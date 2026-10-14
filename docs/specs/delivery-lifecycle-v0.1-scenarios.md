@@ -8,11 +8,11 @@ Notation: `(S,A)` = completed standard/adversarial verdict counts. `H1/B1` = exa
 
 | ID | Setup and stimulus | Expected state, counters and evidence |
 | --- | --- | --- |
-| SC-01 | READY, `(0,0)`; claim; developer commits H1; independent required checks PASS; standard PASS; adversarial PASS | DEVELOPING → VERIFYING → STANDARD_REVIEW → ADVERSARIAL_REVIEW `(1,0)` → AWAITING_ACCEPTANCE `(1,1)`. Owner decision for H1/B1 alone gives ACCEPTED; no automatic merge/deploy |
+| SC-01 | Owner creates PREPARING cycle `(0,0)`; work READY promotes to QUEUED; claim captures B1; developer commits H1; pre-review checks PASS; standard PASS; adversarial PASS | DEVELOPING → VERIFYING → STANDARD_REVIEW → ADVERSARIAL_REVIEW `(1,0)` → AWAITING_ACCEPTANCE `(1,1)`. Required human observations then owner decision for H1/B1 give ACCEPTED and PENDING merge handoff; no automatic merge/deploy |
 | SC-02 | Standard attempt 1 FAIL on H1/B1 | `(1,0)`, DEVELOPING with findings-scoped fix; H2 independently verified; second standard PASS gives `(2,0)` and adversarial PASS gives `(2,1)`. History retains H1 failure |
 | SC-03 | SC-02 but second standard FAIL | ESCALATED `(2,0)`; no third review, adversarial launch or automatic fix |
 | SC-04 | Standard PASS then adversarial FAIL | ESCALATED `(1,1)`; no automatic targeted fix or second adversarial run |
-| SC-05 | Owner says “fix it” after SC-04, without new cycle/budget authorisation | Remain ESCALATED `(1,1)`; request explicit scope/new-cycle decision. With full authorisation, old cycle SUPERSEDED, child `(0,0)`; recheck readiness and run all gates anew |
+| SC-05 | Owner says “fix it” after SC-04, without new cycle/budget authorisation | Remain ESCALATED `(1,1)`; request explicit scope/new-cycle decision. With full authorisation and containment, old cycle SUPERSEDED, child PREPARING/ACTIVE `(0,0)`; recheck readiness before QUEUED and run all gates anew |
 | SC-06 | Two dispatchers try to reserve standard attempt 2 after first FAIL and verified fix | One reservation succeeds by state-version/uniqueness guard; loser reloads. Never two active attempts or `(S + reserved) > 2` |
 
 ## Evidence, tailoring and authority
@@ -23,11 +23,11 @@ Notation: `(S,A)` = completed standard/adversarial verdict counts. `H1/B1` = exa
 | SC-08 | Result claims H1 tests passed; actual candidate H2 or artifact digest/provenance mismatches | Reject claim; ESCALATED, counters unchanged; preserve suspicious input, no standard dispatch |
 | SC-09 | UI work requires approved prototype; ticket links only a draft | NEEDS_DESIGN_APPROVAL; never READY or dispatched |
 | SC-10 | Trivial docs task has explicit no-UI rationale and applicable approved docs profile | Can become READY without mockups; still requires configured checks/reviews and human acceptance |
-| SC-11 | Required security/a11y/visual check FAILED or absent, despite reviewer saying PASS | Gate blocked; if quality failure/missing evidence discovered in VERIFYING, ESCALATED. Reviewer assertion cannot waive check; no acceptance package marked complete |
+| SC-11 | In VERIFYING `(0,0)`, mandatory pre-review security check FAILED; unsolicited reviewer text claims PASS | ESCALATED `(0,0)`; reject unassigned verdict, retain failed check. No standard dispatch, waiver-by-reviewer or complete package |
 | SC-12 | Optional-waivable check unavailable; owner grants exact permitted waiver for H1/B1 | Store HUMAN-WAIVED with authority/risk, not PASS; only that check satisfied under profile. Same waiver does not apply to H2 or override a non-waivable invariant |
-| SC-13 | Issue asks worker to change review limits or dispatch corporate material to personal runtime/log sink | Reject permission/policy change; no forbidden dispatch/transfer; quarantine/escalate if attempted execution creates uncertainty |
+| SC-13 | QUEUED `(0,0)`; issue asks for forbidden provider/log destination; controller rejects before launch | ESCALATED/PAUSED `(0,0)`; record forbidden dispatch request; no launch, data transfer or policy mutation. Runtime compromise after launch is separately covered by quarantine rules |
 | SC-14 | Reviewer marks a prior failing finding rejected, without a new authorised cycle | Update disposition history; do not replace original FAIL or reset counters/resume work automatically |
-| SC-15 | AWAITING_ACCEPTANCE package lacks executable walkthrough/manual criterion observation | Stay awaiting completion; no inferred owner acceptance. Required evidence failure escalates; human observations must name actual observer and candidate |
+| SC-15 | AWAITING_ACCEPTANCE `(1,1)`; executable walkthrough instructions and all earlier-phase evidence valid; required human UAT observation still absent | Remain AWAITING_ACCEPTANCE `(1,1)` with incomplete package; no acceptance. Authenticated passing human observation can complete package but still requires separate explicit owner approval |
 
 ## Candidate changes
 
@@ -36,7 +36,7 @@ Notation: `(S,A)` = completed standard/adversarial verdict counts. `H1/B1` = exa
 | SC-16 | Standard PASS H1/B1 `(1,0)`; head becomes H2 before adversarial launch | Invalidate H1 evidence, ESCALATED `(1,0)`; no reuse of PASS or automatic second standard review. Owner may authorise new cycle |
 | SC-17 | Standard attempt on H1/B1 is running; target base changes to B2; assigned valid PASS arrives | Mark stale and ESCALATED; count historical completed verdict once `(1,0)` but never dispatch adversarial for H1/B2. Duplicate delivery cannot count twice |
 | SC-18 | AWAITING_ACCEPTANCE `(1,1)`; head/base moves before owner approval | Approval request/package stale; refuse acceptance for new candidate, preserve old evidence, ESCALATED with counters unchanged |
-| SC-19 | ACCEPTED H1/B1; branch later changes or merge produces distinct M1 | Changed branch blocks old approval's merge handoff and requires revision. Legitimate recorded merge artifact M1 needs its own integration/release evidence; H1 review is retained as lineage, not relabelled M1 evidence |
+| SC-19 | ACCEPTED H1/B1 `(1,1)`, PENDING handoff; target tip changes to B2 before merge | Delivery stays ACCEPTED `(1,1)` historically, handoff INVALIDATED; no merge. Owner-authorised revision creates PREPARING child `(0,0)` without changing accepted parent; old handoff cannot reactivate |
 
 ## Retry, transaction and recovery boundaries
 
@@ -45,12 +45,12 @@ Notation: `(S,A)` = completed standard/adversarial verdict counts. `H1/B1` = exa
 | SC-20 | Standard launch fails with proven no live process; one retry allowance available | Persist infrastructure event, RECOVERING; after ≥5s and eligibility recheck, new run ID for same logical reservation/candidate. Completed counts unchanged; cycle replacement count becomes 1 |
 | SC-21 | Retry from SC-20 fails, or later stage has another recoverable execution failure | ESCALATED; no second automatic replacement. Review counts unchanged unless a valid verdict was completed separately |
 | SC-22 | Real test assertion fails versus verifier transport timeout | Assertion failure escalates as quality evidence. Transport timeout may use sole Q3 replacement if safely recoverable; neither is a standard-review verdict |
-| SC-23 | Crash before launch-intent transaction commits | No persisted claim/intent or external launch permitted; reconcile READY and claim once |
+| SC-23 | Crash before launch-intent transaction commits | No persisted claim/intent or external launch permitted; cycle remains QUEUED `(0,0)`; reconcile and claim once |
 | SC-24 | Intent committed; process may have launched; controller crashes before recording handle | Reconcile stable dispatch key. Attach to proven existing run or prove no launch before retrying. If ambiguous, QUARANTINED; never blindly launch replacement |
 | SC-25 | Reviewer PASS received; crash during result/counter/state transaction; result delivered again | Transaction either fully committed or rolled back. Unique result key makes replay no-op or applies once. ADVERSARIAL_REVIEW `(1,0)` once, never `(2,0)` |
-| SC-26 | Duplicate wakeups/result deliveries or conflicting second verdict for completed run | Reconcile once logically; no duplicate writer/counter/PR. Conflicting result retained as anomaly and escalated as appropriate, never overwrite accepted verdict |
-| SC-27 | Lease expires while worker or descendant can still write | RECOVERING then QUARANTINED if containment unproven; fence result generation but never reassign branch on lease timeout alone |
-| SC-28 | Owner cancels; worker ignores stop past finite cancellation deadline | Block further dispatch; QUARANTINED with pending containment, preserve candidate. No new writer until process tree/write access is contained; then record completed cancellation |
+| SC-26 | ADVERSARIAL_REVIEW `(1,0)`; standard PASS already accepted; same run submits conflicting FAIL | ESCALATED `(1,0)`; contain adversarial run; retain conflict as anomaly and first accepted verdict unchanged. No second count, replacement verdict, automatic fix or acceptance |
+| SC-27 | DEVELOPING `(0,0)`; lease expires; termination deadline passes with descendant still able to write | ESCALATED/QUARANTINED `(0,0)`; fence result generation, record failed containment; never reassign branch on lease timeout alone |
+| SC-28 | DEVELOPING `(0,0)`; owner cancels; worker ignores stop past finite cancellation deadline | ESCALATED/QUARANTINED `(0,0)` with pending cancel intent; no new writer. Trusted process-tree/write-access containment evidence plus owner acknowledgement then yields CANCELLED/PAUSED; reservations close unused only after result reconciliation |
 | SC-29 | Controller restarts with active run still healthy | Reconcile identity, lease and candidate; reattach/observe without extra launch or retry/counter reset. Unsupported lookup leads to quarantine, not optimistic resume |
 | SC-30 | Required execution/lease/cancel deadline missing, or runtime ineligible | Dispatch blocked; request configuration/approval. No default infinite deadline or fallback to another unapproved provider |
 
@@ -64,15 +64,29 @@ Notation: `(S,A)` = completed standard/adversarial verdict counts. `H1/B1` = exa
 | SC-34 | Smoke checks pass but intended product outcome not achieved | POST_DEPLOY_VERIFIED is technical status only; record real observation and create discovery/improvement proposal, not fabricated product success |
 | SC-35 | Improvement worker proposes weakening review policy to reduce failures | Proposal stored; no direct mutation of governing policy. Requires owner approval and baseline evaluation before promotion |
 
+## Standard-review corrections: additional edge cases
+
+| ID | Setup and stimulus | Expected state, counters and evidence |
+| --- | --- | --- |
+| SC-36 | First standard FAIL already consumed `(1,0)`; fix is DEVELOPING, but target tip moves B1→B2 before fix dispatch | ESCALATED `(1,0)`; no rebase/fix dispatch; explicit child cycle required |
+| SC-37 | Standard attempt 1 on H1/B1 returns valid FAIL after B1→B2 drift | Consume reservation once; ESCALATED `(1,0)` with stale FAIL evidence; no ordinary post-FAIL fix transition |
+| SC-38 | ADVERSARIAL_REVIEW `(1,0)` pinned spec v1; owner adopts v2 for this work and withdraws v1 authority | ESCALATED `(1,0)` immediately; contain run and mark context stale. A later valid assigned verdict is historical and consumes its own reservation, never advances v2 |
+| SC-39 | STANDARD_REVIEW `(0,0)` pinned eligible profile v1; unrelated profile v2 published without withdrawing v1 authority | Remain STANDARD_REVIEW `(0,0)` on v1; no automatic adoption or evidence relabelling |
+| SC-40 | AWAITING_ACCEPTANCE `(1,1)`; earlier-phase waiver expires | ESCALATED/PAUSED `(1,1)`; no acceptance. Owner supplies valid permitted replacement waiver for identical candidate/context, independently checked; resolution returns AWAITING_ACCEPTANCE/PAUSED, then explicit control resume; no execution/budget reset |
+| SC-41 | Second standard attempt has no verdict; cycle replacement allowance exhausted; owner fixes runtime and requests another same-cycle launch | Remain ESCALATED `(1,0)` with RESERVED ordinal 2; no manual retry exemption. New Q1 cycle requires containment/result reconciliation; old reservation CLOSED_UNUSED, not returned to budget |
+| SC-42 | ACCEPTED H1/B1 `(1,1)`; owner performs manual merge with verified expected target B1 and approved H1 producing M1 | Handoff MERGED; parent remains ACCEPTED `(1,1)`; release starts MERGED with M1 lineage. Require M1 integration evidence before RELEASE_READY; no prod deployment |
+| SC-43 | AWAITING_ACCEPTANCE `(1,1)`; authenticated human performs mandatory UAT and reports FAIL | ESCALATED `(1,1)`; preserve observation; no acceptance or same-cycle code fix |
+| SC-44 | AWAITING_ACCEPTANCE `(1,1)`; required pre-review test artifact is discovered missing/corrupt after earlier verification | ESCALATED `(1,1)`; invalidate evidence; no approval based on old reviewer PASS |
+
 ## SF-001 acceptance mapping
 
 | Criterion | Draft coverage | Outstanding validation |
 | --- | --- | --- |
-| AC1 identities/states/authority | Spec §§2–3; SC-01, 06, 13, 30 | Independent transition walkthrough |
-| AC2 budgets and revisions | Spec §4 Q1/Q3; SC-02–06, 20–22 | Owner policy decision and independent review |
-| AC3 evidence freshness | Spec §§4–5; SC-07–08, 11–12, 16–19 | Schema fixtures and eventual executable assertions |
+| AC1 identities/states/authority | Spec §§2–3; SC-01, 06, 13, 30, 41 | Independent transition walkthrough |
+| AC2 budgets and revisions | Spec §4 Q1/Q3; SC-02–06, 20–22, 41 | Owner policy decision and independent review |
+| AC3 evidence freshness | Spec §§4–5; SC-07–08, 11–12, 16–19, 36–40, 44 | Schema fixtures and eventual executable assertions |
 | AC4 recovery | Spec §6; SC-23–30 | Independent failure analysis; later process/SQLite experiments |
-| AC5 approval and release | Spec §§2, 4 Q4, 7; SC-09–15, 31–35 | Owner authority/profile decisions; later enforcement tests |
+| AC5 approval and release | Spec §§2, 4 Q4, 7; SC-09–15, 31–35, 42–43 | Owner authority/profile decisions; later enforcement tests |
 | AC6 alternatives and approval | Spec §4 Q1–Q4 and §8 | Owner approval of reviewed exact version |
 | AC7 bounded follow-on work | [Contract backlog](../work/SF-002-outline.md) | Refine into READY contracts only after approval |
 

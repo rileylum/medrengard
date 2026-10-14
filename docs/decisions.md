@@ -36,12 +36,14 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 
 ## SF-001 recommendations awaiting review and approval
 
-Draft: [delivery lifecycle v0.1](specs/delivery-lifecycle-v0.1.md), with [35 scenario specifications](specs/delivery-lifecycle-v0.1-scenarios.md). None of these proposals has been accepted yet:
+Draft: [delivery lifecycle v0.1](specs/delivery-lifecycle-v0.1.md), with [scenario specifications](specs/delivery-lifecycle-v0.1-scenarios.md). None of these proposals has been accepted yet:
 
 - **Q1 / O-002:** explicit owner-authorised child cycle for revisions after terminal failure/final review; immutable old counters; repeat all required gates, including after adversarial failure.
 - **Q2 / O-003:** freeze reviewed candidates; unexpected head/base changes escalate rather than automatically spending another review. Valid stale verdicts consume their reserved attempt but cannot advance new code.
 - **Q3 / O-004:** one safe automatic replacement execution per cycle, at least five seconds backoff; malformed results and actual verification failures escalate. Unknown process containment quarantines. Finite environment-specific deadlines are required before unattended dispatch.
 - **Q4 / O-008:** owner is sole initial approval authority; only profile-permitted, candidate-specific check waivers; identity, safety, required independent verdicts and hard limits cannot be waived.
+
+Standard review 1 returned FAIL; bounded corrections clarify cycle creation, recovery/reservation transitions, context validity, evidence phases and merge handoff. Initial owner-only/manual merge authority (part of O-006) is now an explicit proposal requiring approval before SF-002E; no auto-merge is authorised.
 
 P-004 (adversarial review on every change) remains proposed. O-005 quality defaults and runtime-dependent deadline/containment details remain later blocking decisions. Drafting these recommendations does not change the manual procedure's current stop-for-guidance rule on infrastructure failure.
 
