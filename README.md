@@ -24,6 +24,6 @@ Owner approval A-001 (2026-10-15): manual contracts-first bootstrap, **TypeScrip
 
 ## Current implementation
 
-Documentation only. No application, dependency setup, automated tests, controller, runtime adapters or GitHub integration exists. No commands for building or testing the factory have yet been established. The repository directory was not Git-initialised when this bootstrap began.
+Documentation only. No application, dependency setup, automated tests, controller, runtime adapters or GitHub integration exists. No commands for building or testing the factory have yet been established. Local Git history was established during SF-001 review; no remote is configured. The corrected design candidate is frozen while a timed-out second standard-review execution awaits owner retry guidance; see `docs/STATUS.md`.
 
 The first automated milestone will be one bounded READY issue reaching a human-reviewable PR without manual stage advancement, with independent evidence, bounded reviews and safe recovery. Until then, humans and agents execute and record those steps explicitly.

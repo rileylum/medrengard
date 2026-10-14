@@ -26,4 +26,12 @@ All findings were confirmed by the author against the draft. Disposition is auth
 | S1-F6 | Medium | Evidence phases and scenario outcomes ambiguous | Explicit pre-review/review/acceptance phases; human UAT attachment and failure rules; sharpened scenarios and new SC-36–44 |
 | S1-F7 | Low | Git absence stated as current after commit | Date historical absence; record initialisation and candidate in current handoff |
 
-Standard attempt 2 is the final permitted standard review in this cycle. If it fails, stop and escalate; do not run adversarial review or silently reset the budget. After PASS, one fresh adversarial review is permitted. Any adversarial FAIL stops for owner direction.
+## Standard attempt 2 — execution timed out; no quality verdict
+
+- Frozen corrected candidate: `117d763c9b1d57a1ecb6278a1d88a8480c3bfa83`; base `f9569aa35f68d3e789152febab3489a47f34b1cb`.
+- [Exact input](standard-2-prompt.txt), [empty/incomplete output](standard-2-result.json), [infrastructure event and requested decision](standard-2-infrastructure.md).
+- Harness timeout after 240 seconds; no matching invocation remained in subsequent process inspection. No retry or adversarial run started.
+- Completed counters remain standard **1/2**, adversarial **0/1**. Infrastructure failures: **1**. Standard logical attempt 2 is reserved/pending, not completed.
+- Author checks before freezing the correction: local Markdown link targets, 44 unique ordered scenario IDs, valid first-review JSON/FAIL, and `git diff --check` all passed. These are not independent semantic verification.
+
+Standard attempt 2 is the final permitted standard review in this cycle. Await owner permission for one replacement execution of that same attempt, recommended finite deadline 600 seconds. If its valid verdict is FAIL, stop and escalate; do not run adversarial review or reset the budget. After PASS, one fresh adversarial review is permitted. Any adversarial FAIL stops for owner direction.
