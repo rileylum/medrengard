@@ -259,7 +259,13 @@ test('an outcome or claim with throwing getters or traps records run_failed and 
     ['claim head getter throws', { status: 'completed', claim: throwingGetter('head', { artifacts: ['r'] }) }],
     ['reason getter throws', throwingGetter('reason', { status: 'failed' })],
     ['function outcome', () => 'completed'],
+    // Clone fine, serialise never: the store's JSON.stringify would throw a bare TypeError.
+    ['bigint in claim', { status: 'completed', claim: { head: 'H1', artifacts: ['r', 10n] } }],
+    ['circular claim', (() => { const a: unknown[] = ['r']; a.push(a); return { status: 'completed', claim: { head: 'H1', artifacts: a } }; })()],
   ];
+  // The proxy never reaches the clone: resolving the promise reads `.then` on it and the trap
+  // throws, so it is reported as a rejection ("adapter threw").
+  const notPlain = ['function outcome', 'bigint in claim', 'circular claim'];
   for (const [name, outcome] of outcomes) {
     const store = fresh();
     const c = await execute(store, 'c1', { name, start: async () => outcome as never }, { ...req, role: 'developer' }, { deadlineMs: 2000, base: 'B1' });
@@ -267,6 +273,7 @@ test('an outcome or claim with throwing getters or traps records run_failed and 
     const last = c.history.at(-1)!.event as { type: string; reason: string };
     assert.equal(last.type, 'run_failed', name);
     assert.ok(last.reason.length > 0, name);
+    if (notPlain.includes(name)) assert.equal(last.reason, 'adapter outcome is not plain data', name);
     assert.deepEqual(c, store.load('c1'), name);
     // The run has its outcome: a later developer execute is refused by the stage, not by an active run.
     const again = await dev(store, { outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } });

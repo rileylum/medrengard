@@ -78,12 +78,13 @@ function requireStage(store: EventStore, cycleId: string, role: Role, runId?: st
   if (expected && cycle.stage !== expected) throw new Error(`${role} run on a cycle in ${cycle.stage}, expected ${expected}`);
 }
 
-// The adapter contract is plain data. Cloning runs every getter and trap once, here, inside the
-// catch; what comes out has none, so no later read in this file can throw. Functions, symbols and
-// Proxies do not clone and become a failed run.
+// The adapter contract is plain data, and "plain" means what the store can persist: a JSON round
+// trip, not structuredClone, because BigInt and cycles clone fine and then throw a bare TypeError
+// out of JSON.stringify in append. The round trip runs every getter, trap and toJSON once, here,
+// inside the catch; what comes out has none, so no later read or write in this path can throw.
 function plain(outcome: unknown): unknown {
   try {
-    return structuredClone(outcome);
+    return JSON.parse(JSON.stringify(outcome));
   } catch {
     return { status: 'failed', reason: 'adapter outcome is not plain data' };
   }
