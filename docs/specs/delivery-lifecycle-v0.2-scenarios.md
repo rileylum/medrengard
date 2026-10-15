@@ -163,14 +163,20 @@ Notation: `(S,A)` = completed standard/adversarial verdict counts. Unless overri
 | SC-88 | STANDARD_REVIEW or ADVERSARIAL_REVIEW valid FAIL is counted while paused, route PENDING; unrelated W expiry escalates before routing; ample S/A/C remain; owner renews W | Escalation creates BLOCKED_FAIL and OPEN review-failure in the same transaction. W renewal cannot remove review-failure, restore the stage or admit Q6. Review FAIL cannot be waived; child cycle/cancellation required. No double count or budget reset; available slots do not grant an operational escape |
 | SC-89 | Replay/race and invalidation branches of SC-86–88 | Repeated escalation/result/renewal/resume reuses disposition, blocker and reservation IDs; each count and routing effect occurs once. Crash rolls back all dispositions/blockers with escalation or commits all; no empty blocker set is exposed between them. A new failure racing last resolution survives CAS/recomputation and prevents release. Head/base/pinned-context drift or conflicting provenance invalidates held PASS with OPEN result-route-invalid; renewing W cannot revive it. Terminal cancel/supersession never releases held routes; quarantine acknowledgement alone neither restores delivery nor routes PASS, and pending stop/cancel blocks resume. Valid PASS with no capacity for its next required reservation remains explicitly escalated for a child, not ACTIVE and stranded. Revoking a waiver/known-baseline resolution from SC-87 reopens P's blocker without reactivating Q6 |
 
+## Cycle-09 bounded standard correction: verdict arrives after escalation
+
+| ID | Setup and stimulus | Expected state, counters and evidence |
+| --- | --- | --- |
+| SC-90 | Reverse SC-86/88 ordering: owner pauses STANDARD_REVIEW, then W expires and escalation requests bounded stop of registered reviewer, THEN its valid assigned PASS/FAIL arrives before termination is proven. Repeat for ADVERSARIAL_REVIEW with current standard PASS | In the verdict transaction consume the still-valid reservation/count once and apply the same disposition as a pre-escalation pending result. PASS becomes HELD_PASS, not an untracked historical result; FAIL adds OPEN review-failure/BLOCKED_FAIL. Neither revokes stop intent or advances while ESCALATED. After containment and valid W renewal, held standard PASS restores then owner resume reserves adversarial once with S=1 even at Smax=1; held adversarial PASS similarly reaches AWAITING_ACCEPTANCE without recount. FAIL prevents restoration despite spare budgets. Repeated verdict/stop/renewal/resume has one effect; a race with resolution reloads/revalidates result/containment and blocker set. Stale valid assigned verdict still counts but invalidates route and requires child/cancel; fenced/replaced/closed-run or unassigned output cannot create a held route or a new count under this exception. Reviewer stop with NO verdict is not a synthetic PASS and does not satisfy these guards |
+
 ## SF-001 acceptance mapping
 
 | Criterion | Draft coverage | Outstanding validation |
 | --- | --- | --- |
-| AC1 identities/states/authority | Spec §§2–3; SC-01, 06, 13, 30, 41, 45–49, 55–65, 76–80, 83–89 | Independent transition walkthrough |
-| AC2 budgets and revisions | Spec §4 Q1/Q3; SC-02–06, 20–22, 41, 48, 52, 61–69, 76–77, 81–89 | Owner policy decision and independent review |
-| AC3 evidence freshness | Spec §§4–5; SC-07–08, 11–12, 16–19, 36–40, 44, 50–54, 58–65, 70–75, 80, 86–89 | Schema fixtures and eventual executable assertions |
-| AC4 recovery | Spec §§3, 6; SC-23–30, 59–65, 69, 81–89 | Independent failure analysis; later process/SQLite experiments |
+| AC1 identities/states/authority | Spec §§2–3; SC-01, 06, 13, 30, 41, 45–49, 55–65, 76–80, 83–90 | Independent transition walkthrough |
+| AC2 budgets and revisions | Spec §4 Q1/Q3; SC-02–06, 20–22, 41, 48, 52, 61–69, 76–77, 81–90 | Owner policy decision and independent review |
+| AC3 evidence freshness | Spec §§4–5; SC-07–08, 11–12, 16–19, 36–40, 44, 50–54, 58–65, 70–75, 80, 86–90 | Schema fixtures and eventual executable assertions |
+| AC4 recovery | Spec §§3, 6; SC-23–30, 59–65, 69, 81–90 | Independent failure analysis; later process/SQLite experiments |
 | AC5 approval and release | Spec §§2, 4 Q4, 7; SC-09–15, 31–35, 42–43, 74, 76–80 | Owner authority/profile decisions; later enforcement tests |
 | AC6 alternatives and approval | Spec §§2, 4 Q1–Q6, 5 and §8 | Owner approval of reviewed exact version |
 | AC7 bounded follow-on work | [Contract backlog](../work/SF-002-outline.md) | Refine into READY contracts only after approval |
