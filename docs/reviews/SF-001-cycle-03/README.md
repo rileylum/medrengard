@@ -7,7 +7,7 @@ Owner replied “Yes” to a new bounded cycle for C2S2-F1 and its three scenari
 - New cycle: SF-001-review-03; parent: SF-001-review-02.
 - Scope: multi-blocker resolution, behaviour of running sibling verification checks, and the three directly related regression scenarios. No general policy expansion or implementation.
 - Parent cycle-02 remains exhausted: standard 2/2 FAIL, adversarial 0/1, infrastructure failures 0. Cycle-01 and all historical evidence also remain unchanged.
-- Current counters: standard 1/2 (FAIL); adversarial 0/1; infrastructure failures 0.
+- Current counters: standard 2/2 (FAIL, FAIL); adversarial 0/1; infrastructure failures 0. Exhausted; ESCALATED.
 - Review invocation deadline: 600 seconds; infrastructure failures stop for guidance under the existing manual procedure.
 - No specification acceptance, automatic budget reset, merge or deployment authorised.
 
@@ -27,4 +27,10 @@ All new semantics remain proposals until independent review and explicit owner d
 - Bounded correction selects explicit child-cycle/cancellation requirement for a sibling timeout/crash recorded while ESCALATED, with OPEN blocker, unchanged Q3 count and no deferred retry. Clarifies paused RECOVERING and extends SC-61 for available/exhausted allowance. Related multi-target/observation wording clarified, no scope expansion.
 - Author checks before `8755abc`: local links, 61 unique ordered scenario IDs and `git diff --check` passed; no executable controller tests.
 
-Next: freeze correction for standard attempt 2. A second FAIL stops and escalates; PASS permits one fresh adversarial review. Author fixes do not constitute PASS.
+## Standard attempt 2 — FAIL; cycle exhausted
+
+- Corrected candidate: `2004d1d3ece6dbbb97c7796c1481e75f67e627f9`; base `8755abc9f2caee557cebf4f9f1b90850669aa969`.
+- [Exact input](standard-2-prompt.txt), [unaltered output](standard-2-result.json). Same fresh tool-disabled command and 600-second deadline. Reported model `claude-opus-5-5`, duration 95.334 seconds, cost $0.7278856; matching-SHA FAIL with no runtime error or permission denials.
+- C3S1-F1 resolved as raised; remaining C3S2-F1 concerns the absent guarded retry launch after a sibling fails in VERIFYING/PAUSED. Disposition uncertain pending owner triage. No new fixes applied.
+- Author checks before `2004d1d`: local links, 61 ordered scenario IDs, first-review FAIL JSON and `git diff --check` passed. No executable controller tests.
+- Stopped at standard **2/2**, adversarial **0/1**. See [escalation packet and two policy options](escalation.md). No next cycle is authorised.
