@@ -98,3 +98,4 @@ Verification: `npm test` and `RUNTIME_SPIKE=1 npm test`, run by the owner on the
 
 ## Log
 - 2026-10-16 — branch `feat/04-d-real-adapters` off main at `212f711`. Plan rows 3 and 4 marked done, STATUS next action updated (`4e89815`). Ticket drafted on the Design route; awaiting owner read and go.
+- 2026-10-16 — owner: “go with all recommendations” (A-024). READY.
