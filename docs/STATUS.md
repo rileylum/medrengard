@@ -15,8 +15,8 @@ Plan step 4 in progress: ticket [04-a](work/04-a-adapter-interface.md) (Design r
 ## Checks run
 
 2026-10-15: `npm test` and `RUNTIME_SPIKE=1 npm test` on `d8a9d21`, owner-run — 51 tests, 36 pass offline (10 live tests skipped with reason), 46 pass live, 5 todo, 0 fail.
-2026-10-16: `npm test` on the 04-a branch, implementer-run — 62 tests, 47 pass, 10 skipped, 5 todo, 0 fail. Not yet owner-run.
+2026-10-16: `npm test` on `3ba5434` (04-a), owner-run — 62 tests, 47 pass, 10 skipped, 5 todo, 0 fail. Standard review 1 PASS, adversarial FAIL (three majors in `receive`/`run_failed`; see the ticket log).
 
 ## Next action
 
-Owner runs `npm test` on the 04-a SHA; then standard review 1 via `claude -p` per [workflow.md](workflow.md).
+Owner decides on the 04-a adversarial FAIL: fix ticket stacked on 04-a (recommended) or merge with the findings parked.
