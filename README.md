@@ -24,6 +24,6 @@ Owner approval A-001 (2026-10-15): manual contracts-first bootstrap, **TypeScrip
 
 ## Current implementation
 
-Documentation only. No application, dependency setup, automated tests, controller, runtime adapters or GitHub integration exists. No commands for building or testing the factory have yet been established. Local Git history was established during SF-001 review; no remote is configured. Four design-review cycles exhausted their standard budgets. Cycle-05 is authorised to add the missing healthy-recovery transition and obtain independent review. The conservative paused-failure direction is owner-approved; the complete specification is not yet accepted. See `docs/STATUS.md`.
+Documentation only. No application, dependency setup, automated tests, controller, runtime adapters or GitHub integration exists. No commands for building or testing the factory have yet been established. Local Git history was established during SF-001 review; no remote is configured. Cycle-05 obtained a standard-review PASS, followed by adversarial needs-attention. Work is paused for owner triage of conflicting reviewer assessments. The conservative paused-failure direction is owner-approved; the complete specification is not yet accepted. See `docs/STATUS.md`.
 
 The first automated milestone will be one bounded READY issue reaching a human-reviewable PR without manual stage advancement, with independent evidence, bounded reviews and safe recovery. Until then, humans and agents execute and record those steps explicitly.

@@ -5,7 +5,7 @@ Local records temporarily stand in for issue tracking. IDs are stable; future Gi
 | ID | Title | Current status |
 | --- | --- | --- |
 | [BOOT-001](BOOT-001.md) | Source review and bootstrap steering | Bootstrap direction accepted (A-001); no independent reviews completed |
-| [SF-001](SF-001.md) | Delivery-cycle and evidence-boundary design | Cycle SF-001-review-05 authorised (A-005); healthy-recovery transition and SC-61 branch awaiting review |
+| [SF-001](SF-001.md) | Delivery-cycle and evidence-boundary design | Cycle-05 standard PASS, adversarial FAIL/needs-attention; stopped for owner triage of reviewer disagreement |
 | [SF-002 outline](SF-002-outline.md) | Contract and fixture decomposition | Planning only; five proposed slices, not READY |
 
 Future backlog entries in `docs/plan.md` are planning placeholders, not complete work contracts.

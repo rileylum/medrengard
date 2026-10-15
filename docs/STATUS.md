@@ -2,20 +2,29 @@
 
 ## Where we are
 
-**SF-001-review-05 standard attempt 1 FAIL; bounded guard/termination correction prepared for final standard review. Complete specification not accepted.**
+**SF-001-review-05: standard PASS, then adversarial needs-attention/FAIL. ESCALATED for owner triage; complete specification not accepted.**
 
-Work: [SF-001](work/SF-001.md). [Cycle-05 ledger](reviews/SF-001-cycle-05/README.md). A-004's conservative paused-failure direction remains accepted; other full-specification approval is pending.
+Work: [SF-001](work/SF-001.md). [Cycle-05 ledger](reviews/SF-001-cycle-05/README.md). **[Escalation and reviewer-disagreement matrix](reviews/SF-001-cycle-05/escalation.md).** [Adversarial report](reviews/SF-001-cycle-05/CHALLENGE.md).
 
-## Latest changes
+## Latest activity
 
-- Added guarded observation-only recovery from ACTIVE-origin RECOVERING with delivery ESCALATED to ACTIVE control, retaining delivery ESCALATED and all blockers, without launch or allowance consumption.
-- Explicitly covers both owner-resumed ACTIVE and escalation-before-default-pause windows, with SC-61's matching expected result.
-- No unrelated policy changes, implementation or new scenario IDs; earlier cycles/evidence unchanged.
+- Added healthy-recovery transition and SC-61 branch under A-005. First standard review FAIL on overly broad continuation guard.
+- Applied permitted bounded correction: keep-observing authority/no-stop guard and complementary bounded termination exit.
+- Final standard review **PASS** on frozen candidate **`ab460b46b2e31bbfe1b33e7878295f4483894aed`**, base `7dde4c1b855ed7f77bd188b4861b908f494f8460`; no material findings.
+- One fresh adversarial review on SAME candidate, cycle-complete merge-base `2094188d7ffc760e7736049c2baa4ce6cdc157bb`, in detached worktree, returned **needs-attention** (FAIL): two medium and one low findings at confidence 0.55/0.45/0.35.
+- Claims: owner pause may trigger termination; keep-observing authority during recovery is undefined; zero-run recovery exit is unclear. Standard review explicitly considered overlapping points non-blocking. Findings remain **uncertain**, not confirmed defects.
+- Stopped without editing the candidate or rerunning adversarial review. Raw inputs/results and exact CHALLENGE.md preserved; audit commits do not substitute a new candidate.
 
-## Counters and next action
+## Counters and checks
 
-Cycle-05: standard 1/2 (FAIL), adversarial 0/1, infrastructure failures 0. Review of `7dde4c1b855ed7f77bd188b4861b908f494f8460` resolved the safe-sibling gap but identified C5S1-F1: guard overbroad for stop-required runs. Correction restricts continuation to recorded permitted observation with no stop intent and defines the complementary bounded stop/PAUSED-or-QUARANTINED outcome; SC-61 aligned. Each of four earlier cycles retains standard 2/2 FAIL and adversarial 0/1; cycle-01 alone had one infrastructure timeout.
+- Cycle-05: **standard 2/2 (FAIL, PASS); adversarial 1/1 (FAIL); infrastructure failures 0**.
+- Earlier cycles retain their exhausted standard counts and evidence; only cycle-01 had one timeout. Nothing reset or erased.
+- Author checks: local links, 61 ordered unique scenarios, `git diff --check`, raw JSON/SHA validation. Standard PASS checked before adversarial launch; detached worktree tracked diff remained empty, only report untracked.
+- All reviews were fresh tool-disabled tabletop analyses of commit-extracted text/diffs, not executable lifecycle tests or direct reviewer Git inspection. Adversarial reviewer received no prior verdicts or author reasoning transcript.
+- No implementation, dependencies, CI, production adapter or external publication. A-004/D-008 policy direction remains accepted; full-spec approval pending.
 
-**Freeze the bounded correction and run final standard review (attempt 2).** Second FAIL stops. Standard PASS permits one fresh adversarial review; adversarial FAIL stops. Infrastructure failures stop for guidance under the current manual procedure.
+## Next action — owner triage, not an automatic new cycle
 
-No remote/publication, implementation, dependencies, CI or executable controller tests. Accepted stack/runtime/hosting remain TypeScript + SQLite, Pi and Claude Code, local execution.
+**Classify the adversarial claims against the standard review's contrary reasoning before authorising more design changes.** The escalation packet identifies the concrete disagreements. Recommend a bounded manual triage with no new quality-review run or design edits until disposition/scope is agreed.
+
+A rejected finding does not silently turn the adversarial FAIL into PASS. Any override, revision scope or new review budget needs an explicit recorded owner decision. Do not start another fix/review or SF-002 implementation on the spent budget.
