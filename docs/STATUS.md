@@ -14,4 +14,4 @@ Ticket [02-a SQLite event store](work/02-a-sqlite-event-store.md) in review on b
 
 ## Next action
 
-Owner decides on 02-a: open ticket 02-b to reject unclassifiable events (in `apply` as escalate, or in `append` before the write) and re-review, or merge as is. After 02-a: plan step 3, the runtime spike (owner leaning towards Claude Code as the first runtime).
+Owner chose a fix ticket: [02-b reject unclassifiable events](work/02-b-reject-unclassifiable-events.md), stacked on the 02-a branch. Awaiting owner go on 02-b, then tests first. After 02-a: plan step 3, the runtime spike (owner leaning towards Claude Code as the first runtime).
