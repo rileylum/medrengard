@@ -54,6 +54,14 @@ Cycle-03 proposed clarification: validated blocker resolutions may accumulate wh
 
 ## Owner approval history
 
+### A-005 — 2026-10-15 — Healthy escalated-recovery revision
+
+- Authority: owner reply “Yes” to a new cycle limited to the healthy-reconciliation transition and SC-61 branch, with up to two standard and one adversarial reviews.
+- Authorised: SF-001-review-05; parent cycle-04 and earlier exhausted histories remain immutable.
+- Scope: C4S2-F1. Add a guarded ACTIVE-origin RECOVERING → ACTIVE observation-only exit while delivery remains ESCALATED; no dispatch, budget consumption or implied acceptance.
+- No full-specification acceptance, implementation or standing review reset. [Cycle-05 ledger](reviews/SF-001-cycle-05/README.md). Existing manual infrastructure-failure stop rule applies.
+
+
 ### A-004 — 2026-10-15 — Conservative paused failure and cycle-04
 
 - Authority: owner reply “Yes” to approval of the conservative rule and a new bounded cycle aligning paused-recovery transitions and SC-61, with up to two standard and one adversarial reviews.
