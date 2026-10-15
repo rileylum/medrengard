@@ -14,4 +14,4 @@ Plan step 2 done (A-018): `src/store.ts` persists events in one `node:sqlite` ta
 
 ## Next action
 
-Owner merges `feat/02-c-validate-serialised-body` into main (carries 02-a, 02-b, 02-c). Then plan step 3, the runtime spike: a script launches `claude -p` and `pi -p` with JSON output, captures the result, and cancels a run mid-flight. Owner leaning towards Claude Code as the first real runtime. Write the step 3 ticket(s) first and get a go.
+Step 2 merged to main. Ticket [03-a runtime spike](work/03-a-runtime-spike.md) written on `feat/03-a-runtime-spike`; awaiting owner go. Owner leaning towards Claude Code as the first real runtime.
