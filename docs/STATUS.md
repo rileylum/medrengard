@@ -24,4 +24,4 @@ Plan step 4 done (A-023): `src/adapter.ts` is the seam between the controller an
 
 ## Next action
 
-Owner merges `feat/04-c-total-receive` into main (it contains 04-a and 04-b). Then ticket 04-d: real `claude` and `pi` adapters over `spawnRuntime`, Design route (cgroup cancel via `systemd-run --user --scope` plus `cgroup.kill`; stdout/stderr byte bound; result normalisation per [03-a-findings.md](work/03-a-findings.md)). Its done-when list must cover the two 03-b lines and the 04-c line in [work/parked.md](work/parked.md). Plan row 5 (real developer run) follows.
+Ticket 04-d on branch `feat/04-d-real-adapters`: real `claude` and `pi` adapters over `spawnRuntime`, Design route (cgroup cancel via `systemd-run --user --scope` plus `cgroup.kill`; stdout/stderr byte bound; result normalisation per [03-a-findings.md](work/03-a-findings.md)). Its done-when list must cover the two 03-b lines and the 04-c line in [work/parked.md](work/parked.md). Draft the design note, get owner approval, then tests first. Plan row 5 (real developer run) follows.
