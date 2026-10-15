@@ -10,7 +10,7 @@ Plan step 2 done (A-018): `src/store.ts` persists events in one `node:sqlite` ta
 
 Plan step 3 done (A-019): `src/runtime/spawn.ts` launches, observes and cancels a runtime as a child process; [03-a-findings.md](work/03-a-findings.md) records how `claude -p` and `pi -p` behave (JSON shapes, session ids, exit 143 on cancel, exit 1 with JSON or stderr on bad model and no auth, tool denial). Tickets 03-a and 03-b, merged as one stacked branch with an adversarial FAIL on record; the process-group escape and the other findings are parked for 04-a.
 
-Plan step 4 in progress: ticket [04-a](work/04-a-adapter-interface.md) (Design route, A-020) on branch `feat/04-a-adapter-interface`: `src/adapter.ts` is the adapter seam, `src/controller.ts` starts a run with a deadline and records the outcome, `run_failed` is a lifecycle event, `EventStore.append` returns the Cycle. 04-a: standard 1 PASS, adversarial FAIL on `3ba5434`; owner chose a fix ticket (A-021). [04-b](work/04-b-receive-hardening.md) on branch `feat/04-b-receive-hardening`, stacked on 04-a, fixes the three majors and the minors; standard PASS, adversarial FAIL on `8664c1b`; owner decides. [04-c](work/04-c-total-receive.md) (A-022) makes `receive` and the deadline total over any value an adapter can produce. 04-d (real claude and pi adapters, cgroup cancel) follows and carries the two 03-b parked lines.
+Plan step 4 done (A-023): `src/adapter.ts` is the seam between the controller and a runtime; `src/controller.ts` starts a run with a deadline and records exactly one outcome per run through `EventStore.append`, which now returns the replayed Cycle; `run_failed` is a lifecycle event; `tests/fake-adapter.ts` drives normal, malformed, timeout, cancel and duplicate outcomes. Tickets 04-a, 04-b and 04-c, merged as one stacked branch with an adversarial FAIL on record (string-cap size bound, parked for 04-d).
 
 ## Checks run
 
@@ -24,4 +24,4 @@ Plan step 4 in progress: ticket [04-a](work/04-a-adapter-interface.md) (Design r
 
 ## Next action
 
-Owner decides on the 04-c adversarial FAIL: a one-line size bound in `plain()` as a fix ticket, or merge 04-a/b/c with the finding parked.
+Owner merges `feat/04-c-total-receive` into main (it contains 04-a and 04-b). Then ticket 04-d: real `claude` and `pi` adapters over `spawnRuntime`, Design route (cgroup cancel via `systemd-run --user --scope` plus `cgroup.kill`; stdout/stderr byte bound; result normalisation per [03-a-findings.md](work/03-a-findings.md)). Its done-when list must cover the two 03-b lines and the 04-c line in [work/parked.md](work/parked.md). Plan row 5 (real developer run) follows.
