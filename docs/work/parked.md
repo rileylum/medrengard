@@ -1,0 +1,12 @@
+# Parked findings
+
+Review findings accepted as real but deferred to the ticket where the affected code is written. Each line names the ticket that must pick it up. A ticket that touches the named area is not READY until its done-when list covers its parked lines or the owner says to drop them.
+
+| Source | Finding | Pick up in |
+| --- | --- | --- |
+| 02-c adversarial (`39d2c59`), major | A caller that applies the unserialised object in memory can diverge from replay: String wrappers, getters and Proxies pass serialisation one way and are read live another way. Fix is in the calling convention: `append` returns the canonical parsed Event (or applies it and returns the Cycle) and the controller uses only that, never the object it was handed. Add a replay test with `new String('PASS')` as a verdict. | Step 4, adapter interface and controller (first ticket that calls `EventStore.append` from non-test code) |
+| 02-c adversarial, minor | Lone-surrogate run IDs collide in the unique index because SQLite replaces them with U+FFFD. Reject ill-formed strings in `requireId` with `String.prototype.isWellFormed()`, or key the index on the escaped JSON of the run ID. | Same ticket as above |
+| 02-b adversarial (`582e399`), minor | `apply` accepts a fix-run `claim` that reuses a consumed run ID; its `developer_result` is then dropped as a duplicate and the cycle can never leave DEVELOPING. Spec says run ID is the run's identity; reject or escalate the claim. | Step 4 (controller allocates run IDs; decide there whether apply or the controller enforces uniqueness) |
+| 02-b adversarial, minor | `open` does not check the parent cycle exists and is ESCALATED, nor "one work item has at most one open cycle". `openChild` enforces the first in memory; the store bypasses it. | Step 4 or 5, whichever first opens cycles from non-test code |
+| 02-a adversarial (`7cff2de`), notes | `DatabaseSync` busy timeout is 0, so a second process throws `database is locked`. Row 0 is trusted as the open marker without a type check. `WITHOUT ROWID` and `WHERE run_id IS NOT NULL` are redundant. | Busy timeout: the first ticket with two processes on one database (step 5 or 6). Row 0 check and schema cleanup: any later store ticket, or drop. |
+| 02-c standard, note | `JSON.stringify` throwing on BigInt or circular input surfaces as a TypeError, not `unclassifiable event`. Nothing is written. Do not match on the message. | Controller error handling, step 4 |

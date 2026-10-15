@@ -18,3 +18,8 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
 
 ## Log
 - 2026-10-15 — ticket written; awaiting owner go.
+- 2026-10-15 — owner: “go”. Branch `feat/02-a-sqlite-event-store`.
+- 2026-10-15 — `b3280df`: owner-run `npm test` 20 pass, 5 todo, 0 fail. Standard 1 FAIL (major: `open()` on an existing cycle inserted a second open row at MAX+1 and broke replay). Fixed test-first; open inserts at seq 0 so the primary key rejects it.
+- 2026-10-15 — `7cff2de`: owner-run `npm test` 21 pass, 5 todo, 0 fail. Standard 2 PASS (minors: store dedups `claim` where `apply` would not; `append` after a failed `open` with another workId). Adversarial FAIL (major: `append` persists an event type `apply` cannot classify; `load` then returns undefined or throws, so the log is unloadable). Budget spent: standard 2/2, adversarial 1/1. Stopped; owner decides. Review prompts and verdicts in `/var/tmp/software_factory/02-a/`.
+- 2026-10-15 — owner: “Yes option 1.” Fix ticket [02-b](02-b-reject-unclassifiable-events.md) opened, stacked on this branch.
+- 2026-10-15 — owner: “Yep lets do 1” (A-018). Merged with 02-b and 02-c via `feat/02-c-validate-serialised-body`. Reviews: standard 2 (FAIL, PASS), adversarial 1 (FAIL, fixed in 02-b). Owner interventions: 3 (go, option 1, merge).

@@ -50,7 +50,7 @@ A ticket is READY when the owner has read it and said go.
 6. **Accept and merge.** Owner merges the PR. Append the closing line to the ticket log.
 7. **Status.** Update [STATUS.md](STATUS.md): what merged, what is next.
 
-Budget per ticket: two standard reviews, one adversarial. Spent budget does not reset. A fix after a terminal FAIL is a new ticket that names the old one.
+Budget per ticket: two standard reviews, one adversarial. Spent budget does not reset. A fix after a terminal FAIL is a new ticket that names the old one. If the owner merges with a FAIL on record (A-018), the finding goes to [work/parked.md](work/parked.md) with the ticket that must pick it up; that ticket is not READY until its done-when list covers it.
 
 ## Reviews
 

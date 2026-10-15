@@ -42,6 +42,34 @@ export type Event =
   | { type: 'cancel' }
   | { type: 'reject_dispatch'; reason: string };
 
+const str = (v: unknown) => typeof v === 'string' && v.length > 0;
+const arr = (v: unknown, each: (x: unknown) => boolean) => Array.isArray(v) && v.every(each);
+const obj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isCheck = (v: unknown) => obj(v) && str(v.name) && ['PASS', 'FAIL', 'MISSING'].includes(v.result as string);
+
+// Shape checks, one per Event type. Everything apply dereferences must be present; anything else
+// is the sender's business. Extra fields are tolerated so an older controller can read newer logs.
+const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
+  claim: (e) => str(e.runId) && str(e.base),
+  developer_result: (e) => str(e.runId) && arr(e.artifacts, str) && (e.head === undefined || typeof e.head === 'string'),
+  verification: (e) => str(e.head) && arr(e.checks, isCheck),
+  verdict: (e) => str(e.runId) && str(e.head) && (e.verdict === 'PASS' || e.verdict === 'FAIL'),
+  head_changed: (e) => str(e.head),
+  base_changed: (e) => str(e.base),
+  accept: (e) => str(e.head),
+  request_changes: () => true,
+  cancel: () => true,
+  reject_dispatch: (e) => str(e.reason),
+};
+
+/** True when apply can classify the value. Use at every boundary where events arrive as data. */
+export function isEvent(v: unknown): v is Event {
+  if (!obj(v)) return false;
+  // hasOwn, not a plain lookup: {type:'toString'} would otherwise find Object.prototype.toString.
+  if (typeof v.type !== 'string' || !Object.hasOwn(SHAPE, v.type)) return false;
+  return SHAPE[v.type as Event['type']](v);
+}
+
 export interface Cycle {
   cycleId: string;
   workId: string;
@@ -150,6 +178,10 @@ export function apply(c: Cycle, e: Event): Cycle {
 
     case 'reject_dispatch':
       return escalate(c, e, `dispatch rejected: ${e.reason}`);
+
+    // Reachable at runtime: types are stripped, not checked, and events arrive as JSON.
+    default:
+      return escalate(c, e, `unclassifiable event: ${String((e as { type?: unknown }).type)}`);
   }
 }
 
