@@ -54,6 +54,15 @@ Cycle-03 proposed clarification: validated blocker resolutions may accumulate wh
 
 ## Owner approval history
 
+### A-006 — 2026-10-15 — Bounded recovery clarification cycle
+
+- Authority: owner reply “Yes, please start” to the proposed cycle with explicitly described semantics and a maximum of two standard reviews and one adversarial review.
+- Authorised: SF-001-review-06, parent cycle-05; all previous verdicts, candidates, counters and evidence remain immutable. This is not a rerun within cycle-05 or reuse of its standard PASS.
+- Selected semantics for this revision: evaluate during-recovery sibling continuation from authenticated current reconciliation evidence; atomically record the keep-observing decision and control outcome; unknown proof retains conservative stop/quarantine handling and fresh health never revokes a required stop. A proven empty execution set after reconciliation exits ESCALATED recovery to PAUSED, retaining blockers/counters and launching nothing.
+- Additional scope: remove misleading owner-pause wording from the stop guard, preserve the unsupported behavioural-finding disposition, and add matching scenarios. No unrelated recovery redesign or new machinery.
+- Limits: at most two completed standard and one adversarial review; infrastructure failure stops for guidance. Terminal failure stops for a concrete counterexample/owner decision, not automatic cycle seven.
+- No full-specification acceptance, SF-002 implementation permission, merge/deploy or standing budget reset. [Cycle-06 ledger](reviews/SF-001-cycle-06/README.md).
+
 ### A-005 — 2026-10-15 — Healthy escalated-recovery revision
 
 - Authority: owner reply “Yes” to a new cycle limited to the healthy-reconciliation transition and SC-61 branch, with up to two standard and one adversarial reviews.

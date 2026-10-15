@@ -2,29 +2,25 @@
 
 ## Where we are
 
-**SF-001-review-05: standard PASS, then adversarial needs-attention/FAIL. ESCALATED for owner triage; complete specification not accepted.**
+**SF-001-review-06 authorised by A-006: bounded clarification candidate being prepared for independent standard review. Complete specification remains unaccepted; SF-002 implementation is not READY.**
 
-Work: [SF-001](work/SF-001.md). [Cycle-05 ledger](reviews/SF-001-cycle-05/README.md). **[Escalation and reviewer-disagreement matrix](reviews/SF-001-cycle-05/escalation.md).** [Adversarial report](reviews/SF-001-cycle-05/CHALLENGE.md).
+Work: [SF-001](work/SF-001.md). [Cycle-06 authority, triage and ledger](reviews/SF-001-cycle-06/README.md).
 
 ## Latest activity
 
-- Added healthy-recovery transition and SC-61 branch under A-005. First standard review FAIL on overly broad continuation guard.
-- Applied permitted bounded correction: keep-observing authority/no-stop guard and complementary bounded termination exit.
-- Final standard review **PASS** on frozen candidate **`ab460b46b2e31bbfe1b33e7878295f4483894aed`**, base `7dde4c1b855ed7f77bd188b4861b908f494f8460`; no material findings.
-- One fresh adversarial review on SAME candidate, cycle-complete merge-base `2094188d7ffc760e7736049c2baa4ce6cdc157bb`, in detached worktree, returned **needs-attention** (FAIL): two medium and one low findings at confidence 0.55/0.45/0.35.
-- Claims: owner pause may trigger termination; keep-observing authority during recovery is undefined; zero-run recovery exit is unclear. Standard review explicitly considered overlapping points non-blocking. Findings remain **uncertain**, not confirmed defects.
-- Stopped without editing the candidate or rerunning adversarial review. Raw inputs/results and exact CHALLENGE.md preserved; audit commits do not substitute a new candidate.
+- Owner authorised read-only triage of cycle-05 reviewer disagreement. Author analysis: pause-termination claim unsupported as presented; decision-ordering and genuinely empty recovery remain narrower uncertainties.
+- Owner then replied “Yes, please start” to a new bounded clarification cycle and the proposed semantics with up to two standard and one adversarial reviews (A-006).
+- Draft clarifies current-evidence evaluation/atomic keep-observing decision during recovery; required stops cannot be revoked by later healthy evidence. Proven empty recovery exits ESCALATED/PAUSED with blockers/counters retained and no launch.
+- Removed misleading owner-pause stop guard wording; aligned SC-61 and added SC-62–64 for ordering, pause races and empty recovery, including negative branches.
+- No implementation, dependencies, CI, runtime adapters or external publication. No acceptance inferred from the revision authorisation.
 
-## Counters and checks
+## Counters and evidence
 
-- Cycle-05: **standard 2/2 (FAIL, PASS); adversarial 1/1 (FAIL); infrastructure failures 0**.
-- Earlier cycles retain their exhausted standard counts and evidence; only cycle-01 had one timeout. Nothing reset or erased.
-- Author checks: local links, 61 ordered unique scenarios, `git diff --check`, raw JSON/SHA validation. Standard PASS checked before adversarial launch; detached worktree tracked diff remained empty, only report untracked.
-- All reviews were fresh tool-disabled tabletop analyses of commit-extracted text/diffs, not executable lifecycle tests or direct reviewer Git inspection. Adversarial reviewer received no prior verdicts or author reasoning transcript.
-- No implementation, dependencies, CI, production adapter or external publication. A-004/D-008 policy direction remains accepted; full-spec approval pending.
+- Cycle-06: **standard 0/2; adversarial 0/1; infrastructure failures 0**. No new independent review has run yet.
+- Parent cycle-05 remains **standard 2/2 (FAIL, PASS), adversarial 1/1 (FAIL), infrastructure failures 0**. Its candidate `ab460b46b2e31bbfe1b33e7878295f4483894aed` and all original reports remain unchanged: [ledger](reviews/SF-001-cycle-05/README.md).
+- All earlier histories remain intact; only cycle-01 had an infrastructure timeout. Finding triage does not rewrite a verdict or reuse a prior PASS.
+- Structural checks, candidate SHA and review inputs/results are recorded in the cycle-06 ledger as completed. Tabletop scenarios are not executable lifecycle tests.
 
-## Next action — owner triage, not an automatic new cycle
+## Next action
 
-**Classify the adversarial claims against the standard review's contrary reasoning before authorising more design changes.** The escalation packet identifies the concrete disagreements. Recommend a bounded manual triage with no new quality-review run or design edits until disposition/scope is agreed.
-
-A rejected finding does not silently turn the adversarial FAIL into PASS. Any override, revision scope or new review budget needs an explicit recorded owner decision. Do not start another fix/review or SF-002 implementation on the spent budget.
+Freeze and structurally check the bounded candidate, then run fresh independent standard review under A-006. Standard PASS permits one fresh adversarial review of the same candidate; first standard FAIL permits one bounded fix. Second standard FAIL, adversarial FAIL or an infrastructure failure stops for owner guidance. No automatic cycle seven, no full-specification acceptance or implementation permission.
