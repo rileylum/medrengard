@@ -1,5 +1,7 @@
 # Delivery lifecycle and evidence boundaries — v0.2
 
+> **Deferred reference (A-016).** Not the implementation baseline. Read [core-lifecycle-v1.md](core-lifecycle-v1.md) instead. Material here returns to scope only when a test or a real incident requires it.
+
 **Status: DRAFT / NOT APPROVED AS A COMPLETE SPECIFICATION.** Work: [SF-001](../work/SF-001.md). Authoring date: 2026-10-15. A-001 approves the approach, stack, targets and hosting. A-004 additionally accepts the conservative paused-execution-failure direction; A-007 accepts PAUSED as the settled control outcome of escalated recovery while preserving safe observation. A-008 additionally accepts the walkthrough directions for configurable policy, bounded correction, baseline-aware verification and structured owner commands. None accepts this complete revised specification.
 
 Source: original architecture v0.3 §§4, 6–9, 12–13, appendices A–B. Worked examples: [scenario set](delivery-lifecycle-v0.2-scenarios.md). This version supersedes v0.1 only upon explicit exact-candidate approval. A-008 deliberately revises the source's fixed 2+1 product limits and stop-on-first-adversarial-FAIL policy; the manual bootstrap reviewing THIS document still uses 2+1 and stops on adversarial FAIL. Directions accepted in A-004/A-007/A-008 do not replace independent validation of these detailed transitions.

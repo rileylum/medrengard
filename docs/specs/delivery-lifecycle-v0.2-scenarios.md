@@ -1,5 +1,7 @@
 # Delivery lifecycle v0.2 — scenario specifications
 
+> **Deferred reference (A-016).** SC-01 to SC-19 are the v1 test fixtures (see [core-lifecycle-v1.md](core-lifecycle-v1.md) and `tests/lifecycle.test.ts`). SC-20 onward are deferred until a test or a real incident requires them.
+
 Status: DRAFT expected outcomes, **not executed tests or independent review**. Companion: [lifecycle specification](delivery-lifecycle-v0.2.md). IDs are stable seeds for future contract and controller fixtures.
 
 Notation: `(S,A)` = completed standard/adversarial verdict counts. Unless overridden, fixtures pin illustrative policy Smax=2, Amax=1, Cmax=1, Rmax=1, Dmax=0, backoff=5s, finite eligible deadlines, known-baseline exceptions disabled. These are FIXTURE VALUES, not hard-coded product ceilings or approved production defaults. C/R/D denote committed correction/used replacement/diagnostic capacity. Every explicit policy override is assumed owner-approved and pinned; real inputs must validate this. `H1/B1` = exact head/base candidate. Unless stated otherwise: approved context, ACTIVE control, eligible environment, sufficient capacity and no replacement execution used. Every row also requires an append-only event with actor, context and evidence. Missing these prerequisites must block transition, not be assumed in executable fixtures.

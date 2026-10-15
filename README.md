@@ -1,29 +1,31 @@
 # Software Factory
 
-A vendor-neutral software delivery factory, being built using its own methodology **manually before automating it**.
+A vendor-neutral software delivery factory: a deterministic controller moves approved work through implementation, independent verification, bounded review and human acceptance. Agents do the reasoning; the controller decides state.
 
 ## Start here
 
 1. [Session instructions](AGENTS.md)
-2. [Current status and next session](docs/STATUS.md)
-3. [Architecture baseline](docs/architecture/baseline.md)
-4. [Manual operating procedure](docs/manual-workflow.md)
-5. [Implementation plan](docs/plan.md)
-6. [Decision register](docs/decisions.md)
-7. [Work contracts](docs/work/README.md) and [reusable templates](docs/templates.md)
+2. [Current status](docs/STATUS.md)
+3. [Core lifecycle v1](docs/specs/core-lifecycle-v1.md), the spec being implemented
+4. [Decision register](docs/decisions.md)
+5. [Architecture baseline](docs/architecture/baseline.md) and [plan](docs/plan.md)
 
-## Source and authority
+Source: [`ai_software_factory_architecture_and_plan_v0.3.docx`](ai_software_factory_architecture_and_plan_v0.3.docx).
 
-The source is [`ai_software_factory_architecture_and_plan_v0.3.docx`](ai_software_factory_architecture_and_plan_v0.3.docx), version 0.3, dated 15 October 2026. It is a working design, not evidence that integrations are supported.
+## Run
 
-These Markdown documents are a working interpretation and bootstrap proposal. They do not silently approve the source's PROPOSED or OPEN choices. Explicit owner approval is required to accept a specification version or change governing rules. See the decision register for unresolved choices.
+Node 24 or later, no dependencies.
 
-## Accepted initial direction
+```
+npm test
+```
 
-Owner approval A-001 (2026-10-15): manual contracts-first bootstrap, **TypeScript + SQLite**, **Pi and Claude Code** as initial runtime targets, and **local execution**. Runtime capabilities and detailed lifecycle policies still need validation/design approval.
+## Layout
 
-## Current implementation
+- `src/lifecycle.ts`: pure state machine for one delivery cycle.
+- `tests/lifecycle.test.ts`: scenarios SC-01 to SC-19 as executable tests.
+- `docs/specs/delivery-lifecycle-v0.*`, `docs/reviews/`: twelve cycles of design review, kept as reference and audit history. Not required reading.
 
-Documentation only. No application, dependency setup, automated tests, controller, runtime adapters or GitHub integration exists. No commands for building or testing the factory have yet been established. Local Git history was established during SF-001 review; no remote is configured. Cycle-05 obtained a standard-review PASS, followed by adversarial needs-attention. Work is paused for owner triage of conflicting reviewer assessments. The conservative paused-failure direction is owner-approved; the complete specification is not yet accepted. See `docs/STATUS.md`.
+## Direction
 
-The first automated milestone will be one bounded READY issue reaching a human-reviewable PR without manual stage advancement, with independent evidence, bounded reviews and safe recovery. Until then, humans and agents execute and record those steps explicitly.
+Owner decisions A-001 and A-016: TypeScript and SQLite, Pi and Claude Code as first runtimes, local execution, fixed 2+1 review budget, and one recovery rule: anything the controller cannot classify stops and asks the owner. Next: a SQLite event store behind the state machine, then a runtime spike launching `claude -p` and `pi -p` with JSON output.

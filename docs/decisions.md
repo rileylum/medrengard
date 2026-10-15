@@ -67,7 +67,17 @@ Cycle-03 proposed clarification: validated blocker resolutions may accumulate wh
 
 ## Owner approval history
 
-### A-015 — Bounded cycle-13 consolidation, then reassessment
+### A-016 — 2026-10-15 — Stop design iteration; implement the core
+
+- Owner, after reviewing twelve design cycles against the v0.3 plan: “I'd much rather go back to our simpler base and let it run implementation rather than just theorizing and agonizing over a plan and edge cases which don't/haven't occured”, then “Ignore my rules”.
+- Cycle-13 is withdrawn before any review ran. No verdict was issued; no budget was spent.
+- [Core lifecycle v1](specs/core-lifecycle-v1.md) is the implementation baseline. It is lifted from source §§6–8 and Appendix A: fixed 2+1 budget, SHA-bound evidence, and one recovery rule (anything unclassified escalates to the owner, who chooses child cycle or cancel).
+- v0.2 and its 120 scenarios become deferred reference. Edge-case semantics return only when an executable test or a real incident requires them. D-008 to D-015 stay recorded as directions but are not implemented in v1.
+- Toolchain: Node 24 built-ins only (`node --test`, `node:sqlite`, native TypeScript stripping). No package dependencies until a test needs one.
+- Manual review of the factory's own code uses the same 2+1 rule, applied to code with executable tests. Design documents are no longer put through adversarial review on their own.
+- Next work: SF-003 project setup with SC-01 to SC-19 as tests, and the O-001 runtime spike (both `claude -p` and `pi -p` expose non-interactive JSON output; checked 2026-10-15).
+
+### A-015 — Bounded cycle-13 consolidation, then reassessment (withdrawn by A-016 before review)
 
 - Owner replied “Okay lets do 13 for now and then re-assess” after the proposed cycle-13 scope/manual budget and discussion of accumulated design-review cycles. Authorises SF-001-review-13, parent cycle-12, with at most two standard reviews and one adversarial review.
 - Scope: A-014/D-015 child/cancel recovery for dispatched initial development escalated before candidate adoption; explicit authenticated absence/seal-proof contradiction safety effects, affected evidence/dependency and launcher eligibility handling; matching scenarios and direct audit/outline alignment. Preserve D-014's artifact-delay trade-off, ordinary healthy non-escalated pause, already-adopted candidates and historical evidence/counts. No non-escalating retrieval subsystem or autonomous same-cycle recovery expansion.
