@@ -2,9 +2,9 @@
 
 ## Where we are
 
-**SF-001-review-09: standard PASS then adversarial needs-attention/FAIL. ESCALATED for owner triage/decision. No further fix/review authorised; full specification unaccepted; implementation not READY.**
+**SF-001-review-09: standard PASS then adversarial needs-attention/FAIL. ESCALATED; bounded author triage complete, owner revision decision required. No further fix/review authorised; full specification unaccepted; implementation not READY.**
 
-Work: [SF-001](work/SF-001.md). [Cycle-09 ledger](reviews/SF-001-cycle-09/README.md). **[Concrete sequences and reviewer-disagreement packet](reviews/SF-001-cycle-09/escalation.md).** [Exact adversarial report](reviews/SF-001-cycle-09/CHALLENGE.md).
+Work: [SF-001](work/SF-001.md). [Cycle-09 ledger](reviews/SF-001-cycle-09/README.md). **[Completed author triage and narrowed recommendations](reviews/SF-001-cycle-09/triage.md).** [Original escalation/disagreement packet](reviews/SF-001-cycle-09/escalation.md). [Exact adversarial report](reviews/SF-001-cycle-09/CHALLENGE.md).
 
 ## Latest activity
 
@@ -22,6 +22,10 @@ Work: [SF-001](work/SF-001.md). [Cycle-09 ledger](reviews/SF-001-cycle-09/README
 - Author checks passed: local Markdown links, 90 ordered unique v0.2 scenario IDs, diff whitespace, raw JSON/verdict/SHA validation, exact CHALLENGE equality, unchanged frozen design and v0.1/cycle-08 evidence. Detached adversarial worktree tracked diff empty; only report untracked.
 - All reviews fresh and tool-disabled, using commit-extracted normative documents, manifests and scoped actual diffs. Adversarial packet omitted prior conclusions and developer reasoning. Tabletop analysis, not direct reviewer Git inspection or executable controller tests.
 
-## Next action — owner triage/decision
+## Latest triage — no design change or review attempt
 
-Review the two concrete sequences and scope/interpretation disagreements before authorising another correction cycle. No extra reviews or implementation on the spent budget. Any new scope/budget or acceptance decision must be explicit; finding disposition cannot rewrite the adversarial FAIL into PASS. Product configurable policy does not extend manual bootstrap authority.
+Owner authorised bounded triage. Author traced the frozen candidate and both original reports: F1 supports an immediate unfulfilled-review disposition gap (not proven indefinite stall/safety bypass); F2 supports explicit ACTIVE-classification/abandoned-intent coverage, not permission to ignore failures. The claimed pause-versus-escalation contradiction is rejected because these are different triggers. Recommendation: reconcile every outstanding obligation, not only the PENDING route enum; do not filter solely by APPLIED since an admitted correction can remain unfinished. Full details in triage document. Counters, original verdicts and design remain unchanged.
+
+## Next action — owner revision decision
+
+Decide whether to authorise one bounded correction for the narrowed obligation-disposition gaps, with explicit scope and manual review budget. No new cycle was authorised by the triage request. No extra reviews or implementation on the spent budget. Any new scope/budget or acceptance decision must be explicit; finding disposition cannot rewrite the adversarial FAIL into PASS. Product configurable policy does not extend manual bootstrap authority.
