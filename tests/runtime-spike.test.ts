@@ -78,6 +78,17 @@ async function live(t: TestContext, rt: Runtime): Promise<RunResult | undefined>
   return r;
 }
 
+/** The fields the findings document cites for a failed run, parsed rather than a byte prefix. */
+function errorFields(rt: Runtime, stdout: string): string {
+  if (stdout.trim() === '') return '(empty)';
+  const first = JSON.parse(stdout.trim().split('\n')[0]);
+  if (rt.name === 'claude') {
+    const { type, subtype, is_error, terminal_reason, api_error_status, session_id, result } = first;
+    return JSON.stringify({ type, subtype, is_error, terminal_reason, api_error_status, session_id, result });
+  }
+  return `${stdout.trim().split('\n').length} line(s), first: ${JSON.stringify(first)}`;
+}
+
 const summary = (r: RunResult) =>
   `status=${r.status} exit=${r.exitCode} signal=${r.signal} wall=${r.wallMs}ms stdout=${r.stdout.length}B stderr=${r.stderr.length}B`;
 
@@ -89,6 +100,8 @@ for (const rt of runtimes) {
     const { text, session } = rt.parse(r.stdout);
     assert.match(text, /pong/i);
     assert.ok(session.length > 0);
+    const v = await spawnRuntime({ command: rt.command, args: ['--version'], prompt: '', cwd: dir });
+    t.diagnostic(`${rt.name} --version: ${v.stdout.trim()}`);
     t.diagnostic(`${rt.name} flags: ${rt.args().join(' ')}`);
     t.diagnostic(`${rt.name} ping: ${summary(r)} session=${session} text=${JSON.stringify(text)}`);
     t.diagnostic(`${rt.name} stdout keys: ${rt.name === 'claude'
@@ -138,8 +151,9 @@ for (const rt of runtimes) {
     const r = await run;
     const took = Date.now() - started;
     t.diagnostic(`${rt.name} cancel: ${summary(r)} cancel-to-exit=${took}ms`);
+    // `status` is the signal. The exit code is recorded above, not asserted: a CLI that flushes
+    // and exits 0 on SIGTERM was still cancelled.
     assert.equal(r.status, 'cancelled');
-    assert.notEqual(r.exitCode, 0);
     assert.ok(took < 2000 + 1000, `cancel took ${took}ms`);
   });
 
@@ -148,7 +162,7 @@ for (const rt of runtimes) {
     const r = await spawnRuntime({ command: rt.command, args: rt.args(['--model', 'no-such-model-xyz']), prompt: PING, cwd: dir });
     t.diagnostic(`${rt.name} bad model: ${summary(r)}`);
     t.diagnostic(`${rt.name} bad model stderr: ${JSON.stringify(r.stderr.trim().split('\n')[0] ?? '')}`);
-    t.diagnostic(`${rt.name} bad model stdout: ${JSON.stringify(r.stdout.slice(0, 300))}`);
+    t.diagnostic(`${rt.name} bad model stdout: ${errorFields(rt, r.stdout)}`);
     assert.notEqual(r.exitCode, 0);
   });
 
@@ -159,7 +173,7 @@ for (const rt of runtimes) {
     const r = await spawnRuntime({ command: rt.command, args: rt.args(), prompt: PING, cwd: dir, env: { PATH: process.env.PATH!, HOME: home } });
     t.diagnostic(`${rt.name} no auth: ${summary(r)}`);
     t.diagnostic(`${rt.name} no auth stderr: ${JSON.stringify(r.stderr.trim().split('\n')[0] ?? '')}`);
-    t.diagnostic(`${rt.name} no auth stdout: ${JSON.stringify(r.stdout.slice(0, 300))}`);
+    t.diagnostic(`${rt.name} no auth stdout: ${errorFields(rt, r.stdout)}`);
     assert.notEqual(r.exitCode, 0);
     assert.ok(rt.unauthenticated(r), 'no auth message found');
   });
