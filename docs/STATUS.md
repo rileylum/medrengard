@@ -14,4 +14,4 @@ Plan step 2 done (A-018): `src/store.ts` persists events in one `node:sqlite` ta
 
 ## Next action
 
-Step 3 in progress on `feat/03-a-runtime-spike`: [03-a](work/03-a-runtime-spike.md) code and [findings](work/03-a-findings.md) committed; both CLIs authenticated and probed. Next: owner runs `npm test` and `RUNTIME_SPIKE=1 npm test` on the SHA, then standard review 1.
+Step 3 in progress on `feat/03-a-runtime-spike`: [03-a](work/03-a-runtime-spike.md) code and [findings](work/03-a-findings.md) committed; both CLIs authenticated and probed. Owner-run tests pass on 85e32e9. Standard review 1 PASS; adversarial FAIL (2 major: `close` versus `exit` with a grandchild on the pipe, and `cancel()` dead once `exitCode` is set). Stopped; owner decides: fix ticket 03-b, or merge with the findings parked for 04-a.
