@@ -2,11 +2,11 @@
 
 ## Where we are
 
-Design iteration stopped (A-016). Implementing [core lifecycle v1](specs/core-lifecycle-v1.md). The twelve design-review cycles and v0.x specs were removed from the tree; they are in Git history before `1214ca2`.
+Design iteration stopped (A-016). Implementing [core lifecycle v1](specs/core-lifecycle-v1.md).
 
-Plan step 1 done and merged: `src/lifecycle.ts` is the pure state machine; `tests/lifecycle.test.ts` holds SC-01 to SC-19.
+Plan step 1 done: `src/lifecycle.ts` is the pure state machine; `tests/lifecycle.test.ts` and `tests/scenarios.ts` hold SC-01 to SC-19.
 
-Ticket [02-a SQLite event store](work/02-a-sqlite-event-store.md) in review on branch `feat/02-a-sqlite-event-store`: `src/store.ts` persists events in one `node:sqlite` table and replays them through `apply`. Standard review 1 FAIL (double `open` corrupted the log), fixed with a test. Standard review 2 PASS on `7cff2de`. Adversarial review FAIL on `7cff2de`: an event type `apply` cannot classify is persisted and makes the log unloadable. Review budget is spent. Per workflow.md, a fix is a new ticket that names 02-a.
+Plan step 2 done (A-018): `src/store.ts` persists events in one `node:sqlite` table and replays them through `apply`. Tickets 02-a, 02-b, 02-c, merged as one stacked branch. Three adversarial reviews each found a narrower input-validation hole; the last one is about the controller's calling convention and is parked in [work/parked.md](work/parked.md).
 
 ## Checks run
 
@@ -14,4 +14,4 @@ Ticket [02-a SQLite event store](work/02-a-sqlite-event-store.md) in review on b
 
 ## Next action
 
-02-c on `39d2c59`: standard 1 PASS, adversarial FAIL. The store meets its done-when list; the finding is that a future controller applying the unserialised object in memory can diverge from replay, and the suggested fix is an interface change (`append` returns the canonical Event, or applies it and returns the Cycle). Owner decides: 02-d for that interface change, or merge the stacked PR (02-a, 02-b, 02-c) and settle the calling convention in the controller ticket, where the caller is written. After that: plan step 3, the runtime spike.
+Owner merges `feat/02-c-validate-serialised-body` into main (carries 02-a, 02-b, 02-c). Then plan step 3, the runtime spike: a script launches `claude -p` and `pi -p` with JSON output, captures the result, and cancels a run mid-flight. Owner leaning towards Claude Code as the first real runtime. Write the step 3 ticket(s) first and get a go.
