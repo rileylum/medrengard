@@ -37,6 +37,30 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-023 — 2026-10-16 — Merge 04-a/04-b/04-c with the 04-c adversarial finding parked
+
+Owner, after the 04-c adversarial FAIL on `e97a045` (one major: an outcome within about 60 bytes of V8's string cap strands a cycle; needs about 3 GB of heap to produce): “Yep I agree I think, we should really just accept it here and move on to actually implementing what we're trying to guard against right?”
+
+Effect: the stacked branch carrying 04-a, 04-b and 04-c is merged with standard PASS and adversarial FAIL on record. The size bound is parked against 04-d (real claude and pi adapters), where the bytes come in and a stdout limit bounds them; the self-resolving-thenable hang is recorded as a non-goal of the in-process seam. Step 4 of the plan is done: the adapter seam, the fake adapter and the controller's receive path drive the state machine for normal, malformed, timeout, cancel and duplicate outcomes.
+
+### A-022 — 2026-10-16 — Fix ticket for the 04-b adversarial FAIL
+
+Owner, after the 04-b adversarial FAIL on `8664c1b` (two majors: hostile in-process values from an adapter strand a cycle; one minor: the stage guard rejects a reviewer run whose cycle was cancelled while it ran): “option 1 go”.
+
+Effect: ticket 04-c-total-receive, Fast route, stacked on 04-b with fresh review budget. The real claude and pi adapter ticket becomes 04-d; the two 03-b parked lines move with it.
+
+### A-021 — 2026-10-16 — Fix ticket for the 04-a adversarial FAIL
+
+Owner, after the 04-a adversarial FAIL on `3ba5434` (three majors in `receive` and `run_failed`): “Option 1, go”.
+
+Effect: ticket 04-b-receive-hardening, Fast route, stacked on 04-a with fresh review budget, fixes the three majors and the related minors. The real claude and pi adapter ticket becomes 04-c; the two 03-b parked lines move with it.
+
+### A-020 — 2026-10-16 — 04-a adapter interface design
+
+Owner, after reading the 04-a design note and four questions (split real adapters and cgroup cancel into 04-b; controller owns the deadline; new `run_failed` event; `append` returns the Cycle): “go with your recommendations”.
+
+Effect: 04-a is READY on the Design route with the recommended answers. The two 03-b parked lines (process-tree escape; `cancel()` guard and cwd minors) move to 04-b, the ticket that wraps `spawnRuntime` into real claude and pi adapters. The adapter seam is `src/adapter.ts`; the controller in `src/controller.ts` is the only non-test caller of `EventStore.append`.
+
 ### A-019 — 2026-10-15 — Merge 03-a/03-b with the 03-b adversarial findings parked
 
 Owner, after the 03-b adversarial FAIL on `d8a9d21`: “option 1”. Earlier, choosing the fix ticket after the 03-a adversarial FAIL on `85e32e9`: “Go ahead with option 1, 3b”.

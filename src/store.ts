@@ -13,7 +13,14 @@ interface OpenRow {
 
 function requireId(v: unknown, what: string): asserts v is string {
   if (typeof v !== 'string' || v.length === 0) throw new Error(`${what} must be a non-empty string`);
+  // SQLite stores a lone surrogate as U+FFFD, so two ill-formed IDs would share one row key.
+  if (!v.isWellFormed()) throw new Error(`${what} must be a well-formed string`);
 }
+
+const DEDUP: Event['type'][] = ['developer_result', 'verdict', 'run_failed'];
+
+/** append refused the event because apply could not classify its serialised form. */
+export class UnclassifiableEvent extends Error {}
 
 export class EventStore {
   private db: DatabaseSync;
@@ -29,8 +36,8 @@ export class EventStore {
         body TEXT NOT NULL,
         PRIMARY KEY (cycle_id, seq)
       ) WITHOUT ROWID;
-      CREATE UNIQUE INDEX IF NOT EXISTS events_run
-        ON events (cycle_id, type, run_id) WHERE run_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS events_run_outcome
+        ON events (cycle_id, run_id) WHERE run_id IS NOT NULL;
     `);
   }
 
@@ -49,22 +56,28 @@ export class EventStore {
   }
 
   /**
-   * Append one event. Throws before writing if apply could not classify it: a bad row would make
-   * the whole log unloadable. Returns false, and writes nothing, for a redelivered result or
-   * verdict (same type and run ID): those are the only events the spec dedups, so only those
-   * carry run_id into the unique index. A redelivered claim is stored and apply decides.
+   * Append one event and return the Cycle replayed from the log. Callers must use the returned
+   * Cycle and never apply the object they passed in: the object can read differently live than
+   * its serialised form does (02-c finding). Throws before writing if apply could not classify
+   * the serialised event: a bad row would make the whole log unloadable. A run has one outcome:
+   * a second result, verdict or run_failed for a run ID that already has one writes nothing and
+   * returns the current Cycle. Only those three carry run_id into the unique index; a redelivered
+   * claim is stored and apply decides.
    */
-  append(cycleId: string, event: Event): boolean {
+  append(cycleId: string, event: Event): Cycle {
     requireId(cycleId, 'cycle ID');
     // Validate the serialised body, not the object: sparse arrays, toJSON, array-with-props and
     // inherited fields all pass a check on the object yet serialise to something apply reads
     // differently. What is checked here is exactly the bytes that go into the row.
     const body = JSON.stringify(event);
     const parsed: unknown = body === undefined ? undefined : JSON.parse(body);
-    if (!isEvent(parsed)) throw new Error(`unclassifiable event: ${body}`);
+    if (!isEvent(parsed)) throw new UnclassifiableEvent(`unclassifiable event: ${body}`);
     if (!this.exists(cycleId)) throw new Error(`cycle ${cycleId} not open`);
-    const dedupKey = parsed.type === 'developer_result' || parsed.type === 'verdict' ? parsed.runId : null;
-    return this.insert(cycleId, parsed.type, dedupKey, body);
+    // The index key is the JSON-escaped run ID, not the raw string: SQLite would fold a lone
+    // surrogate to U+FFFD and two distinct run IDs would collide.
+    const dedupKey = DEDUP.includes(parsed.type) ? JSON.stringify((parsed as { runId: string }).runId) : null;
+    this.insert(cycleId, parsed.type, dedupKey, body);
+    return this.load(cycleId)!;
   }
 
   /** Lifecycle events for a cycle in commit order, without the open marker. */
@@ -86,14 +99,13 @@ export class EventStore {
 
   // Single statement so seq allocation and the insert cannot interleave with another append on
   // this connection; OR IGNORE turns the unique-index hit into "no change".
-  private insert(cycleId: string, type: string, runId: string | null, body: string): boolean {
-    const result = this.db
+  private insert(cycleId: string, type: string, runId: string | null, body: string): void {
+    this.db
       .prepare(
         `INSERT OR IGNORE INTO events (cycle_id, seq, type, run_id, body)
          SELECT ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ? FROM events WHERE cycle_id = ?`,
       )
       .run(cycleId, type, runId, body, cycleId);
-    return result.changes === 1;
   }
 
   private exists(cycleId: string): boolean {

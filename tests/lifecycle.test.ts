@@ -184,3 +184,25 @@ test('accept must name the candidate SHA', () => {
   );
   assert.equal(c.stage, 'ESCALATED');
 });
+
+test('run_failed escalates with its reason; a duplicate run_failed is ignored (04-a)', () => {
+  let c = run(newCycle('c1', 'w1'), { type: 'claim', runId: 'dev1', base: 'B1' });
+  c = apply(c, { type: 'run_failed', runId: 'dev1', reason: 'timeout' });
+  assert.equal(c.stage, 'ESCALATED');
+  assert.match(c.escalation ?? '', /timeout/);
+  c = apply(c, { type: 'run_failed', runId: 'dev1', reason: 'timeout' });
+  assert.match(c.history.at(-1)!.note ?? '', /ignored/);
+  assert.equal(isEvent({ type: 'run_failed', runId: 'dev1' }), false);
+  assert.equal(isEvent({ type: 'run_failed', runId: 'dev1', reason: '' }), false);
+  assert.equal(isEvent({ type: 'run_failed', runId: 'dev1', reason: 'x' }), true);
+});
+
+test('run_failed for a run whose verdict or result is already consumed is ignored (04-b)', () => {
+  const reviewed = run(toStandardReview(), { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' });
+  const after = apply(reviewed, { type: 'run_failed', runId: 'sr1', reason: 'crash' });
+  assert.equal(after.stage, 'ADVERSARIAL_REVIEW');
+  assert.deepEqual(counters(after), [1, 0]);
+  assert.match(after.history.at(-1)!.note ?? '', /ignored/);
+  const developed = run(newCycle('c1', 'w1'), ...TO_STANDARD_REVIEW.slice(0, 2));
+  assert.equal(apply(developed, { type: 'run_failed', runId: 'dev1', reason: 'cancelled' }).stage, 'VERIFYING');
+});

@@ -111,6 +111,18 @@ export const scenarios: Scenario[] = [
     ],
   },
   { name: 'SC-13', stage: 'ESCALATED', counters: [0, 0], events: [{ type: 'reject_dispatch', reason: 'forbidden runtime' }] },
+  // 04-a: a run that produced no claim (timeout, crash, malformed) escalates and is deduplicated by run ID.
+  {
+    name: 'RF-01',
+    stage: 'ESCALATED', counters: [0, 0],
+    events: [
+      { type: 'claim', runId: 'dev1', base: 'B1' },
+      { type: 'run_failed', runId: 'dev1', reason: 'timeout' },
+      { type: 'run_failed', runId: 'dev1', reason: 'timeout' },
+    ],
+  },
+  // An infrastructure failure during review is not a review attempt: counters stay.
+  { name: 'RF-02', stage: 'ESCALATED', counters: [0, 0], events: [...toStandardReview, { type: 'run_failed', runId: 'sr1', reason: 'malformed result' }] },
   {
     name: 'SC-16',
     stage: 'ESCALATED', counters: [1, 0],
