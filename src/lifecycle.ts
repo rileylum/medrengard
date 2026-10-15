@@ -44,7 +44,7 @@ export type Event =
 
 const str = (v: unknown) => typeof v === 'string' && v.length > 0;
 const arr = (v: unknown, each: (x: unknown) => boolean) => Array.isArray(v) && v.every(each);
-const obj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
+const obj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isCheck = (v: unknown) => obj(v) && str(v.name) && ['PASS', 'FAIL', 'MISSING'].includes(v.result as string);
 
 // Shape checks, one per Event type. Everything apply dereferences must be present; anything else

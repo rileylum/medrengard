@@ -3,7 +3,7 @@
 // todo where v1 has no corresponding model yet.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apply, newCycle, openChild, type Cycle, type Event } from '../src/lifecycle.ts';
+import { apply, isEvent, newCycle, openChild, type Cycle, type Event } from '../src/lifecycle.ts';
 import { PASS_CHECKS, sc, scenarios, toStandardReview as TO_STANDARD_REVIEW } from './scenarios.ts';
 
 const run = (c: Cycle, ...events: Event[]) => events.reduce(apply, c);
@@ -18,6 +18,11 @@ test('every shared scenario ends at its declared stage and counters', () => {
     assert.equal(c.stage, s.stage, s.name);
     assert.deepEqual(counters(c), s.counters, s.name);
   }
+});
+
+test('isEvent rejects arrays, primitives and objects with no handled type', () => {
+  for (const v of [[], Object.assign([], { type: 'cancel' }), 'cancel', 1, null, undefined, {}, { type: 'bogus' }]) assert.equal(isEvent(v), false, JSON.stringify(v));
+  assert.equal(isEvent({ type: 'cancel' }), true);
 });
 
 test('an event of unknown type escalates instead of returning undefined', () => {

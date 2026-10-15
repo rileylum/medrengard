@@ -124,6 +124,11 @@ test('append rejects an event apply cannot classify, before writing', () => {
     { type: '__proto__' },
     'cancel',
     null,
+    // Pass the in-memory shape but serialise to something else (02-b adversarial finding).
+    (() => { const checks: unknown[] = []; checks[1] = { name: 't', result: 'PASS' }; return { type: 'verification', head: 'H1', checks }; })(),
+    { type: 'cancel', toJSON: () => ({ type: 'bogus' }) },
+    Object.assign([], { type: 'cancel' }),
+    Object.assign(Object.create({ runId: 'x', base: 'B1' }), { type: 'claim' }),
   ];
   for (const e of bad) assert.throws(() => store.append('c1', e as unknown as Event), /unclassifiable/, JSON.stringify(e));
   assert.equal(store.events('c1').length, 1);

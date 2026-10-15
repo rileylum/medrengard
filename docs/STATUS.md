@@ -14,4 +14,4 @@ Ticket [02-a SQLite event store](work/02-a-sqlite-event-store.md) in review on b
 
 ## Next action
 
-Owner chose a fix ticket: [02-b reject unclassifiable events](work/02-b-reject-unclassifiable-events.md), stacked on the 02-a branch. 02-b: standard 1 FAIL on `8327523` (fixed), standard 2 PASS on `582e399`, adversarial FAIL on `582e399`: the guard validates the in-memory object while the row stores its JSON serialisation, and the two can differ (sparse arrays, `toJSON`, inherited fields). Budget spent again. Owner decides. After 02-a: plan step 3, the runtime spike (owner leaning towards Claude Code as the first runtime).
+Ticket [02-c validate serialised body](work/02-c-validate-serialised-body.md), stacked on 02-b on 02-a. Owner-run tests on the SHA, then standard review, adversarial review, and one merge of the stacked PR carrying 02-a, 02-b and 02-c. After that: plan step 3, the runtime spike (owner leaning towards Claude Code as the first runtime), and a controller ticket that picks up the minors parked in the 02-b and 02-c tickets.

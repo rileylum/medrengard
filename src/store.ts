@@ -56,10 +56,15 @@ export class EventStore {
    */
   append(cycleId: string, event: Event): boolean {
     requireId(cycleId, 'cycle ID');
-    if (!isEvent(event)) throw new Error(`unclassifiable event: ${JSON.stringify(event)}`);
+    // Validate the serialised body, not the object: sparse arrays, toJSON, array-with-props and
+    // inherited fields all pass a check on the object yet serialise to something apply reads
+    // differently. What is checked here is exactly the bytes that go into the row.
+    const body = JSON.stringify(event);
+    const parsed: unknown = body === undefined ? undefined : JSON.parse(body);
+    if (!isEvent(parsed)) throw new Error(`unclassifiable event: ${body}`);
     if (!this.exists(cycleId)) throw new Error(`cycle ${cycleId} not open`);
-    const dedupKey = event.type === 'developer_result' || event.type === 'verdict' ? event.runId : null;
-    return this.insert(cycleId, event.type, dedupKey, event);
+    const dedupKey = parsed.type === 'developer_result' || parsed.type === 'verdict' ? parsed.runId : null;
+    return this.insert(cycleId, parsed.type, dedupKey, body);
   }
 
   /** Lifecycle events for a cycle in commit order, without the open marker. */
@@ -81,13 +86,13 @@ export class EventStore {
 
   // Single statement so seq allocation and the insert cannot interleave with another append on
   // this connection; OR IGNORE turns the unique-index hit into "no change".
-  private insert(cycleId: string, type: string, runId: string | null, body: object): boolean {
+  private insert(cycleId: string, type: string, runId: string | null, body: string): boolean {
     const result = this.db
       .prepare(
         `INSERT OR IGNORE INTO events (cycle_id, seq, type, run_id, body)
          SELECT ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ? FROM events WHERE cycle_id = ?`,
       )
-      .run(cycleId, type, runId, JSON.stringify(body), cycleId);
+      .run(cycleId, type, runId, body, cycleId);
     return result.changes === 1;
   }
 
