@@ -10,8 +10,8 @@ Ticket [02-a SQLite event store](work/02-a-sqlite-event-store.md) in review on b
 
 ## Checks run
 
-2026-10-15: `npm test` on `8327523`, owner-run — 31 tests, 26 pass, 5 todo (SC-09, 10, 12, 14, 15 need readiness, waiver, finding and package models that v1 does not have yet), 0 fail.
+2026-10-15: `npm test` on `582e399`, owner-run — 31 tests, 26 pass, 5 todo (SC-09, 10, 12, 14, 15 need readiness, waiver, finding and package models that v1 does not have yet), 0 fail.
 
 ## Next action
 
-Owner chose a fix ticket: [02-b reject unclassifiable events](work/02-b-reject-unclassifiable-events.md), stacked on the 02-a branch. 02-b implemented; standard review 1 FAIL on `8327523` (null check elements passed the guard), fixed test-first. Next: owner-run tests, standard review 2, adversarial, merge of the stacked PR. After 02-a: plan step 3, the runtime spike (owner leaning towards Claude Code as the first runtime).
+Owner chose a fix ticket: [02-b reject unclassifiable events](work/02-b-reject-unclassifiable-events.md), stacked on the 02-a branch. 02-b: standard 1 FAIL on `8327523` (fixed), standard 2 PASS on `582e399`, adversarial FAIL on `582e399`: the guard validates the in-memory object while the row stores its JSON serialisation, and the two can differ (sparse arrays, `toJSON`, inherited fields). Budget spent again. Owner decides. After 02-a: plan step 3, the runtime spike (owner leaning towards Claude Code as the first runtime).
