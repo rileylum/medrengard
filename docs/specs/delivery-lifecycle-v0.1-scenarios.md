@@ -36,7 +36,7 @@ Notation: `(S,A)` = completed standard/adversarial verdict counts. `H1/B1` = exa
 | SC-16 | Standard PASS H1/B1 `(1,0)`; head becomes H2 before adversarial launch | Invalidate H1 evidence, ESCALATED `(1,0)`; no reuse of PASS or automatic second standard review. Owner may authorise new cycle |
 | SC-17 | Standard attempt on H1/B1 is running; target base changes to B2; assigned valid PASS arrives | Mark stale and ESCALATED; count historical completed verdict once `(1,0)` but never dispatch adversarial for H1/B2. Duplicate delivery cannot count twice |
 | SC-18 | AWAITING_ACCEPTANCE `(1,1)`; head/base moves before owner approval | Approval request/package stale; refuse acceptance for new candidate, preserve old evidence, ESCALATED with counters unchanged |
-| SC-19 | ACCEPTED H1/B1 `(1,1)`, PENDING handoff; target tip changes to B2 before merge | Delivery stays ACCEPTED `(1,1)` historically, handoff INVALIDATED; no merge. Owner-authorised revision creates PREPARING child `(0,0)` without changing accepted parent; old handoff cannot reactivate |
+| SC-19 | ACCEPTED H1/B1 `(1,1)`, PENDING handoff; target tip changes to B2 before merge | Delivery stays ACCEPTED `(1,1)` historically, handoff INVALIDATED; no merge. Owner-authorised revision atomically creates PREPARING child `(0,0)`, transfers work tip and marks handoff REVISED with child link without changing accepted parent; old handoff cannot reactivate |
 
 ## Retry, transaction and recovery boundaries
 
@@ -78,16 +78,32 @@ Notation: `(S,A)` = completed standard/adversarial verdict counts. `H1/B1` = exa
 | SC-43 | AWAITING_ACCEPTANCE `(1,1)`; authenticated human performs mandatory UAT and reports FAIL | ESCALATED `(1,1)`; preserve observation; no acceptance or same-cycle code fix |
 | SC-44 | AWAITING_ACCEPTANCE `(1,1)`; required pre-review test artifact is discovered missing/corrupt after earlier verification | ESCALATED `(1,1)`; invalidate evidence; no approval based on old reviewer PASS |
 
+## Cycle-02 corrections: refinement, lineage and failed evidence
+
+| ID | Setup and stimulus | Expected state, counters and evidence |
+| --- | --- | --- |
+| SC-45 | PREPARING C1 pins incomplete contract v1 `(0,0)`; owner adopts refined v2 with explicit child scope/budget | Atomically C1 SUPERSEDED and C2 PREPARING/ACTIVE `(0,0)`, unique parent-child link and work tip C2; no edits to v1 or dispatch before readiness |
+| SC-46 | Valid finite batch names work W/v1 and its limits; W has no cycle and becomes READY | Controller creates PREPARING then QUEUED without another individual owner action; required design approval still enforced. Batch entry cannot authorise revisions or a second initial cycle |
+| SC-47 | W has a DEVELOPING cycle `(0,0)`; second initial authorisation arrives with a different decision ID | Reject new initial creation; original cycle/tip unchanged, no new budget, worker or branch assignment |
+| SC-48 | ACCEPTED parent with INVALIDATED handoff `(1,1)`; D-a creates child C2; distinct D-b concurrently targets same parent | One atomic winner sets REVISED/child C2 and work tip C2; loser rejected even with different event ID. Replay D-a returns C2; never C3 or a second live budget |
+| SC-49 | W has ACCEPTED/PENDING parent `(1,1)`; another initial authorisation arrives | Reject; handoff and work tip unchanged and live slot retained; no child or parallel delivery |
+| SC-50 | VERIFYING check P actually FAILED; profile explicitly permits FAILED-outcome waiver; owner grants exact waiver referencing failure; no other blocker | ESCALATED/PAUSED `(0,0)` resolves to VERIFYING/PAUSED with effective HUMAN-WAIVED and retained FAILED evidence; explicit control resume then normal gate evaluation, no rerun or counter reset |
+| SC-51 | Same failure but profile only permits BLOCKED/unavailable waiver | Remain ESCALATED/PAUSED `(0,0)`; reject FAILED waiver; no standard dispatch or policy relaxation |
+| SC-52 | Registered check P FAILED on H1/B1; owner reruns it outside controller and supplies PASS | Remain ESCALATED/PAUSED `(0,0)`; unregistered PASS diagnostic only, original failure authoritative; no Q3 exemption or promotion |
+| SC-53 | VERIFYING lacks artifact from a registered completed check, no FAILED result; enters ESCALATED; owner retrieves original trusted PASS output | Independently validate same run/candidate and resolve to VERIFYING/PAUSED `(0,0)`; no new execution or replacement allowance consumed; no acceptance without remaining gates |
+| SC-54 | Failure P was validly HUMAN-WAIVED; waiver expires in AWAITING_ACCEPTANCE `(1,1)` | ESCALATED/PAUSED `(1,1)` and effective FAILED restored; later PASS cannot clear it. Only renewed exact permitted failure waiver or new child decision can resolve |
+| SC-55 | ACCEPTED/PENDING `(1,1)`; owner declines merge; no in-flight merge and containment proven | Handoff CLOSED, acceptance history retained, live slot released; no merge. Later revision must atomically link one child and move CLOSED→REVISED under existing lineage guards |
+
 ## SF-001 acceptance mapping
 
 | Criterion | Draft coverage | Outstanding validation |
 | --- | --- | --- |
-| AC1 identities/states/authority | Spec §§2–3; SC-01, 06, 13, 30, 41 | Independent transition walkthrough |
-| AC2 budgets and revisions | Spec §4 Q1/Q3; SC-02–06, 20–22, 41 | Owner policy decision and independent review |
-| AC3 evidence freshness | Spec §§4–5; SC-07–08, 11–12, 16–19, 36–40, 44 | Schema fixtures and eventual executable assertions |
+| AC1 identities/states/authority | Spec §§2–3; SC-01, 06, 13, 30, 41, 45–49, 55 | Independent transition walkthrough |
+| AC2 budgets and revisions | Spec §4 Q1/Q3; SC-02–06, 20–22, 41, 48, 52 | Owner policy decision and independent review |
+| AC3 evidence freshness | Spec §§4–5; SC-07–08, 11–12, 16–19, 36–40, 44, 50–54 | Schema fixtures and eventual executable assertions |
 | AC4 recovery | Spec §6; SC-23–30 | Independent failure analysis; later process/SQLite experiments |
 | AC5 approval and release | Spec §§2, 4 Q4, 7; SC-09–15, 31–35, 42–43 | Owner authority/profile decisions; later enforcement tests |
-| AC6 alternatives and approval | Spec §4 Q1–Q4 and §8 | Owner approval of reviewed exact version |
+| AC6 alternatives and approval | Spec §4 Q1–Q5 and §8 | Owner approval of reviewed exact version |
 | AC7 bounded follow-on work | [Contract backlog](../work/SF-002-outline.md) | Refine into READY contracts only after approval |
 
 ## How to turn this into tests

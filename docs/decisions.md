@@ -47,7 +47,18 @@ Standard review 1 returned FAIL; bounded corrections clarify cycle creation, rec
 
 P-004 (adversarial review on every change) remains proposed. O-005 quality defaults and runtime-dependent deadline/containment details remain later blocking decisions. Drafting these recommendations does not change the manual procedure's current stop-for-guidance rule on infrastructure failure.
 
+Cycle-02 proposed clarifications (not yet design-approved): Q5 permits bounded, explicit initial-work batches without per-stage owner kicking; revisions remain individually authorised. One atomic work-lineage tip prevents duplicate cycles. Q4 distinguishes BLOCKED and FAILED waiver permission, preserves failed evidence and forbids unregistered rerun PASS from clearing a gate.
+
 ## Owner approval history
+
+### A-002 — 2026-10-15 — SF-001 bounded revision cycle
+
+- Authority: owner reply “Yes” to the explicit proposal to address S2-F1–F3 and their scenarios in a new cycle with at most two standard and one adversarial reviews.
+- Authorised: SF-001-review-02; parent SF-001-review-01 remains exhausted with immutable counters/history.
+- Scope: pre-readiness refinement/initial authority, duplicate-cycle prevention, failed-check waiver/rerun semantics and directly related scenarios.
+- No design acceptance, general review reset policy or implementation permission. Existing manual infrastructure-failure stop rule remains in force.
+- Exact scope/budget and future review evidence: [cycle-02 ledger](reviews/SF-001-cycle-02/README.md).
+
 
 ### A-001 — 2026-10-15 — Bootstrap direction
 
