@@ -1,5 +1,0 @@
-Worktree: /tmp/sf001-cycle06-adversarial-a6mz2ahi
-HEAD: 09e4328d35a68929d9d07579727a323ee965a105
-Base ref: bcb001a9bd374768394584270cffffdf8ced9747
-Resolved merge-base: bcb001a9bd374768394584270cffffdf8ced9747
-Operator extracted committed documents and actual merge-base diff; tool-disabled reviewer does not inspect Git directly.
