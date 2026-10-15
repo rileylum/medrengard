@@ -28,6 +28,7 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 | D-010 | DECIDED (A-008 direction) | Owner-approved pinned configuration defines total cycle review/replacement/diagnostic/correction limits; bounded standard/adversarial/verification corrections, both reviews repeat on new candidates | SF-001 v0.2 |
 | D-011 | DECIDED (A-008 direction) | Local CLI first; structured version-bound owner decisions, separate design/work authority and controller-derived readiness; future UI/GitHub same boundary | SF-001 v0.2 |
 | D-012 | DECIDED (A-008 direction) | Baseline-aware verification: distinguish regressions/new tests from proven unrelated known failures on pinned baseline, retain failure evidence and tracked issues | SF-001 v0.2 |
+| D-013 | DECIDED (A-011 direction) | Abandoned candidate retains no automatic Q3/Q6 but may finish eligible checks/gates; stopped dispatched correction without valid completion needs independent child/cancel blocker; physical stop alone does not fence result acceptance | SF-001 cycle-11; detailed guards remain under review |
 | O-001 | OPEN | Validate Pi and Claude Code availability, permissions, cancellation, isolation and structured-result capabilities; selection does not prove support | Runtime spikes |
 | O-002 | OPEN | Exact human revision/new-cycle/reset semantics, including overrides after adversarial failure | SF-001 |
 | O-003 | OPEN | Head/base change after PASS or during review: evidence invalidation, remaining-budget handling and escalation | SF-001 |
@@ -61,6 +62,15 @@ Cycle-02 proposed clarifications (not yet design-approved): Q5 permits bounded, 
 Cycle-03 proposed clarification: validated blocker resolutions may accumulate while ESCALATED; only an empty unresolved-blocker set permits stage restoration. Safe, already-running confined verification siblings continue under observation without new dispatch; unsafe context/containment still requires stopping workers. The specific conservative paused-execution-failure direction is now accepted in A-004; other details remain under review.
 
 ## Owner approval history
+
+### A-011 — 2026-10-15 — Abandonment and stopped-execution boundaries
+
+- Owner replied “yes” to the three recommended directions and a bounded cycle-11 covering them and matching scenarios, with at most two standard reviews and one adversarial review.
+- D-013: after abandonment, no further automatic replacement or correction on that candidate in the cycle, even for a different source; retain spent C. Eligible remaining checks/review gates may finish after legitimate discharge/restoration. Trade-off: more owner intervention despite unused capacity. Alternative of re-enabling Q3/new Q6 episodes is not selected.
+- A dispatched correction stopped without valid completion requires an independent child/cancel blocker; source-failure waivers cannot clear it. Expand scope beyond cycle-10's undispatched-only correction. Reconcile valid available/retained evidence before declaring completion absent; preserve ordinary healthy pause and accepted H2 history.
+- Physical required stop alone does not fence result acceptance. Otherwise-valid late verdicts count once behind existing terminal blockers; explicit fencing/replacement or terminal closure makes later output diagnostic. No process continuation, lease renewal, retry or blocker bypass granted.
+- Authorises SF-001-review-11, parent cycle-10, solely these boundaries, matching scenarios and direct audit/outline alignment. [Cycle-11 ledger](reviews/SF-001-cycle-11/README.md). Detailed semantics need fresh reviews and exact-version acceptance.
+- Manual 2+1 budget/stop rules remain: terminal standard/adversarial failure or infrastructure failure stops for guidance. Prior histories/counters immutable. No complete-spec acceptance, implementation, deployment or standing reset authority.
 
 ### A-010 — 2026-10-15 — Outstanding-obligation disposition correction
 
