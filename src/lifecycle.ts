@@ -42,6 +42,32 @@ export type Event =
   | { type: 'cancel' }
   | { type: 'reject_dispatch'; reason: string };
 
+const str = (v: unknown) => typeof v === 'string' && v.length > 0;
+const arr = (v: unknown) => Array.isArray(v);
+
+// Shape checks, one per Event type. Everything apply dereferences must be present; anything else
+// is the sender's business. Extra fields are tolerated so an older controller can read newer logs.
+const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
+  claim: (e) => str(e.runId) && str(e.base),
+  developer_result: (e) => str(e.runId) && arr(e.artifacts) && (e.head === undefined || typeof e.head === 'string'),
+  verification: (e) => str(e.head) && arr(e.checks),
+  verdict: (e) => str(e.runId) && str(e.head) && (e.verdict === 'PASS' || e.verdict === 'FAIL'),
+  head_changed: (e) => str(e.head),
+  base_changed: (e) => str(e.base),
+  accept: (e) => str(e.head),
+  request_changes: () => true,
+  cancel: () => true,
+  reject_dispatch: (e) => str(e.reason),
+};
+
+/** True when apply can classify the value. Use at every boundary where events arrive as data. */
+export function isEvent(v: unknown): v is Event {
+  if (typeof v !== 'object' || v === null) return false;
+  const e = v as Record<string, unknown>;
+  const check = typeof e.type === 'string' ? SHAPE[e.type as Event['type']] : undefined;
+  return check !== undefined && check(e);
+}
+
 export interface Cycle {
   cycleId: string;
   workId: string;
@@ -150,6 +176,10 @@ export function apply(c: Cycle, e: Event): Cycle {
 
     case 'reject_dispatch':
       return escalate(c, e, `dispatch rejected: ${e.reason}`);
+
+    // Reachable at runtime: types are stripped, not checked, and events arrive as JSON.
+    default:
+      return escalate(c, e, `unclassifiable event: ${String((e as { type?: unknown }).type)}`);
   }
 }
 

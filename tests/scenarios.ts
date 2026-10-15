@@ -2,9 +2,9 @@
 // must replay every scenario through another path (e.g. the event store) and compare.
 import type { Event, Stage } from '../src/lifecycle.ts';
 
-const PASS_CHECKS = [{ name: 'tests', result: 'PASS' as const }];
+export const PASS_CHECKS = [{ name: 'tests', result: 'PASS' as const }];
 
-const toStandardReview: Event[] = [
+export const toStandardReview: Event[] = [
   { type: 'claim', runId: 'dev1', base: 'B1' },
   { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['result.json'] },
   { type: 'verification', head: 'H1', checks: PASS_CHECKS },
@@ -20,13 +20,17 @@ export interface Scenario {
   name: string;
   events: Event[];
   stage: Stage;
+  counters: [standard: number, adversarial: number];
 }
 
+export const sc = (name: string): Scenario => scenarios.find((s) => s.name === name)!;
+
 export const scenarios: Scenario[] = [
-  { name: 'SC-01', stage: 'ACCEPTED', events: [...bothPass, { type: 'accept', head: 'H1' }] },
+  // Final stage and counters are asserted by tests/lifecycle.test.ts; tests/store.test.ts replays them.
+  { name: 'SC-01', stage: 'ACCEPTED', counters: [1, 1], events: [...bothPass, { type: 'accept', head: 'H1' }] },
   {
     name: 'SC-02',
-    stage: 'AWAITING_ACCEPTANCE',
+    stage: 'AWAITING_ACCEPTANCE', counters: [2, 1],
     events: [
       ...toStandardReview,
       { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'FAIL', findings: ['f1'] },
@@ -39,7 +43,7 @@ export const scenarios: Scenario[] = [
   },
   {
     name: 'SC-03',
-    stage: 'ESCALATED',
+    stage: 'ESCALATED', counters: [2, 0],
     events: [
       ...toStandardReview,
       { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'FAIL' },
@@ -52,7 +56,7 @@ export const scenarios: Scenario[] = [
   },
   {
     name: 'SC-04',
-    stage: 'ESCALATED',
+    stage: 'ESCALATED', counters: [1, 1],
     events: [
       ...toStandardReview,
       { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' },
@@ -61,7 +65,7 @@ export const scenarios: Scenario[] = [
   },
   {
     name: 'SC-05',
-    stage: 'ESCALATED',
+    stage: 'ESCALATED', counters: [1, 1],
     events: [
       ...toStandardReview,
       { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' },
@@ -71,7 +75,7 @@ export const scenarios: Scenario[] = [
   },
   {
     name: 'SC-06',
-    stage: 'ADVERSARIAL_REVIEW',
+    stage: 'ADVERSARIAL_REVIEW', counters: [1, 0],
     events: [
       ...toStandardReview,
       { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' },
@@ -80,7 +84,7 @@ export const scenarios: Scenario[] = [
   },
   {
     name: 'SC-07',
-    stage: 'ESCALATED',
+    stage: 'ESCALATED', counters: [0, 0],
     events: [
       { type: 'claim', runId: 'dev1', base: 'B1' },
       { type: 'developer_result', runId: 'dev1', artifacts: [] },
@@ -89,7 +93,7 @@ export const scenarios: Scenario[] = [
   },
   {
     name: 'SC-08',
-    stage: 'ESCALATED',
+    stage: 'ESCALATED', counters: [0, 0],
     events: [
       { type: 'claim', runId: 'dev1', base: 'B1' },
       { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] },
@@ -98,7 +102,7 @@ export const scenarios: Scenario[] = [
   },
   {
     name: 'SC-11',
-    stage: 'ESCALATED',
+    stage: 'ESCALATED', counters: [0, 0],
     events: [
       { type: 'claim', runId: 'dev1', base: 'B1' },
       { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] },
@@ -106,15 +110,15 @@ export const scenarios: Scenario[] = [
       { type: 'verdict', runId: 'stranger', head: 'H1', verdict: 'PASS' },
     ],
   },
-  { name: 'SC-13', stage: 'ESCALATED', events: [{ type: 'reject_dispatch', reason: 'forbidden runtime' }] },
+  { name: 'SC-13', stage: 'ESCALATED', counters: [0, 0], events: [{ type: 'reject_dispatch', reason: 'forbidden runtime' }] },
   {
     name: 'SC-16',
-    stage: 'ESCALATED',
+    stage: 'ESCALATED', counters: [1, 0],
     events: [...toStandardReview, { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' }, { type: 'head_changed', head: 'H2' }],
   },
   {
     name: 'SC-17',
-    stage: 'ESCALATED',
+    stage: 'ESCALATED', counters: [0, 0],
     events: [
       ...toStandardReview,
       { type: 'base_changed', base: 'B2' },
@@ -124,7 +128,7 @@ export const scenarios: Scenario[] = [
   },
   {
     name: 'SC-17b',
-    stage: 'ESCALATED',
+    stage: 'ESCALATED', counters: [1, 0],
     events: [
       ...toStandardReview,
       { type: 'verdict', runId: 'sr1', head: 'H0', verdict: 'PASS' },
@@ -133,12 +137,12 @@ export const scenarios: Scenario[] = [
   },
   {
     name: 'SC-18',
-    stage: 'ESCALATED',
+    stage: 'ESCALATED', counters: [1, 1],
     events: [...bothPass, { type: 'head_changed', head: 'H2' }, { type: 'accept', head: 'H2' }],
   },
   {
     name: 'SC-19',
-    stage: 'ACCEPTED',
+    stage: 'ACCEPTED', counters: [1, 1],
     events: [...bothPass, { type: 'accept', head: 'H1' }, { type: 'base_changed', base: 'B2' }],
   },
 ];

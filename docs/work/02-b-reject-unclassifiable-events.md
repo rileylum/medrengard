@@ -18,4 +18,4 @@ Non-goals: cross-process concurrency, busy timeouts, tamper detection on row 0, 
 Verification: `npm test`, run by the owner on the reviewed SHA.
 
 ## Log
-- 2026-10-15 — ticket written after 02-a adversarial FAIL; owner: “Yes option 1.” Awaiting owner go on this ticket.
+- 2026-10-15 — ticket written after 02-a adversarial FAIL; owner: “Yes option 1.” Owner: “go”. Branch `feat/02-b-reject-unclassifiable-events`.

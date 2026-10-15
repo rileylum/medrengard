@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { apply, newCycle, type Cycle, type Event } from '../src/lifecycle.ts';
 import { EventStore } from '../src/store.ts';
-import { scenarios } from './scenarios.ts';
+import { PASS_CHECKS, scenarios, toStandardReview } from './scenarios.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'sf-store-'));
 test.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -94,17 +94,70 @@ test('a process killed between two events reopens and continues from the last co
 test('a duplicate event with the same run ID written twice changes nothing', () => {
   const store = new EventStore(dbPath('dup'));
   store.open('c1', 'w1');
-  const events: Event[] = [
-    { type: 'claim', runId: 'dev1', base: 'B1' },
-    { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] },
-    { type: 'verification', head: 'H1', checks: [{ name: 'tests', result: 'PASS' }] },
-    { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' },
-  ];
+  const events: Event[] = [...toStandardReview, { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' }];
   for (const e of events) assert.equal(store.append('c1', e), true);
   const before = store.load('c1');
   assert.equal(store.append('c1', { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' }), false);
   assert.equal(store.append('c1', { type: 'developer_result', runId: 'dev1', head: 'H2', artifacts: ['r'] }), false);
   assert.deepEqual(store.load('c1'), before);
   assert.equal(store.events('c1').length, events.length);
+  store.close();
+});
+
+test('append rejects an event apply cannot classify, before writing', () => {
+  const store = new EventStore(dbPath('bogus'));
+  store.open('c1', 'w1');
+  store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1' });
+  const bad = [
+    { type: 'bogus' },
+    { type: 'open', workId: 'w9' },
+    { type: 'claim', runId: 'dev2' },
+    { type: 'developer_result', runId: 'dev1', head: 'H1' },
+    { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'MAYBE' },
+    { type: 'verification', head: 'H1' },
+    'cancel',
+    null,
+  ];
+  for (const e of bad) assert.throws(() => store.append('c1', e as unknown as Event), /unclassifiable/, JSON.stringify(e));
+  assert.equal(store.events('c1').length, 1);
+  assert.deepEqual(stage(store.load('c1')!), ['DEVELOPING', 0, 0]);
+  store.append('c1', { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] });
+  assert.deepEqual(stage(store.load('c1')!), ['VERIFYING', 0, 0]);
+  store.close();
+});
+
+test('open and append reject empty or non-string IDs', () => {
+  const store = new EventStore(dbPath('ids'));
+  for (const id of ['', null, undefined, 1]) {
+    assert.throws(() => store.open(id as unknown as string, 'w1'), /cycle ID/, String(id));
+    assert.throws(() => store.open('c1', id as unknown as string), /work ID/, String(id));
+    assert.throws(() => store.append(id as unknown as string, { type: 'cancel' }), /cycle ID/, String(id));
+  }
+  assert.equal(store.load(''), undefined);
+  store.close();
+});
+
+test('store dedup matches apply: a redelivered claim reaches apply, results and verdicts do not', () => {
+  // The 02-a adversarial reviewer's divergence sequence: claim dev2 is ignored while dev1 is active,
+  // then legitimately accepted after the standard FAIL. Dropping it in the store escalated on replay.
+  const events: Event[] = [
+    { type: 'claim', runId: 'dev1', base: 'B1' },
+    { type: 'claim', runId: 'dev2', base: 'B1' },
+    { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] },
+    { type: 'verification', head: 'H1', checks: PASS_CHECKS },
+    { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'FAIL' },
+    { type: 'claim', runId: 'dev2', base: 'B1' },
+    { type: 'developer_result', runId: 'dev2', head: 'H2', artifacts: ['r'] },
+  ];
+  const store = new EventStore(dbPath('dedup'));
+  store.open('c1', 'w1');
+  for (const e of events) assert.equal(store.append('c1', e), true, JSON.stringify(e));
+  const expected = events.reduce(apply, newCycle('c1', 'w1'));
+  assert.deepEqual(stage(expected), ['VERIFYING', 1, 0]);
+  assert.deepEqual(stage(store.load('c1')!), stage(expected));
+  // Redelivered claim after the second result: apply escalates (claim outside QUEUED); the store must not hide it.
+  const redelivered: Event = { type: 'claim', runId: 'dev2', base: 'B1' };
+  assert.equal(store.append('c1', redelivered), true);
+  assert.deepEqual(stage(store.load('c1')!), stage(apply(expected, redelivered)));
   store.close();
 });

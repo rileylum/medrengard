@@ -1,7 +1,7 @@
 // SQLite event store for cycles (ticket 02-a). One append-only table; the state machine in
 // lifecycle.ts stays pure and is replayed on load. No leases, no cross-process concurrency.
 import { DatabaseSync } from 'node:sqlite';
-import { apply, newCycle, type Cycle, type Event } from './lifecycle.ts';
+import { apply, isEvent, newCycle, type Cycle, type Event } from './lifecycle.ts';
 
 // Row 0 of every cycle is the store's own "open" marker; it is not a lifecycle Event and never
 // reaches apply. Keeping it in the same table honours the one-table constraint.
@@ -9,6 +9,10 @@ interface OpenRow {
   type: 'open';
   workId: string;
   parentCycleId?: string;
+}
+
+function requireId(v: unknown, what: string): asserts v is string {
+  if (typeof v !== 'string' || v.length === 0) throw new Error(`${what} must be a non-empty string`);
 }
 
 export class EventStore {
@@ -32,6 +36,8 @@ export class EventStore {
 
   /** Create a cycle. Returns the initial Cycle. Throws if the ID is already in use. */
   open(cycleId: string, workId: string, parentCycleId?: string): Cycle {
+    requireId(cycleId, 'cycle ID');
+    requireId(workId, 'work ID');
     const row: OpenRow = { type: 'open', workId, parentCycleId };
     // Fixed seq 0, not MAX+1: a second open must collide on the primary key and be ignored,
     // otherwise it would land mid-log and reach apply, which has no 'open' case.
@@ -43,16 +49,17 @@ export class EventStore {
   }
 
   /**
-   * Append one event. Returns false, and writes nothing, when an event of the same type with
-   * the same run ID is already stored for this cycle: a redelivered result or verdict must not
-   * grow the log. (type, run_id) rather than run_id alone because a claim and its
-   * developer_result legitimately share a run ID. apply dedups on run ID alone, so a run ID
-   * reused across roles is stored here and then recorded as ignored on replay; apply stays the
-   * arbiter of state either way.
+   * Append one event. Throws before writing if apply could not classify it: a bad row would make
+   * the whole log unloadable. Returns false, and writes nothing, for a redelivered result or
+   * verdict (same type and run ID): those are the only events the spec dedups, so only those
+   * carry run_id into the unique index. A redelivered claim is stored and apply decides.
    */
   append(cycleId: string, event: Event): boolean {
+    requireId(cycleId, 'cycle ID');
+    if (!isEvent(event)) throw new Error(`unclassifiable event: ${JSON.stringify(event)}`);
     if (!this.exists(cycleId)) throw new Error(`cycle ${cycleId} not open`);
-    return this.insert(cycleId, event.type, 'runId' in event ? event.runId : null, event);
+    const dedupKey = event.type === 'developer_result' || event.type === 'verdict' ? event.runId : null;
+    return this.insert(cycleId, event.type, dedupKey, event);
   }
 
   /** Lifecycle events for a cycle in commit order, without the open marker. */
