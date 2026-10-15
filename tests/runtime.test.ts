@@ -219,7 +219,7 @@ test('output past maxOutputBytes stops the run inside the grace bound and report
   assert.equal(r.status, 'overflow');
   assert.equal(r.stdout, '');
   assert.match(r.stderr, /stdout exceeded 65536 bytes/);
-  assert.ok(took < 300 + 1500, `took ${took}ms`);
+  assert.ok(took < 300 + 1000, `took ${took}ms`);
 });
 
 test('scope: cancel kills a grandchild that left the process group with setsid', async (t) => {
@@ -255,4 +255,19 @@ test('scope: a child that re-parents itself with exec setsid leaves no worker be
   assert.equal(r.status, 'exited');
   await new Promise((res) => setTimeout(res, 3000));
   assert.equal(existsSync(marker), false, 'worker outlived the exited child');
+});
+
+test('scope: a child that writes a large result and exits at once loses none of it', async (t) => {
+  if (!scoped(t)) return;
+  const r = await spawnRuntime({
+    command: process.execPath,
+    // Exit in the write callback: a bare process.exit after an async pipe write flushes only 64 KB
+    // in the child itself, which would make the test about the fixture, not the pipe.
+    args: ['-e', 'process.stdout.write("y".repeat(1 << 20), () => process.exit(0))'],
+    prompt: '',
+    cwd: dir,
+    scope: `sf-test-${process.pid}-large`,
+  });
+  assert.equal(r.status, 'exited');
+  assert.equal(r.stdout.length, 1 << 20);
 });

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RunOutcome } from '../src/adapter.ts';
@@ -127,6 +127,19 @@ test('cgroup isolation is the default and refuses at construction when systemd-r
 });
 
 const hasUserSystemd = spawnSync('systemd-run', ['--user', '--scope', '-q', '--', 'true']).status === 0;
+
+test('cgroup isolation: the deadline through execute kills a setsid grandchild of the runtime', async (t) => {
+  if (!hasUserSystemd) return void t.skip('no user systemd');
+  const marker = join(dir, 'execute-escape-marker.txt');
+  const adapter = cliAdapter({ ...claude, command: process.execPath, args: [join(import.meta.dirname, 'fixtures', 'escape.ts'), marker] }, { graceMs: 300 });
+  const store = fresh();
+  const c = await execute(store, 'c1', adapter, { role: 'developer', prompt: '', cwd: dir }, { deadlineMs: 500, base: 'B1' });
+  assert.equal(c.stage, 'ESCALATED');
+  assert.match(c.escalation ?? '', /timeout/);
+  await new Promise((res) => setTimeout(res, 3000));
+  assert.equal(existsSync(marker), false, 'grandchild outlived the deadline');
+  store.close();
+});
 
 test('cgroup isolation: the fixture runs under a scope and a run through execute still completes', async (t) => {
   if (!hasUserSystemd) return void t.skip('no user systemd');

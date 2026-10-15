@@ -3,7 +3,7 @@
 // outcome mapping) is shared. Shapes and exit codes are from docs/work/03-a-findings.md.
 import { spawnSync } from 'node:child_process';
 import type { Adapter, RunOutcome } from '../adapter.ts';
-import { spawnRuntime, type RunResult } from './spawn.ts';
+import { scopePath, spawnRuntime, type RunResult } from './spawn.ts';
 
 export interface CliSpec {
   name: 'claude' | 'pi';
@@ -24,15 +24,7 @@ export interface CliAdapterOptions {
 
 export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter {
   const isolation = opts.isolation ?? 'cgroup';
-  // Fail at construction, not on the first run: a machine without a user systemd is a setup
-  // problem, and a silent fallback would hide the 03-b escape on exactly that machine.
-  if (isolation === 'cgroup') {
-    const probe = spawnSync('systemd-run', ['--user', '--scope', '-q', '--', 'true']);
-    if (probe.status !== 0) {
-      const why = probe.error?.message ?? (probe.stderr.toString().trim() || `exit ${probe.status}`);
-      throw new Error(`cgroup isolation needs systemd-run --user --scope (${why}); pass isolation: 'process-group' to accept the process-group limit`);
-    }
-  }
+  if (isolation === 'cgroup') checkScopes();
   return {
     async start(req, signal) {
       const run = spawnRuntime({
@@ -51,6 +43,24 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
   };
 }
 
+// Fail at construction, not on the first run: a machine without a user systemd is a setup
+// problem, and a silent fallback would hide the 03-b escape on exactly that machine. The probe
+// runs a throwaway scope exactly as spawnRuntime will and checks, from inside it, that the path
+// spawnRuntime computes is the scope's real cgroup and that its cgroup.kill is writable.
+function checkScopes(): void {
+  const unit = `sf-probe-${process.pid}-${Date.now()}`;
+  const expected = scopePath(unit);
+  const probe = spawnSync('systemd-run', ['--user', '--scope', '-q', '--slice-inherit', `--unit=${unit}`, '--', 'sh', '-c',
+    'd=/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup); echo "$d"; test -w "$d/cgroup.kill"']);
+  const why = probe.error?.message
+    ?? (probe.status !== 0 ? probe.stderr.toString().trim() || `exit ${probe.status}; cgroup.kill not writable`
+    : probe.stdout.toString().trim() !== expected ? `scope landed at ${probe.stdout.toString().trim()}, expected ${expected}`
+    : undefined);
+  if (why !== undefined) {
+    throw new Error(`cgroup isolation needs systemd-run --user --scope (${why}); pass isolation: 'process-group' to accept the process-group limit`);
+  }
+}
+
 function outcome(spec: CliSpec, r: RunResult): RunOutcome {
   if (r.status === 'cancelled') return { status: 'cancelled' };
   if (r.status === 'failed' || r.status === 'overflow') return failed(r.stderr);
@@ -66,7 +76,7 @@ const firstLine = (s: string) => s.trim().split('\n')[0] ?? '';
  * object. The fields are not checked here; the store classifies the claim.
  */
 function claimFrom(text: string, sessionId?: string): RunOutcome {
-  const blocks = [...text.matchAll(/```json\s*\n([\s\S]*?)\n\s*```/g)];
+  const blocks = [...text.matchAll(/```json\s*\n([\s\S]*?)\n?\s*```/g)];
   const raw = blocks.length ? blocks.at(-1)![1] : text.trim().startsWith('{') ? text.trim() : undefined;
   if (raw === undefined) return failed('no claim block in reply');
   try {

@@ -50,10 +50,13 @@ export interface Run extends Promise<RunResult> {
 
 const DEFAULT_MAX_OUTPUT = 8 * 1024 * 1024;
 
-// cgroup v2 only: one line, `0::/path`. Read per spawn, not cached, so a controller that is
-// moved between cgroups mid-life still computes the right path.
-function ownCgroup(): string {
-  return `/sys/fs/cgroup${readFileSync('/proc/self/cgroup', 'utf8').trim().split(':')[2]}`;
+/**
+ * Where `systemd-run --user --scope --slice-inherit --unit=<unit>` puts the scope: beside this
+ * process's own cgroup. cgroup v2 only (one line, `0::/path`). Read per call, not cached, so a
+ * controller moved between cgroups mid-life still computes the right path.
+ */
+export function scopePath(unit: string): string {
+  return `${dirname(`/sys/fs/cgroup${readFileSync('/proc/self/cgroup', 'utf8').trim().split(':')[2]}`)}/${unit}.scope`;
 }
 
 export function spawnRuntime(opts: SpawnOptions): Run {
@@ -98,7 +101,7 @@ export function spawnRuntime(opts: SpawnOptions): Run {
   // and the process group is still ours to signal. `--slice-inherit` puts the scope beside this
   // process's own cgroup, which makes its path known before the child even runs: no /proc read,
   // no window where a fast-exiting child escapes the kill.
-  const cgroup = opts.scope ? `${dirname(ownCgroup())}/${opts.scope}.scope` : undefined;
+  const cgroup = opts.scope ? scopePath(opts.scope) : undefined;
   const [command, args] = opts.scope
     ? ['systemd-run', ['--user', '--scope', '-q', '--slice-inherit', `--unit=${opts.scope}`, '--', opts.command, ...opts.args]]
     : [opts.command, opts.args];
@@ -116,12 +119,14 @@ export function spawnRuntime(opts: SpawnOptions): Run {
     if (child.pid === undefined) return;
     try { process.kill(-child.pid, sig); } catch { /* group already gone */ }
   };
-  // SIGKILL for everything in the scope, whatever its session or group. The group is signalled
-  // too, for the moment before systemd-run has joined the scope and for runs without one.
-  const killTree = () => {
-    signalGroup('SIGKILL');
+  // SIGKILL for everything in the scope, whatever its session or group; ENOENT means it is
+  // already empty and gone.
+  const killScope = () => {
     if (cgroup) { try { writeFileSync(`${cgroup}/cgroup.kill`, '1'); } catch { /* scope already gone */ } }
   };
+  // The group is signalled too, for the moment before systemd-run has joined the scope and for
+  // runs without one.
+  const killTree = () => { signalGroup('SIGKILL'); killScope(); };
   const dropPipes = () => { child.stdout.destroy(); child.stderr.destroy(); };
 
   const stop = () => {
@@ -169,10 +174,13 @@ export function spawnRuntime(opts: SpawnOptions): Run {
     child.on('exit', () => {
       exited = true;
       // Under a scope, whatever the child left running (a worker it re-parented with setsid, a
-      // grandchild on the pipe) dies with it; the child's own result is what we report.
-      // Without one, only after a cancel is a surviving descendant's output unwanted.
-      if (cgroup) { killTree(); dropPipes(); }
-      else if (status !== 'exited') { signalGroup('SIGKILL'); dropPipes(); }
+      // grandchild on the pipe) dies with it. The pipes are left to close on their own: `exit`
+      // can fire with the child's last write still unread in the pipe, and destroying it here
+      // would cut the tail off a result. The group is not signalled: the child is reaped and its
+      // pgid may already be someone else's.
+      killScope();
+      // After a cancel or overflow nothing a surviving descendant writes is wanted.
+      if (status !== 'exited') { if (!cgroup) signalGroup('SIGKILL'); dropPipes(); }
     });
     // `close` waits for every stdio pipe, so a normal exit still collects the child's last output.
     child.on('close', (code, signal) => finish(code, signal));
