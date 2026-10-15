@@ -2,31 +2,23 @@
 
 ## Where we are
 
-**SF-001-review-02 ESCALATED: final standard review FAIL; budget exhausted. No design approval or implementation yet.**
+**SF-001-review-03 authorised by A-003; C2S2-F1 correction prepared for independent review. No design approval or implementation yet.**
 
-Accepted direction: manual contracts-first bootstrap, TypeScript + SQLite, Pi and Claude Code, local execution. A-002 authorised the second bounded cycle, not final design acceptance or unlimited cycles.
+Accepted direction: manual contracts-first bootstrap, TypeScript + SQLite, Pi and Claude Code, local execution. A-003 grants a narrow new revision cycle, not final design acceptance or unlimited cycles.
 
-Work: [SF-001](work/SF-001.md). [Cycle-02 ledger](reviews/SF-001-cycle-02/README.md). **[Focused escalation](reviews/SF-001-cycle-02/escalation.md).**
+Work: [SF-001](work/SF-001.md). [Cycle-03 ledger](reviews/SF-001-cycle-03/README.md). Earlier exhausted cycles and evidence remain intact.
 
-## This session
+## Latest changes
 
-- Recorded A-002 and preserved the parent exhausted cycle/history unchanged.
-- Addressed S2-F1–F3: PREPARING refinement, bounded initial authority, unique work lineage/child creation, failed-check waiver and rerun semantics; added SC-45–55.
-- Candidate `f4bd520298208715808d5f6709b49ce29c898951` received standard FAIL on two residual ambiguities: authority expiry and never-launched initial checks.
-- Applied the one permitted bounded correction, adding SC-56–58. Frozen candidate: **`a273fc77c75309b0d0396eaeea7ecf76a8864c47`**, base `f4bd520298208715808d5f6709b49ce29c898951`.
-- Final standard review returned FAIL on **C2S2-F1**: behaviour when multiple blockers coexist and a sibling verification check is already running. Earlier issues resolved as raised.
-- Stopped without further design edits or adversarial review. Subsequent audit commits do not replace the frozen candidate.
+- Replaced circular resolution guards with per-blocker validation and durable partial resolution; restore the interrupted stage only after recomputing an empty OPEN blocker set.
+- Defined shared-configuration resolution for multiple check intents and preserved each initial-execution allowance.
+- Defined observation of already-running, eligible, confined sibling checks during safe verification escalation; no new dispatch or quality advancement. Unsafe cases still require bounded containment.
+- Added SC-59–61 and mapped them to the contract/fixture outline. These remain tabletop expectations, not executed tests.
 
-## Counters and verification
+## Counters and next action
 
-- Cycle-02: **standard 2/2 (FAIL, FAIL); adversarial 0/1; infrastructure failures 0**.
-- Parent cycle-01 retains standard 2/2 FAIL, adversarial 0/1 and one timeout; nothing reset or erased.
-- Both cycle-02 reviews were fresh, tool-disabled Claude Code textual/tabletop reviews of Git-extracted packets, not executable controller tests. Raw inputs/results retained; exact SHA and explicit verdict validated by operator.
-- Author structural checks: links, 55 then 58 ordered unique scenario IDs, review JSON and `git diff --check` passed for their respective candidates.
-- No remote/publication, application code, dependencies, CI or production runtime adapter. No owner acceptance of the specification.
+Cycle-03: standard 0/2, adversarial 0/1, infrastructure failures 0. Cycle-02 retains standard 2/2 FAIL, adversarial 0/1 and zero infrastructure failures. Cycle-01 retains standard 2/2 FAIL, adversarial 0/1 and one timeout.
 
-## Next action — owner decision required
+**Freeze the revised candidate and run fresh-context standard review.** First FAIL permits one bounded correction/final standard attempt; second FAIL stops. Standard PASS permits one adversarial review; adversarial FAIL stops. Infrastructure failures stop for guidance under the current manual procedure.
 
-**Triage C2S2-F1 and approve or decline a further narrow revision.** Recommendation in the escalation packet: SF-001-review-03, limited to multi-blocker resolution, sibling verification behaviour and three directly related scenarios, with at most two standard and one adversarial reviews. This is NOT yet authorised.
-
-Do not apply another fix, run another standard review or adversarial review, or begin SF-002 implementation without the required decision. Existing stack/runtime/hosting choices need not be re-asked.
+No remote/publication, implementation, dependencies or CI. Do not treat author corrections or cycle authorisation as design approval.

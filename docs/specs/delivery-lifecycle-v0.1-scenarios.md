@@ -102,14 +102,22 @@ Notation: `(S,A)` = completed standard/adversarial verdict counts. `H1/B1` = exa
 | SC-57 | C1 STANDARD_REVIEW `(0,0)` with derived authority; original batch creation deadline passes, then valid current PASS arrives | ADVERSARIAL_REVIEW `(1,0)` with adversarial reservation; no staleness/escalation from creation deadline alone; explicit revocation would instead use context-invalidation rules |
 | SC-58 | SC-30 blocker; owner supplies missing deadline, same approved candidate/profile, no other blocker and no prior launch proven | Resolve to VERIFYING/PAUSED `(0,0)`; owner resumes control; controller registers and launches P's unused initial execution exactly once. Replacement count remains 0; no waiver or child cycle needed |
 
+## Cycle-03 correction: multiple blockers and running siblings
+
+| ID | Setup and stimulus | Expected state, counters and evidence |
+| --- | --- | --- |
+| SC-59 | VERIFYING `(0,0)`; P and R never launched because a shared deadline config is missing; owner supplies it for both check intents | ESCALATED/PAUSED records two OPEN blockers and two unused initial allowances. One validated command resolves both named blockers atomically; with no others, restore VERIFYING/PAUSED. After separate owner control resume, each check launches its own initial execution once; Q3 count remains 0. Replay cannot duplicate resolutions or launches; failed validation for either target rejects the whole command |
+| SC-60 | ESCALATED/PAUSED `(0,0)`, resume_stage VERIFYING; Q FAILED (profile permits FAILED waiver), P never launched due to config; owner first grants exact waiver for Q, then fixes P config | First command resolves Q only, preserves its FAILED evidence/effective HUMAN-WAIVED, stays ESCALATED/PAUSED with P OPEN and no launch. Second resolves P and restores VERIFYING/PAUSED; explicit resume permits P's initial launch, not a Q rerun. Reverse order produces the same final blocker set. Concurrent new failures survive CAS/revalidation and prevent resume; no review/Q3 counter changes |
+| SC-61 | VERIFYING `(0,0)`; P cannot launch, Q's registered initial check is running with valid authority, unchanged candidate, finite deadline and proved read-only confinement | Escalate/PAUSE with P OPEN; Q continues under observation, retains used initial allowance and original deadline. Q's valid PASS is recorded without delivery advancement or clearing P. Owner fixes P, restoring VERIFYING/PAUSED; after explicit resume P launches once and Q is not rerun. No Q3 allowance consumed. Negative branch: valid Q FAIL instead adds an OPEN failure blocker, so fixing P alone cannot restore VERIFYING; unsafe context/containment instead triggers bounded termination/quarantine, never free Q relaunch |
+
 ## SF-001 acceptance mapping
 
 | Criterion | Draft coverage | Outstanding validation |
 | --- | --- | --- |
-| AC1 identities/states/authority | Spec §§2–3; SC-01, 06, 13, 30, 41, 45–49, 55–58 | Independent transition walkthrough |
+| AC1 identities/states/authority | Spec §§2–3; SC-01, 06, 13, 30, 41, 45–49, 55–61 | Independent transition walkthrough |
 | AC2 budgets and revisions | Spec §4 Q1/Q3; SC-02–06, 20–22, 41, 48, 52 | Owner policy decision and independent review |
-| AC3 evidence freshness | Spec §§4–5; SC-07–08, 11–12, 16–19, 36–40, 44, 50–54, 58 | Schema fixtures and eventual executable assertions |
-| AC4 recovery | Spec §6; SC-23–30 | Independent failure analysis; later process/SQLite experiments |
+| AC3 evidence freshness | Spec §§4–5; SC-07–08, 11–12, 16–19, 36–40, 44, 50–54, 58–61 | Schema fixtures and eventual executable assertions |
+| AC4 recovery | Spec §§3, 6; SC-23–30, 59–61 | Independent failure analysis; later process/SQLite experiments |
 | AC5 approval and release | Spec §§2, 4 Q4, 7; SC-09–15, 31–35, 42–43 | Owner authority/profile decisions; later enforcement tests |
 | AC6 alternatives and approval | Spec §4 Q1–Q5 and §8 | Owner approval of reviewed exact version |
 | AC7 bounded follow-on work | [Contract backlog](../work/SF-002-outline.md) | Refine into READY contracts only after approval |

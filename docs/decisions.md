@@ -49,7 +49,17 @@ P-004 (adversarial review on every change) remains proposed. O-005 quality defau
 
 Cycle-02 proposed clarifications (not yet design-approved): Q5 permits bounded, explicit initial-work batches without per-stage owner kicking; revisions remain individually authorised. One atomic work-lineage tip prevents duplicate cycles. Q4 distinguishes BLOCKED and FAILED waiver permission, preserves failed evidence and forbids unregistered rerun PASS from clearing a gate.
 
+Cycle-03 proposed clarification: validated blocker resolutions may accumulate while ESCALATED; only an empty unresolved-blocker set permits stage restoration. Safe, already-running confined verification siblings may finish under observation without new dispatch; unsafe context/containment still requires stopping workers. This remains a draft recommendation, not an accepted operating-policy change.
+
 ## Owner approval history
+
+### A-003 — 2026-10-15 — SF-001 multi-blocker revision cycle
+
+- Authority: owner reply “Yes” to the explicit proposal for another bounded cycle limited to C2S2-F1 and its three scenarios, with at most two standard and one adversarial reviews.
+- Authorised: SF-001-review-03; parent cycle-02 and earlier cycle-01 remain exhausted with immutable counters/history.
+- Scope: multi-blocker resolution and sibling verification execution behaviour. No specification acceptance, implementation or general reset policy authorised.
+- [Cycle-03 ledger](reviews/SF-001-cycle-03/README.md). Existing manual infrastructure-failure stop rule remains in force.
+
 
 ### A-002 — 2026-10-15 — SF-001 bounded revision cycle
 
