@@ -8,9 +8,8 @@ A vendor-neutral software delivery factory: a deterministic controller moves app
 2. [Current status](docs/STATUS.md)
 3. [Core lifecycle v1](docs/specs/core-lifecycle-v1.md), the spec being implemented
 4. [Decision register](docs/decisions.md)
-5. [Architecture baseline](docs/architecture/baseline.md) and [plan](docs/plan.md)
-
-Source: [`ai_software_factory_architecture_and_plan_v0.3.docx`](ai_software_factory_architecture_and_plan_v0.3.docx).
+5. [Architecture baseline](docs/architecture/baseline.md), the one-screen summary, and [plan](docs/plan.md)
+6. [Full architecture v0.3](docs/architecture/source-v0.3.md), converted from the original DOCX with diagrams
 
 ## Run
 
