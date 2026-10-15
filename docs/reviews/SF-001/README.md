@@ -34,4 +34,13 @@ All findings were confirmed by the author against the draft. Disposition is auth
 - Completed counters remain standard **1/2**, adversarial **0/1**. Infrastructure failures: **1**. Standard logical attempt 2 is reserved/pending, not completed.
 - Author checks before freezing the correction: local Markdown link targets, 44 unique ordered scenario IDs, valid first-review JSON/FAIL, and `git diff --check` all passed. These are not independent semantic verification.
 
-Standard attempt 2 is the final permitted standard review in this cycle. Await owner permission for one replacement execution of that same attempt, recommended finite deadline 600 seconds. If its valid verdict is FAIL, stop and escalate; do not run adversarial review or reset the budget. After PASS, one fresh adversarial review is permitted. Any adversarial FAIL stops for owner direction.
+## Standard attempt 2 — authorised replacement completed: FAIL
+
+- Owner authorised the one replacement execution at a 600-second deadline: [authorisation](standard-2-retry-authorisation.md).
+- Same candidate/base and unchanged packet as the interrupted execution; candidate spec/scenarios/SF-002 outline and packet checked against Git before launch.
+- [Raw result](standard-2-run-2-result.json): valid completed verdict **FAIL** for `117d763c9b1d57a1ecb6278a1d88a8480c3bfa83`; reported model `claude-opus-5-5`, duration 256.071 seconds, API cost $0.9731816, no runtime error or permission denials.
+- Reviewer resolved S1-F1–F7 as originally raised but reported S2-F1–F3: PREPARING refinement/initial authority, one-live-cycle uniqueness, and failed-check waiver/rerun semantics. New findings remain uncertain pending owner triage; no further corrections applied.
+- Completed counters: **standard 2/2 (FAIL, FAIL); adversarial 0/1**. Infrastructure failures remain **1**; the successful replacement is not a third quality attempt.
+- **STOPPED / ESCALATED.** No adversarial review or design fix performed after this verdict. See [escalation packet and proposed next-cycle scope](escalation.md).
+
+A new correction/review cycle requires explicit owner scope and budget authorisation. Do not reset this cycle's counters or treat the retry authorisation as approval of another cycle.
