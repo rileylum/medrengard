@@ -60,9 +60,9 @@ function toEvent(runId: string, role: Role, claim: unknown): Event {
   return { type: 'verdict', runId, head: c.head, verdict: c.verdict, findings: c.findings } as Event;
 }
 
-// The deadline is decided here, before the adapter is told to stop, so the outcome is `timeout`
-// whether the adapter then settles `cancelled`, settles late, or never settles. A late settle or
-// rejection is dropped.
+// The deadline resolves the race, then aborts the adapter; whatever the adapter does afterwards
+// (settle `cancelled`, settle late, reject, or nothing) lands on an already-settled promise and
+// is dropped. So the outcome is `timeout` for every adapter, including one that ignores abort.
 function bounded(adapter: Adapter, req: RunRequest, deadlineMs: number): Promise<RunOutcome> {
   const ac = new AbortController();
   return new Promise<RunOutcome>((resolve) => {

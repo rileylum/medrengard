@@ -137,8 +137,15 @@ test('the controller mints a fresh run ID per execute and does not start a run t
   store.close();
 });
 
-test('errors other than an unclassifiable claim propagate; nothing is written', async () => {
+test('errors other than an unclassifiable claim propagate from receive; no run_failed is attempted', () => {
+  // A store that fails for its own reasons (disk, closed handle). The controller must not read
+  // that as a malformed claim and try to write run_failed on top of it.
+  let appends = 0;
+  const broken = { append() { appends++; throw new Error('disk full'); } } as unknown as EventStore;
+  assert.throws(() => receive(broken, 'c1', 'dev1', 'developer', { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } }), /disk full/);
+  assert.equal(appends, 1);
+  // And execute: a claim that cannot be written stops before any launch.
   const store = fresh();
   store.close();
-  await assert.rejects(dev(store, { outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } }), (err: Error) => !/malformed/.test(err.message));
+  return assert.rejects(dev(store, { outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } }), (err: Error) => !/malformed/.test(err.message));
 });
