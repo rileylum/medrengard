@@ -62,6 +62,13 @@ Cycle-03 proposed clarification: validated blocker resolutions may accumulate wh
 
 ## Owner approval history
 
+### A-010 — 2026-10-15 — Outstanding-obligation disposition correction
+
+- Owner replied “Yes go ahead” to cycle-10 limited to the two narrowed cycle-09 triage gaps and matching scenarios, with at most two standard reviews and one adversarial review.
+- Authorises SF-001-review-10, parent cycle-09: required reviewer stop without valid verdict after evidence reconciliation; explicit disposition of ACTIVE failures awaiting classification and admitted-but-undispatched correction episodes. Preserve C, no intent resurrection, ordinary pause/resume unchanged, historical corrected-candidate failures not re-blocked.
+- Manual stop rules unchanged: terminal standard/adversarial failure or infrastructure failure stops for guidance. No product-policy loop may extend this budget. Preserve all previous verdicts/counters; no full-spec acceptance, implementation, deployment or standing budget reset.
+- [Cycle-10 ledger](reviews/SF-001-cycle-10/README.md). Detailed proposal awaits independent reviews and exact-version owner acceptance.
+
 ### A-009 — 2026-10-15 — Pending-result escalation disposition
 
 - Scope authority: owner said “Okay, lets move forward with that” to retaining eligible PASS evidence for once-only routing after revalidation and explicit quality blockers for pending failures, with waiver-expiry/renewal, replay and invalidation scenarios.
