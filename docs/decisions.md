@@ -24,6 +24,7 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 | P-005 | DECIDED (A-001) | Run locally initially; corporate execution remains separately authorised | Initial hosting |
 | D-007 | DECIDED (A-001) | Initial runtime targets: Pi and Claude Code; core remains vendor-neutral | Runtime spikes |
 | D-008 | DECIDED (A-004) | Conservative paused-execution-failure direction: escalate and require new cycle/cancellation, no deferred retry; detailed transitions remain under review | SF-001 cycle-04 |
+| D-009 | DECIDED (A-007) | Escalated recovery settles to PAUSED, preserving permitted healthy observation; remove ACTIVE-preserving recovery exception; detailed transitions remain under review | SF-001 cycle-07 |
 | O-001 | OPEN | Validate Pi and Claude Code availability, permissions, cancellation, isolation and structured-result capabilities; selection does not prove support | Runtime spikes |
 | O-002 | OPEN | Exact human revision/new-cycle/reset semantics, including overrides after adversarial failure | SF-001 |
 | O-003 | OPEN | Head/base change after PASS or during review: evidence invalidation, remaining-budget handling and escalation | SF-001 |
@@ -53,6 +54,15 @@ Cycle-02 proposed clarifications (not yet design-approved): Q5 permits bounded, 
 Cycle-03 proposed clarification: validated blocker resolutions may accumulate while ESCALATED; only an empty unresolved-blocker set permits stage restoration. Safe, already-running confined verification siblings continue under observation without new dispatch; unsafe context/containment still requires stopping workers. The specific conservative paused-execution-failure direction is now accepted in A-004; other details remain under review.
 
 ## Owner approval history
+
+### A-007 — 2026-10-15 — PAUSED settlement and cycle-07
+
+- Direction authority: owner reply “Lets go with that then” to the recommendation that escalated recovery settles to PAUSED, with safe observation retained and the ACTIVE-preserving exception removed.
+- Cycle authority: owner reply “Yes please” to the explicit request for cycle-07 limited to this simplification and affected scenarios, with at most two standard and one adversarial reviews.
+- Accepted D-009: successful escalated recovery settles PAUSED regardless of interruption origin; healthy authorised confined checks may continue under observation. Required stops, quarantine, cancellation, result/blocker retention, no dispatch and unchanged counters remain in force. Owner resume and post-blocker-restoration resume requirements are not removed.
+- Alternative rejected for this initial design: retaining the ACTIVE-preserving exception with additional timing/precedence distinctions. PAUSED reduces complexity without adding a dispatch-path owner action under the current blocker-restoration rule; interruption origin remains in audit history.
+- Authorised SF-001-review-07, parent cycle-06. Earlier candidates, counters and verdicts remain immutable; this direction supersedes the earlier ACTIVE-preserving direction only for the new candidate. C6A1-F1 need not be declared confirmed to make this explicit simplification.
+- No full-spec acceptance, implementation, automatic merge/deploy or standing budget reset. Terminal review failure or infrastructure failure stops for owner guidance. [Cycle-07 ledger](reviews/SF-001-cycle-07/README.md).
 
 ### A-006 — 2026-10-15 — Bounded recovery clarification cycle
 
