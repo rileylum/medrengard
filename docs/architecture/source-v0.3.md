@@ -1,6 +1,6 @@
 # AI Software Factory: Architecture and Implementation Plan
 
-Markdown conversion of `ai_software_factory_architecture_and_plan_v0.3.docx` (the original stays beside this file). Content is unchanged except that figures and state tables are also rendered as Mermaid diagrams.
+Markdown conversion of the original design document, kept beside this file as [source-v0.3.docx](source-v0.3.docx). Content is unchanged except that figures and state tables are also rendered as Mermaid diagrams.
 
 > **PURPOSE**  
 > A practical, vendor-neutral design for collaborative requirements, autonomous development, bounded independent review, evidence-led acceptance, and continuous improvement.
