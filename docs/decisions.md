@@ -29,6 +29,7 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 | D-011 | DECIDED (A-008 direction) | Local CLI first; structured version-bound owner decisions, separate design/work authority and controller-derived readiness; future UI/GitHub same boundary | SF-001 v0.2 |
 | D-012 | DECIDED (A-008 direction) | Baseline-aware verification: distinguish regressions/new tests from proven unrelated known failures on pinned baseline, retain failure evidence and tracked issues | SF-001 v0.2 |
 | D-013 | DECIDED (A-011 direction) | Abandoned candidate retains no automatic Q3/Q6 but may finish eligible checks/gates; stopped dispatched correction without valid completion needs independent child/cancel blocker; physical stop alone does not fence result acceptance | SF-001 cycle-11; detailed guards remain under review |
+| D-014 | DECIDED (A-012 direction) | Preserve trustworthy completion recorded while authority was valid, subject to proven ordering/identity; recovery of escalated correction development requires explicit child-cycle authority rather than waiver-dependent same-cycle handoff | Future bounded SF-001 revision; no revision budget yet |
 | O-001 | OPEN | Validate Pi and Claude Code availability, permissions, cancellation, isolation and structured-result capabilities; selection does not prove support | Runtime spikes |
 | O-002 | OPEN | Exact human revision/new-cycle/reset semantics, including overrides after adversarial failure | SF-001 |
 | O-003 | OPEN | Head/base change after PASS or during review: evidence invalidation, remaining-budget handling and escalation | SF-001 |
@@ -43,6 +44,8 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 ## Current SF-001 revision awaiting review and exact-version approval
 
 Current draft: [delivery lifecycle v0.2](specs/delivery-lifecycle-v0.2.md), [scenarios](specs/delivery-lifecycle-v0.2-scenarios.md). A-008 accepts walkthrough directions, not the complete revised semantics/default configuration or implementation. Q1/Q2 now allow controller-admitted same-cycle corrections before terminal failure; Q3 uses configured replacement/backoff values with D-008 eligibility unchanged; Q6 defines one shared correction allowance and remaining-path guards. Structured commands, protected policy activation and known-baseline classification require validation. Both review gates, explicit candidate/package acceptance and separate manual merge remain required.
+
+A-012/D-014 subsequently selects retained trustworthy completion evidence and child-cycle recovery for escalated correction development, instead of the draft's waiver-dependent HELD_DEVELOPMENT handoff. The frozen cycle-11 specification has NOT been revised to implement this direction; revision scope/budget and exact-version acceptance remain separate gates.
 
 ### Historical v0.1 recommendations (not the current v0.2 policy)
 
@@ -62,6 +65,16 @@ Cycle-02 proposed clarifications (not yet design-approved): Q5 permits bounded, 
 Cycle-03 proposed clarification: validated blocker resolutions may accumulate while ESCALATED; only an empty unresolved-blocker set permits stage restoration. Safe, already-running confined verification siblings continue under observation without new dispatch; unsafe context/containment still requires stopping workers. The specific conservative paused-execution-failure direction is now accepted in A-004; other details remain under review.
 
 ## Owner approval history
+
+### A-012 — 2026-10-15 — Preserve evidence; conservative development recovery (direction only)
+
+- Owner replied “That sounds good to me” to the recommendation to preserve trustworthy earlier completion records while requiring explicit child-cycle recovery for correction development interrupted by escalation. The recommendation explicitly did not request or grant a new revision authorisation.
+- D-014: a trusted, durable launcher record of completion while authority was valid should remain usable as evidence despite later delivery/retrieval after lease expiry. Bind exact run/candidate/authority and prove ordering relative to expiry/fencing. Worker timing claims alone are insufficient; missing trustworthy proof stops for guidance. Precise receipt-admission, replacement-fence and terminal-closure precedence still needs a reviewed specification and eventual runtime capability evidence.
+- Evidence preservation is not permission to continue: no silent reopening of cancelled cycles, clearing unrelated blockers, renewing execution authority or replenishing budgets. Do not infer that all late output is admissible.
+- Initial recovery of escalated correction development uses an explicitly authorised child cycle, not the draft's H1-waiver-dependent HELD_DEVELOPMENT resume path. Preserve H2/artifacts; a child contract may explicitly name preserved work as its starting point, but must independently meet readiness and every required verification/review gate. Old PASSes or budgets do not transfer as authority. Cancellation remains available. Ordinary healthy non-escalated pause and an H2 already accepted before escalation are not newly reclassified by this direction.
+- Trade-offs accepted: durable receipt provenance/order adds implementation obligations; child-cycle recovery adds owner intervention/repeated gates and may leave parent capacity unused. Avoid the artificial H1-defect waiver solely to hand off a correction that already fixes it. A more autonomous same-cycle development handoff is deferred, not silently adopted.
+- Affected draft: lifecycle v0.2 at frozen `5c6da6c751e2dc68109ffd44d97472bd028af673` and matching scenarios, to be aligned only in a separately authorised revision. This selects policy direction, not detailed transitions, numerical defaults, full-spec acceptance or implementation.
+- Cycle-11 remains stopped: standard 2/2 FAIL/FAIL, adversarial 0/1, infrastructure 0. **No cycle-12 scope/review budget, new review, specification edit, implementation, merge/deployment or standing reset is authorised by this reply.**
 
 ### A-011 — 2026-10-15 — Abandonment and stopped-execution boundaries
 

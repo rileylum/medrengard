@@ -2,7 +2,7 @@
 
 ## Where we are
 
-**SF-001-review-11: standard FAIL/FAIL, terminal stop. ESCALATED; owner policy decision required. No further fix/review authorised; complete specification unaccepted; implementation not READY.**
+**SF-001-review-11: standard FAIL/FAIL, terminal stop. ESCALATED; owner selected A-012/D-014 direction, revision scope/budget still required. No further fix/review authorised; complete specification unaccepted; implementation not READY.**
 
 Work: [SF-001](work/SF-001.md). [Cycle-11 ledger](reviews/SF-001-cycle-11/README.md). **[Escalation packet and owner choices](reviews/SF-001-cycle-11/escalation.md)**.
 
@@ -23,6 +23,12 @@ Work: [SF-001](work/SF-001.md). [Cycle-11 ledger](reviews/SF-001-cycle-11/README
 - Full staged whitespace check reports trailing spaces in the exact `standard-2-prompt.txt` numbered blank lines/embedded Git diff. Preserved raw packet unchanged; scoped Markdown check passes. This is an audit formatting limitation, not a review infrastructure failure.
 - Both reviews fresh/tool-disabled, model reported `claude-opus-5-5`, using committed text/manifests/scoped diffs; not direct reviewer Git inspection or runtime proof.
 
-## Next action — owner policy decision
+## Latest owner decision — direction only
 
-Choose whether trusted pre-expiry launcher completion receipts remain admissible when reconciled after expiry, or must already have been reconciled by the controller before expiry. Also confirm the guarded held-development handoff and its H1-waiver cost versus child/cancel-only recovery. See escalation for alternatives and constraints. Any further correction needs explicit scope/direction and a separately authorised review budget; this spent cycle and product configurable loops grant none. No implementation or exact-spec acceptance inferred.
+Owner replied “That sounds good to me” to preserving trustworthy completion records created while authority was valid and using explicitly authorised child-cycle recovery for escalated correction development instead of the H1-waiver-dependent handoff. Recorded A-012/D-014 in [decisions](decisions.md). Trusted identity/ordering proof is required; worker timing claims are insufficient. Preserving evidence cannot reopen terminal work, clear unrelated blockers or grant execution. A child may explicitly start from preserved work but repeats readiness and required verification/review gates. Ordinary healthy pause and already-accepted H2 history remain distinct.
+
+This approval is policy direction only: specification/scenarios, original reports and counters are unchanged. No revision cycle or review budget was requested in the discussion or inferred from the reply. Audit-only decision/handoff updates; no runtime tests or review invocation.
+
+## Next action — revision authorisation
+
+Ask for one bounded cycle-12 to align trusted retained-completion admission and related fence/replacement/closure ordering, replace waiver-dependent HELD_DEVELOPMENT recovery with child/cancel handling, and align matching scenarios/direct audit records, with at most two standard reviews and one adversarial review under existing stop rules. Do not start until explicitly authorised. No implementation or exact-spec acceptance inferred.
