@@ -101,17 +101,40 @@ test('cancel after the child exited but a grandchild holds the pipe still resolv
 test('a child that died by its own signal before cancel is reported exited, not cancelled', async () => {
   const run = spawnRuntime({
     // sh, not node: node writes a diagnostic report on SIGSEGV and takes most of a second to die.
+    // The backgrounded grandchild holds stdout so the run is still pending when cancel() lands.
     command: 'sh',
-    args: ['-c', 'echo ready; kill -SEGV $$'],
+    args: ['-c', `"${process.execPath}" -e "setTimeout(() => {}, 3000)" & echo ready; kill -SEGV $$`],
     prompt: '',
     cwd: dir,
   });
   await run.ready;
-  await new Promise((res) => setTimeout(res, 200));
+  await new Promise((res) => setTimeout(res, 300));
+  const started = Date.now();
   run.cancel();
   const r = await run;
+  assert.ok(Date.now() - started < 1000, 'cancel did not unstick the run');
   assert.equal(r.status, 'exited');
   assert.equal(r.signal, 'SIGSEGV');
+});
+
+test('a cancelled child that honours SIGTERM resolves at once, not at the grace period, when a grandchild holds the pipe', async () => {
+  const run = spawnRuntime({
+    command: 'sh',
+    // The grandchild ignores SIGTERM: otherwise the group SIGTERM would free the pipe by itself
+    // and the test could not tell the exit-time SIGKILL from the grace-period one.
+    // The grandchild prints "ready" itself, after its handler is installed; an earlier echo from
+    // sh would let the cancel land while node is still booting with the default handler.
+    args: ['-c', `"${process.execPath}" -e "process.on('SIGTERM', () => {}); console.log('ready'); setTimeout(() => {}, 3000)" & sleep 10`],
+    prompt: '',
+    cwd: dir,
+    graceMs: 2000,
+  });
+  await run.ready;
+  const started = Date.now();
+  run.cancel();
+  const r = await run;
+  assert.equal(r.status, 'cancelled');
+  assert.ok(Date.now() - started < 1000, 'waited for the grace period or the grandchild');
 });
 
 test('a missing cwd is reported as failed and names the directory, not the binary', async () => {

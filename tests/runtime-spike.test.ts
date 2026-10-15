@@ -101,9 +101,10 @@ for (const rt of runtimes) {
     assert.match(text, /pong/i);
     assert.ok(session.length > 0);
     const v = await spawnRuntime({ command: rt.command, args: ['--version'], prompt: '', cwd: dir });
-    t.diagnostic(`${rt.name} --version: ${v.stdout.trim()}`);
+    t.diagnostic(`${rt.name} --version: ${v.stdout.trim()} (node ${process.version})`);
     t.diagnostic(`${rt.name} flags: ${rt.args().join(' ')}`);
     t.diagnostic(`${rt.name} ping: ${summary(r)} session=${session} text=${JSON.stringify(text)}`);
+    t.diagnostic(`${rt.name} ping fields: ${errorFields(rt, r.stdout)}`);
     t.diagnostic(`${rt.name} stdout keys: ${rt.name === 'claude'
       ? Object.keys(JSON.parse(r.stdout)).join(',')
       : [...new Set(r.stdout.trim().split('\n').map((l) => JSON.parse(l).type))].join(',')}`);
