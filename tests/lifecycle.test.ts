@@ -184,3 +184,15 @@ test('accept must name the candidate SHA', () => {
   );
   assert.equal(c.stage, 'ESCALATED');
 });
+
+test('run_failed escalates with its reason; a duplicate run_failed is ignored (04-a)', () => {
+  let c = run(newCycle('c1', 'w1'), { type: 'claim', runId: 'dev1', base: 'B1' });
+  c = apply(c, { type: 'run_failed', runId: 'dev1', reason: 'timeout' });
+  assert.equal(c.stage, 'ESCALATED');
+  assert.match(c.escalation ?? '', /timeout/);
+  c = apply(c, { type: 'run_failed', runId: 'dev1', reason: 'timeout' });
+  assert.match(c.history.at(-1)!.note ?? '', /ignored/);
+  assert.equal(isEvent({ type: 'run_failed', runId: 'dev1' }), false);
+  assert.equal(isEvent({ type: 'run_failed', runId: 'dev1', reason: '' }), false);
+  assert.equal(isEvent({ type: 'run_failed', runId: 'dev1', reason: 'x' }), true);
+});

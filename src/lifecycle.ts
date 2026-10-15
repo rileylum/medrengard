@@ -40,7 +40,9 @@ export type Event =
   | { type: 'accept'; head: string }
   | { type: 'request_changes' }
   | { type: 'cancel' }
-  | { type: 'reject_dispatch'; reason: string };
+  | { type: 'reject_dispatch'; reason: string }
+  /** The run ended with no usable claim: timeout, crash, malformed output, cancelled by deadline. */
+  | { type: 'run_failed'; runId: string; reason: string };
 
 const str = (v: unknown) => typeof v === 'string' && v.length > 0;
 const arr = (v: unknown, each: (x: unknown) => boolean) => Array.isArray(v) && v.every(each);
@@ -60,6 +62,7 @@ const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
   request_changes: () => true,
   cancel: () => true,
   reject_dispatch: (e) => str(e.reason),
+  run_failed: (e) => str(e.runId) && str(e.reason),
 };
 
 /** True when apply can classify the value. Use at every boundary where events arrive as data. */
@@ -178,6 +181,12 @@ export function apply(c: Cycle, e: Event): Cycle {
 
     case 'reject_dispatch':
       return escalate(c, e, `dispatch rejected: ${e.reason}`);
+
+    // Counters do not move: an infrastructure failure is not a review attempt (spec, Recovery).
+    case 'run_failed': {
+      if (c.consumed.includes(e.runId)) return record(c, e, c.stage, {}, 'ignored: duplicate run_failed');
+      return escalate(c, e, `run failed: ${e.reason}`, { consumed: [...c.consumed, e.runId] });
+    }
 
     // Reachable at runtime: types are stripped, not checked, and events arrive as JSON.
     default:

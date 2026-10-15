@@ -95,10 +95,12 @@ test('a duplicate event with the same run ID written twice changes nothing', () 
   const store = new EventStore(dbPath('dup'));
   store.open('c1', 'w1');
   const events: Event[] = [...toStandardReview, { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' }];
-  for (const e of events) assert.equal(store.append('c1', e), true);
-  const before = store.load('c1');
-  assert.equal(store.append('c1', { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' }), false);
-  assert.equal(store.append('c1', { type: 'developer_result', runId: 'dev1', head: 'H2', artifacts: ['r'] }), false);
+  let before: Cycle | undefined;
+  for (const e of events) before = store.append('c1', e);
+  assert.deepEqual(store.load('c1'), before);
+  // A redelivery hands back the current Cycle, unchanged, so a caller cannot tell it from a no-op.
+  assert.deepEqual(store.append('c1', { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' }), before);
+  assert.deepEqual(store.append('c1', { type: 'developer_result', runId: 'dev1', head: 'H2', artifacts: ['r'] }), before);
   assert.deepEqual(store.load('c1'), before);
   assert.equal(store.events('c1').length, events.length);
   store.close();
@@ -163,13 +165,44 @@ test('store dedup matches apply: a redelivered claim reaches apply, results and 
   ];
   const store = new EventStore(dbPath('dedup'));
   store.open('c1', 'w1');
-  for (const e of events) assert.equal(store.append('c1', e), true, JSON.stringify(e));
+  for (const e of events) store.append('c1', e);
   const expected = events.reduce(apply, newCycle('c1', 'w1'));
   assert.deepEqual(stage(expected), ['VERIFYING', 1, 0]);
   assert.deepEqual(stage(store.load('c1')!), stage(expected));
   // Redelivered claim after the second result: apply escalates (claim outside QUEUED); the store must not hide it.
   const redelivered: Event = { type: 'claim', runId: 'dev2', base: 'B1' };
-  assert.equal(store.append('c1', redelivered), true);
-  assert.deepEqual(stage(store.load('c1')!), stage(apply(expected, redelivered)));
+  assert.deepEqual(stage(store.append('c1', redelivered)), stage(apply(expected, redelivered)));
+  store.close();
+});
+
+test('append returns the replayed Cycle, never one built from the caller\'s object (02-c parked)', () => {
+  // new String('PASS') serialises to "PASS" but fails `=== 'PASS'` live: applying the object in
+  // memory would count the verdict as a FAIL while replay counts it as a PASS.
+  const store = new EventStore(dbPath('canonical'));
+  store.open('c1', 'w1');
+  for (const e of toStandardReview) store.append('c1', e);
+  const wrapped = { type: 'verdict', runId: 'sr1', head: 'H1', verdict: new String('PASS') } as unknown as Event;
+  const returned = store.append('c1', wrapped);
+  assert.equal(returned.stage, 'ADVERSARIAL_REVIEW');
+  assert.deepEqual(returned, store.load('c1'));
+  // The divergence the finding describes: the live object reads as a FAIL.
+  assert.equal(apply(toStandardReview.reduce(apply, newCycle('c1', 'w1')), wrapped).stage, 'DEVELOPING');
+  store.close();
+});
+
+test('run IDs that differ only by a lone surrogate are two runs, not a duplicate (02-c parked)', () => {
+  // SQLite stores an ill-formed string as U+FFFD, so two such IDs collide in the unique index
+  // unless the index is keyed on the escaped JSON form.
+  const store = new EventStore(dbPath('surrogate'));
+  store.open('c1', 'w1');
+  for (const e of toStandardReview) store.append('c1', e);
+  store.append('c1', { type: 'verdict', runId: 'sr\uD800', head: 'H1', verdict: 'PASS' });
+  const c = store.append('c1', { type: 'verdict', runId: 'sr\uDC00', head: 'H1', verdict: 'PASS' });
+  assert.equal(c.stage, 'AWAITING_ACCEPTANCE');
+  assert.equal(store.events('c1').length, toStandardReview.length + 2);
+  for (const id of ['\uD800', 'c\uDC00']) {
+    assert.throws(() => store.open(id, 'w1'), /well-formed/, JSON.stringify(id));
+    assert.throws(() => store.open('c2', id), /well-formed/, JSON.stringify(id));
+  }
   store.close();
 });
