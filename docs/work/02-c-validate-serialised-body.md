@@ -16,3 +16,4 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
 
 ## Log
 - 2026-10-15 — ticket written after 02-b adversarial FAIL; owner: “Option 1 go”. Branch `feat/02-c-validate-serialised-body`.
+- 2026-10-15 — `39d2c59`: owner-run `npm test` 27 pass, 5 todo, 0 fail. Standard 1 PASS (notes only). Adversarial FAIL: all done-when items met and every 02-b reproduction closed, but the goal sentence overclaims; a caller that applies the unserialised object in memory (String wrappers, getters, Proxies) still diverges from replay, because the store cannot see the caller's side. Suggested fix: `append` returns the canonical parsed Event (or applies it and returns the Cycle) and the controller uses only that. Minor: lone-surrogate run IDs collide in the unique index. Budget spent: standard 1/2, adversarial 1/1. Stopped; owner decides. Prompts and verdicts in `/var/tmp/software_factory/02-c/`.

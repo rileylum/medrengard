@@ -10,8 +10,8 @@ Ticket [02-a SQLite event store](work/02-a-sqlite-event-store.md) in review on b
 
 ## Checks run
 
-2026-10-15: `npm test` on `582e399`, owner-run — 31 tests, 26 pass, 5 todo (SC-09, 10, 12, 14, 15 need readiness, waiver, finding and package models that v1 does not have yet), 0 fail.
+2026-10-15: `npm test` on `39d2c59`, owner-run — 32 tests, 27 pass, 5 todo (SC-09, 10, 12, 14, 15 need readiness, waiver, finding and package models that v1 does not have yet), 0 fail.
 
 ## Next action
 
-Ticket [02-c validate serialised body](work/02-c-validate-serialised-body.md), stacked on 02-b on 02-a. Owner-run tests on the SHA, then standard review, adversarial review, and one merge of the stacked PR carrying 02-a, 02-b and 02-c. After that: plan step 3, the runtime spike (owner leaning towards Claude Code as the first runtime), and a controller ticket that picks up the minors parked in the 02-b and 02-c tickets.
+02-c on `39d2c59`: standard 1 PASS, adversarial FAIL. The store meets its done-when list; the finding is that a future controller applying the unserialised object in memory can diverge from replay, and the suggested fix is an interface change (`append` returns the canonical Event, or applies it and returns the Cycle). Owner decides: 02-d for that interface change, or merge the stacked PR (02-a, 02-b, 02-c) and settle the calling convention in the controller ticket, where the caller is written. After that: plan step 3, the runtime spike.
