@@ -6,6 +6,7 @@ A vendor-neutral software delivery factory: a deterministic controller moves app
 
 1. [Session instructions](AGENTS.md)
 2. [Current status](docs/STATUS.md)
+3. [Working agreement](docs/workflow.md): plan step to ticket to branch to review to merge
 3. [Core lifecycle v1](docs/specs/core-lifecycle-v1.md), the spec being implemented
 4. [Decision register](docs/decisions.md)
 5. [Architecture baseline](docs/architecture/baseline.md), the one-screen summary, and [plan](docs/plan.md)

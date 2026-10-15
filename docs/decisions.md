@@ -23,6 +23,7 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | D-007 | DECIDED (A-001) | First runtimes: Pi and Claude Code |
 | D-016 | DECIDED (A-016) | [Core lifecycle v1](specs/core-lifecycle-v1.md) is the implementation baseline. One recovery rule: anything unclassified escalates; owner chooses child cycle or cancel. Edge-case semantics are added only when a test or a real incident requires them |
 | D-017 | DECIDED (A-016) | Design documents are not put through adversarial review on their own. The 2+1 rule applies to code with executable tests |
+| D-018 | DECIDED (A-017) | Plan steps are broken into Fast or Design tickets and delivered per [workflow.md](workflow.md) |
 
 ## Open
 
@@ -35,6 +36,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | O-009 | Staging and deployment ownership | Release tracking |
 
 ## Approval history
+
+### A-017 — 2026-10-15 — Working agreement
+
+Owner: “Yes plase, that sounds good. And make some notes in agents.md or somewhere for this to be our agreed workflow going forward - taking items from the plan, breaking them down into that framework and potentially multiple pieces of work”.
+
+Effect: [workflow.md](workflow.md) is the agreed process. Plan steps become Fast or Design tickets under `docs/work/`, one branch each, tests first, owner-run verification, one fresh-session standard review (two at most), one adversarial review, owner merge. First ticket: 02-a SQLite event store.
 
 ### A-016 — 2026-10-15 — Stop design iteration; implement the core
 

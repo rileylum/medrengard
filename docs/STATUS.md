@@ -12,4 +12,4 @@ Plan step 1 done: `src/lifecycle.ts` is the pure state machine; `tests/lifecycle
 
 ## Next action
 
-Plan step 2: SQLite event store behind the state machine. Then step 3, the runtime spike that launches `claude -p` and `pi -p` with JSON output and cancels a run mid-flight.
+Owner merges `feat/core-lifecycle-v1` to main. Then ticket [02-a SQLite event store](work/02-a-sqlite-event-store.md) on a fresh branch, per [workflow.md](workflow.md). Step 3, the runtime spike, follows.
