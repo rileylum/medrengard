@@ -8,13 +8,15 @@ Work: [SF-001](work/SF-001.md). [Cycle-12 ledger](reviews/SF-001-cycle-12/README
 
 ## Latest activity
 
+- Owner “Yep agree” approved **A-014/D-015 direction only**: dispatched initial development interrupted by escalation before candidate adoption requires child/cancel, matching correction recovery. Preserve valid material, ordinary healthy non-escalated pause and already-adopted candidates. No specification edits or cycle-13 scope/review budget authorised.
+
 - A-013 authorised A-012/D-014 trusted retained completion, child recovery of escalated dispatched corrections, related fence/replacement/closure ordering and matching scenarios under manual 2+1 limits.
 - Initial candidate `6fecd12c55ccd7ed6249dea88ab1bd68c117ed5d` standard FAIL on non-escalated result routing and absence-proof/late-count interaction. Applied one permitted correction; 112 scenarios total.
 - Final candidate **`502f482248ef8ffb3a765def15f43ea94fb32a2d`** received standard 2 PASS, then fresh adversarial needs-attention/FAIL on SAME SHA. No design edits after standard PASS. Cycle/adversarial base `7e39957b155422df133b8cac64f3d965d7d77703`; standard correction base is initial candidate above.
 - Owner subsequently replied “Yes please” to analysis only. [Completed bounded author triage](reviews/SF-001-cycle-12/triage.md); no specification edits, reviewer invocation or budget reset.
 - C12A1-F1: artifact-triggered child recovery is a real D-014 cost, not a false timeout or contradiction of SC-111's non-escalated branch. Recommend retaining the selected policy, not adding a retrieval exception.
-- C12A1-F2: explicit initial-development escalation disposition is missing, but a mandatory stall/contradiction is not proven. Recommend owner choice: child/cancel for dispatched initial development interrupted before candidate adoption, or explicit post-restoration handoff. Child/cancel is the recommended simpler boundary, not approved policy.
-- C12A1-F3: existing generic provenance/conflict guards oppose silent advancement; the asserted anomaly-only bypass is overstated. Explicit proof-dependency/capability invalidation and its relationship to immutable counts/no-child-transfer still need clarification. No new policy adopted.
+- C12A1-F2: explicit initial-development escalation disposition is missing, but a mandatory stall/contradiction is not proven. Recommend owner choice: child/cancel for dispatched initial development interrupted before candidate adoption, or explicit post-restoration handoff. Child/cancel was recommended in triage and subsequently selected as direction only by A-014/D-015.
+- C12A1-F3: existing generic provenance/conflict guards oppose silent advancement; the asserted anomaly-only bypass is overstated. Explicit proof-dependency/capability invalidation and its relationship to immutable counts/no-child-transfer still need clarification. Proof-contradiction clarification remains a recommendation, not newly approved semantics.
 
 ## Counters and checks
 
@@ -26,4 +28,4 @@ Work: [SF-001](work/SF-001.md). [Cycle-12 ledger](reviews/SF-001-cycle-12/README
 
 ## Next action — owner decision
 
-Ask whether initial dispatched development crossing escalation before candidate adoption should use the same child/cancel boundary as correction development; retain valid material, healthy pause and already-adopted-candidate distinctions. Also recommend preserving D-014's artifact-delay trade-off and clarifying authenticated proof-contradiction safety effects without recounting/reopening history. These recommendations are not approved. Any later revision needs explicit scope/policy direction and a fresh manual budget; no cycle-13 authority yet. Do not infer implementation or exact-spec acceptance, or use product policy loops to extend this spent cycle.
+Request bounded cycle-13 authority for A-014/D-015 initial-development child recovery, explicit authenticated proof-contradiction/dependent-evidence/capability safety handling, and directly matching scenarios/audit alignment. Preserve D-014's artifact-delay boundary, healthy pause, already-adopted candidates and immutable historical counts. Proposed manual budget: at most two standard reviews and one adversarial review; terminal quality failure or infrastructure failure stops for guidance. No such scope/budget is authorised yet. No implementation, exact-spec acceptance or automatic extension of cycle-12.

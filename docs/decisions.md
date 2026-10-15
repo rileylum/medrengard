@@ -30,6 +30,7 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 | D-012 | DECIDED (A-008 direction) | Baseline-aware verification: distinguish regressions/new tests from proven unrelated known failures on pinned baseline, retain failure evidence and tracked issues | SF-001 v0.2 |
 | D-013 | DECIDED (A-011 direction) | Abandoned candidate retains no automatic Q3/Q6 but may finish eligible checks/gates; stopped dispatched correction without valid completion needs independent child/cancel blocker; physical stop alone does not fence result acceptance | SF-001 cycle-11; detailed guards remain under review |
 | D-014 | DECIDED (A-012 direction) | Preserve trustworthy completion recorded while authority was valid, subject to proven ordering/identity; recovery of escalated correction development requires explicit child-cycle authority rather than waiver-dependent same-cycle handoff | SF-001 cycle-12 authorised by A-013; detailed semantics under review |
+| D-015 | DECIDED (A-014 direction) | Dispatched initial development interrupted by escalation before candidate adoption also requires explicit child-cycle authority or cancellation; preserve valid material, healthy non-escalated pause and already-adopted candidates | Future bounded SF-001 revision; no cycle-13 authority yet |
 | O-001 | OPEN | Validate Pi and Claude Code availability, permissions, cancellation, isolation and structured-result capabilities; selection does not prove support | Runtime spikes |
 | O-002 | OPEN | Exact human revision/new-cycle/reset semantics, including overrides after adversarial failure | SF-001 |
 | O-003 | OPEN | Head/base change after PASS or during review: evidence invalidation, remaining-budget handling and escalation | SF-001 |
@@ -65,6 +66,15 @@ Cycle-02 proposed clarifications (not yet design-approved): Q5 permits bounded, 
 Cycle-03 proposed clarification: validated blocker resolutions may accumulate while ESCALATED; only an empty unresolved-blocker set permits stage restoration. Safe, already-running confined verification siblings continue under observation without new dispatch; unsafe context/containment still requires stopping workers. The specific conservative paused-execution-failure direction is now accepted in A-004; other details remain under review.
 
 ## Owner approval history
+
+### A-014 — Initial-development child recovery (direction only)
+
+- Owner replied “Yep agree” to the explicit question whether initial development should use the same child-cycle recovery boundary after escalation. The question expressly reserved revision scope and review-budget approval for a separate decision.
+- D-015: when escalation interrupts dispatched initial development before candidate adoption, require explicit child-cycle authority or cancellation, as for correction development. Preserve valid completed material without treating it as parent continuation authority. Ordinary healthy non-escalated pause and candidates already adopted before escalation remain unchanged.
+- The child must independently satisfy readiness and fresh required verification/review gates; no parent PASS, waiver or budget transfers as authority. Initial development has no correction C slot to consume or refund merely because this boundary applies. Detailed guards/scenarios remain to be reviewed.
+- Accepts the additional owner intervention/repeated gates for this initial-development case rather than an implicit same-cycle post-restoration handoff. Does not approve a non-escalating artifact-retrieval exception.
+- This reply selects the initial-development direction only. The triage's proposed proof-dependency/capability invalidation clarification still requires bounded revision scope and reviewed semantics; do not infer approval of unspecified trust-recovery mechanisms.
+- Frozen design remains `502f482248ef8ffb3a765def15f43ea94fb32a2d`; cycle-12 remains stopped at standard 2/2 (FAIL, PASS), adversarial 1/1 FAIL, infrastructure 0. **No cycle-13 scope/budget, specification edit, new review, implementation, exact-spec acceptance or standing reset is authorised by this reply.**
 
 ### A-013 — 2026-10-15 — Bounded retained-evidence and child-recovery revision
 
