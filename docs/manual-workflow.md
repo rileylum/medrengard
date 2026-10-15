@@ -2,6 +2,8 @@
 
 Status: bootstrap approach accepted by owner approval A-001 (2026-10-15). It applies the v0.3 methodology while the controller does not exist. Detailed policies explicitly marked proposed or pending remain unresolved; accepting the approach does not approve future specifications.
 
+A-008 authorises drafting configurable product policy in lifecycle v0.2. It does NOT apply those proposed correction/retry loops to this manual procedure: each design revision still has its explicitly authorised 2+1 cap, adversarial FAIL stops, and infrastructure failure requires owner guidance. No worker may use the policy under design to extend its own review.
+
 ## Authority during bootstrap
 
 The human operator performs scheduling and authorises stage changes; agents perform bounded reasoning, implementation and review. Local versioned work records temporarily replace Issues/PR metadata and the execution ledger. This is intentionally manual and single-work-item-first, not a claim of automation or crash-safe concurrency.

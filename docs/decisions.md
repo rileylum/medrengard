@@ -8,7 +8,7 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 | --- | --- | --- | --- |
 | D-001 | DECIDED (source) | Deterministic controller; agents supply reasoning/results, not transition authority | §§1–2, 6 |
 | D-002 | DECIDED (source) | Vendor-neutral core; separate role/runtime/model and corporate/personal domains | §§1, 5, 15 |
-| D-003 | DECIDED (source) | At most two standard and one adversarial review per delivery cycle; terminal failures escalate | §§7, 15 |
+| D-003 | DECIDED (source; product numerical limits superseded by A-008/D-010) | Source 2+1 and stop-on-adversarial-FAIL retained for manual bootstrap; product now uses approved configurable budgets/correction | §§7, 15; A-008 |
 | D-004 | DECIDED (source) | Explicit human final acceptance and substantive design/governance approval | §§2–3, 10–12 |
 | D-005 | DECIDED (source) | Full risk-tailored SDLC; no initial automatic production deployments | §§1, 13, 15 |
 | D-006 | DECIDED (source) | Target pools: three developers, 2–3 reviewers, at most one concurrent adversarial run | §§1, 6 |
@@ -25,6 +25,9 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 | D-007 | DECIDED (A-001) | Initial runtime targets: Pi and Claude Code; core remains vendor-neutral | Runtime spikes |
 | D-008 | DECIDED (A-004) | Conservative paused-execution-failure direction: escalate and require new cycle/cancellation, no deferred retry; detailed transitions remain under review | SF-001 cycle-04 |
 | D-009 | DECIDED (A-007) | Escalated recovery settles to PAUSED, preserving permitted healthy observation; remove ACTIVE-preserving recovery exception; detailed transitions remain under review | SF-001 cycle-07 |
+| D-010 | DECIDED (A-008 direction) | Owner-approved pinned configuration defines total cycle review/replacement/diagnostic/correction limits; bounded standard/adversarial/verification corrections, both reviews repeat on new candidates | SF-001 v0.2 |
+| D-011 | DECIDED (A-008 direction) | Local CLI first; structured version-bound owner decisions, separate design/work authority and controller-derived readiness; future UI/GitHub same boundary | SF-001 v0.2 |
+| D-012 | DECIDED (A-008 direction) | Baseline-aware verification: distinguish regressions/new tests from proven unrelated known failures on pinned baseline, retain failure evidence and tracked issues | SF-001 v0.2 |
 | O-001 | OPEN | Validate Pi and Claude Code availability, permissions, cancellation, isolation and structured-result capabilities; selection does not prove support | Runtime spikes |
 | O-002 | OPEN | Exact human revision/new-cycle/reset semantics, including overrides after adversarial failure | SF-001 |
 | O-003 | OPEN | Head/base change after PASS or during review: evidence invalidation, remaining-budget handling and escalation | SF-001 |
@@ -36,9 +39,13 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 | O-009 | OPEN | Staging/deployment ownership, permissions and rollback responsibility | Release integration |
 | O-010 | OPEN | Available real-user validation and operational/product feedback, with collection owner and privacy limits | Applicable design/release work |
 
-## SF-001 recommendations awaiting review and approval
+## Current SF-001 revision awaiting review and exact-version approval
 
-Draft: [delivery lifecycle v0.1](specs/delivery-lifecycle-v0.1.md), with [scenario specifications](specs/delivery-lifecycle-v0.1-scenarios.md). None of these proposals has been accepted yet:
+Current draft: [delivery lifecycle v0.2](specs/delivery-lifecycle-v0.2.md), [scenarios](specs/delivery-lifecycle-v0.2-scenarios.md). A-008 accepts walkthrough directions, not the complete revised semantics/default configuration or implementation. Q1/Q2 now allow controller-admitted same-cycle corrections before terminal failure; Q3 uses configured replacement/backoff values with D-008 eligibility unchanged; Q6 defines one shared correction allowance and remaining-path guards. Structured commands, protected policy activation and known-baseline classification require validation. Both review gates, explicit candidate/package acceptance and separate manual merge remain required.
+
+### Historical v0.1 recommendations (not the current v0.2 policy)
+
+[Delivery lifecycle v0.1](specs/delivery-lifecycle-v0.1.md) and [scenarios](specs/delivery-lifecycle-v0.1-scenarios.md) remain unchanged as cycle-07 reviewed artifacts. Its complete specification was not accepted; the following records its earlier proposals, superseded where A-008/v0.2 explicitly changes them:
 
 - **Q1 / O-002:** explicit owner-authorised child cycle for revisions after terminal failure/final review; immutable old counters; repeat all required gates, including after adversarial failure.
 - **Q2 / O-003:** freeze reviewed candidates; unexpected head/base changes escalate rather than automatically spending another review. Valid stale verdicts consume their reserved attempt but cannot advance new code.
@@ -54,6 +61,17 @@ Cycle-02 proposed clarifications (not yet design-approved): Q5 permits bounded, 
 Cycle-03 proposed clarification: validated blocker resolutions may accumulate while ESCALATED; only an empty unresolved-blocker set permits stage restoration. Safe, already-running confined verification siblings continue under observation without new dispatch; unsafe context/containment still requires stopping workers. The specific conservative paused-execution-failure direction is now accepted in A-004; other details remain under review.
 
 ## Owner approval history
+
+### A-008 — 2026-10-15 — Walkthrough decisions and bounded v0.2 revision
+
+- Direction authority: owner agreed “Yes that looks good” to approved configuration as policy authority and total-per-cycle review caps, including correction after adversarial FAIL and fresh standard review of changed candidates; “Sounds good” to CLI/structured handoff; “Yes this is correct” to baseline-aware test failures and a shared correction allowance; “yes” to candidate-bound acceptance/separate manual merge. Earlier individual/batch authorisation and automatic in-scope progress were also affirmed during the walkthrough.
+- Revision authority: owner replied “yes” to the explicit request for one coherent specification revision covering those decisions, with the existing MANUAL bootstrap budget of at most two standard reviews and one adversarial review. New cycle SF-001-review-08, parent cycle-07.
+- D-010: versioned owner-approved configuration is authoritative for product values, without permanent 2+1 ceilings. Pin each cycle; no worker self-authority or silent live-budget edits. Corrections consume a shared total allowance, reviewers retain separate total caps, and each changed candidate repeats verification plus both reviews. Terminal escalation needs owner authority/new cycle. Numerical defaults remain unselected.
+- D-011: local CLI first, deterministic structured command boundary, exact identities/versions and owner privilege separation. Design approval, work authorisation and derived readiness are separate; future UI/GitHub uses same semantics. No existing CLI or runtime capability claimed.
+- D-012: new/changed tests and regressions return for bounded correction. Eligible equivalent failures on pinned B1 may be tracked as known failures without interruption; never relabel PASS. Inconclusive/flaky, in-scope, worsening, masking or non-waivable failures cannot silently bypass verification. Finite diagnostic accounting is part of the drafted mechanism, not a new unlimited allowance.
+- Acceptance remains structured and candidate/package-bound, with manual merge and no initial deployment. D-008/D-009 remain accepted; non-escalated empty-run recovery remains deferred until its implementation path is designed.
+- Cycle-07 PASS/PASS remains valid historical evidence on `a02c9b010c8888683b43cc2773cc03cde454023b`, not approval of v0.1 or v0.2. All earlier histories remain unchanged.
+- No full-spec acceptance or implementation. Manual cycle-08 still stops on second standard FAIL, any adversarial FAIL or infrastructure failure; the proposed product loops cannot extend this review. [Cycle-08 ledger](reviews/SF-001-cycle-08/README.md).
 
 ### A-007 — 2026-10-15 — PAUSED settlement and cycle-07
 

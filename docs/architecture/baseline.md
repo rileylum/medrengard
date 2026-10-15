@@ -26,7 +26,7 @@ These are conceptual capabilities, not four required applications.
 
 - Runtime, model and worker role are independent dimensions. Domain models must be vendor-neutral.
 - Target resource pools: three developers, two or three standard reviewers, at most one concurrent adversarial reviewer. These are maximum concurrency, not permanent teams.
-- A delivery cycle allows at most two standard-review attempts and one adversarial attempt. Terminal failure escalates.
+- Source v0.3 limits a delivery cycle to two standard-review attempts and one adversarial attempt. A-008/D-010 supersedes these numerical product ceilings with owner-approved, cycle-pinned configuration and bounded correction; the manual bootstrap retains its explicit 2+1 authorisations. Terminal failure still escalates.
 - Final PR acceptance, substantive intent changes and governing-rule changes require explicit human approval.
 - Personal and corporate execution domains must keep credentials, repositories, state, logs and artifacts separate.
 - Full SDLC is in scope, proportionate to risk; automatic production deployment is not in the initial release.
@@ -37,7 +37,7 @@ Owner-approved in A-001 (2026-10-15): TypeScript core, SQLite persistence, Pi an
 
 Other source proposals: GitHub Issues/PRs as human-facing records; isolated Git worktrees; machine-readable results and commit-bound evidence; portable skills and Git-backed knowledge; search before embeddings; PR-based review before a custom dashboard.
 
-Target authority split: GitHub holds human-visible work and approval history; the controller database holds operational state, leases, attempts, counters and reconciliation. Webhooks wake reconciliation; labels are not locks. During bootstrap, local work records stand in for those systems and are explicitly not a durable concurrent controller.
+Target authority split: GitHub holds human-visible work and approval history; the controller database holds operational state, leases, attempts, counters and reconciliation. Webhooks wake reconciliation; labels are not locks. During bootstrap, local work records stand in for those systems and are explicitly not a durable concurrent controller. A-008/D-011 selects a local CLI over structured authenticated controller commands as the initial owner handoff, before GitHub/UI integrations. Design Studio output or an LLM interpretation is not execution authority; READY is derived by the controller.
 
 ## Required contracts and invariants
 

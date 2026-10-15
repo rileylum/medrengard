@@ -2,27 +2,23 @@
 
 ## Where we are
 
-**SF-001-review-07: standard PASS and adversarial ship/PASS on the same frozen candidate. AWAITING_ACCEPTANCE. Complete specification not yet owner-approved; SF-002 implementation not READY.**
+**SF-001-review-08 authorised by A-008: drafting/checking lifecycle v0.2 after owner acceptance walkthrough requested changes. Full specification unaccepted; implementation not READY.**
 
-Work: [SF-001](work/SF-001.md). [Cycle-07 ledger](reviews/SF-001-cycle-07/README.md). **[Owner acceptance package and walkthrough](reviews/SF-001-cycle-07/acceptance.md).** [Exact adversarial report](reviews/SF-001-cycle-07/CHALLENGE.md).
+Work: [SF-001](work/SF-001.md). [Cycle-08 ledger](reviews/SF-001-cycle-08/README.md). [v0.2 specification](specs/delivery-lifecycle-v0.2.md), [v0.2 scenarios](specs/delivery-lifecycle-v0.2-scenarios.md).
 
 ## Latest activity
 
-- Owner selected D-009: escalated recovery settles PAUSED while eligible healthy checks continue under observation. A-007 separately authorised cycle-07's bounded simplification and 2+1 review budget.
-- Removed ACTIVE-preserving recovery; aligned healthy/stop/empty recovery for either origin, preserved safety, current evidence, failure accounting, counters and explicit resume. Aligned SC-61–64 and added mixed-sibling SC-65.
-- Frozen candidate **`a02c9b010c8888683b43cc2773cc03cde454023b`**, base `edaa2cbe661c9d616d92733a2287d86e5107ba7d`.
-- Standard attempt 1 PASS, no material findings. Independent adversarial attempt 1 ship/PASS, no substantive findings. No design edits after PASS; audit commits do not replace the reviewed specification.
-- Prepared criterion matrix, exact policy decisions, owner walkthrough and residual-obligation list. No implementation, dependencies, CI, runtime adapters, external publication or deployment.
+- Owner agreed configurable owner-approved policy, total per-cycle review caps with adversarial correction, shared correction allowance, baseline-aware verification and structured CLI approval handoff. Acceptance remains candidate/package-bound with separate manual merge.
+- A-008 separately authorises this coherent revision under MANUAL bootstrap 2+1 review limits. Proposed product loops do not extend this task's review authority.
+- New v0.2 files preserve v0.1 reviewed content unchanged. Added configuration/command trust boundaries, correction accounting, diagnostic baseline/known-failure handling; aligned scenarios and added SC-66–82, plus follow-on fixture obligations.
+- No implementation, CLI, dependencies, runtime proof, remote publication or full-spec acceptance. D-008/D-009 remain accepted. Concrete defaults, identity isolation, comparison protocols and the older non-escalated empty-run recovery question remain readiness obligations.
 
-## Counters and checks
+## Counters and evidence
 
-- Cycle-07: **standard 1/2 PASS; adversarial 1/1 PASS; infrastructure failures 0**.
-- Cycle-06 remains standard 1/2 PASS, adversarial 1/1 FAIL, infrastructure failures 0; all earlier verdicts/counters remain intact. Only cycle-01 had an infrastructure timeout.
-- Author structural checks: local Markdown targets, 65 unique ordered IDs, `git diff --check`, raw JSON/verdict/SHA validation, exact CHALLENGE equality and unchanged reviewed artifacts. Detached adversarial worktree tracked diff empty, only report untracked.
-- Both reviews used separate fresh tool-disabled contexts with commit-extracted text/diff; adversarial input excluded standard conclusions/developer reasoning. These are tabletop analyses, not direct reviewer Git inspection or executable lifecycle tests.
+- Cycle-08: **standard 0/2; adversarial 0/1; infrastructure failures 0**.
+- Cycle-07 retains standard 1/2 PASS and adversarial 1/1 PASS on `a02c9b010c8888683b43cc2773cc03cde454023b`, no infrastructure failures. Its acceptance package was the subject of the walkthrough, not approval of that specification. All earlier histories unchanged.
+- Structural checks/frozen candidate and review evidence are recorded in cycle-08 ledger as completed. Scenarios are not executable tests.
 
-## Next action — owner acceptance decision
+## Next action
 
-Ask the owner to inspect the acceptance package/walkthrough and approve or amend the exact candidate, including Q1–Q5, P-004 and initial owner-only/manual merge policy (O-006 portion). Accepted D-008/D-009 directions do not equal full-spec acceptance. Do not edit the frozen design to address non-blocking notes or start implementation.
-
-After explicit approval, record it and refine the first SF-002 contract. Runtime/SQLite/containment evidence, quality profiles/deadlines and the pre-existing non-escalated empty-run RECOVERING entry/exit uncertainty remain explicit implementation-readiness obligations, not silently solved by these PASSes.
+Check/freeze v0.2 and run fresh independent standard review, then one adversarial review only on standard PASS. First standard FAIL permits one bounded correction; second standard FAIL, adversarial FAIL or infrastructure failure stops for owner guidance. Do not approve the specification or start implementation implicitly.
