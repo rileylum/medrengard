@@ -14,4 +14,4 @@ Plan step 2 done (A-018): `src/store.ts` persists events in one `node:sqlite` ta
 
 ## Next action
 
-Step 2 merged to main. Ticket [03-a runtime spike](work/03-a-runtime-spike.md) written on `feat/03-a-runtime-spike`; awaiting owner go. Owner leaning towards Claude Code as the first real runtime.
+Step 3 in progress on `feat/03-a-runtime-spike`: [03-a](work/03-a-runtime-spike.md) code and [findings](work/03-a-findings.md) committed; both CLIs authenticated and probed. Next: owner runs `npm test` and `RUNTIME_SPIKE=1 npm test` on the SHA, then standard review 1.

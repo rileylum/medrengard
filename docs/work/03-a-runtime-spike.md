@@ -19,3 +19,4 @@ Verification: `npm test`, then `RUNTIME_SPIKE=1 npm test`, both run by the owner
 
 ## Log
 - 2026-10-15 — ticket written; awaiting owner go.
+- 2026-10-15 — owner: "go". Tests written first (tests/runtime.test.ts, tests/runtime-spike.test.ts), src/runtime/spawn.ts makes them pass. Implementer-run: `npm test` 46 tests, 31 pass, 10 skipped (RUNTIME_SPIKE unset), 5 todo, 0 fail; `RUNTIME_SPIKE=1` spike file 10 pass in 24 s. Findings in 03-a-findings.md. Awaiting owner-run tests, then standard review 1.
