@@ -29,7 +29,7 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 | D-011 | DECIDED (A-008 direction) | Local CLI first; structured version-bound owner decisions, separate design/work authority and controller-derived readiness; future UI/GitHub same boundary | SF-001 v0.2 |
 | D-012 | DECIDED (A-008 direction) | Baseline-aware verification: distinguish regressions/new tests from proven unrelated known failures on pinned baseline, retain failure evidence and tracked issues | SF-001 v0.2 |
 | D-013 | DECIDED (A-011 direction) | Abandoned candidate retains no automatic Q3/Q6 but may finish eligible checks/gates; stopped dispatched correction without valid completion needs independent child/cancel blocker; physical stop alone does not fence result acceptance | SF-001 cycle-11; detailed guards remain under review |
-| D-014 | DECIDED (A-012 direction) | Preserve trustworthy completion recorded while authority was valid, subject to proven ordering/identity; recovery of escalated correction development requires explicit child-cycle authority rather than waiver-dependent same-cycle handoff | Future bounded SF-001 revision; no revision budget yet |
+| D-014 | DECIDED (A-012 direction) | Preserve trustworthy completion recorded while authority was valid, subject to proven ordering/identity; recovery of escalated correction development requires explicit child-cycle authority rather than waiver-dependent same-cycle handoff | SF-001 cycle-12 authorised by A-013; detailed semantics under review |
 | O-001 | OPEN | Validate Pi and Claude Code availability, permissions, cancellation, isolation and structured-result capabilities; selection does not prove support | Runtime spikes |
 | O-002 | OPEN | Exact human revision/new-cycle/reset semantics, including overrides after adversarial failure | SF-001 |
 | O-003 | OPEN | Head/base change after PASS or during review: evidence invalidation, remaining-budget handling and escalation | SF-001 |
@@ -45,7 +45,7 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 
 Current draft: [delivery lifecycle v0.2](specs/delivery-lifecycle-v0.2.md), [scenarios](specs/delivery-lifecycle-v0.2-scenarios.md). A-008 accepts walkthrough directions, not the complete revised semantics/default configuration or implementation. Q1/Q2 now allow controller-admitted same-cycle corrections before terminal failure; Q3 uses configured replacement/backoff values with D-008 eligibility unchanged; Q6 defines one shared correction allowance and remaining-path guards. Structured commands, protected policy activation and known-baseline classification require validation. Both review gates, explicit candidate/package acceptance and separate manual merge remain required.
 
-A-012/D-014 subsequently selects retained trustworthy completion evidence and child-cycle recovery for escalated correction development, instead of the draft's waiver-dependent HELD_DEVELOPMENT handoff. The frozen cycle-11 specification has NOT been revised to implement this direction; revision scope/budget and exact-version acceptance remain separate gates.
+A-012/D-014 subsequently selects retained trustworthy completion evidence and child-cycle recovery for escalated correction development, instead of the draft's waiver-dependent HELD_DEVELOPMENT handoff. A-013 now authorises a bounded cycle-12 revision of that direction. Frozen cycle-11 evidence remains unchanged; exact-version acceptance is still a separate gate.
 
 ### Historical v0.1 recommendations (not the current v0.2 policy)
 
@@ -65,6 +65,13 @@ Cycle-02 proposed clarifications (not yet design-approved): Q5 permits bounded, 
 Cycle-03 proposed clarification: validated blocker resolutions may accumulate while ESCALATED; only an empty unresolved-blocker set permits stage restoration. Safe, already-running confined verification siblings continue under observation without new dispatch; unsafe context/containment still requires stopping workers. The specific conservative paused-execution-failure direction is now accepted in A-004; other details remain under review.
 
 ## Owner approval history
+
+### A-013 — 2026-10-15 — Bounded retained-evidence and child-recovery revision
+
+- Owner replied “Yes please” to cycle-12 limited to A-012/D-014, related fencing/replacement/closure ordering and matching scenarios, with at most two standard reviews and one adversarial review.
+- Authorises SF-001-review-12, parent cycle-11. Preserve trustworthy pre-expiry completion evidence under explicit provenance/order guards; replace waiver-dependent same-cycle development handoff with child/cancel recovery of escalated dispatched corrections. Ordinary healthy pause, undispatched-correction rules and already-accepted H2 history remain distinct.
+- Scope includes direct scenario/outline/audit alignment; no unrelated cleanup or runtime implementation. [Cycle-12 ledger](reviews/SF-001-cycle-12/README.md).
+- Prior candidates/verdicts/counters remain immutable. Manual terminal standard/adversarial failure or infrastructure failure stops for guidance; product configuration cannot extend this budget. No complete-spec acceptance, deployment or standing reset authority.
 
 ### A-012 — 2026-10-15 — Preserve evidence; conservative development recovery (direction only)
 
