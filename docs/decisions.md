@@ -23,6 +23,7 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 | P-004 | PROPOSED | Adversarial review for every change initially, including small changes; no implicit exemptions | First delivery review |
 | P-005 | DECIDED (A-001) | Run locally initially; corporate execution remains separately authorised | Initial hosting |
 | D-007 | DECIDED (A-001) | Initial runtime targets: Pi and Claude Code; core remains vendor-neutral | Runtime spikes |
+| D-008 | DECIDED (A-004) | Conservative paused-execution-failure direction: escalate and require new cycle/cancellation, no deferred retry; detailed transitions remain under review | SF-001 cycle-04 |
 | O-001 | OPEN | Validate Pi and Claude Code availability, permissions, cancellation, isolation and structured-result capabilities; selection does not prove support | Runtime spikes |
 | O-002 | OPEN | Exact human revision/new-cycle/reset semantics, including overrides after adversarial failure | SF-001 |
 | O-003 | OPEN | Head/base change after PASS or during review: evidence invalidation, remaining-budget handling and escalation | SF-001 |
@@ -49,9 +50,18 @@ P-004 (adversarial review on every change) remains proposed. O-005 quality defau
 
 Cycle-02 proposed clarifications (not yet design-approved): Q5 permits bounded, explicit initial-work batches without per-stage owner kicking; revisions remain individually authorised. One atomic work-lineage tip prevents duplicate cycles. Q4 distinguishes BLOCKED and FAILED waiver permission, preserves failed evidence and forbids unregistered rerun PASS from clearing a gate.
 
-Cycle-03 proposed clarification: validated blocker resolutions may accumulate while ESCALATED; only an empty unresolved-blocker set permits stage restoration. Safe, already-running confined verification siblings may finish under observation without new dispatch; unsafe context/containment still requires stopping workers. This remains a draft recommendation, not an accepted operating-policy change.
+Cycle-03 proposed clarification: validated blocker resolutions may accumulate while ESCALATED; only an empty unresolved-blocker set permits stage restoration. Safe, already-running confined verification siblings continue under observation without new dispatch; unsafe context/containment still requires stopping workers. The specific conservative paused-execution-failure direction is now accepted in A-004; other details remain under review.
 
 ## Owner approval history
+
+### A-004 — 2026-10-15 — Conservative paused failure and cycle-04
+
+- Authority: owner reply “Yes” to approval of the conservative rule and a new bounded cycle aligning paused-recovery transitions and SC-61, with up to two standard and one adversarial reviews.
+- Accepted direction D-008: execution failure while paused escalates and requires an individually authorised new cycle or cancellation, not a deferred same-cycle retry. This includes the restored VERIFYING/PAUSED case.
+- Authorised: SF-001-review-04, limited to C3S2-F1, consistent paused-recovery guards/effects and SC-61. Parent cycles remain exhausted and immutable.
+- Alternative rejected for this initial design: durable pending-retry machinery after owner resume. Conservative handling is simpler but can increase human interventions.
+- This is not acceptance of the full lifecycle specification, other Q1–Q5 proposals, implementation permission or a standing reset policy. [Cycle-04 ledger](reviews/SF-001-cycle-04/README.md).
+
 
 ### A-003 — 2026-10-15 — SF-001 multi-blocker revision cycle
 
