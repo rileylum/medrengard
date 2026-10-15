@@ -19,3 +19,4 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
 
 ## Log
 - 2026-10-15 — ticket written after 02-a adversarial FAIL; owner: “Yes option 1.” Owner: “go”. Branch `feat/02-b-reject-unclassifiable-events`.
+- 2026-10-15 — `8327523`: owner-run `npm test` 26 pass, 5 todo, 0 fail. Standard 1 FAIL (major: `checks: [null]` passed the shape guard and broke replay; minor: `{type:'toString'}` resolved via Object.prototype). Fixed test-first: check and artifact elements validated, `Object.hasOwn` before lookup.

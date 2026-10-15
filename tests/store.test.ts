@@ -115,6 +115,13 @@ test('append rejects an event apply cannot classify, before writing', () => {
     { type: 'developer_result', runId: 'dev1', head: 'H1' },
     { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'MAYBE' },
     { type: 'verification', head: 'H1' },
+    { type: 'verification', head: 'H1', checks: [null] },
+    { type: 'verification', head: 'H1', checks: [{ name: 'tests', result: 'OK' }] },
+    { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: [null] },
+    { type: 'toString' },
+    { type: 'valueOf' },
+    { type: 'hasOwnProperty' },
+    { type: '__proto__' },
     'cancel',
     null,
   ];

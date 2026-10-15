@@ -43,14 +43,16 @@ export type Event =
   | { type: 'reject_dispatch'; reason: string };
 
 const str = (v: unknown) => typeof v === 'string' && v.length > 0;
-const arr = (v: unknown) => Array.isArray(v);
+const arr = (v: unknown, each: (x: unknown) => boolean) => Array.isArray(v) && v.every(each);
+const obj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
+const isCheck = (v: unknown) => obj(v) && str(v.name) && ['PASS', 'FAIL', 'MISSING'].includes(v.result as string);
 
 // Shape checks, one per Event type. Everything apply dereferences must be present; anything else
 // is the sender's business. Extra fields are tolerated so an older controller can read newer logs.
 const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
   claim: (e) => str(e.runId) && str(e.base),
-  developer_result: (e) => str(e.runId) && arr(e.artifacts) && (e.head === undefined || typeof e.head === 'string'),
-  verification: (e) => str(e.head) && arr(e.checks),
+  developer_result: (e) => str(e.runId) && arr(e.artifacts, str) && (e.head === undefined || typeof e.head === 'string'),
+  verification: (e) => str(e.head) && arr(e.checks, isCheck),
   verdict: (e) => str(e.runId) && str(e.head) && (e.verdict === 'PASS' || e.verdict === 'FAIL'),
   head_changed: (e) => str(e.head),
   base_changed: (e) => str(e.base),
@@ -62,10 +64,10 @@ const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
 
 /** True when apply can classify the value. Use at every boundary where events arrive as data. */
 export function isEvent(v: unknown): v is Event {
-  if (typeof v !== 'object' || v === null) return false;
-  const e = v as Record<string, unknown>;
-  const check = typeof e.type === 'string' ? SHAPE[e.type as Event['type']] : undefined;
-  return check !== undefined && check(e);
+  if (!obj(v)) return false;
+  // hasOwn, not a plain lookup: {type:'toString'} would otherwise find Object.prototype.toString.
+  if (typeof v.type !== 'string' || !Object.hasOwn(SHAPE, v.type)) return false;
+  return SHAPE[v.type as Event['type']](v);
 }
 
 export interface Cycle {
