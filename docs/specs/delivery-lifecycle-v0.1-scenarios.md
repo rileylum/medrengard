@@ -52,7 +52,7 @@ Notation: `(S,A)` = completed standard/adversarial verdict counts. `H1/B1` = exa
 | SC-27 | DEVELOPING `(0,0)`; lease expires; termination deadline passes with descendant still able to write | ESCALATED/QUARANTINED `(0,0)`; fence result generation, record failed containment; never reassign branch on lease timeout alone |
 | SC-28 | DEVELOPING `(0,0)`; owner cancels; worker ignores stop past finite cancellation deadline | ESCALATED/QUARANTINED `(0,0)` with pending cancel intent; no new writer. Trusted process-tree/write-access containment evidence plus owner acknowledgement then yields CANCELLED/PAUSED; reservations close unused only after result reconciliation |
 | SC-29 | Controller restarts with active run still healthy | Reconcile identity, lease and candidate; reattach/observe without extra launch or retry/counter reset. Unsupported lookup leads to quarantine, not optimistic resume |
-| SC-30 | Required execution/lease/cancel deadline missing, or runtime ineligible | Dispatch blocked; request configuration/approval. No default infinite deadline or fallback to another unapproved provider |
+| SC-30 | VERIFYING `(0,0)`; required check's initial execution not launched because deadline is missing; no ambiguous intent | ESCALATED/PAUSED with unused initial allowance, resume_stage VERIFYING; request configuration. No launch, Q3 consumption, infinite deadline or provider fallback |
 
 ## Release and learning
 
@@ -94,13 +94,21 @@ Notation: `(S,A)` = completed standard/adversarial verdict counts. `H1/B1` = exa
 | SC-54 | Failure P was validly HUMAN-WAIVED; waiver expires in AWAITING_ACCEPTANCE `(1,1)` | ESCALATED/PAUSED `(1,1)` and effective FAILED restored; later PASS cannot clear it. Only renewed exact permitted failure waiver or new child decision can resolve |
 | SC-55 | ACCEPTED/PENDING `(1,1)`; owner declines merge; no in-flight merge and containment proven | Handoff CLOSED, acceptance history retained, live slot released; no merge. Later revision must atomically link one child and move CLOSED→REVISED under existing lineage guards |
 
+## Cycle-02 bounded correction: expiry and initial-check blocking
+
+| ID | Setup and stimulus | Expected state, counters and evidence |
+| --- | --- | --- |
+| SC-56 | Batch grant created C1 PREPARING `(0,0)` before its creation deadline; deadline passes, grant not revoked; work then becomes READY | Derived C1 authority remains valid; controller promotes to QUEUED `(0,0)` without renewal or new child. Unused batch entries cannot create cycles after expiry |
+| SC-57 | C1 STANDARD_REVIEW `(0,0)` with derived authority; original batch creation deadline passes, then valid current PASS arrives | ADVERSARIAL_REVIEW `(1,0)` with adversarial reservation; no staleness/escalation from creation deadline alone; explicit revocation would instead use context-invalidation rules |
+| SC-58 | SC-30 blocker; owner supplies missing deadline, same approved candidate/profile, no other blocker and no prior launch proven | Resolve to VERIFYING/PAUSED `(0,0)`; owner resumes control; controller registers and launches P's unused initial execution exactly once. Replacement count remains 0; no waiver or child cycle needed |
+
 ## SF-001 acceptance mapping
 
 | Criterion | Draft coverage | Outstanding validation |
 | --- | --- | --- |
-| AC1 identities/states/authority | Spec §§2–3; SC-01, 06, 13, 30, 41, 45–49, 55 | Independent transition walkthrough |
+| AC1 identities/states/authority | Spec §§2–3; SC-01, 06, 13, 30, 41, 45–49, 55–58 | Independent transition walkthrough |
 | AC2 budgets and revisions | Spec §4 Q1/Q3; SC-02–06, 20–22, 41, 48, 52 | Owner policy decision and independent review |
-| AC3 evidence freshness | Spec §§4–5; SC-07–08, 11–12, 16–19, 36–40, 44, 50–54 | Schema fixtures and eventual executable assertions |
+| AC3 evidence freshness | Spec §§4–5; SC-07–08, 11–12, 16–19, 36–40, 44, 50–54, 58 | Schema fixtures and eventual executable assertions |
 | AC4 recovery | Spec §6; SC-23–30 | Independent failure analysis; later process/SQLite experiments |
 | AC5 approval and release | Spec §§2, 4 Q4, 7; SC-09–15, 31–35, 42–43 | Owner authority/profile decisions; later enforcement tests |
 | AC6 alternatives and approval | Spec §4 Q1–Q5 and §8 | Owner approval of reviewed exact version |

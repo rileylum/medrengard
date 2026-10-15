@@ -2,7 +2,7 @@
 
 ## Where we are
 
-**SF-001-review-02 authorised (A-002); bounded corrections prepared for independent review. No design approval or implementation yet.**
+**SF-001-review-02 standard attempt 1 FAIL; bounded correction prepared for final standard review. No design approval or implementation yet.**
 
 Accepted direction: manual contracts-first bootstrap, TypeScript + SQLite, Pi and Claude Code, local execution. The owner approved a new 2+1 review cycle for S2-F1–F3; this is not acceptance of the design or a standing reset policy.
 
@@ -17,8 +17,8 @@ Active work: [SF-001](work/SF-001.md). [Cycle-02 ledger](reviews/SF-001-cycle-02
 
 ## Current counters and next action
 
-Cycle-02: standard 0/2; adversarial 0/1; infrastructure failures 0.
+Cycle-02: standard 1/2 (FAIL); adversarial 0/1; infrastructure failures 0. Candidate `f4bd520298208715808d5f6709b49ce29c898951` resolved the prior three gaps but review found two residual ambiguities: authority expiry and never-launched checks. Corrected with derived cycle authority and explicit pre-launch blocker resolution; added SC-56–58.
 
-**Freeze the revised candidate and obtain fresh-context standard review.** A first FAIL permits one bounded fix and one final standard review; second FAIL escalates. Standard PASS permits one adversarial review; its FAIL escalates. Infrastructure failures stop for guidance under the existing manual procedure.
+**Freeze the bounded correction and obtain fresh-context standard review 2.** A second FAIL escalates. Standard PASS permits one adversarial review; its FAIL escalates. Infrastructure failures stop for guidance under the existing manual procedure.
 
 No remote/publication, implementation, CI or executable controller tests. Parent evidence/counters remain intact. Do not infer final design acceptance from revision authorisation.
