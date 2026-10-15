@@ -12,6 +12,11 @@ export interface RunRequest {
   cwd: string;
 }
 
+/**
+ * Plain data only: the controller takes a structuredClone of the outcome before reading it, so
+ * getters, Proxies, functions and symbols are either run once inside its guard or turned into a
+ * failed run. Build outcomes from JSON.parse and literals.
+ */
 export type RunOutcome =
   /** The runtime returned something. `claim` is parsed JSON and unvalidated; the controller classifies it. */
   | { status: 'completed'; claim: unknown; sessionId?: string }

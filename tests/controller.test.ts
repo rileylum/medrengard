@@ -231,3 +231,64 @@ test('a reviewer run starts only when the cycle is in the stage for its role', a
   assert.equal(adapter.requests.length, 0);
   store.close();
 });
+
+// 04-c: the adversarial findings on 8664c1b. Values no runtime can produce, but a buggy in-process
+// adapter can; none may keep execute from settling or leave a run without an outcome.
+
+const throwingTag = () => Object.defineProperty({}, Symbol.toStringTag, { get() { throw new Error('tag'); } });
+const throwingProxy = () => new Proxy({}, { get() { throw new Error('trap'); } });
+const throwingGetter = (key: string, rest: Record<string, unknown> = {}) =>
+  Object.defineProperty({ ...rest }, key, { get() { throw new Error(`${key} getter`); }, enumerable: true });
+
+test('a rejection value that cannot be described still settles execute with run_failed', async () => {
+  for (const [name, value] of [['toStringTag throws', throwingTag()], ['proxy trap throws', throwingProxy()]] as const) {
+    const store = fresh();
+    const started = Date.now();
+    const c = await execute(store, 'c1', { name, start: () => Promise.reject(value) }, { ...req, role: 'developer' }, { deadlineMs: 2000, base: 'B1' });
+    assert.ok(Date.now() - started < 1000, `${name}: settled`);
+    assert.equal(c.stage, 'ESCALATED', name);
+    assert.equal(c.history.at(-1)!.event.type, 'run_failed', name);
+    store.close();
+  }
+});
+
+test('an outcome or claim with throwing getters or traps records run_failed and does not strand the cycle', async () => {
+  const outcomes: [string, unknown][] = [
+    ['status getter throws', throwingGetter('status')],
+    ['proxy outcome', throwingProxy()],
+    ['claim head getter throws', { status: 'completed', claim: throwingGetter('head', { artifacts: ['r'] }) }],
+    ['reason getter throws', throwingGetter('reason', { status: 'failed' })],
+    ['function outcome', () => 'completed'],
+  ];
+  for (const [name, outcome] of outcomes) {
+    const store = fresh();
+    const c = await execute(store, 'c1', { name, start: async () => outcome as never }, { ...req, role: 'developer' }, { deadlineMs: 2000, base: 'B1' });
+    assert.equal(c.stage, 'ESCALATED', name);
+    const last = c.history.at(-1)!.event as { type: string; reason: string };
+    assert.equal(last.type, 'run_failed', name);
+    assert.ok(last.reason.length > 0, name);
+    assert.deepEqual(c, store.load('c1'), name);
+    // The run has its outcome: a later developer execute is refused by the stage, not by an active run.
+    const again = await dev(store, { outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } });
+    assert.doesNotMatch(again.history.at(-1)!.note ?? '', /already active/, name);
+    store.close();
+  }
+});
+
+test('a reviewer run whose cycle was cancelled or escalated while it ran is recorded, not thrown', async () => {
+  const interruptions = [{ type: 'cancel' }, { type: 'head_changed', head: 'H2' }] as const;
+  for (const interruption of interruptions) {
+    const store = fresh();
+    for (const e of toStandardReview) store.append('c1', e);
+    const adapter = fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', verdict: 'PASS' } }, afterMs: 100 });
+    const running = execute(store, 'c1', adapter, { ...req, role: 'standard_reviewer' }, { deadlineMs: 2000 });
+    await new Promise((r) => setTimeout(r, 20));
+    const interrupted = store.append('c1', interruption);
+    const c = await running;
+    assert.equal(c.stage, interrupted.stage, interruption.type);
+    assert.deepEqual(stage(c), stage(interrupted), interruption.type);
+    assert.deepEqual(c, store.load('c1'), interruption.type);
+    assert.match(c.history.at(-1)!.note ?? '', /ignored/, interruption.type);
+    store.close();
+  }
+});

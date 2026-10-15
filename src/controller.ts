@@ -49,7 +49,7 @@ export async function execute(
  */
 export function receive(store: EventStore, cycleId: string, runId: string, role: Role, outcome: RunOutcome): Cycle {
   if (role !== 'developer') requireStage(store, cycleId, role, runId);
-  const o = normalise(outcome);
+  const o = normalise(plain(outcome));
   if (o.status !== 'completed') {
     return store.append(cycleId, { type: 'run_failed', runId, reason: o.status === 'failed' ? o.reason : 'cancelled' });
   }
@@ -63,16 +63,30 @@ export function receive(store: EventStore, cycleId: string, runId: string, role:
   }
 }
 
+const SETTLED: Stage[] = ['ESCALATED', 'ACCEPTED', 'CANCELLED'];
+
 // A reviewer verdict is counted against whatever review stage the cycle is in, so a run for the
 // wrong role would be miscounted. Refuse to start or record one; this is a controller bug, not a
-// runtime outcome, so it throws rather than escalating the cycle. A run that already has its
-// outcome recorded is exempt: its redelivery is a no-op whatever stage the cycle has reached.
+// runtime outcome, so it throws rather than escalating the cycle. Exempt: a run that already has
+// its outcome (redelivery is a no-op), and a cycle that is escalated or terminal (apply ignores
+// everything, so nothing can be miscounted and a cancel mid-review must not throw).
 function requireStage(store: EventStore, cycleId: string, role: Role, runId?: string): void {
   const cycle = store.load(cycleId);
   if (!cycle) throw new Error(`cycle ${cycleId} not open`);
-  if (runId !== undefined && cycle.consumed.includes(runId)) return;
+  if (runId !== undefined && (cycle.consumed.includes(runId) || SETTLED.includes(cycle.stage))) return;
   const expected = REVIEW_STAGE[role];
   if (expected && cycle.stage !== expected) throw new Error(`${role} run on a cycle in ${cycle.stage}, expected ${expected}`);
+}
+
+// The adapter contract is plain data. Cloning runs every getter and trap once, here, inside the
+// catch; what comes out has none, so no later read in this file can throw. Functions, symbols and
+// Proxies do not clone and become a failed run.
+function plain(outcome: unknown): unknown {
+  try {
+    return structuredClone(outcome);
+  } catch {
+    return { status: 'failed', reason: 'adapter outcome is not plain data' };
+  }
 }
 
 // Whatever the adapter actually returned, the controller must be able to write a well-formed
@@ -85,9 +99,11 @@ function normalise(outcome: unknown): RunOutcome {
   return { status: 'failed', reason: `adapter returned an unknown outcome: ${describe(outcome)}` };
 }
 
-// String(x) throws for a null-prototype object or a Symbol; a reason must never throw.
+// String(x) throws for a null-prototype object or a Symbol, and the Object.prototype.toString
+// fallback reads Symbol.toStringTag, which can throw too; a reason must never throw.
 function describe(v: unknown): string {
-  try { return String(v); } catch { return Object.prototype.toString.call(v); }
+  try { return String(v); } catch { /* fall through */ }
+  try { return Object.prototype.toString.call(v); } catch { return '[value that cannot be described]'; }
 }
 
 // Builds the event shape from whatever the runtime sent and lets the store's isEvent decide.
@@ -110,9 +126,10 @@ function bounded(adapter: Adapter, req: RunRequest, deadlineMs: number): Promise
       ac.abort();
     }, deadlineMs);
     // Wrapped in a Promise so a synchronous throw from start() is a rejection, not an escape.
+    // resolve runs before clearTimeout: if anything here could still throw, the timer would fire.
     new Promise<RunOutcome>((res) => res(adapter.start(req, ac.signal))).then(
-      (o) => { clearTimeout(timer); resolve(o); },
-      (err) => { clearTimeout(timer); resolve({ status: 'failed', reason: `adapter threw: ${describe(err)}` }); },
+      (o) => { resolve(o); clearTimeout(timer); },
+      (err) => { resolve({ status: 'failed', reason: `adapter threw: ${describe(err)}` }); clearTimeout(timer); },
     );
   });
 }
