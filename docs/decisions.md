@@ -30,7 +30,7 @@ Statuses retain the source convention: DECIDED = explicit source direction or re
 | D-012 | DECIDED (A-008 direction) | Baseline-aware verification: distinguish regressions/new tests from proven unrelated known failures on pinned baseline, retain failure evidence and tracked issues | SF-001 v0.2 |
 | D-013 | DECIDED (A-011 direction) | Abandoned candidate retains no automatic Q3/Q6 but may finish eligible checks/gates; stopped dispatched correction without valid completion needs independent child/cancel blocker; physical stop alone does not fence result acceptance | SF-001 cycle-11; detailed guards remain under review |
 | D-014 | DECIDED (A-012 direction) | Preserve trustworthy completion recorded while authority was valid, subject to proven ordering/identity; recovery of escalated correction development requires explicit child-cycle authority rather than waiver-dependent same-cycle handoff | SF-001 cycle-12 authorised by A-013; detailed semantics under review |
-| D-015 | DECIDED (A-014 direction) | Dispatched initial development interrupted by escalation before candidate adoption also requires explicit child-cycle authority or cancellation; preserve valid material, healthy non-escalated pause and already-adopted candidates | Future bounded SF-001 revision; no cycle-13 authority yet |
+| D-015 | DECIDED (A-014 direction) | Dispatched initial development interrupted by escalation before candidate adoption also requires explicit child-cycle authority or cancellation; preserve valid material, healthy non-escalated pause and already-adopted candidates | SF-001 cycle-13 authorised by A-015; detailed semantics under review |
 | O-001 | OPEN | Validate Pi and Claude Code availability, permissions, cancellation, isolation and structured-result capabilities; selection does not prove support | Runtime spikes |
 | O-002 | OPEN | Exact human revision/new-cycle/reset semantics, including overrides after adversarial failure | SF-001 |
 | O-003 | OPEN | Head/base change after PASS or during review: evidence invalidation, remaining-budget handling and escalation | SF-001 |
@@ -66,6 +66,15 @@ Cycle-02 proposed clarifications (not yet design-approved): Q5 permits bounded, 
 Cycle-03 proposed clarification: validated blocker resolutions may accumulate while ESCALATED; only an empty unresolved-blocker set permits stage restoration. Safe, already-running confined verification siblings continue under observation without new dispatch; unsafe context/containment still requires stopping workers. The specific conservative paused-execution-failure direction is now accepted in A-004; other details remain under review.
 
 ## Owner approval history
+
+### A-015 — Bounded cycle-13 consolidation, then reassessment
+
+- Owner replied “Okay lets do 13 for now and then re-assess” after the proposed cycle-13 scope/manual budget and discussion of accumulated design-review cycles. Authorises SF-001-review-13, parent cycle-12, with at most two standard reviews and one adversarial review.
+- Scope: A-014/D-015 child/cancel recovery for dispatched initial development escalated before candidate adoption; explicit authenticated absence/seal-proof contradiction safety effects, affected evidence/dependency and launcher eligibility handling; matching scenarios and direct audit/outline alignment. Preserve D-014's artifact-delay trade-off, ordinary healthy non-escalated pause, already-adopted candidates and historical evidence/counts. No non-escalating retrieval subsystem or autonomous same-cycle recovery expansion.
+- Concrete trust-safety guards are drafts for independent review, not accepted exact semantics. Review must trace interacting rules and identify concrete material failures; uncertain/deferred concerns and intentional policy costs remain explicitly distinguished, not silently waived or converted into PASS.
+- First standard FAIL permits one bounded correction/final standard review; second standard FAIL, any adversarial FAIL or infrastructure failure stops for guidance. Product policy cannot extend manual budgets. Review PASS is not exact-spec acceptance.
+- **After cycle-13, reassess with the owner regardless of outcome. No automatic cycle-14, additional review budget or implementation authority.** Preserve all earlier candidates, raw reports, verdicts and counters. No automatic merge/deploy, scope expansion or standing reset.
+- Base: `e5e43434cea763d0a0f01a5f3ccfeead360c0862`; [cycle-13 ledger](reviews/SF-001-cycle-13/README.md).
 
 ### A-014 — Initial-development child recovery (direction only)
 
