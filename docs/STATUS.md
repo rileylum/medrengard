@@ -2,22 +2,26 @@
 
 ## Where we are
 
-**SF-001-review-09 authorised by A-009: preparing C8S2-F1's bounded pending-result disposition correction. Full specification unaccepted; implementation not READY.**
+**SF-001-review-09: standard PASS then adversarial needs-attention/FAIL. ESCALATED for owner triage/decision. No further fix/review authorised; full specification unaccepted; implementation not READY.**
 
-Work: [SF-001](work/SF-001.md). [Cycle-09 ledger](reviews/SF-001-cycle-09/README.md). [v0.2 spec](specs/delivery-lifecycle-v0.2.md), [scenarios](specs/delivery-lifecycle-v0.2-scenarios.md).
+Work: [SF-001](work/SF-001.md). [Cycle-09 ledger](reviews/SF-001-cycle-09/README.md). **[Concrete sequences and reviewer-disagreement packet](reviews/SF-001-cycle-09/escalation.md).** [Exact adversarial report](reviews/SF-001-cycle-09/CHALLENGE.md).
 
 ## Latest activity
 
-- Owner chose eligible PASS retention/once-only revalidated routing and explicit failure blockers, then confirmed cycle-09's manual 2+1 budget.
-- Draft replaces silent route abandonment on escalation with explicit transactional dispositions. HELD_PASS stays behind all blockers; restored-stage owner resume routes once without recount. FAIL blockers cannot silently restore into Q6. Existing permitted waiver/known-baseline resolution may discharge verification failure, not review FAIL.
-- Added SC-86–89 and aligned SC-85, including waiver expiry/renewal, review/verification PASS/FAIL, cap boundary, replay/races and invalidation. No implementation, dependencies, publication or full-spec approval.
+- A-009 authorised explicit escalation dispositions for pending results, retained eligible PASS routing, failure blockers and matching scenarios under manual 2+1 review limits.
+- First standard review FAIL on `3ac9b466a9adee08b612170b62ac63efeba12378`: original cases resolved, late verdict arriving after escalation still lacked disposition. Applied one bounded correction and SC-90.
+- Frozen final candidate **`97b03854f7b73f9070bbb49bef1e82d8548427b4`**; standard comparison base `3ac9b466a9adee08b612170b62ac63efeba12378`; adversarial merge-base `f613d5707d04dac557da51f57f5d9a10982ca726`.
+- Standard attempt 2 PASS, C8S2-F1/C9S1-F1 resolved. Fresh adversarial review on SAME SHA needs-attention/FAIL with two medium findings. No design edits after PASS/FAIL.
+- C9A1-F1 (0.6): reviewer stopped without verdict lacks explicit unfulfilled-reservation blocker. Standard had identified/deferred the same pre-existing liveness gap; scope/materiality disagreement.
+- C9A1-F2 (0.5): ACTIVE assertion classification and committed pre-dispatch correction may lack explicit escalation disposition. Interpretive caveats remain; pause-retains vs escalation-abandons are different triggers, not automatically a contradiction. Triage packet preserves claims without silently confirming them.
 
-## Counters and evidence
+## Counters and checks
 
-- Cycle-09: **standard 0/2; adversarial 0/1; infrastructure failures 0**.
-- Cycle-08 remains standard 2/2 FAIL/FAIL, adversarial 0/1, infrastructure failures 0. All prior candidates/evidence remain unchanged; cycle-07 PASS/PASS is historical, not approval of changed v0.2.
-- Author checks/frozen candidate and independent evidence will be recorded in cycle-09 ledger. Tabletop scenarios are not executable lifecycle tests.
+- Cycle-09: **standard 2/2 (FAIL, PASS); adversarial 1/1 (FAIL); infrastructure failures 0**.
+- Cycle-08 remains standard 2/2 FAIL/FAIL, adversarial 0/1; all earlier histories/candidates unchanged. Historical cycle-07 PASS/PASS does not approve changed v0.2.
+- Author checks passed: local Markdown links, 90 ordered unique v0.2 scenario IDs, diff whitespace, raw JSON/verdict/SHA validation, exact CHALLENGE equality, unchanged frozen design and v0.1/cycle-08 evidence. Detached adversarial worktree tracked diff empty; only report untracked.
+- All reviews fresh and tool-disabled, using commit-extracted normative documents, manifests and scoped actual diffs. Adversarial packet omitted prior conclusions and developer reasoning. Tabletop analysis, not direct reviewer Git inspection or executable controller tests.
 
-## Next action
+## Next action — owner triage/decision
 
-Check/freeze candidate then fresh independent standard review. First standard FAIL allows one bounded correction; standard PASS permits one adversarial review on the same candidate. Terminal review failure or infrastructure failure stops for owner guidance. Product-policy loops do not extend this manual review budget.
+Review the two concrete sequences and scope/interpretation disagreements before authorising another correction cycle. No extra reviews or implementation on the spent budget. Any new scope/budget or acceptance decision must be explicit; finding disposition cannot rewrite the adversarial FAIL into PASS. Product configurable policy does not extend manual bootstrap authority.
