@@ -33,8 +33,12 @@ export class EventStore {
   /** Create a cycle. Returns the initial Cycle. Throws if the ID is already in use. */
   open(cycleId: string, workId: string, parentCycleId?: string): Cycle {
     const row: OpenRow = { type: 'open', workId, parentCycleId };
-    const inserted = this.insert(cycleId, row.type, null, row);
-    if (!inserted) throw new Error(`cycle ${cycleId} already open`);
+    // Fixed seq 0, not MAX+1: a second open must collide on the primary key and be ignored,
+    // otherwise it would land mid-log and reach apply, which has no 'open' case.
+    const result = this.db
+      .prepare('INSERT OR IGNORE INTO events (cycle_id, seq, type, run_id, body) VALUES (?, 0, ?, NULL, ?)')
+      .run(cycleId, row.type, JSON.stringify(row));
+    if (result.changes !== 1) throw new Error(`cycle ${cycleId} already open`);
     return newCycle(cycleId, workId, parentCycleId);
   }
 
@@ -42,7 +46,9 @@ export class EventStore {
    * Append one event. Returns false, and writes nothing, when an event of the same type with
    * the same run ID is already stored for this cycle: a redelivered result or verdict must not
    * grow the log. (type, run_id) rather than run_id alone because a claim and its
-   * developer_result legitimately share a run ID.
+   * developer_result legitimately share a run ID. apply dedups on run ID alone, so a run ID
+   * reused across roles is stored here and then recorded as ignored on replay; apply stays the
+   * arbiter of state either way.
    */
   append(cycleId: string, event: Event): boolean {
     if (!this.exists(cycleId)) throw new Error(`cycle ${cycleId} not open`);

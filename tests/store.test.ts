@@ -38,7 +38,17 @@ test('events append to one SQLite table keyed by cycle', () => {
   b.close();
 });
 
-test('loading a cycle replays every scenario to the same state as the in-memory run', () => {
+test('opening a cycle twice throws and leaves its log intact', () => {
+  const store = new EventStore(dbPath('reopen'));
+  store.open('c1', 'w1');
+  store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1' });
+  assert.throws(() => store.open('c1', 'w1'), /already open/);
+  assert.equal(store.events('c1').length, 1);
+  assert.deepEqual(stage(store.load('c1')!), ['DEVELOPING', 0, 0]);
+  store.close();
+});
+
+test('loading a cycle replays every SC scenario (minus the five todo ones) to the same state as the in-memory run', () => {
   const store = new EventStore(dbPath('replay'));
   for (const s of scenarios) {
     const expected = s.events.reduce(apply, newCycle(s.name, 'w1'));

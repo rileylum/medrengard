@@ -19,3 +19,4 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
 ## Log
 - 2026-10-15 — ticket written; awaiting owner go.
 - 2026-10-15 — owner: “go”. Branch `feat/02-a-sqlite-event-store`.
+- 2026-10-15 — `b3280df`: owner-run `npm test` 20 pass, 5 todo, 0 fail. Standard 1 FAIL (major: `open()` on an existing cycle inserted a second open row at MAX+1 and broke replay). Fixed test-first; open inserts at seq 0 so the primary key rejects it.
