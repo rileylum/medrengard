@@ -9,7 +9,7 @@ export interface CliSpec {
   name: 'claude' | 'pi';
   command: string;
   args: string[];
-  /** Turn a finished child into an outcome. Called only for status `exited`; must not throw. */
+  /** Turn a finished child into an outcome. Called only for status `exited`. A throw is a failed run, via the controller. */
   parse(stdout: string, stderr: string, exitCode: number | null): RunOutcome;
 }
 
@@ -45,7 +45,6 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
         scope: isolation === 'cgroup' ? `sf-${req.runId}` : undefined,
       });
       signal.addEventListener('abort', () => run.cancel(), { once: true });
-      if (signal.aborted) run.cancel();
       const r = await run;
       return outcome(spec, r);
     },
@@ -55,11 +54,7 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
 function outcome(spec: CliSpec, r: RunResult): RunOutcome {
   if (r.status === 'cancelled') return { status: 'cancelled' };
   if (r.status === 'failed' || r.status === 'overflow') return failed(r.stderr);
-  try {
-    return spec.parse(r.stdout, r.stderr, r.exitCode);
-  } catch (err) {
-    return failed(`${spec.name} output could not be parsed: ${String(err)}`);
-  }
+  return spec.parse(r.stdout, r.stderr, r.exitCode);
 }
 
 // A reason is a sentence for the escalation, not a transcript; cut so it can never be the size problem.
@@ -81,7 +76,8 @@ function claimFrom(text: string, sessionId?: string): RunOutcome {
   }
 }
 
-const parseJson = (s: string): Record<string, unknown> | undefined => {
+// Loosely typed on purpose: the shapes are the CLIs' and every read below tolerates a missing path.
+const parseJson = (s: string): Record<string, any> | undefined => {
   try {
     const v = JSON.parse(s);
     return typeof v === 'object' && v !== null ? v : undefined;
@@ -120,8 +116,8 @@ export const pi: CliSpec = {
       return failed(`pi: ${firstLine(stderr) || `run ended without agent_end (exit ${exitCode})`}`);
     }
     const turn = events.filter((e) => e.type === 'turn_end').at(-1);
-    const content = ((turn?.message as { content?: unknown } | undefined)?.content ?? []) as { type?: string; text?: string }[];
-    const text = Array.isArray(content) ? content.filter((c) => c?.type === 'text').map((c) => c.text ?? '').join('') : '';
+    const content: any[] = Array.isArray(turn?.message?.content) ? turn.message.content : [];
+    const text = content.filter((c) => c?.type === 'text').map((c) => String(c.text ?? '')).join('');
     return claimFrom(text, sessionId);
   },
 };
