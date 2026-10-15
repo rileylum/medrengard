@@ -41,7 +41,7 @@ Draft: [delivery lifecycle v0.1](specs/delivery-lifecycle-v0.1.md), with [scenar
 
 - **Q1 / O-002:** explicit owner-authorised child cycle for revisions after terminal failure/final review; immutable old counters; repeat all required gates, including after adversarial failure.
 - **Q2 / O-003:** freeze reviewed candidates; unexpected head/base changes escalate rather than automatically spending another review. Valid stale verdicts consume their reserved attempt but cannot advance new code.
-- **Q3 / O-004:** one safe automatic replacement execution per cycle, at least five seconds backoff; malformed results and actual verification failures escalate. Unknown process containment quarantines. Finite environment-specific deadlines are required before unattended dispatch.
+- **Q3 / O-004:** one safe automatic replacement execution per cycle, at least five seconds backoff, only for eligible ACTIVE-origin recovery with no intervening pause/escalation. Accepted D-008 excludes failures while paused or delivery escalated from deferred retry; malformed results and actual verification failures escalate. Unknown process containment quarantines. Finite environment-specific deadlines are required before unattended dispatch.
 - **Q4 / O-008:** owner is sole initial approval authority; only profile-permitted, candidate-specific check waivers; identity, safety, required independent verdicts and hard limits cannot be waived.
 
 Standard review 1 returned FAIL; bounded corrections clarify cycle creation, recovery/reservation transitions, context validity, evidence phases and merge handoff. Initial owner-only/manual merge authority (part of O-006) is now an explicit proposal requiring approval before SF-002E; no auto-merge is authorised.
