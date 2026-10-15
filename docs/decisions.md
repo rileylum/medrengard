@@ -62,6 +62,14 @@ Cycle-03 proposed clarification: validated blocker resolutions may accumulate wh
 
 ## Owner approval history
 
+### A-009 — 2026-10-15 — Pending-result escalation disposition
+
+- Scope authority: owner said “Okay, lets move forward with that” to retaining eligible PASS evidence for once-only routing after revalidation and explicit quality blockers for pending failures, with waiver-expiry/renewal, replay and invalidation scenarios.
+- Budget authority: owner replied “confirmed” to the explicit request for cycle-09, at most two standard reviews and one adversarial review under existing manual stop rules.
+- Authorised SF-001-review-09, parent cycle-08. Scope solely C8S2-F1 and directly matching spec/scenario/audit alignment; no unrelated cleanup, full-spec approval, implementation or standing budget reset.
+- Chosen direction: retain authentic same-candidate PASS routing behind all blockers, no recount or unnecessary re-review; escalated review FAIL cannot be operationally resolved, verification FAIL uses only existing permitted waiver/known-baseline resolutions or child/cancel. Invalidation and terminal states cannot resurrect a result. Detailed semantics require independent review.
+- All cycle-08 FAIL/FAIL counters and earlier evidence remain unchanged. Terminal standard/adversarial failure or infrastructure failure stops for owner guidance. [Cycle-09 ledger](reviews/SF-001-cycle-09/README.md).
+
 ### A-008 — 2026-10-15 — Walkthrough decisions and bounded v0.2 revision
 
 - Direction authority: owner agreed “Yes that looks good” to approved configuration as policy authority and total-per-cycle review caps, including correction after adversarial FAIL and fresh standard review of changed candidates; “Sounds good” to CLI/structured handoff; “Yes this is correct” to baseline-aware test failures and a shared correction allowance; “yes” to candidate-bound acceptance/separate manual merge. Earlier individual/batch authorisation and automatic in-scope progress were also affirmed during the walkthrough.
