@@ -18,3 +18,4 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
 
 ## Log
 - 2026-10-15 — ticket written; awaiting owner go.
+- 2026-10-15 — owner: “go”. Branch `feat/02-a-sqlite-event-store`.
