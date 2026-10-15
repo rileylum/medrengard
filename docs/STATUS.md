@@ -19,6 +19,8 @@ Plan step 4 in progress: ticket [04-a](work/04-a-adapter-interface.md) (Design r
 
 2026-10-16: `npm test` on `8664c1b` (04-b), owner-run — 68 tests, 53 pass, 10 skipped, 5 todo, 0 fail. Standard review 1 PASS; adversarial FAIL (two majors: hostile in-process values from an adapter, a throwing `toStringTag` getter on a rejection and a throwing `status` getter on an outcome, strand a cycle; see the ticket log).
 
+2026-10-16: `npm test` on the 04-c branch, implementer-run — 71 tests, 56 pass, 10 skipped, 5 todo, 0 fail. Not yet owner-run.
+
 ## Next action
 
-Owner decides on the 04-b adversarial FAIL: a small fix ticket making `receive` and `bounded` total over any JavaScript value (recommended), or merge with the findings parked.
+Owner runs `npm test` on the 04-c SHA; then standard review 1 for 04-c via `claude -p`.
