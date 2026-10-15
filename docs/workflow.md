@@ -54,7 +54,7 @@ Budget per ticket: two standard reviews, one adversarial. Spent budget does not 
 
 ## Reviews
 
-Reviews run in a fresh session, for example through the `dispatch` skill or `claude -p`. The reviewer prompt contains the ticket, the diff against main, the SHA, the test output and AGENTS.md. It must not contain the implementer's reasoning or this conversation. The reviewer returns:
+Reviews run in a fresh session through `claude -p` with the prompt in a file. Do not use the `dispatch` skill; it depends on herdr, which is not part of this setup. The reviewer prompt contains the ticket, the diff against main, the SHA, the test output and AGENTS.md. It must not contain the implementer's reasoning or this conversation. The reviewer returns:
 
 ```
 Verdict: PASS | FAIL
