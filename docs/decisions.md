@@ -71,6 +71,7 @@ Cycle-03 proposed clarification: validated blocker resolutions may accumulate wh
 - Owner replied “Yes please” to cycle-12 limited to A-012/D-014, related fencing/replacement/closure ordering and matching scenarios, with at most two standard reviews and one adversarial review.
 - Authorises SF-001-review-12, parent cycle-11. Preserve trustworthy pre-expiry completion evidence under explicit provenance/order guards; replace waiver-dependent same-cycle development handoff with child/cancel recovery of escalated dispatched corrections. Ordinary healthy pause, undispatched-correction rules and already-accepted H2 history remain distinct.
 - Scope includes direct scenario/outline/audit alignment; no unrelated cleanup or runtime implementation. [Cycle-12 ledger](reviews/SF-001-cycle-12/README.md).
+- After terminal cycle-12 adversarial FAIL, owner separately replied “Yes please” to bounded analysis of its three findings only. [Completed author triage](reviews/SF-001-cycle-12/triage.md) preserves the verdicts and spent budget. No design edits/reviews authorised; recommendations about initial-development child recovery and proof-contradiction safety are not accepted policy or cycle-13 authority.
 - Prior candidates/verdicts/counters remain immutable. Manual terminal standard/adversarial failure or infrastructure failure stops for guidance; product configuration cannot extend this budget. No complete-spec acceptance, deployment or standing reset authority.
 
 ### A-012 — 2026-10-15 — Preserve evidence; conservative development recovery (direction only)
