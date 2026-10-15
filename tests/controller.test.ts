@@ -132,7 +132,9 @@ test('the controller mints a fresh run ID per execute and does not start a run t
   const b = await execute(store, 'c1', adapter, { ...req, role: 'developer' }, { deadlineMs: 5000, base: 'B1' });
   assert.equal(adapter.requests.length, 1);
   assert.equal(b.stage, 'ESCALATED');
-  assert.notEqual(a.runs[0].runId, b.history.at(-1)!.event.type === 'claim' ? (b.history.at(-1)!.event as { runId: string }).runId : '');
+  const refused = b.history.at(-1)!.event as { type: string; runId: string };
+  assert.equal(refused.type, 'claim');
+  assert.notEqual(refused.runId, a.runs[0].runId);
   assert.match(a.runs[0].runId, /^[0-9a-f-]{36}$/);
   store.close();
 });

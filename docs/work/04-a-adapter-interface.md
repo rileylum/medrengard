@@ -64,7 +64,7 @@ Fake adapter, `tests/fake-adapter.ts`: scripted per call — settle with a given
 
 Done when:
 - A `completed` outcome with a well-formed developer claim moves DEVELOPING to VERIFYING, and with a well-formed verdict moves STANDARD_REVIEW on; verified by test through `execute` and `store.load()`.
-- A `completed` outcome whose claim the store cannot classify records `run_failed` and the cycle is ESCALATED with reason `malformed result`; verified by test with a missing head, a non-array artifacts and a non-object claim.
+- A `completed` outcome whose claim the store cannot classify records `run_failed` and the cycle is ESCALATED with reason `malformed result`; verified by test with a non-array artifacts, missing artifacts and non-object claims. A missing head is a well-formed result that `apply` rejects (SC-07) and escalates as such; verified by the same test.
 - An adapter that has not settled by `deadlineMs` yields `run_failed` with reason `timeout` within `deadlineMs` plus one second, both for an adapter that honours abort and one that ignores it; a settle arriving later changes nothing; verified by test.
 - A `cancelled` or `failed` outcome escalates with its reason; verified by test.
 - The same run's outcome delivered twice changes nothing: the second `append` returns a Cycle deep-equal to the first and the event count is unchanged; verified by test.
@@ -78,3 +78,5 @@ Verification: `npm test`, run by the owner on the reviewed SHA. Then `lazy-revie
 
 ## Log
 - 2026-10-16 — branch `feat/04-a-adapter-interface` off main at `cecdb5b`. Ticket drafted on the Design route; awaiting owner read and go, and a decision on moving the two 03-b lines to 04-b.
+- 2026-10-16 — owner: “go with your recommendations” (A-020). The two 03-b lines move to 04-b.
+- 2026-10-16 — tests first (`tests/controller.test.ts`, `tests/fake-adapter.ts`, RF-01/RF-02 scenarios, two store tests; 7 red), then `src/adapter.ts`, `src/controller.ts`, `run_failed` in lifecycle.ts, `append` returns the Cycle. Two deviations from the note: `execute`'s last argument is `{ deadlineMs, base? }` (the developer claim needs the base SHA, which the adapter does not); a claim with a missing head is a well-formed `developer_result` that `apply` rejects itself (SC-07), so it is recorded as such and escalates with `missing commit`, not as `run_failed` — the done-when wording is corrected. Mutation-checked: run_failed dedup in the store, the dedup key escaping, the refused-claim guard and the error-propagation guard each fail a test when removed; the `consumed` bookkeeping in `run_failed` did not and was deleted (a redelivery always meets an ESCALATED cycle). Lazy-review: three cuts applied. Implementer-run: `npm test` 62 tests, 47 pass, 10 skipped, 5 todo, 0 fail. Awaiting owner-run tests, then standard review 1.

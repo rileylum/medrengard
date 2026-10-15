@@ -70,13 +70,8 @@ function bounded(adapter: Adapter, req: RunRequest, deadlineMs: number): Promise
       resolve({ status: 'failed', reason: 'timeout' });
       ac.abort();
     }, deadlineMs);
-    let started: Promise<RunOutcome>;
-    try {
-      started = adapter.start(req, ac.signal);
-    } catch (err) {
-      started = Promise.reject(err);
-    }
-    started.then(
+    // Wrapped in a Promise so a synchronous throw from start() is a rejection, not an escape.
+    new Promise<RunOutcome>((res) => res(adapter.start(req, ac.signal))).then(
       (o) => { clearTimeout(timer); resolve(o); },
       (err) => { clearTimeout(timer); resolve({ status: 'failed', reason: `adapter threw: ${String(err)}` }); },
     );
