@@ -20,3 +20,4 @@ Verification: `npm test`, then `RUNTIME_SPIKE=1 npm test`, both run by the owner
 ## Log
 - 2026-10-15 — ticket written; awaiting owner go.
 - 2026-10-15 — owner: "go". Tests written first (tests/runtime.test.ts, tests/runtime-spike.test.ts), src/runtime/spawn.ts makes them pass. Implementer-run: `npm test` 46 tests, 31 pass, 10 skipped (RUNTIME_SPIKE unset), 5 todo, 0 fail; `RUNTIME_SPIKE=1` spike file 10 pass in 24 s. Findings in 03-a-findings.md. Awaiting owner-run tests, then standard review 1.
+- 2026-10-15 — owner-run `npm test` on 7d7dd45: 46 tests, 31 pass, 10 skipped, 5 todo, 0 fail. Owner-run `RUNTIME_SPIKE=1 npm test`: 40 pass, 1 cancelled (`claude: with tools disabled, asking for a file does not create it` timed out at 120 s; child ran about 8 min, no file created). Three re-probes returned in under 7 s; cause unknown. Fix: the deny test cancels at 60 s and records it. Findings updated. Awaiting owner re-run of the live suite.

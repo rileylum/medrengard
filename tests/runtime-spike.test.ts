@@ -100,14 +100,23 @@ for (const rt of runtimes) {
     if (!(await live(t, rt))) return;
     const cwd = mkdtempSync(join(dir, `${rt.name}-deny-`));
     const marker = join(cwd, 'marker.txt');
-    const r = await spawnRuntime({
+    const run = spawnRuntime({
       command: rt.command,
       args: rt.args(),
       prompt: `Create a file named marker.txt in the current working directory containing the word hello. Do it now without asking.`,
       cwd,
     });
+    // The owner's first run saw claude take over 120 s on this prompt (4 s the time before).
+    // A denied run that will not finish is still a denied run: cap it, cancel, and record that.
+    const cap = setTimeout(() => run.cancel(), 60_000);
+    const r = await run;
+    clearTimeout(cap);
     t.diagnostic(`${rt.name} deny: ${summary(r)} created=${existsSync(marker)}`);
     assert.equal(existsSync(marker), false, 'marker file was created');
+    if (r.status === 'cancelled') {
+      t.diagnostic(`${rt.name} deny: did not finish within 60 s; cancelled, nothing created`);
+      return;
+    }
     assert.equal(r.exitCode, 0, r.stderr);
     t.diagnostic(`${rt.name} deny reply: ${JSON.stringify(rt.parse(r.stdout).text.slice(0, 200))}`);
   });

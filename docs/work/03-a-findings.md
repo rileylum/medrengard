@@ -15,7 +15,7 @@ Flags: `claude -p --output-format json --tools "" --no-session-persistence`.
 | Case | Exit | Observed |
 | --- | --- | --- |
 | Ping | 0 | One JSON object on stdout, 1.8 KB, nothing on stderr. `type:"result"`, `result:"pong"`, `session_id` (UUID), `is_error:false`, `subtype:"success"`, `terminal_reason:"completed"`, `num_turns`, `total_cost_usd`, `usage`, `modelUsage`, `permission_denials`, `duration_ms`, `uuid`. Wall 2.9 s. |
-| Tools disabled, asked to create a file | 0 | No file. The `result` text was a tool call rendered as text: `入 (tool_use)\n{ "file_path": ..., "content": "hello\n" }`. The model tried to call a tool that was not offered; nothing executed. |
+| Tools disabled, asked to create a file | 0 | No file. The `result` text was a tool call rendered as text: `入 (tool_use)\n{ "file_path": ..., "content": "hello\n" }`. The model tried to call a tool that was not offered; nothing executed. `num_turns:1`, 2 to 6 s in four runs. **In the owner's first run this case did not return for over 120 s** (the suite waited about eight minutes for the child to exit). No output was captured, so the cause is unknown; three later probes with the same prompt all returned within 7 s. The test now cancels the run at 60 s and records that; the file was still not created. |
 | Cancelled 3 s in (SIGTERM, 2 s grace) | 143 | Exited 0.8 s after SIGTERM, on its own, with exit code 143 (not a signal from Node's view). Stdout empty: no partial JSON. |
 | `--model no-such-model-xyz` | 1 | Still a full JSON result on stdout: `is_error:true`, `subtype:"success"`, `terminal_reason:"api_error"`, `api_error_status:404`, `result` is a human sentence about the model. Stderr: `[claude-code:unrecognized_model] {"model":...}`. 2.2 s. |
 | No auth (empty HOME, no env keys) | 1 | Same JSON shape: `is_error:true`, `api_error_status:null`, `result:"Not logged in · Please run /login"`. Stderr empty. 0.6 s. |
@@ -46,7 +46,7 @@ Things a controller must not assume: a `session` line does not mean the run will
 - Both honour SIGTERM and exit 143 within one second; the SIGKILL fallback was not needed.
 - Both return exit 1 for bad model and missing auth. Claude says so in JSON on stdout; pi says so in plain text on stderr.
 - Tool denial works in both: `--tools ""` and `--no-tools`. The Claude model may still emit tool-call-shaped text; the file is not created.
-- Ten live tests took 24 s total, well under the 120 s per-test cap.
+- Ten live tests took 24 s in the implementer's run. One owner run had the Claude deny case exceed 120 s (see above). A controller cannot rely on `claude -p` returning promptly even for a one-turn prompt; it needs its own deadline and cancel, which the spawn helper provides.
 
 ## For 04-a
 
