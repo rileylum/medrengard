@@ -1,6 +1,6 @@
 # Core delivery lifecycle — v1
 
-Status: implementation baseline (A-016). Source: architecture v0.3 §§6–8, 12–13, Appendix A–B. This replaces `delivery-lifecycle-v0.2.md` as the document implementers read. v0.2 stays as deferred reference; its edge-case semantics return only when a test or a real incident demands them.
+Status: implementation baseline (A-016). Source: architecture v0.3 §§6–8, 12–13, Appendix A–B. Edge-case semantics are added only when a test or a real incident demands them.
 
 ## Principles
 
@@ -70,4 +70,4 @@ ACCEPTED records the SHA and the owner decision. Merge is a separate owner actio
 
 ## Acceptance tests
 
-Fixtures SC-01 to SC-19 in `delivery-lifecycle-v0.2-scenarios.md` are the first test cases; `tests/lifecycle.test.ts` implements them. Scenarios SC-20 onward are deferred with v0.2.
+`tests/lifecycle.test.ts` is the executable form of this document. Scenario names SC-01 to SC-19 are kept from the earlier design work for continuity.

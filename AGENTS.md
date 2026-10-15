@@ -6,8 +6,6 @@
 - `docs/specs/core-lifecycle-v1.md`: the lifecycle being implemented. Two pages. This is the spec.
 - `docs/decisions.md`: what the owner has decided. Latest entry wins.
 
-Do not read `docs/specs/delivery-lifecycle-v0.*` or `docs/reviews/` unless a test or incident sends you there. They are deferred reference and audit history.
-
 ## Rules
 
 - Controller decides state; agents return claims. Evidence binds to a commit SHA.

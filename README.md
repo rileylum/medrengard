@@ -24,7 +24,6 @@ npm test
 
 - `src/lifecycle.ts`: pure state machine for one delivery cycle.
 - `tests/lifecycle.test.ts`: scenarios SC-01 to SC-19 as executable tests.
-- `docs/specs/delivery-lifecycle-v0.*`, `docs/reviews/`: twelve cycles of design review, kept as reference and audit history. Not required reading.
 
 ## Direction
 

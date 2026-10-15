@@ -2,13 +2,9 @@
 
 ## Where we are
 
-Design iteration stopped (A-016). Implementing [core lifecycle v1](specs/core-lifecycle-v1.md). Cycle-13 withdrawn before review; cycles 1–12 and v0.2 are archived reference under `docs/reviews/` and `docs/specs/`.
+Design iteration stopped (A-016). Implementing [core lifecycle v1](specs/core-lifecycle-v1.md). The twelve design-review cycles and v0.x specs were removed from the tree; they are in Git history before `1214ca2`.
 
-## In progress: SF-003 project setup
-
-- Zero-dependency Node 24 toolchain: `node --test`, `node:sqlite`, native TypeScript stripping. Probe passed 2026-10-15.
-- `src/lifecycle.ts`: pure state machine from the v1 transition table.
-- `tests/lifecycle.test.ts`: SC-01 to SC-19 from the v0.2 scenario file, adapted to v1 semantics.
+Plan step 1 done: `src/lifecycle.ts` is the pure state machine; `tests/lifecycle.test.ts` holds SC-01 to SC-19.
 
 ## Checks run
 
@@ -16,4 +12,4 @@ Design iteration stopped (A-016). Implementing [core lifecycle v1](specs/core-li
 
 ## Next action
 
-SF-004: SQLite event store behind the state machine, then the O-001 spike script that launches `claude -p` and `pi -p` with JSON output and a cancel mid-run.
+Plan step 2: SQLite event store behind the state machine. Then step 3, the runtime spike that launches `claude -p` and `pi -p` with JSON output and cancels a run mid-flight.

@@ -1,5 +1,0 @@
-Worktree: /tmp/sf001-cycle09-adversarial-ui2vsv1y
-HEAD: 97b03854f7b73f9070bbb49bef1e82d8548427b4
-Base ref: f613d5707d04dac557da51f57f5d9a10982ca726
-Resolved merge-base: f613d5707d04dac557da51f57f5d9a10982ca726
-Operator extracted committed documents, full manifest and path-scoped normative diff. Tool-disabled reviewer does not directly inspect Git.
