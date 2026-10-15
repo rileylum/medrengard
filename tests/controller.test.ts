@@ -73,6 +73,7 @@ test('timeout: the deadline wins against an adapter that honours abort and one t
     assert.ok(took < 1050, `${step}: took ${took}ms`);
     assert.equal(c.stage, 'ESCALATED', step);
     assert.match(c.escalation ?? '', /timeout/, step);
+    assert.equal(adapter.aborted, 1, `${step}: adapter was told to stop`);
     assert.deepEqual(c, store.load('c1'));
     store.close();
   }
@@ -150,4 +151,83 @@ test('errors other than an unclassifiable claim propagate from receive; no run_f
   const store = fresh();
   store.close();
   return assert.rejects(dev(store, { outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } }), (err: Error) => !/malformed/.test(err.message));
+});
+
+// 04-b: the adversarial findings on 3ba5434.
+
+test('a failed outcome with no usable reason, or an outcome outside the union, still records run_failed', async () => {
+  const outcomes = [
+    { status: 'failed', reason: '' },
+    { status: 'failed', reason: 42 },
+    { status: 'failed' },
+    { status: 'bogus' },
+    undefined,
+    null,
+    'done',
+  ];
+  for (const outcome of outcomes) {
+    const store = fresh();
+    const c = await dev(store, { outcome: outcome as never });
+    assert.equal(c.stage, 'ESCALATED', JSON.stringify(outcome));
+    const last = c.history.at(-1)!.event as { type: string; reason: string };
+    assert.equal(last.type, 'run_failed', JSON.stringify(outcome));
+    assert.ok(last.reason.length > 0, JSON.stringify(outcome));
+    assert.deepEqual(c, store.load('c1'));
+    store.close();
+  }
+});
+
+test('an adapter that rejects with an unprintable value, or throws synchronously, cannot hang execute', async () => {
+  const adapters = [
+    { name: 'rejects-null-proto', start: () => Promise.reject(Object.create(null)) },
+    { name: 'rejects-undefined', start: () => Promise.reject(undefined) },
+    { name: 'throws', start: () => { throw new Error('boom'); } },
+  ];
+  for (const adapter of adapters) {
+    const store = fresh();
+    const started = Date.now();
+    const c = await execute(store, 'c1', adapter, { ...req, role: 'developer' }, { deadlineMs: 2000, base: 'B1' });
+    assert.ok(Date.now() - started < 1000, `${adapter.name}: settled before the deadline`);
+    assert.equal(c.stage, 'ESCALATED', adapter.name);
+    assert.equal(c.history.at(-1)!.event.type, 'run_failed', adapter.name);
+    store.close();
+  }
+});
+
+test('execute rejects a deadline setTimeout would not honour, before writing anything', async () => {
+  for (const deadlineMs of [NaN, 0, -1, 0.5, Infinity, 2 ** 31, '1000']) {
+    const store = fresh();
+    const adapter = fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } });
+    await assert.rejects(execute(store, 'c1', adapter, { ...req, role: 'developer' }, { deadlineMs: deadlineMs as number, base: 'B1' }), /deadlineMs/, String(deadlineMs));
+    assert.equal(store.events('c1').length, 0, String(deadlineMs));
+    assert.equal(adapter.requests.length, 0, String(deadlineMs));
+    store.close();
+  }
+});
+
+test('a reviewer run starts only when the cycle is in the stage for its role', async () => {
+  const cases: [string, 'standard_reviewer' | 'adversarial_reviewer', number][] = [
+    ['QUEUED', 'standard_reviewer', 0],
+    ['STANDARD_REVIEW', 'adversarial_reviewer', 3],
+    ['ADVERSARIAL_REVIEW', 'standard_reviewer', 4],
+  ];
+  const upTo = [...toStandardReview, { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' } as const];
+  for (const [stageName, role, n] of cases) {
+    const store = fresh();
+    for (const e of upTo.slice(0, n)) store.append('c1', e);
+    assert.equal(store.load('c1')!.stage, stageName);
+    const adapter = fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', verdict: 'PASS' } } });
+    await assert.rejects(execute(store, 'c1', adapter, { ...req, role }, { deadlineMs: 1000 }), new RegExp(`${role}.*${stageName}`));
+    assert.equal(adapter.requests.length, 0, `${role} on ${stageName}`);
+    assert.equal(store.load('c1')!.stage, stageName);
+    assert.throws(() => receive(store, 'c1', 'x1', role, { status: 'completed', claim: { head: 'H1', verdict: 'PASS' } }), new RegExp(role));
+    assert.equal(store.load('c1')!.stage, stageName);
+    store.close();
+  }
+  // Unopened cycle: nothing to check against, nothing starts.
+  const store = fresh();
+  const adapter = fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', verdict: 'PASS' } } });
+  await assert.rejects(execute(store, 'nope', adapter, { ...req, role: 'standard_reviewer' }, { deadlineMs: 1000 }), /not open/);
+  assert.equal(adapter.requests.length, 0);
+  store.close();
 });

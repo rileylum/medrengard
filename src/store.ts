@@ -19,6 +19,9 @@ function requireId(v: unknown, what: string): asserts v is string {
 
 const DEDUP: Event['type'][] = ['developer_result', 'verdict', 'run_failed'];
 
+/** append refused the event because apply could not classify its serialised form. */
+export class UnclassifiableEvent extends Error {}
+
 export class EventStore {
   private db: DatabaseSync;
 
@@ -33,8 +36,8 @@ export class EventStore {
         body TEXT NOT NULL,
         PRIMARY KEY (cycle_id, seq)
       ) WITHOUT ROWID;
-      CREATE UNIQUE INDEX IF NOT EXISTS events_run
-        ON events (cycle_id, type, run_id) WHERE run_id IS NOT NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS events_run_outcome
+        ON events (cycle_id, run_id) WHERE run_id IS NOT NULL;
     `);
   }
 
@@ -56,10 +59,10 @@ export class EventStore {
    * Append one event and return the Cycle replayed from the log. Callers must use the returned
    * Cycle and never apply the object they passed in: the object can read differently live than
    * its serialised form does (02-c finding). Throws before writing if apply could not classify
-   * the serialised event: a bad row would make the whole log unloadable. A redelivered result,
-   * verdict or run_failed (same type and run ID) writes nothing and returns the current Cycle;
-   * those are the only events the spec dedups, so only those carry run_id into the unique
-   * index. A redelivered claim is stored and apply decides.
+   * the serialised event: a bad row would make the whole log unloadable. A run has one outcome:
+   * a second result, verdict or run_failed for a run ID that already has one writes nothing and
+   * returns the current Cycle. Only those three carry run_id into the unique index; a redelivered
+   * claim is stored and apply decides.
    */
   append(cycleId: string, event: Event): Cycle {
     requireId(cycleId, 'cycle ID');
@@ -68,7 +71,7 @@ export class EventStore {
     // differently. What is checked here is exactly the bytes that go into the row.
     const body = JSON.stringify(event);
     const parsed: unknown = body === undefined ? undefined : JSON.parse(body);
-    if (!isEvent(parsed)) throw new Error(`unclassifiable event: ${body}`);
+    if (!isEvent(parsed)) throw new UnclassifiableEvent(`unclassifiable event: ${body}`);
     if (!this.exists(cycleId)) throw new Error(`cycle ${cycleId} not open`);
     // The index key is the JSON-escaped run ID, not the raw string: SQLite would fold a lone
     // surrogate to U+FFFD and two distinct run IDs would collide.

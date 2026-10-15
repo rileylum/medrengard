@@ -183,10 +183,12 @@ export function apply(c: Cycle, e: Event): Cycle {
       return escalate(c, e, `dispatch rejected: ${e.reason}`);
 
     // Counters do not move: an infrastructure failure is not a review attempt (spec, Recovery).
-    // No consumed bookkeeping: a redelivery arrives at an ESCALATED cycle and is ignored above;
-    // the store dedups the row by run ID.
+    // A run that already delivered its result or verdict cannot fail afterwards; a late
+    // run_failed for it is a redelivery and must not overturn the recorded transition.
     case 'run_failed':
-      return escalate(c, e, `run failed: ${e.reason}`);
+      if (c.consumed.includes(e.runId)) return record(c, e, c.stage, {}, 'ignored: run already has an outcome');
+      // Consumed so the controller can tell a redelivered run_failed from a run in the wrong stage.
+      return escalate(c, e, `run failed: ${e.reason}`, { consumed: [...c.consumed, e.runId] });
 
     // Reachable at runtime: types are stripped, not checked, and events arrive as JSON.
     default:

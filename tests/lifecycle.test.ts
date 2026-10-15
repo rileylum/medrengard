@@ -196,3 +196,13 @@ test('run_failed escalates with its reason; a duplicate run_failed is ignored (0
   assert.equal(isEvent({ type: 'run_failed', runId: 'dev1', reason: '' }), false);
   assert.equal(isEvent({ type: 'run_failed', runId: 'dev1', reason: 'x' }), true);
 });
+
+test('run_failed for a run whose verdict or result is already consumed is ignored (04-b)', () => {
+  const reviewed = run(toStandardReview(), { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' });
+  const after = apply(reviewed, { type: 'run_failed', runId: 'sr1', reason: 'crash' });
+  assert.equal(after.stage, 'ADVERSARIAL_REVIEW');
+  assert.deepEqual(counters(after), [1, 0]);
+  assert.match(after.history.at(-1)!.note ?? '', /ignored/);
+  const developed = run(newCycle('c1', 'w1'), ...TO_STANDARD_REVIEW.slice(0, 2));
+  assert.equal(apply(developed, { type: 'run_failed', runId: 'dev1', reason: 'cancelled' }).stage, 'VERIFYING');
+});

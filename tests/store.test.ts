@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { apply, newCycle, type Cycle, type Event } from '../src/lifecycle.ts';
-import { EventStore } from '../src/store.ts';
+import { EventStore, UnclassifiableEvent } from '../src/store.ts';
 import { PASS_CHECKS, scenarios, toStandardReview } from './scenarios.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'sf-store-'));
@@ -132,7 +132,7 @@ test('append rejects an event apply cannot classify, before writing', () => {
     Object.assign([], { type: 'cancel' }),
     Object.assign(Object.create({ runId: 'x', base: 'B1' }), { type: 'claim' }),
   ];
-  for (const e of bad) assert.throws(() => store.append('c1', e as unknown as Event), /unclassifiable/, JSON.stringify(e));
+  for (const e of bad) assert.throws(() => store.append('c1', e as unknown as Event), UnclassifiableEvent, JSON.stringify(e));
   assert.equal(store.events('c1').length, 1);
   assert.deepEqual(stage(store.load('c1')!), ['DEVELOPING', 0, 0]);
   store.append('c1', { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] });
@@ -205,4 +205,27 @@ test('run IDs that differ only by a lone surrogate are two runs, not a duplicate
     assert.throws(() => store.open('c2', id), /well-formed/, JSON.stringify(id));
   }
   store.close();
+});
+
+test('one outcome per run: a run_failed after a consumed verdict or result is not written (04-b)', () => {
+  const store = new EventStore(dbPath('one-outcome'));
+  store.open('c1', 'w1');
+  for (const e of toStandardReview) store.append('c1', e);
+  const n = store.events('c1').length;
+  // Result already consumed for dev1.
+  assert.deepEqual(store.append('c1', { type: 'run_failed', runId: 'dev1', reason: 'cancelled' }), store.load('c1'));
+  assert.equal(store.events('c1').length, n);
+  const reviewed = store.append('c1', { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' });
+  assert.equal(reviewed.stage, 'ADVERSARIAL_REVIEW');
+  assert.deepEqual(store.append('c1', { type: 'run_failed', runId: 'sr1', reason: 'crash' }), reviewed);
+  assert.equal(store.events('c1').length, n + 1);
+  // And the other way round: a result after a run_failed for the same run is dropped too.
+  const other = new EventStore(dbPath('one-outcome-2'));
+  other.open('c1', 'w1');
+  other.append('c1', { type: 'claim', runId: 'dev1', base: 'B1' });
+  const failed = other.append('c1', { type: 'run_failed', runId: 'dev1', reason: 'timeout' });
+  assert.deepEqual(other.append('c1', { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] }), failed);
+  assert.equal(other.events('c1').length, 2);
+  store.close();
+  other.close();
 });

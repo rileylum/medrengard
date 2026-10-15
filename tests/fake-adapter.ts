@@ -10,15 +10,19 @@ export type Step =
 
 export interface FakeAdapter extends Adapter {
   requests: RunRequest[];
+  /** Number of starts whose signal has aborted, whether or not the step honoured it. */
+  aborted: number;
 }
 
 export function fakeAdapter(...script: Step[]): FakeAdapter {
   const requests: RunRequest[] = [];
-  return {
+  const fake: FakeAdapter = {
     name: 'fake',
     requests,
+    aborted: 0,
     start(req, signal) {
       requests.push(req);
+      signal.addEventListener('abort', () => fake.aborted++);
       const step = script.shift();
       if (step === undefined) throw new Error('fake adapter: script exhausted');
       return new Promise<RunOutcome>((resolve) => {
@@ -28,4 +32,5 @@ export function fakeAdapter(...script: Step[]): FakeAdapter {
       });
     },
   };
+  return fake;
 }
