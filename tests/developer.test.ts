@@ -577,29 +577,31 @@ const fifoHead = (clone: string) => {
   execFileSync('mkfifo', [join(clone, '.git', 'HEAD')]);
 };
 
-test('a FIFO the developer leaves at its clone\'s .git/HEAD: the fetch is killed at the deadline, the claim refused naming it, and nothing of the fetch survives (08-f)', async () => {
-  const { repo, store, runsDir } = scratch();
-  const fifo: DeveloperAdapter = {
-    name: 'fifo',
-    async start(req) {
-      writeFileSync(join(req.cwd, 'done.txt'), 'done\n');
-      git(req.cwd, 'add', 'done.txt');
-      git(req.cwd, 'commit', '-q', '-m', 'done');
-      const head = git(req.cwd, 'rev-parse', 'HEAD');
-      fifoHead(req.cwd);
-      return { status: 'completed', claim: { head, artifacts: ['done.txt'] } };
-    },
-  };
-  const started = Date.now();
-  const { cycle, worktree } = await develop(store, fifo, job(repo), { deadlineMs: 2000, runsDir });
-  assert.ok(Date.now() - started < 15_000, `develop took ${Date.now() - started} ms`);
-  assert.equal(cycle.stage, 'ESCALATED');
-  assert.match(cycle.escalation ?? '', /fetch of sf\/\S+ from .* timed out after 2000 ms \(SIGKILL\)/);
-  assert.equal(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/heads/sf', 'refs/sf'), '');
-  await new Promise((r) => setTimeout(r, 300));
-  assert.equal(survivors(worktree), '');
-  store.close();
-});
+for (const sandbox of [{ backend: 'bwrap' }, { backend: 'none' }] as const) {
+  test(`a FIFO the developer leaves at its clone's .git/HEAD: the fetch is killed at the deadline, the claim refused naming it, and nothing of the fetch survives, sandbox ${sandbox.backend} (08-f, standard 1 minor)`, async () => {
+    const { repo, store, runsDir } = scratch();
+    const fifo: DeveloperAdapter = {
+      name: 'fifo',
+      async start(req) {
+        writeFileSync(join(req.cwd, 'done.txt'), 'done\n');
+        git(req.cwd, 'add', 'done.txt');
+        git(req.cwd, 'commit', '-q', '-m', 'done');
+        const head = git(req.cwd, 'rev-parse', 'HEAD');
+        fifoHead(req.cwd);
+        return { status: 'completed', claim: { head, artifacts: ['done.txt'] } };
+      },
+    };
+    const started = Date.now();
+    const { cycle, worktree } = await develop(store, fifo, job(repo), { deadlineMs: 2000, runsDir, sandbox });
+    assert.ok(Date.now() - started < 15_000, `develop took ${Date.now() - started} ms`);
+    assert.equal(cycle.stage, 'ESCALATED');
+    assert.match(cycle.escalation ?? '', /fetch of sf\/\S+ from .* timed out after 2000 ms \(SIGKILL\)/);
+    assert.equal(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/heads/sf', 'refs/sf'), '');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(survivors(worktree), '');
+    store.close();
+  });
+}
 
 test('a FIFO at the clone\'s .git/HEAD before a fix: fix throws naming the timeout and appends nothing (08-f)', async () => {
   const { store, runsDir, job: j, cycleId, worktree } = await failed();

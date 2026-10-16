@@ -210,7 +210,10 @@ function land(repo: string, clone: string, branch: string, cycleId: string, base
   try {
     // git runs this through sh with the clone's path appended; under `none` it is plain `git upload-pack`.
     const [cmd, args] = wrap(sandbox, { cwd: clone, write: [], read: [clone], network: false }, 'git', ['upload-pack']);
-    const fetchArgs = ['-c', 'fetch.fsckObjects=true', 'fetch', '-q', '--no-tags', '--no-write-fetch-head', `--upload-pack=${[cmd, ...args].map(shellQuote).join(' ')}`];
+    // Its own deadline too: killing the fetch does not reach upload-pack, which under `none` would
+    // stay blocked on a FIFO for good (08-f standard 1). Under bwrap --die-with-parent covers it.
+    const uploadPack = ['timeout', '-s', 'KILL', `${timeoutMs / 1000}s`, cmd, ...args];
+    const fetchArgs = ['-c', 'fetch.fsckObjects=true', 'fetch', '-q', '--no-tags', '--no-write-fetch-head', `--upload-pack=${uploadPack.map(shellQuote).join(' ')}`];
     const fetched = spawnSync('git', [...fetchArgs, clone, `+refs/heads/${branch}:${incoming}`], { cwd: repo, encoding: 'utf8', ...bounded(timeoutMs) });
     const why = stopped(fetched, timeoutMs);
     if (why) return `fetch of ${branch} from ${clone} ${why}`;
