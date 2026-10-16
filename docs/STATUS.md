@@ -33,4 +33,4 @@ Step 5 in progress: ticket 05-a on `feat/05-a-developer-run` (A-026). `src/devel
 
 ## Next action
 
-05-a is stopped on an adversarial FAIL (`18421ff`); the owner decides between a fix ticket 05-b stacked on 05-a and a merge with the findings parked. Then After 05-a: plan row 6 (verification checks run by the controller, then reviewer runs through the same seam), and the 02-a busy timeout when a second process shares the database.
+05-b (`feat/05-b-contain-developer-run`, stacked on 05-a, A-027) fixes the 05-a adversarial findings; owner runs `npm test` on its SHA, then standard review 1, adversarial review, owner merge of the stacked branch. Then After 05-a: plan row 6 (verification checks run by the controller, then reviewer runs through the same seam), and the 02-a busy timeout when a second process shares the database.
