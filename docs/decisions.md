@@ -26,6 +26,7 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | D-018 | DECIDED (A-017) | Plan steps are broken into Fast or Design tickets and delivered per [workflow.md](workflow.md) |
 | D-019 | DECIDED (A-035) | Candidate code runs inside a sandbox chosen by backend name. Bubblewrap first; Docker, VMs and cloud later behind the same interface. No VM or cloud backend for now; the tool stays agnostic |
 | D-020 | DECIDED (A-042) | Malicious code stays in scope, but the defences need not be airtight. Each adversarial finding is weighed by risk, and the recommendation can be a merge with the risk accepted. An accepted risk is recorded in [work/accepted-risks.md](work/accepted-risks.md) |
+| D-021 | DECIDED (A-043) | The factory may run on any repository, not only scratch ones. Runs keep full network access and can read their own CLI's credentials |
 
 ## Open
 
@@ -38,6 +39,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | O-009 | Staging and deployment ownership | Release tracking |
 
 ## Approval history
+
+### A-043 — 2026-10-17 — Lift the scratch-repositories-only limit
+
+Owner, after step 8 put developer, check and reviewer runs in bubblewrap, offered three answers on the working limit that the A-029 merge introduced (factory runs on scratch repositories only): lift it for repositories without secrets (recommended), keep it, or lift it fully. Told the two open gaps: every run has full network access, and a run can read its own CLI's config directory, credentials included, so a hostile or confused agent could send out the repository and the login. Reply: “lift it fully.”
+
+Effect: the factory may run on any repository, including one that holds secrets. The two gaps stay open and are accepted for now. The network line in [work/parked.md](work/parked.md) is no longer tied to the first repository holding secrets; it waits for a later ticket. The parked lines that cite the limit are marked lifted.
 
 ### A-042 — 2026-10-17 — Weigh adversarial findings by risk; record accepted risks
 
