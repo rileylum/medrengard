@@ -34,4 +34,4 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 ## Next action
 
-Owner merges `feat/05-b-contain-developer-run` into main (it contains 05-a; standard PASS and adversarial PASS on `c8e7cf4`). Then After 05-a: plan row 6 (verification checks run by the controller, then reviewer runs through the same seam), and the 02-a busy timeout when a second process shares the database.
+Step 6 in progress (A-028). Ticket 06-a (`feat/06-a-verification`): `src/verify.ts` runs the job's declared checks in a fresh detached checkout of the candidate, writes evidence under `<runsDir>/evidence/<head>/` and appends `verification`. 06-b (reviewer runs) is drafted and follows after 06-a's standard PASS. The 02-a busy timeout waits for the first ticket with two processes on one database.

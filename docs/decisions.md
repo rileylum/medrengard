@@ -37,6 +37,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-028 — 2026-10-16 — Step 6 design: verification and reviewer runs
+
+Owner, after the step 6 question round (two tickets 06-a verification and 06-b reviewer runs; checks declared on `Job`, not read from the candidate; checks run in a fresh detached checkout of the candidate SHA; evidence as files under the runs directory keyed by SHA, no store change; `review()` mirroring `develop` over `execute`, claude reviewers with `Read,Glob,Grep,Bash(npm test)` and pi with `read,grep,find,ls`; a check that cannot start is `MISSING`, everything else non-zero is `FAIL`; no `runtime` on reviewer runs; parked head-guard variants stay parked): “take all”.
+
+Effect: 06-a is READY on the Design route with the recommended answers; 06-b is drafted and becomes READY after 06-a's standard PASS. `src/verify.ts` owns the checkout, the check runs, the evidence files and the `verification` event.
+
 ### A-027 — 2026-10-16 — Fix ticket for the 05-a adversarial FAIL
 
 Owner, after the 05-a adversarial FAIL on `18421ff` (two majors: a throw after `open` strands a QUEUED cycle and blocks the work item; `git log --output` and `git diff --output` let a claude developer write outside the worktree under the allow list): “option 1 go”.
