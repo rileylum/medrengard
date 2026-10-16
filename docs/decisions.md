@@ -24,6 +24,7 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | D-016 | DECIDED (A-016) | [Core lifecycle v1](specs/core-lifecycle-v1.md) is the implementation baseline. One recovery rule: anything unclassified escalates; owner chooses child cycle or cancel. Edge-case semantics are added only when a test or a real incident requires them |
 | D-017 | DECIDED (A-016) | Design documents are not put through adversarial review on their own. The 2+1 rule applies to code with executable tests |
 | D-018 | DECIDED (A-017) | Plan steps are broken into Fast or Design tickets and delivered per [workflow.md](workflow.md) |
+| D-019 | DECIDED (A-035) | Candidate code runs inside a sandbox chosen by backend name. Bubblewrap first; Docker, VMs and cloud later behind the same interface. No VM or cloud backend for now; the tool stays agnostic |
 
 ## Open
 
@@ -36,6 +37,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | O-009 | Staging and deployment ownership | Release tracking |
 
 ## Approval history
+
+### A-035 — 2026-10-16 — Sandbox before plan row 8; five design answers
+
+Owner, choosing between the sandbox ticket and plan row 8: “Sandbox, ideally I think this implementation deserves some research. My system is currently resource constrained so I don't want VMs as the solution, I also want to keep things local so cloud solutions are out as well. Though I don't want either of those solutions to be out of the picture eventually, this tool should ideally be agnostic.” Then, after the research summary ([08-a-findings.md](work/08-a-findings.md)) and five questions (a sandbox interface that wraps a command from a policy of read paths, write paths and network, the backend named in the job file, `none` explicit and scratch-only; the developer in its own clone, the controller fetching its branch; checks on the candidate's files with no git folder, the controller comparing them to the commit; no network for checks, full network for developers and reviewers, domain filtering parked; reads start empty and bind only what is needed): “Take all”.
+
+Effect: the sandbox becomes plan row 8; GitHub sync, pools, release tracking and the improvement loop move to row 9. Row 8 is two tickets. 08-a-sandboxed-checks (Design route; READY on these five answers, its ticket text written after the reply) adds `src/sandbox.ts` with the bubblewrap backend and runs verification checks inside it on a checkout with no `.git`; it covers the parked 06-a symlink, `core.hooksPath` and evidence-file lines and the 07-b gitdir-swap, `git replace` and `core.fileMode` lines. 08-b (drafted after 08-a) moves developer and reviewer runs into the sandbox, the developer into its own clone; what claude and pi need inside comes from an owner-run probe, because listing their configuration directories was refused to this session as credential exploration.
 
 ### A-034 — 2026-10-16 — Fix ticket for the 07-b adversarial FAIL
 
