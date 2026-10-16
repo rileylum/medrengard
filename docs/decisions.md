@@ -38,6 +38,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-041 — 2026-10-16 — Fix ticket for the 08-e adversarial FAIL
+
+Owner, after the 08-e adversarial FAIL on `eeffa15` (one major: a FIFO a check leaves in a gitlink's nested `.git` blocks the controller's git forever and nothing is recorded; one minor: the `update-index` arm of `treeDiff`'s catch has no test of its own), offered a fix ticket 08-f that gives the controller's git calls a timeout tied to the stage deadline, with tests for the FIFO case and the untested arm, or a merge with the hang parked: “Option 1 go”. The owner did not answer the offered rule to park hostile-check findings by default, so no such rule is recorded.
+
+Effect: ticket 08-f-controller-git-timeout, Fast route, stacked on 08-e with fresh review budget. Every controller git call over a tree a run or a check wrote gets the stage deadline as its timeout and is killed with SIGKILL past it, and the failure is recorded with its reason. The ticket also covers the same hang on the developer side (the fetch from the clone in `land`, and `fix`'s git in the clone), which the implementer session reproduced while scoping, and the parked non-UTF-8 minor, which A-040 assigned to the next ticket that touches `verify.ts`.
+
 ### A-040 — 2026-10-16 — Fix ticket for the 08-d adversarial FAIL
 
 Owner, after the 08-d adversarial FAIL on `64514a0` (one major: main.ts passing the sandbox to the adversarial and pi reviewers is untested; two minors: a malformed nested repository at a gitlink makes `treeDiff` throw before cleanup, a non-UTF-8 untracked name stops the removal), offered a fix ticket stacked on 08-d covering the major and the gitlink minor with the UTF-8 minor parked, or a merge with the findings parked: “Option 1 go”.
