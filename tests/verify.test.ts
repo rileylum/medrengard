@@ -387,3 +387,39 @@ test('an untracked .gitattributes planted by a check does not change how the tre
   assert.match(evidence(evidenceDir, 'tree').stdout, /^M\tnotes\.txt$/m);
   store.close();
 });
+
+// Ticket 08-b: permissions a check leaves behind (08-a adversarial). git skips a path it cannot
+// lstat with a warning and exit 0, so the controller restores owner access before comparing.
+test('a check that rewrites a tracked file and removes the permissions on its directory records tree: FAIL (08-b, 08-a adversarial major)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([],
+    committing((wt) => { writeFileSync(join(wt, 'done.txt'), 'done\n'); mkdirSync(join(wt, 'src')); writeFileSync(join(wt, 'src', 'lib.js'), 'module.exports = 1;\n'); }));
+  job.checks = [sh('evil', 'echo "module.exports = 2;" > src/lib.js; chmod 000 src')];
+  const { cycle: c, evidenceDir, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'ESCALATED', c.escalation);
+  assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+  assert.match(evidence(evidenceDir, 'tree').stdout, /^M\tsrc\/lib\.js$/m);
+  rmSync(worktree, { recursive: true });
+  store.close();
+});
+
+test('a check that removes the permissions on the checkout itself is classified, not thrown, and the checkout can still be replaced (08-b, 08-a adversarial minor)', async () => {
+  for (const [script, stage] of [['chmod 000 .', 'STANDARD_REVIEW'], ['echo EVIL >> README.md; chmod 000 .', 'ESCALATED']] as const) {
+    const { store, runsDir, job, cycle } = await verifying([sh('lock', script)]);
+    const { cycle: c, evidenceDir, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+    assert.equal(c.stage, stage, `${script}: ${c.escalation}`);
+    if (stage === 'ESCALATED') assert.match(evidence(evidenceDir, 'tree').stdout, /^M\tREADME\.md$/m);
+    // What the next verification of the cycle does first.
+    rmSync(worktree, { recursive: true });
+    store.close();
+  }
+});
+
+test('untracked entries a check leaves are removed after the tree check: the checkout is the commit and nothing else (08-b, 08-a adversarial minor)', async () => {
+  const { store, runsDir, job, cycle, repo, head } = await verifying([
+    sh('litter', 'echo x > leftover.txt; ln -s /etc/hostname notes; mkdir -p build/out; echo y > build/out/a; git init -q .; git config core.pager "touch /tmp/pwned"'),
+  ]);
+  const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  assert.deepEqual(readdirSync(worktree).sort(), git(repo, 'ls-tree', '--name-only', head).split('\n').sort());
+  store.close();
+});

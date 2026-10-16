@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EventStore } from '../src/store.ts';
 import { claude, claudeReviewer, cliAdapter, pi, piReviewer, type CliSpec } from '../src/runtime/cli-adapter.ts';
@@ -339,3 +339,19 @@ for (const [name, spec] of [['claude', claudeReviewer], ['pi', piReviewer]] as c
     store.close();
   });
 }
+
+test('review compares in full a checkout whose permissions changed after verify (08-b)', async () => {
+  const { store, runsDir, job, cycleId, checkout } = await reviewable();
+  const before = store.events(cycleId).length;
+  writeFileSync(join(checkout, 'done.txt'), 'benign\n');
+  chmodSync(checkout, 0o000);
+  const adapter = fakeAdapter('hang');
+  try {
+    await assert.rejects(review(store, adapter, cycleId, job, opts(runsDir)), /not clean against/);
+  } finally {
+    chmodSync(checkout, 0o755);
+  }
+  assert.equal(adapter.requests.length, 0);
+  assert.equal(store.events(cycleId).length, before);
+  store.close();
+});
