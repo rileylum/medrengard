@@ -48,4 +48,4 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 ## Next action
 
-Owner merges `feat/06-c-reviewer-prompt-bounds` into main (it contains 06-b; 06-b standard PASS 09402c8, adversarial FAIL f7ed0be fixed by 06-c; 06-c standard PASS d0fd999, adversarial PASS 03310a6). Then plan row 7: one ticket READY to a human-reviewable PR with no manual stage advancement, including one standard FAIL and fix, over `develop`, `verify` and `review`; its first design question is the parked 06-c minor (a check that dirties the tracked tree).
+Step 7 (A-032): 07-a fix run implemented on `feat/07-a-fix-run` at `c5322f6` (`fix` in `src/developer.ts`); owner runs `npm test` on it, then standard review 1. 07-b (the loop, `src/main.ts`, the `tree: FAIL` check) follows stacked on 07-a.
