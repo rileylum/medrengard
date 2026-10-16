@@ -65,5 +65,5 @@ Plan step 8 (sandbox, A-035) in progress on `feat/08-a-sandbox`: 08-a runs every
 ## Next action
 
 1. Owner reads [08-a-sandboxed-checks.md](work/08-a-sandboxed-checks.md); the five answers were approved (A-035), the ticket text was written after.
-2. Standard review 1 PASS on `21733ae`; minor fixed in `798eb1c`. Adversarial review running on `798eb1c`.
+2. Standard review 1 PASS on `21733ae`; minor fixed in `798eb1c`. Adversarial FAIL on `798eb1c`: a check that removes a directory's permissions hides a rewrite from the tree comparison (ticket log). The owner chooses: a fix ticket, or merge with the FAIL parked.
 3. Owner runs `/var/tmp/software_factory/08-b/probes/runtime-binds.sh` (up to eight one-line paid calls) so 08-b can be drafted: what claude and pi need inside bubblewrap.
