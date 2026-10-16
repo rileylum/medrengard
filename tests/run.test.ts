@@ -182,6 +182,8 @@ test('live main.ts: a job file runs end to end and prints the stage, branch and 
     runtime: { developer: 'claude', standard: 'claude', adversarial: 'claude' },
   }));
   const r = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'src', 'main.ts'), jobFile], { encoding: 'utf8', timeout: 550_000 });
+  // The scratch tree is deleted after the run; the printed summary is the record of what the real CLIs did.
+  t.diagnostic(r.stdout);
   const stage = /^Stage: (\S+)/m.exec(r.stdout)?.[1];
   assert.ok(stage === 'AWAITING_ACCEPTANCE' || stage === 'ESCALATED', `${r.stdout}\n${r.stderr}`);
   assert.ok(!/^Error: /m.test(r.stdout), r.stdout);
