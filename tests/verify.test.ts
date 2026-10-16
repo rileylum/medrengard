@@ -142,13 +142,22 @@ test('a stale -verify worktree is replaced by a checkout of the current head', a
   assert.equal(r.cycle.stage, 'STANDARD_REVIEW', r.cycle.escalation);
   assert.equal(git(stale, 'rev-parse', 'HEAD'), head);
   assert.ok(!existsSync(join(stale, 'leftover.txt')));
+  // Deleted by hand but still registered with git: the next verification must still get a checkout.
+  rmSync(stale, { recursive: true });
+  const again = await verifying([sh('file', 'test -f done.txt')]);
+  rmSync(join(again.runsDir, `${again.cycle.cycleId}-verify`), { recursive: true, force: true });
+  git(again.repo, 'worktree', 'add', '-q', '--detach', join(again.runsDir, `${again.cycle.cycleId}-verify`), again.base);
+  rmSync(join(again.runsDir, `${again.cycle.cycleId}-verify`), { recursive: true });
+  const r2 = await verify(again.store, again.cycle.cycleId, again.job, { ...opts(), runsDir: again.runsDir });
+  assert.equal(r2.cycle.stage, 'STANDARD_REVIEW', r2.cycle.escalation);
+  again.store.close();
   store.close();
 });
 
 test('verify outside VERIFYING, or with a bad check name, throws before anything is written', async () => {
   const { store, runsDir, job, cycle } = await verifying([sh('ok', 'true')]);
   const before = store.events(cycle.cycleId).length;
-  for (const bad of [[sh('a b', 'true')], [sh('../x', 'true')], [sh('', 'true')], [sh('dup', 'true'), sh('dup', 'true')]]) {
+  for (const bad of [[sh('a b', 'true')], [sh('../x', 'true')], [sh('..', 'true')], [sh('', 'true')], [sh('dup', 'true'), sh('dup', 'true')]]) {
     await assert.rejects(verify(store, cycle.cycleId, { ...job, checks: bad }, { ...opts(), runsDir }), /check name/);
   }
   assert.ok(!existsSync(join(runsDir, `${cycle.cycleId}-verify`)));

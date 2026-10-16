@@ -1,12 +1,13 @@
 // Ticket 05-a: one developer run from open to outcome. Resolves the base, opens the cycle, makes
 // a worktree on the cycle's branch, assembles the prompt, calls execute, and refuses any claim
 // whose commit is not the branch tip. Callers learn this one function; the loop is step 7.
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { checkDeadline, execute } from './controller.ts';
+import { git } from './git.ts';
 import type { Cycle } from './lifecycle.ts';
 import type { EventStore } from './store.ts';
 import type { Check } from './verify.ts';
@@ -130,15 +131,4 @@ function prompt(ticket: string): string {
     '{"head": "<full commit sha>", "artifacts": ["<paths>"]}',
     '```',
   ].join('\n');
-}
-
-// Sync Git: accept runs inside receive, which is synchronous. stdio is captured so a failing
-// command surfaces as an Error naming the command, never as text on the controller's terminal.
-function git(cwd: string, ...args: string[]): string {
-  try {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  } catch (err) {
-    const stderr = (err as { stderr?: string }).stderr?.toString().trim();
-    throw new Error(`git ${args.join(' ')} in ${cwd} failed: ${stderr || (err as Error).message}`);
-  }
 }

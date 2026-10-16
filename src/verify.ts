@@ -1,12 +1,12 @@
 // Ticket 06-a: the VERIFYING stage. Checks out the candidate fresh, runs the job's declared checks
 // there, writes each one's output and exit against the SHA, and appends one verification event.
 // The lifecycle decides what the results mean; this module only produces them.
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
+import { git } from './git.ts';
 import type { Cycle, Event } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
@@ -40,18 +40,18 @@ export interface Verified {
   evidenceDir: string;
 }
 
-type CheckResult = Event extends infer E ? (E extends { type: 'verification' } ? E['checks'][number] : never) : never;
+type CheckResult = Extract<Event, { type: 'verification' }>['checks'][number];
 
 const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
 // A file stem, nothing that could leave the evidence directory or hide a sibling's file.
-const NAME = /^[A-Za-z0-9_.-]{1,100}$/;
+const NAME = /^(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/;
 
 /** Run every declared check on the cycle's candidate and record one verification event. */
 export async function verify(store: EventStore, cycleId: string, job: Job, opts: VerifyOptions): Promise<Verified> {
   const checks = job.checks ?? [];
   const seen = new Set<string>();
   for (const c of checks) {
-    if (typeof c.name !== 'string' || !NAME.test(c.name) || c.name === '.' || c.name === '..') throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
+    if (typeof c.name !== 'string' || !NAME.test(c.name)) throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
     if (seen.has(c.name)) throw new Error(`check name ${c.name} is declared twice`);
     seen.add(c.name);
   }
@@ -70,6 +70,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // checkout of the commit alone is the only thing that proves it. A worktree left by an earlier
   // verification of this cycle (a fix run moved the head) goes first.
   if (existsSync(worktree)) git(job.repo, 'worktree', 'remove', '--force', worktree);
+  // A -verify directory deleted by hand stays registered, and `worktree add` refuses the path.
   git(job.repo, 'worktree', 'prune');
   mkdirSync(evidenceDir, { recursive: true });
   git(job.repo, 'worktree', 'add', '-q', '--detach', worktree, head);
@@ -107,13 +108,4 @@ async function runCheck(check: Check, cwd: string, isolation: 'cgroup' | 'proces
   if (r.status === 'cancelled') return { ...base, result: 'FAIL', exit: 'timeout' };
   if (r.status === 'overflow') return { ...base, result: 'FAIL', exit: 'overflow' };
   return { ...base, result: r.exitCode === 0 ? 'PASS' : 'FAIL', exit: `exit ${r.exitCode ?? `signal ${r.signal}`}` };
-}
-
-function git(cwd: string, ...args: string[]): string {
-  try {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-  } catch (err) {
-    const stderr = (err as { stderr?: string }).stderr?.toString().trim();
-    throw new Error(`git ${args.join(' ')} in ${cwd} failed: ${stderr || (err as Error).message}`);
-  }
 }
