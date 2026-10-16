@@ -1,14 +1,15 @@
 // Ticket 05-a: one developer run from open to outcome. Resolves the base, opens the cycle, makes
 // a worktree on the cycle's branch, assembles the prompt, calls execute, and refuses any claim
-// whose commit is not the branch tip. Callers learn this one function; the loop is step 7.
+// whose commit is not the branch tip. Ticket 07-a adds the fix run: the same developer on the
+// same worktree after a standard FAIL, prompted with the findings, under the same head guard.
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { checkDeadline, execute } from './controller.ts';
 import { git } from './git.ts';
-import type { Cycle } from './lifecycle.ts';
+import type { Cycle, Event } from './lifecycle.ts';
 import type { EventStore } from './store.ts';
 import type { Check } from './verify.ts';
 
@@ -72,7 +73,7 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
       cycleId,
       developer,
       { role: 'developer', prompt: prompt(job.ticket), cwd: worktree },
-      { deadlineMs: opts.deadlineMs, base, accept: (claim) => refuse(worktree, branch, base, claim) },
+      { deadlineMs: opts.deadlineMs, base, accept: (claim) => refuse(worktree, branch, base, undefined, claim) },
     );
     return { cycle, worktree, branch };
   } catch (err) {
@@ -83,17 +84,64 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
   }
 }
 
+type Verdict = Extract<Event, { type: 'verdict' }>;
+
+/**
+ * Run the developer again on the cycle's worktree after a standard FAIL. Everything comes from
+ * the store and runsDir, as for verify and review: the findings are the last verdict's, the base
+ * the candidate's, the worktree where develop left it. Returns the replayed Cycle and where its
+ * branch lives.
+ */
+export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId: string, job: Job, opts: DevelopOptions): Promise<Developed> {
+  checkDeadline(opts.deadlineMs);
+  const cycle = store.load(cycleId);
+  if (!cycle) throw new Error(`cycle ${cycleId} not open`);
+  // DEVELOPING with a head is only ever the stage after a standard FAIL; DEVELOPING without one
+  // is the first run, which develop owns.
+  if (cycle.stage !== 'DEVELOPING' || !cycle.candidate?.head) throw new Error(`fix on a cycle in ${cycle.stage}${cycle.candidate?.head ? '' : ' with no candidate'}, expected DEVELOPING after a standard FAIL`);
+  if (cycle.runs.some((r) => r.role === 'developer' && !cycle.consumed.includes(r.runId))) throw new Error(`cycle ${cycleId} has a developer run still active`);
+  const { head, base } = cycle.candidate;
+  const verdict = cycle.history.map((h) => h.event).filter((e): e is Verdict => e.type === 'verdict').at(-1);
+  if (!verdict || verdict.verdict !== 'FAIL' || verdict.head !== head) throw new Error(`cycle ${cycleId}: last verdict is not a FAIL for the candidate ${head}`);
+
+  const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
+  const worktree = join(runsDir, cycleId);
+  const branch = `sf/${cycleId}`;
+  if (!existsSync(join(worktree, '.git'))) throw new Error(`no worktree at ${worktree}; the cycle's branch has nowhere to be fixed`);
+  // The tip must be the candidate: anything else is a head change outside a fix run, which the
+  // spec gives to the owner, not to a run that would quietly build on it.
+  const tip = git(worktree, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`);
+  if (tip !== head) throw new Error(`worktree ${worktree} is at ${tip}, not at the candidate ${head}`);
+  // On the branch, not merely with the branch at the head: a detached or switched worktree would
+  // take the developer's commit off the branch and spend the run on a claim refused as not the tip.
+  const onto = gitStatus(worktree, 'symbolic-ref', '--quiet', 'HEAD') === 0 ? git(worktree, 'symbolic-ref', '--quiet', 'HEAD') : '(detached)';
+  if (onto !== `refs/heads/${branch}`) throw new Error(`worktree ${worktree} is on ${onto}, not on ${branch}`);
+  const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
+  const cycleAfter = await execute(
+    store,
+    cycleId,
+    developer,
+    { role: 'developer', prompt: prompt(job.ticket, { head, findings: verdict.findings ?? [] }), cwd: worktree },
+    { deadlineMs: opts.deadlineMs, base, accept: (claim) => refuse(worktree, branch, base, head, claim) },
+  );
+  return { cycle: cycleAfter, worktree, branch };
+}
+
 /**
  * The spec's "commit exists" guard, plus its evidence rule that the diff is non-empty. The head
  * must be the full SHA at the tip of the cycle's branch: the tip, not any reachable commit, so
  * what is verified and reviewed is what the developer left behind, nothing on top of it. It
- * must descend from the base and differ from it, or `base..head` means nothing to step 6.
+ * must descend from the base and differ from it, or `base..head` means nothing to step 6. A fix
+ * run must also produce a new SHA with a new tree: the previous candidate is the one that failed
+ * review, and a commit with its exact tree (an empty commit on top of it) fixed nothing and would
+ * spend the second verification and standard review on the diff that already failed.
  */
-function refuse(worktree: string, branch: string, base: string, claim: unknown): string | undefined {
+function refuse(worktree: string, branch: string, base: string, previous: string | undefined, claim: unknown): string | undefined {
   const head = (claim as { head?: unknown } | null)?.head;
   if (typeof head !== 'string' || !head) return undefined; // not ours to judge; the store rejects it
   const tip = git(worktree, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`);
   if (head === base) return `commit ${head} is the base, not a new commit`;
+  if (head === previous) return `commit ${head} is the previous candidate, not a new commit`;
   if (head !== tip) {
     return isCommit(worktree, head) ? `commit ${head} is not the tip of ${branch} (${tip})` : `commit ${head} is not the full SHA of a commit on ${branch} (tip ${tip})`;
   }
@@ -102,6 +150,11 @@ function refuse(worktree: string, branch: string, base: string, claim: unknown):
   const diff = gitStatus(worktree, 'diff', '--quiet', base, head);
   if (diff === 0) return `commit ${head} has no changes against the base ${base}`;
   if (diff !== 1) return `commit ${head}: git diff ${base} ${head} failed with exit ${diff}`;
+  if (previous !== undefined) {
+    const same = gitStatus(worktree, 'diff', '--quiet', previous, head);
+    if (same === 0) return `commit ${head} has no changes against the previous candidate ${previous}`;
+    if (same !== 1) return `commit ${head}: git diff ${previous} ${head} failed with exit ${same}`;
+  }
   return undefined;
 }
 
@@ -117,12 +170,17 @@ function isCommit(worktree: string, sha: string): boolean {
 }
 
 // Two rules the developer cannot infer from the ticket, then the claim in the exact shape the
-// adapters parse (04-d). The fence text is asserted by tests/developer.test.ts.
-function prompt(ticket: string): string {
+// adapters parse (04-d). The fence text is asserted by tests/developer.test.ts. A fix run gets
+// the findings after the ticket; its first line differs from the first run's, which the fixture
+// developer relies on to produce a different commit.
+function prompt(ticket: string, fixing?: { head: string; findings: string[] }): string {
   return [
-    'You are the developer for the ticket below. The current directory is a Git worktree on the branch for this work.',
+    fixing
+      ? 'You are the developer fixing review findings on the ticket below. The current directory is a Git worktree on the branch for this work, at your earlier commit.'
+      : 'You are the developer for the ticket below. The current directory is a Git worktree on the branch for this work.',
     '',
     ticket.trim(),
+    ...(fixing ? ['', `A review of your commit ${fixing.head} FAILED. Fix these findings, then commit:`, ...(fixing.findings.length ? fixing.findings.map((f) => `- ${f}`) : ['- (the reviewer listed no findings)'])] : []),
     '',
     'Rules:',
     '- Make the change and commit it on the current branch. Do not push, do not switch or create branches, do not amend commits that were already there.',

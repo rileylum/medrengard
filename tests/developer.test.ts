@@ -8,7 +8,9 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { join } from 'node:path';
 import { EventStore } from '../src/store.ts';
 import { claude, claudeDeveloper, cliAdapter, pi, piDeveloper, type CliSpec } from '../src/runtime/cli-adapter.ts';
-import { develop, type DeveloperAdapter, type Job } from '../src/developer.ts';
+import { develop, fix, type DeveloperAdapter, type Job } from '../src/developer.ts';
+import { verify } from '../src/verify.ts';
+import { review } from '../src/review.ts';
 import { fakeAdapter } from './fake-adapter.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
@@ -214,3 +216,183 @@ for (const name of ['claude', 'pi'] as const) {
     store.close();
   });
 }
+
+// Ticket 07-a: the fix run. A cycle a standard FAIL sent back to DEVELOPING gets a second
+// developer run on its own worktree, prompted with the findings, under the same head guard.
+
+/** A scratch repository taken through develop, a passing verify and a fixture standard FAIL: DEVELOPING with a candidate. */
+async function failed(spec: CliSpec = claude) {
+  const { repo, store, runsDir, base } = scratch();
+  const j = job(repo, { checks: [{ name: 'ok', command: ['true'] }] });
+  const dev = await develop(store, fake(spec), j, { deadlineMs: 20_000, runsDir });
+  assert.equal(dev.cycle.stage, 'VERIFYING', dev.cycle.escalation);
+  const ver = await verify(store, dev.cycle.cycleId, j, { deadlineMs: 20_000, runsDir, isolation: 'process-group' });
+  assert.equal(ver.cycle.stage, 'STANDARD_REVIEW', ver.cycle.escalation);
+  const rev = await review(store, fakeReviewer(spec, 'fail'), dev.cycle.cycleId, j, { deadlineMs: 20_000, runsDir });
+  assert.equal(rev.stage, 'DEVELOPING', rev.escalation);
+  return { repo, store, runsDir, base, job: j, cycleId: dev.cycle.cycleId, head: rev.candidate!.head, worktree: dev.worktree, branch: dev.branch };
+}
+const fakeReviewer = (spec: CliSpec, variant: string) => cliAdapter({ ...spec, command: process.execPath, args: [fixture, spec.name, 'verdict', variant] }, { isolation: 'process-group' });
+
+for (const spec of [claude, pi]) {
+  test(`${spec.name} fixture: fix runs the developer again on the cycle's worktree and reaches VERIFYING on a new head (07-a)`, async () => {
+    const { repo, store, runsDir, base, job: j, cycleId, head, worktree, branch } = await failed(spec);
+    const fixed = await fix(store, fake(spec), cycleId, j, { deadlineMs: 20_000, runsDir });
+    assert.equal(fixed.cycle.stage, 'VERIFYING', fixed.cycle.escalation);
+    assert.equal(fixed.worktree, worktree);
+    assert.equal(fixed.branch, branch);
+    const head2 = fixed.cycle.candidate!.head;
+    assert.notEqual(head2, head);
+    assert.equal(fixed.cycle.candidate!.base, base);
+    assert.equal(fixed.cycle.standard, 1);
+    assert.equal(fixed.cycle.runs.length, 2);
+    assert.deepEqual(fixed.cycle.runs[1]!.input, { head, base });
+    assert.equal(fixed.cycle.runs[1]!.runtime, spec.name);
+    assert.equal(git(repo, 'rev-parse', branch), head2);
+    assert.equal(git(worktree, 'rev-parse', '--abbrev-ref', 'HEAD'), branch);
+    assert.deepEqual(store.load(cycleId), fixed.cycle);
+    store.close();
+  });
+}
+
+test('the fix prompt carries the ticket, the failed head and each finding; cwd is the worktree (07-a)', async () => {
+  const { store, runsDir, job: j, cycleId, head, worktree } = await failed();
+  const adapter = fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } });
+  const { cycle } = await fix(store, adapter, cycleId, { ...j, ticket: 'TICKET BODY HERE' }, { deadlineMs: 5000, runsDir });
+  const [req] = adapter.requests;
+  assert.equal(req!.cwd, worktree);
+  assert.equal(req!.role, 'developer');
+  assert.match(req!.prompt, /TICKET BODY HERE/);
+  assert.match(req!.prompt, new RegExp(`commit ${head} FAILED`));
+  assert.match(req!.prompt, /\[major\] done\.txt:1 — fixture finding/);
+  assert.match(req!.prompt, /```json\n\{"head": "<full commit sha>", "artifacts": \["<paths>"\]\}\n```/);
+  assert.match(req!.prompt, /do not push/i);
+  assert.equal(cycle.stage, 'ESCALATED');
+  assert.match(cycle.escalation ?? '', /commit H1 /);
+  store.close();
+});
+
+test('a fix claim is refused when it names the previous head, an empty commit on it, the base, a non-tip, an orphan, a revert to the base or an unknown SHA (07-a)', async () => {
+  // The fixture's "base" is the worktree HEAD when it starts, which in a fix run is the previous
+  // candidate: nocommit claims it without committing, base after committing. empty commits
+  // --allow-empty on top of it: a new SHA with the tree that already failed review.
+  for (const variant of ['nocommit', 'base', 'empty', 'first', 'bogus', 'short', 'orphan']) {
+    const { store, runsDir, base, job: j, cycleId, head, worktree } = await failed();
+    const { cycle } = await fix(store, fake(claude, variant), cycleId, j, { deadlineMs: 20_000, runsDir });
+    assert.equal(cycle.stage, 'ESCALATED', variant);
+    assert.equal(cycle.history.at(-1)!.event.type, 'run_failed', variant);
+    const claimed = variant === 'bogus' ? 'a'.repeat(40) : variant === 'short' ? git(worktree, 'rev-parse', 'HEAD').slice(0, 7) : variant === 'nocommit' || variant === 'base' ? head : variant === 'first' ? git(worktree, 'rev-parse', 'HEAD~1') : git(worktree, 'rev-parse', 'HEAD');
+    assert.match(cycle.escalation ?? '', new RegExp(`run failed: commit ${claimed}`), variant);
+    if (variant === 'nocommit' || variant === 'base') assert.match(cycle.escalation ?? '', /previous candidate, not a new commit/);
+    if (variant === 'empty') { assert.notEqual(claimed, head); assert.match(cycle.escalation ?? '', new RegExp(`no changes against the previous candidate ${head}`)); }
+    if (variant === 'orphan') assert.match(cycle.escalation ?? '', /not descended from the base/);
+    assert.notEqual(claimed, base);
+    store.close();
+  }
+  // The shared rules the fixture cannot reach on a fix run: a claim that names the base itself,
+  // and a commit that reverts the worktree to the base's tree (a new SHA with no diff against the base).
+  {
+    const { store, runsDir, base, job: j, cycleId } = await failed();
+    const { cycle } = await fix(store, fakeAdapter({ outcome: { status: 'completed', claim: { head: base, artifacts: ['done.txt'] } } }), cycleId, j, { deadlineMs: 5000, runsDir });
+    assert.equal(cycle.stage, 'ESCALATED');
+    assert.match(cycle.escalation ?? '', new RegExp(`run failed: commit ${base} is the base, not a new commit`));
+    store.close();
+  }
+  {
+    const { store, runsDir, base, job: j, cycleId } = await failed();
+    const reverting: DeveloperAdapter = {
+      name: 'reverting',
+      async start(req) {
+        git(req.cwd, 'rm', '-q', 'done.txt');
+        git(req.cwd, 'commit', '-q', '-m', 'revert to the base tree');
+        return { status: 'completed', claim: { head: git(req.cwd, 'rev-parse', 'HEAD'), artifacts: ['done.txt'] } };
+      },
+    };
+    const { cycle } = await fix(store, reverting, cycleId, j, { deadlineMs: 5000, runsDir });
+    assert.equal(cycle.stage, 'ESCALATED');
+    assert.match(cycle.escalation ?? '', new RegExp(`no changes against the base ${base}`));
+    store.close();
+  }
+});
+
+test('fix throws and appends nothing outside a post-FAIL DEVELOPING, with a developer run active, or without the worktree at the head (07-a)', async () => {
+  const o = (runsDir: string) => ({ deadlineMs: 20_000, runsDir });
+  const events = (store: EventStore, id: string) => store.events(id).length;
+  {
+    // QUEUED, VERIFYING, STANDARD_REVIEW: no candidate, or not DEVELOPING.
+    const { repo, store, runsDir } = scratch();
+    const j = job(repo, { checks: [{ name: 'ok', command: ['true'] }] });
+    store.open('q1', 'wq');
+    await assert.rejects(fix(store, fake(claude), 'q1', j, o(runsDir)), /QUEUED/);
+    assert.equal(events(store, 'q1'), 0);
+    await assert.rejects(fix(store, fake(claude), 'nope', j, o(runsDir)), /not open/);
+    const dev = await develop(store, fake(claude), j, o(runsDir));
+    const id = dev.cycle.cycleId;
+    const unchanged = async (re: RegExp) => {
+      const before = events(store, id);
+      await assert.rejects(fix(store, fake(claude), id, j, o(runsDir)), re);
+      assert.equal(events(store, id), before);
+    };
+    await unchanged(/VERIFYING/);
+    await verify(store, id, j, { ...o(runsDir), isolation: 'process-group' });
+    await unchanged(/STANDARD_REVIEW/);
+    await review(store, fakeReviewer(claude, 'pass'), id, j, o(runsDir));
+    await unchanged(/ADVERSARIAL_REVIEW/);
+    store.append(id, { type: 'cancel' });
+    await unchanged(/CANCELLED/);
+    store.close();
+  }
+  {
+    // DEVELOPING after a first-run failure is ESCALATED, not a fix candidate.
+    const { repo, store, runsDir } = scratch();
+    const dev = await develop(store, fake(claude, 'bogus'), job(repo), o(runsDir));
+    assert.equal(dev.cycle.stage, 'ESCALATED');
+    const before = events(store, dev.cycle.cycleId);
+    await assert.rejects(fix(store, fake(claude), dev.cycle.cycleId, job(repo), o(runsDir)), /ESCALATED/);
+    assert.equal(events(store, dev.cycle.cycleId), before);
+    store.close();
+  }
+  {
+    // A fix run already active: the second call is refused, not silently ignored by apply.
+    const { store, runsDir, job: j, cycleId } = await failed();
+    const adapter = fakeAdapter('hang');
+    const first = fix(store, adapter, cycleId, j, { deadlineMs: 500, runsDir });
+    while (adapter.requests.length === 0) await new Promise((r) => setTimeout(r, 5));
+    const before = events(store, cycleId);
+    await assert.rejects(fix(store, fakeAdapter('hang'), cycleId, j, o(runsDir)), /developer run .*active/);
+    assert.equal(events(store, cycleId), before);
+    assert.equal((await first).cycle.stage, 'ESCALATED');
+    store.close();
+  }
+  {
+    // The worktree tip moved by hand: the candidate changed outside a fix run; the owner decides.
+    const { store, runsDir, job: j, cycleId, worktree } = await failed();
+    writeFileSync(join(worktree, 'extra.txt'), 'x\n');
+    git(worktree, 'add', 'extra.txt');
+    git(worktree, 'commit', '-q', '-m', 'by hand');
+    const before = events(store, cycleId);
+    await assert.rejects(fix(store, fake(claude), cycleId, j, o(runsDir)), /not at the candidate/);
+    assert.equal(events(store, cycleId), before);
+    store.close();
+  }
+  {
+    // The worktree is detached at the candidate: the branch is at the head, but a commit here would leave it.
+    const { store, runsDir, job: j, cycleId, worktree } = await failed();
+    git(worktree, 'checkout', '-q', '--detach');
+    const before = events(store, cycleId);
+    await assert.rejects(fix(store, fake(claude), cycleId, j, o(runsDir)), /on \(detached\), not on sf\//);
+    assert.equal(events(store, cycleId), before);
+    git(worktree, 'checkout', '-q', '-b', 'elsewhere');
+    await assert.rejects(fix(store, fake(claude), cycleId, j, o(runsDir)), /on refs\/heads\/elsewhere, not on sf\//);
+    store.close();
+  }
+  {
+    // The worktree is gone.
+    const { store, runsDir, job: j, cycleId, worktree } = await failed();
+    rmSync(worktree, { recursive: true, force: true });
+    const before = events(store, cycleId);
+    await assert.rejects(fix(store, fake(claude), cycleId, j, o(runsDir)), /no worktree/);
+    assert.equal(events(store, cycleId), before);
+    store.close();
+  }
+});

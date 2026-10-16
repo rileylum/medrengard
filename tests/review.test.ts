@@ -8,8 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EventStore } from '../src/store.ts';
 import { claude, claudeReviewer, cliAdapter, pi, piReviewer, type CliSpec } from '../src/runtime/cli-adapter.ts';
-import { execute } from '../src/controller.ts';
-import { develop, type Job } from '../src/developer.ts';
+import { develop, fix, type Job } from '../src/developer.ts';
 import { verify } from '../src/verify.ts';
 import { review } from '../src/review.ts';
 import { fakeAdapter } from './fake-adapter.ts';
@@ -190,12 +189,11 @@ test('review throws and appends nothing outside a review stage, without the chec
 });
 
 test('after a standard FAIL and a fix run, the prompt carries the verification for the new head, not the old one', async () => {
-  const { store, runsDir, job, cycleId, head, base } = await reviewable();
+  const { store, runsDir, job, cycleId, head } = await reviewable();
   const failed = await review(store, fake(claude, 'verdict', 'fail'), cycleId, job, opts(runsDir));
   assert.equal(failed.stage, 'DEVELOPING');
-  // The fix run: the fixture commits again in the cycle's worktree (a different first line, so a different done.txt).
-  const worktree = join(runsDir, cycleId);
-  const fixed = await execute(store, cycleId, fake(claude, 'commit'), { role: 'developer', prompt: 'Fix: change done.txt and commit it.', cwd: worktree }, { deadlineMs: 20_000, base });
+  // The fix run (07-a): the fixture commits again in the cycle's worktree (the fix prompt's first line differs, so done.txt differs).
+  const fixed = (await fix(store, fake(claude, 'commit'), cycleId, job, opts(runsDir))).cycle;
   assert.equal(fixed.stage, 'VERIFYING', fixed.escalation);
   const head2 = fixed.candidate!.head;
   assert.notEqual(head2, head);
