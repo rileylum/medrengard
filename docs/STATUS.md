@@ -28,7 +28,9 @@ Step 5 in progress: ticket 05-a on `feat/05-a-developer-run` (A-026). `src/devel
 
 2026-10-16: `npm test` on `93ab46e` (04-d), owner-run — 102 tests, 83 pass, 14 skipped, 5 todo, 0 fail; `RUNTIME_SPIKE=1 npm test` 97 pass, 0 skipped, 0 fail. Standard 1 PASS; adversarial FAIL on `5347806` (claim-block regex backtracking holds the event loop past the deadline).
 2026-10-16: `npm test` on `c72625d` and `e6789d6` (04-e), owner-run — 111 tests, 92 pass, 14 skipped, 5 todo, 0 fail. Standard 1 PASS, adversarial PASS.
+2026-10-16: `npm test` on `c7adae7` (05-a), owner-run — 125 tests, 104 pass, 16 skipped, 5 todo, 0 fail; `RUNTIME_SPIKE=1 node --test tests/developer.test.ts` 9 pass, both live developer runs reach VERIFYING. Standard 1 PASS (2 minors, 3 notes, fixed in `18421ff`).
+2026-10-16: `npm test` on `18421ff` (05-a), owner-run — 126 tests, 105 pass, 16 skipped, 5 todo, 0 fail. Adversarial FAIL: two majors (a throw after `open` strands a QUEUED cycle and blocks the work; `git log --output` and `git diff --output` write outside the worktree under the claude allow list); see the ticket log.
 
 ## Next action
 
-Owner runs `npm test` on the 05-a SHA; then standard review 1 of `feat/05-a-developer-run` (prompt under `/var/tmp/software_factory/05-a/`), adversarial review, owner merge. After 05-a: plan row 6 (verification checks run by the controller, then reviewer runs through the same seam), and the 02-a busy timeout when a second process shares the database.
+05-a is stopped on an adversarial FAIL (`18421ff`); the owner decides between a fix ticket 05-b stacked on 05-a and a merge with the findings parked. Then After 05-a: plan row 6 (verification checks run by the controller, then reviewer runs through the same seam), and the 02-a busy timeout when a second process shares the database.
