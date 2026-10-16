@@ -37,6 +37,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-029 — 2026-10-16 — Merge 06-a with the adversarial findings parked
+
+Owner, after the 06-a adversarial FAIL on `4b20fb5` (one major: a symlink committed in the candidate lets a check read the developer's worktree, so evidence for a SHA depends on files in no commit; two minors: an unknown binary is `FAIL` not `MISSING` under cgroup isolation, and `git worktree add` runs a committed `post-checkout` hook through `core.hooksPath`): “option 2 go”.
+
+Effect: `feat/06-a-verification` is merged with standard PASS (5d1a34b) and adversarial FAIL (4b20fb5) on record. The major and both minors are tracked in [work/parked.md](work/parked.md). All three need a developer with unscoped shell or `git config`, which today is pi on a scratch repository; the ticket that gives pi a policy or puts a sandbox around the worktree is not READY until its done-when list covers them. The `MISSING` classification goes to the next ticket that touches `verify.ts`.
+
 ### A-028 — 2026-10-16 — Step 6 design: verification and reviewer runs
 
 Owner, after the step 6 question round (two tickets 06-a verification and 06-b reviewer runs; checks declared on `Job`, not read from the candidate; checks run in a fresh detached checkout of the candidate SHA; evidence as files under the runs directory keyed by SHA, no store change; `review()` mirroring `develop` over `execute`, claude reviewers with `Read,Glob,Grep,Bash(npm test)` and pi with `read,grep,find,ls`; a check that cannot start is `MISSING`, everything else non-zero is `FAIL`; no `runtime` on reviewer runs; parked head-guard variants stay parked): “take all”.

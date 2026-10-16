@@ -14,6 +14,8 @@ Step 4 completed by 04-d and 04-e (A-024, A-025): `src/runtime/cli-adapter.ts` b
 
 Plan step 4 done (A-023): `src/adapter.ts` is the seam between the controller and a runtime; `src/controller.ts` starts a run with a deadline and records exactly one outcome per run through `EventStore.append`, which now returns the replayed Cycle; `run_failed` is a lifecycle event; `tests/fake-adapter.ts` drives normal, malformed, timeout, cancel and duplicate outcomes. Tickets 04-a, 04-b and 04-c, merged as one stacked branch with an adversarial FAIL on record (string-cap size bound, parked for 04-d).
 
+Plan step 6, ticket 06-a (A-028, A-029): `src/verify.ts` checks out the candidate detached at `<runsDir>/<cycleId>-verify`, runs `job.checks` there through `spawnRuntime` with a deadline, byte cap and scope, writes `<name>.stdout|stderr|exit` under `<runsDir>/evidence/<head>/`, and appends `verification`; `Job.checks` declares the commands; `src/git.ts` is the shared sync Git helper. Standard 1 PASS, adversarial FAIL (committed-symlink escape, pi only) parked for the pi-policy or sandbox ticket. 06-b (reviewer runs) is drafted.
+
 Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a, 05-b): `src/developer.ts` opens a cycle, makes a worktree per cycle on `sf/<cycleId>`, prompts the developer and refuses a claim whose head is not the branch tip through the new `accept` option on `execute`; the `claim` event carries `runtime`; `EventStore.open` enforces one open cycle per work item and an ESCALATED parent; `claudeDeveloper(worktree)` and `piDeveloper` are the tools-on specs. Both real CLIs reached VERIFYING live.
 
 ## Checks run
@@ -38,4 +40,4 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 ## Next action
 
-Owner decides on the 06-a adversarial FAIL on `4b20fb5` (`feat/06-a-verification`, standard 1 PASS): fix ticket 06-c stacked on 06-a, park the major with the pi lines and merge, or cancel. Then 06-b (reviewer runs), drafted in `docs/work/06-b-reviewer-runs.md`.
+Owner merges `feat/06-a-verification` into main (standard 1 PASS on 5d1a34b, adversarial FAIL on 4b20fb5 parked, A-029). Then 06-b (reviewer runs): confirm the done-when list in `docs/work/06-b-reviewer-runs.md` on the Design route and start it; it should pick up the parked `MISSING`-under-cgroup minor if it touches `verify.ts`.
