@@ -112,6 +112,10 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
   // spec gives to the owner, not to a run that would quietly build on it.
   const tip = git(worktree, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`);
   if (tip !== head) throw new Error(`worktree ${worktree} is at ${tip}, not at the candidate ${head}`);
+  // On the branch, not merely with the branch at the head: a detached or switched worktree would
+  // take the developer's commit off the branch and spend the run on a claim refused as not the tip.
+  const onto = gitStatus(worktree, 'symbolic-ref', '--quiet', 'HEAD') === 0 ? git(worktree, 'symbolic-ref', '--quiet', 'HEAD') : '(detached)';
+  if (onto !== `refs/heads/${branch}`) throw new Error(`worktree ${worktree} is on ${onto}, not on ${branch}`);
   const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
   const cycleAfter = await execute(
     store,
@@ -128,7 +132,9 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
  * must be the full SHA at the tip of the cycle's branch: the tip, not any reachable commit, so
  * what is verified and reviewed is what the developer left behind, nothing on top of it. It
  * must descend from the base and differ from it, or `base..head` means nothing to step 6. A fix
- * run must also produce a new SHA: the previous candidate is the one that failed review.
+ * run must also produce a new SHA with a new tree: the previous candidate is the one that failed
+ * review, and a commit with its exact tree (an empty commit on top of it) fixed nothing and would
+ * spend the second verification and standard review on the diff that already failed.
  */
 function refuse(worktree: string, branch: string, base: string, previous: string | undefined, claim: unknown): string | undefined {
   const head = (claim as { head?: unknown } | null)?.head;
@@ -144,6 +150,11 @@ function refuse(worktree: string, branch: string, base: string, previous: string
   const diff = gitStatus(worktree, 'diff', '--quiet', base, head);
   if (diff === 0) return `commit ${head} has no changes against the base ${base}`;
   if (diff !== 1) return `commit ${head}: git diff ${base} ${head} failed with exit ${diff}`;
+  if (previous !== undefined) {
+    const same = gitStatus(worktree, 'diff', '--quiet', previous, head);
+    if (same === 0) return `commit ${head} has no changes against the previous candidate ${previous}`;
+    if (same !== 1) return `commit ${head}: git diff ${previous} ${head} failed with exit ${same}`;
+  }
   return undefined;
 }
 

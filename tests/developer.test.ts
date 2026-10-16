@@ -272,19 +272,45 @@ test('the fix prompt carries the ticket, the failed head and each finding; cwd i
   store.close();
 });
 
-test('a fix claim naming the previous head, the base, a non-tip, an orphan or an unknown SHA is refused and names it (07-a)', async () => {
+test('a fix claim is refused when it names the previous head, an empty commit on it, the base, a non-tip, an orphan, a revert to the base or an unknown SHA (07-a)', async () => {
   // The fixture's "base" is the worktree HEAD when it starts, which in a fix run is the previous
-  // candidate: nocommit claims it without committing, base after committing. Both need a new SHA.
-  for (const variant of ['nocommit', 'base', 'first', 'bogus', 'short', 'orphan']) {
+  // candidate: nocommit claims it without committing, base after committing. empty commits
+  // --allow-empty on top of it: a new SHA with the tree that already failed review.
+  for (const variant of ['nocommit', 'base', 'empty', 'first', 'bogus', 'short', 'orphan']) {
     const { store, runsDir, base, job: j, cycleId, head, worktree } = await failed();
     const { cycle } = await fix(store, fake(claude, variant), cycleId, j, { deadlineMs: 20_000, runsDir });
     assert.equal(cycle.stage, 'ESCALATED', variant);
     assert.equal(cycle.history.at(-1)!.event.type, 'run_failed', variant);
     const claimed = variant === 'bogus' ? 'a'.repeat(40) : variant === 'short' ? git(worktree, 'rev-parse', 'HEAD').slice(0, 7) : variant === 'nocommit' || variant === 'base' ? head : variant === 'first' ? git(worktree, 'rev-parse', 'HEAD~1') : git(worktree, 'rev-parse', 'HEAD');
     assert.match(cycle.escalation ?? '', new RegExp(`run failed: commit ${claimed}`), variant);
-    if (variant === 'nocommit' || variant === 'base') assert.match(cycle.escalation ?? '', /previous candidate/);
-    assert.notEqual(claimed, base);
+    if (variant === 'nocommit' || variant === 'base') assert.match(cycle.escalation ?? '', /previous candidate, not a new commit/);
+    if (variant === 'empty') { assert.notEqual(claimed, head); assert.match(cycle.escalation ?? '', new RegExp(`no changes against the previous candidate ${head}`)); }
     if (variant === 'orphan') assert.match(cycle.escalation ?? '', /not descended from the base/);
+    assert.notEqual(claimed, base);
+    store.close();
+  }
+  // The shared rules the fixture cannot reach on a fix run: a claim that names the base itself,
+  // and a commit that reverts the worktree to the base's tree (a new SHA with no diff against the base).
+  {
+    const { store, runsDir, base, job: j, cycleId } = await failed();
+    const { cycle } = await fix(store, fakeAdapter({ outcome: { status: 'completed', claim: { head: base, artifacts: ['done.txt'] } } }), cycleId, j, { deadlineMs: 5000, runsDir });
+    assert.equal(cycle.stage, 'ESCALATED');
+    assert.match(cycle.escalation ?? '', new RegExp(`run failed: commit ${base} is the base, not a new commit`));
+    store.close();
+  }
+  {
+    const { store, runsDir, base, job: j, cycleId } = await failed();
+    const reverting: DeveloperAdapter = {
+      name: 'reverting',
+      async start(req) {
+        git(req.cwd, 'rm', '-q', 'done.txt');
+        git(req.cwd, 'commit', '-q', '-m', 'revert to the base tree');
+        return { status: 'completed', claim: { head: git(req.cwd, 'rev-parse', 'HEAD'), artifacts: ['done.txt'] } };
+      },
+    };
+    const { cycle } = await fix(store, reverting, cycleId, j, { deadlineMs: 5000, runsDir });
+    assert.equal(cycle.stage, 'ESCALATED');
+    assert.match(cycle.escalation ?? '', new RegExp(`no changes against the base ${base}`));
     store.close();
   }
 });
@@ -338,6 +364,17 @@ test('fix throws and appends nothing outside a post-FAIL DEVELOPING, with a deve
     const before = events(store, cycleId);
     await assert.rejects(fix(store, fake(claude), cycleId, j, o(runsDir)), /not at the candidate/);
     assert.equal(events(store, cycleId), before);
+    store.close();
+  }
+  {
+    // The worktree is detached at the candidate: the branch is at the head, but a commit here would leave it.
+    const { store, runsDir, job: j, cycleId, worktree } = await failed();
+    git(worktree, 'checkout', '-q', '--detach');
+    const before = events(store, cycleId);
+    await assert.rejects(fix(store, fake(claude), cycleId, j, o(runsDir)), /on \(detached\), not on sf\//);
+    assert.equal(events(store, cycleId), before);
+    git(worktree, 'checkout', '-q', '-b', 'elsewhere');
+    await assert.rejects(fix(store, fake(claude), cycleId, j, o(runsDir)), /on refs\/heads\/elsewhere, not on sf\//);
     store.close();
   }
   {
