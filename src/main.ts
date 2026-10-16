@@ -1,6 +1,6 @@
 // Ticket 07-b: the owner's one command. `node src/main.ts <job.json>` runs one job through the
 // loop with the real claude and pi adapters and prints what the owner needs to diff and merge.
-// Checks run in the job's sandbox (08-a); developer and reviewer runs do not yet (08-b), so
+// Checks run in the job's sandbox (08-a); developer and reviewer runs do not yet (08-c), so
 // scratch repositories only until then (A-029).
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';

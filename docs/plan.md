@@ -11,7 +11,7 @@ Build one vertical slice at a time. Each step ends with a test that runs.
 | 5 | Real developer run | One READY ticket in a scratch repository produces a commit in an isolated worktree. **Done 2026-10-16** (tickets 05-a, 05-b; A-026, A-027; findings in [work/parked.md](work/parked.md)). |
 | 6 | Verification and reviews | Controller runs the repository's checks and launches fresh-context standard and adversarial reviewers. **Done 2026-10-16** (tickets 06-a, 06-b, 06-c; A-028 to A-031; findings in [work/parked.md](work/parked.md)) |
 | 7 | End to end | One ticket goes READY to human-reviewable PR with no manual stage advancement, including one standard FAIL and fix. **Done 2026-10-16** (tickets 07-a, 07-b, 07-c; A-032 to A-034; `node src/main.ts <job.json>`; with no remote the PR is the local `sf/<cycleId>` branch; findings in [work/parked.md](work/parked.md)) |
-| 8 | Sandbox | Candidate code (checks, developer, reviewers) runs inside a sandbox named by backend; the parked sandbox class is closed by tests, and the loop may point at a real repository. Tickets 08-a (checks), 08-b (developer and reviewer runs); A-035 |
+| 8 | Sandbox | Candidate code (checks, developer, reviewers) runs inside a sandbox named by backend; the parked sandbox class is closed by tests, and the loop may point at a real repository. Tickets 08-a (checks), 08-b (fix for 08-a's adversarial FAIL), 08-c (developer and reviewer runs); A-035, A-036 |
 | 9 | GitHub sync, pools, release tracking, improvement loop | Per source §§6, 11, 13 |
 
 Measure as you go: stage waits, manual interventions, review attempts, confirmed defects. Automate the next most repeated manual step.
