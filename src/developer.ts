@@ -87,6 +87,15 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
 type Verdict = Extract<Event, { type: 'verdict' }>;
 
 /**
+ * One finding, one line: every terminator JavaScript's `m` flag or a terminal treats as a line
+ * break (\n, \r, \r\n, U+2028, U+2029, U+0085) becomes a space, so a reviewer's finding cannot
+ * open a line of its own in the developer prompt or overwrite the owner's terminal (07-b adversarial).
+ */
+export function oneLine(finding: unknown): string {
+  return String(finding).replace(/\s*(?:\r\n?|[\n\u2028\u2029\u0085])\s*/g, ' ');
+}
+
+/**
  * Run the developer again on the cycle's worktree after a standard FAIL. Everything comes from
  * the store and runsDir, as for verify and review: the findings are the last verdict's, the base
  * the candidate's, the worktree where develop left it. Returns the replayed Cycle and where its
@@ -121,7 +130,7 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
     store,
     cycleId,
     developer,
-    { role: 'developer', prompt: prompt(job.ticket, { head, findings: verdict.findings ?? [] }), cwd: worktree },
+    { role: 'developer', prompt: prompt(job.ticket, { head, findings: verdict.findings }), cwd: worktree },
     { deadlineMs: opts.deadlineMs, base, accept: (claim) => refuse(worktree, branch, base, head, claim) },
   );
   return { cycle: cycleAfter, worktree, branch };
@@ -173,14 +182,19 @@ function isCommit(worktree: string, sha: string): boolean {
 // adapters parse (04-d). The fence text is asserted by tests/developer.test.ts. A fix run gets
 // the findings after the ticket; its first line differs from the first run's, which the fixture
 // developer relies on to produce a different commit.
-function prompt(ticket: string, fixing?: { head: string; findings: string[] }): string {
+function prompt(ticket: string, fixing?: { head: string; findings: unknown }): string {
+  // The verdict shape does not check findings (07-a adversarial): a list is a line each, a bare
+  // string one line, anything else nothing; a newline inside one would otherwise open a line of
+  // its own in this prompt, such as a second Rules: section.
+  const raw = fixing?.findings;
+  const findings = (Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []).map((f) => `- ${oneLine(f)}`);
   return [
     fixing
       ? 'You are the developer fixing review findings on the ticket below. The current directory is a Git worktree on the branch for this work, at your earlier commit.'
       : 'You are the developer for the ticket below. The current directory is a Git worktree on the branch for this work.',
     '',
     ticket.trim(),
-    ...(fixing ? ['', `A review of your commit ${fixing.head} FAILED. Fix these findings, then commit:`, ...(fixing.findings.length ? fixing.findings.map((f) => `- ${f}`) : ['- (the reviewer listed no findings)'])] : []),
+    ...(fixing ? ['', `A review of your commit ${fixing.head} FAILED. Fix these findings, then commit:`, ...(findings.length ? findings : ['- (the reviewer listed no findings)'])] : []),
     '',
     'Rules:',
     '- Make the change and commit it on the current branch. Do not push, do not switch or create branches, do not amend commits that were already there.',

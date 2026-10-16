@@ -189,3 +189,73 @@ test('verify outside VERIFYING, or with a bad check name, throws before anything
   assert.equal(store.events(cycle.cycleId).length, before + 1);
   store.close();
 });
+
+// Ticket 07-b: a check that rewrites a tracked file leaves a checkout that is not the commit. Recorded
+// as a failed check with the status as evidence, so the cycle escalates instead of waiting on review.
+test('a check that modifies a tracked file records tree: FAIL with the status as evidence and the cycle escalates (07-b, parked 06-c minor)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('fmt', 'echo formatted >> README.md'), sh('after', 'true')]);
+  const { cycle: c, evidenceDir } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'ESCALATED');
+  assert.deepEqual(results(c).checks, [{ name: 'fmt', result: 'PASS' }, { name: 'after', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+  const ev = evidence(evidenceDir, 'tree');
+  assert.match(ev.stdout, /^ M README\.md$/m);
+  assert.equal(ev.stderr, '');
+  assert.equal(ev.exit, 'dirty\n');
+  store.close();
+});
+
+test('a clean tree after the checks records no tree check; an untracked leftover is not dirt (07-b)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('leave', 'echo x > leftover.txt')]);
+  const { cycle: c } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  assert.deepEqual(results(c).checks, [{ name: 'leave', result: 'PASS' }]);
+  store.close();
+});
+
+test('a declared check named tree is refused before anything is written (07-b)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('tree', 'true')]);
+  await assert.rejects(verify(store, cycle.cycleId, job, { ...opts(), runsDir }), /tree.*reserved/);
+  assert.ok(!existsSync(join(runsDir, `${cycle.cycleId}-verify`)));
+  assert.equal(store.load(cycle.cycleId)!.stage, 'VERIFYING');
+  store.close();
+});
+
+// Ticket 07-c: a check that hides its rewrite behind an index flag is still a tree that is not the commit.
+test('a check that hides a rewritten tracked file behind skip-worktree or assume-unchanged records tree: FAIL naming the flag (07-c)', async () => {
+  for (const [flag, tag] of [['--skip-worktree', 'S'], ['--assume-unchanged', 'h']]) {
+    const { store, runsDir, job, cycle } = await verifying([sh('evil', `git update-index ${flag} README.md && echo EVIL >> README.md`)]);
+    const { cycle: c, evidenceDir } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+    assert.equal(c.stage, 'ESCALATED', flag);
+    assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }], flag);
+    const ev = evidence(evidenceDir, 'tree');
+    assert.match(ev.stdout, new RegExp(`^${tag} README\\.md$`, 'm'), flag);
+    assert.equal(ev.exit, 'dirty\n');
+    store.close();
+  }
+});
+
+test('a status past 1 MiB is tree evidence, not a throw (07-c)', async () => {
+  // 11 000 tracked files with long names, every one rewritten by the check: the porcelain status is about 1.4 MB.
+  const { store, runsDir, job } = await verifying();
+  const many: import('../src/adapter.ts').Adapter = {
+    name: 'many',
+    async start(req) {
+      mkdirSync(join(req.cwd, 'big'));
+      for (let i = 0; i < 11_000; i++) writeFileSync(join(req.cwd, 'big', `${String(i).padStart(5, '0')}-${'n'.repeat(110)}`), 'x\n');
+      git(req.cwd, 'add', '-A');
+      git(req.cwd, 'commit', '-q', '-m', 'many files');
+      return { status: 'completed', claim: { head: git(req.cwd, 'rev-parse', 'HEAD'), artifacts: ['big'] } };
+    },
+  };
+  // A second work item in the same scratch repository: the first one's cycle is still open in VERIFYING.
+  const j: Job = { ...job, workId: 'w-many', checks: [sh('fmt', 'for f in big/*; do echo y >> "$f"; done')] };
+  const dev = await develop(store, many, j, { deadlineMs: 60_000, runsDir });
+  assert.equal(dev.cycle.stage, 'VERIFYING', dev.cycle.escalation);
+  const { cycle: c, evidenceDir } = await verify(store, dev.cycle.cycleId, j, { ...opts({ deadlineMs: 120_000 }), runsDir });
+  assert.equal(c.stage, 'ESCALATED', c.escalation);
+  assert.deepEqual(results(c).checks, [{ name: 'fmt', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+  const ev = evidence(evidenceDir, 'tree');
+  assert.ok(ev.stdout.length > 1024 * 1024, String(ev.stdout.length));
+  assert.equal(ev.stdout.split('\n').filter((l) => l.startsWith(' M big/')).length, 11_000);
+  store.close();
+});
