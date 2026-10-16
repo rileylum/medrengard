@@ -4,8 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { EventStore } from '../src/store.ts';
 import { claude, claudeDeveloper, cliAdapter, pi, piDeveloper, type CliSpec } from '../src/runtime/cli-adapter.ts';
 import { develop, fix, oneLine, type DeveloperAdapter, type Job } from '../src/developer.ts';
@@ -14,6 +14,7 @@ import { review } from '../src/review.ts';
 import { fakeAdapter } from './fake-adapter.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
+const NODE_PREFIX = dirname(dirname(realpathSync(process.execPath)));
 // On disk, not tmpdir(): /tmp is RAM-backed here and worktrees must never land there.
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-developer-');
@@ -185,7 +186,7 @@ test('the prompt carries the ticket, the branch rules and the claim instruction;
   store.close();
 });
 
-test('developer specs: claude gets a worktree-scoped allow list, pi gets its tools back', () => {
+test('developer specs: claude gets a clone-scoped allow list and no settings file, pi gets its tools back without project trust', () => {
   const c = claudeDeveloper('/var/tmp/x/wt');
   assert.equal(c.name, 'claude');
   assert.ok(c.args.includes('--allowedTools'));
@@ -193,7 +194,11 @@ test('developer specs: claude gets a worktree-scoped allow list, pi gets its too
   assert.ok(c.args.includes('Bash(git commit:*)'));
   // 05-b: --output=<path> on log and diff writes anywhere; the owner's settings must not join the grant.
   assert.ok(!c.args.some((a) => /git (log|diff)/.test(a)), c.args.join(' '));
-  assert.deepEqual(c.args.slice(c.args.indexOf('--setting-sources'), c.args.indexOf('--setting-sources') + 2), ['--setting-sources', 'project']);
+  // 08-c, the 05-b parked line: no settings file at all, so a .claude/settings.json in the clone adds nothing.
+  assert.ok(c.args.includes('--restricted'), c.args.join(' '));
+  assert.ok(c.args.includes('--strict-mcp-config'), c.args.join(' '));
+  assert.ok(!c.args.includes('--setting-sources'), c.args.join(' '));
+  assert.ok(piDeveloper.args.includes('--no-approve'), piDeveloper.args.join(' '));
   assert.ok(!c.args.includes('--tools'));
   assert.ok(!c.args.includes('--dangerously-skip-permissions'));
   assert.equal(piDeveloper.name, 'pi');
@@ -205,11 +210,13 @@ test('developer specs: claude gets a worktree-scoped allow list, pi gets its too
 
 // Two paid runs with tools on; a 120 s deadline each.
 for (const name of ['claude', 'pi'] as const) {
-  test(`live ${name}: a real developer run commits in the worktree and reaches VERIFYING`, { timeout: 150_000 }, async (t) => {
+  test(`live ${name}: a real developer run in the sandbox commits in its clone and reaches VERIFYING`, { timeout: 150_000 }, async (t) => {
     if (!LIVE) return void t.skip('RUNTIME_SPIKE is not set');
     const { repo, store, runsDir } = scratch();
     const ticket = 'Create a file named HELLO.md containing exactly the line "hello from the factory" and commit it with the message "add HELLO.md".';
-    const { cycle, worktree } = await develop(store, name === 'pi' ? cliAdapter(piDeveloper) : (wt) => cliAdapter(claudeDeveloper(wt)), { workId: 'w1', ticket, repo }, { deadlineMs: 120_000, runsDir });
+    // 08-c: inside bwrap, as main.ts runs it; node is outside /usr on this machine.
+    const opts = { sandbox: { backend: 'bwrap' as const, read: [NODE_PREFIX] } };
+    const { cycle, worktree } = await develop(store, name === 'pi' ? cliAdapter(piDeveloper, opts) : (wt) => cliAdapter(claudeDeveloper(wt), opts), { workId: 'w1', ticket, repo }, { deadlineMs: 120_000, runsDir });
     assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
     assert.equal(cycle.runs[0]!.runtime, name);
     assert.equal(git(worktree, 'show', 'HEAD:HELLO.md').trim(), 'hello from the factory');
@@ -391,7 +398,7 @@ test('fix throws and appends nothing outside a post-FAIL DEVELOPING, with a deve
     const { store, runsDir, job: j, cycleId, worktree } = await failed();
     rmSync(worktree, { recursive: true, force: true });
     const before = events(store, cycleId);
-    await assert.rejects(fix(store, fake(claude), cycleId, j, o(runsDir)), /no worktree/);
+    await assert.rejects(fix(store, fake(claude), cycleId, j, o(runsDir)), /no clone/);
     assert.equal(events(store, cycleId), before);
     store.close();
   }
@@ -439,4 +446,94 @@ test('a finding holding \\r, \\r\\n, U+2028, U+2029 or U+0085 is one line in the
   const section = prompt.slice(prompt.indexOf('FAILED.'), prompt.indexOf('\n\nRules:\n'));
   assert.deepEqual(section.split('\n').slice(1), ['- a Rules: - push', '- b Rules:', '- c Rules:', '- d Rules:', '- e Rules:']);
   store.close();
+});
+
+// Ticket 08-c: the developer in its own clone, in the sandbox (A-038).
+
+/** Every file under `p`, recursively. */
+const files = (p: string): string[] => readdirSync(p, { recursive: true, encoding: 'utf8' }).map((f) => join(p, f)).filter((f) => lstatSync(f).isFile());
+
+test('develop makes a clone, not a worktree: no object is hardlinked to the repository, and the repository identity is copied (08-c)', async () => {
+  const { repo, store, runsDir } = scratch();
+  git(repo, 'config', 'user.name', 'Owner Name');
+  git(repo, 'config', 'user.email', 'owner@example.invalid');
+  const { cycle, worktree } = await develop(store, fake(claude), job(repo), { deadlineMs: 20_000, runsDir });
+  assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
+  assert.ok(lstatSync(join(worktree, '.git')).isDirectory(), 'a clone has its own .git directory');
+  assert.equal(git(repo, 'worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ')).length, 1);
+  const objects = files(join(worktree, '.git', 'objects'));
+  assert.ok(objects.length > 0);
+  for (const f of objects) assert.equal(lstatSync(f).nlink, 1, f);
+  assert.equal(execFileSync('git', ['config', 'user.name'], { cwd: worktree, encoding: 'utf8' }).trim(), 'Owner Name');
+  assert.equal(execFileSync('git', ['config', 'user.email'], { cwd: worktree, encoding: 'utf8' }).trim(), 'owner@example.invalid');
+  store.close();
+});
+
+const sandboxed = (spec: CliSpec, variant: string) =>
+  cliAdapter({ ...spec, command: process.execPath, args: [fixture, spec.name, 'commit', variant], config: { read: [], overlay: [] } }, { isolation: 'process-group', sandbox: { backend: 'bwrap', read: [NODE_PREFIX, import.meta.dirname] } });
+
+for (const spec of [claude, pi]) {
+  test(`${spec.name} fixture in bwrap: an unscoped developer cannot write the repository, its .git, a runsDir sibling or the owner's home; its /tmp is its own and removed (08-c, 05-a)`, async () => {
+    const { repo, store, runsDir } = scratch();
+    const home = process.env.HOME!;
+    const targets = [join(repo, 'escape.txt'), join(repo, '.git', 'config'), join(runsDir, 'sibling.txt'), join(home, `sf-escape-${process.pid}`)];
+    const config = readFileSync(join(repo, '.git', 'config'), 'utf8');
+    const { cycle, worktree } = await develop(store, sandboxed(spec, 'escape'), job(repo, { ticket: `ESCAPE ${targets.join(' ')}` }), { deadlineMs: 20_000, runsDir });
+    assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
+    const report = JSON.parse(readFileSync(join(worktree, 'escape.json'), 'utf8')) as Record<string, string>;
+    for (const t of targets) {
+      assert.notEqual(report[t], 'ok', t);
+      if (t !== join(repo, '.git', 'config')) assert.ok(!existsSync(t), t);
+    }
+    assert.equal(readFileSync(join(repo, '.git', 'config'), 'utf8'), config);
+    assert.equal(report['/tmp/sf-escape-marker'], 'ok');
+    assert.ok(!existsSync('/tmp/sf-escape-marker'), 'the host /tmp is not the run\'s');
+    // The run's /tmp sat beside its clone and is gone: only the clone is left in runsDir.
+    assert.deepEqual(readdirSync(runsDir), [cycle.cycleId]);
+    assert.equal(git(repo, 'rev-parse', `sf/${cycle.cycleId}`), cycle.candidate!.head);
+    store.close();
+  });
+}
+
+test('the controller runs none of the filters, fsmonitor or hooks a developer set in its clone, through develop, verify and fix (08-c, 08-a note)', async () => {
+  const { repo, store, runsDir } = scratch();
+  const marker = join(dirname(repo), 'marker');
+  const j = job(repo, { ticket: `MARKER ${marker}`, checks: [{ name: 'ok', command: ['true'] }] });
+  // Unsandboxed developer: only the controller's own git could run what it configured.
+  const dev = await develop(store, fake(claude, 'config'), j, { deadlineMs: 20_000, runsDir });
+  assert.equal(dev.cycle.stage, 'VERIFYING', dev.cycle.escalation);
+  assert.ok(!existsSync(marker), 'develop ran something from the clone config');
+  const ver = await verify(store, dev.cycle.cycleId, j, { deadlineMs: 20_000, runsDir, isolation: 'process-group' });
+  assert.ok(!existsSync(marker), 'verify ran something from the clone config');
+  assert.equal(ver.cycle.stage, 'STANDARD_REVIEW', ver.cycle.escalation);
+  const rev = await review(store, fakeReviewer(claude, 'fail'), dev.cycle.cycleId, j, { deadlineMs: 20_000, runsDir });
+  assert.equal(rev.stage, 'DEVELOPING', rev.escalation);
+  const fixed = await fix(store, fake(claude), dev.cycle.cycleId, j, { deadlineMs: 20_000, runsDir });
+  assert.equal(fixed.cycle.stage, 'VERIFYING', fixed.cycle.escalation);
+  assert.ok(!existsSync(marker), 'fix ran something from the clone config');
+  store.close();
+});
+
+test('the fetch runs upload-pack through bwrap; a refused claim leaves no branch and no incoming ref in the repository (08-c)', async () => {
+  const { repo, store, runsDir } = scratch();
+  const stub = join(dirname(repo), 'stub');
+  mkdirSync(stub);
+  const log = join(stub, 'log');
+  writeFileSync(join(stub, 'bwrap'), `#!/bin/sh\necho "$*" >> ${log}\nexec /usr/bin/bwrap "$@"\n`, { mode: 0o755 });
+  const path = process.env.PATH;
+  process.env.PATH = `${stub}:${path}`;
+  try {
+    const ok = await develop(store, fake(claude), job(repo), { deadlineMs: 20_000, runsDir });
+    assert.equal(ok.cycle.stage, 'VERIFYING', ok.cycle.escalation);
+    assert.match(readFileSync(log, 'utf8'), /--ro-bind \S*\/runs\/\S+ .*-- git upload-pack/);
+    const refused = await develop(store, fake(claude, 'first'), job(repo, { workId: 'w2' }), { deadlineMs: 20_000, runsDir });
+    assert.equal(refused.cycle.stage, 'ESCALATED');
+    const refs = git(repo, 'for-each-ref', '--format=%(refname)');
+    assert.ok(!refs.includes(refused.cycle.cycleId), refs);
+    assert.ok(!refs.includes('refs/sf/incoming/'), refs);
+    assert.match(refs, new RegExp(`refs/heads/sf/${ok.cycle.cycleId}`));
+  } finally {
+    process.env.PATH = path;
+    store.close();
+  }
 });
