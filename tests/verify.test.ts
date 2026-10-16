@@ -505,6 +505,8 @@ test('a malformed nested repository left at a gitlink is tree: FAIL with git\'s 
   const { cycle: c, evidenceDir, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
   assert.equal(c.stage, 'ESCALATED', c.escalation);
   assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+  // git's own error, not only the gitlink dirt the removal adds to the same evidence (08-e standard 1).
+  assert.match(evidence(evidenceDir, 'tree').stdout, /^git diff-files for .* failed: fatal: .*not recognized as a git repository/m);
   assert.match(evidence(evidenceDir, 'tree').stdout, /vendor/);
   assert.deepEqual(readdirSync(join(worktree, 'vendor')), []);
   store.close();

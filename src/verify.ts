@@ -154,9 +154,9 @@ function checkoutGit(repo: string, checkout: string, head: string) {
 
 /**
  * Delete everything under `checkout` that is not a tracked path or a directory holding one, and
- * empty every gitlink. A gitlink checks out as an empty directory that diff-files never looks
- * inside, so anything a check put in one is returned as dirt (08-b adversarial); the rest of what
- * a check leaves untracked is not dirt, only removed.
+ * empty every gitlink. A gitlink checks out as an empty directory, and diff-files compares only
+ * the nested repository's HEAD there, not the files, so anything a check put in one is returned as
+ * dirt (08-b adversarial); the rest of what a check leaves untracked is not dirt, only removed.
  */
 function removeUntracked(checkout: string, entries: { gitlink: boolean; path: string }[]): string {
   const keep = new Set(entries.filter((e) => !e.gitlink).map((e) => e.path));
