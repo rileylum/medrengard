@@ -22,7 +22,7 @@ Plan step 7 done (A-032 to A-034), 07-a merged, 07-b and 07-c as one stacked bra
 
 Plan step 8 done (sandbox, A-035 to A-042). 08-a and 08-b merged by the owner as `f5e90bb`: every verification check runs inside bubblewrap on a checkout with no `.git`. `src/sandbox.ts` wraps a command from a policy (write roots, read roots, network) for backend `bwrap` or `none`; the job file names it, default `bwrap`. The controller writes and compares the checkout through the repository's git dir and a private index, restores owner access before comparing, counts git's warnings as dirt, and removes untracked entries before review. Closed: the parked 06-a symlink, `core.hooksPath` and evidence lines, the 07-b gitdir-swap, `git replace` and `core.fileMode` lines, and 08-a's adversarial major. Parked (A-037): a committed gitlink directory and a dangling symlink survive the untracked removal (against 08-c), and two verify minors. 08-c merged as `86dde47`: the developer runs in bwrap in its own clone, and its branch comes back through a sandboxed `upload-pack`. 08-d, 08-e and 08-f merged together as `f479736`: reviewers run in bwrap with the checkout read-only, every reviewer call site in `main.ts` is tested, and every controller git call over a tree a run or a check wrote is killed at the stage deadline and recorded. Developer, check and reviewer runs are all sandboxed now. The owner lifted the scratch-repositories-only limit (A-043): the factory may run on any repository. Runs keep full network access and can read their own CLI's credentials. Parked: two 08-f minors, against the next ticket that touches `git.ts`, `verify.ts` or `developer.ts`. Research: [08-a-findings.md](work/08-a-findings.md).
 
-Ticket 07-d (A-044), on `feat/07-d-accept-cancel` stacked on `feat/09-scoping`: `node src/main.ts accept <job.json> <sha>` and `cancel <job.json>` record the owner's decision, so a work ID can run again. A refused command writes nothing. The store waits 5 s for another process's write lock and checks row 0 (two parked 02-a notes). Standard 1 PASS and adversarial PASS on `b5d4635`, two adversarial minors waiting on the owner.
+Ticket 07-d (A-044), on `feat/07-d-accept-cancel` stacked on `feat/09-scoping`: `node src/main.ts accept <job.json> <sha>` and `cancel <job.json>` record the owner's decision, so a work ID can run again. A refused command writes nothing. The store waits 5 s for another process's write lock and checks row 0 (two parked 02-a notes). Standard 1 PASS and adversarial PASS on `b5d4635`. The owner chose to fix the two adversarial minors (A-045): the run command refuses extra arguments, and a job naming a parent that is no longer ESCALATED is refused with a hint. Standard 2 PASS on `eaa5eb8`. Ready for merge.
 
 ## Checks run
 
@@ -71,10 +71,11 @@ Ticket 07-d (A-044), on `feat/07-d-accept-cancel` stacked on `feat/09-scoping`: 
 2026-10-17: `npm test` on `73463fc` (main after the 08-close merge), owner-run — all pass.
 
 2026-10-17: `npm test` on `b5d4635` (07-d), implementer-run, not independent — 228 tests, 204 pass, 19 skipped, 5 todo, 0 fail. Standard 1 PASS, adversarial PASS (2 minors).
+2026-10-17: `npm test` on `eaa5eb8` (07-d, A-045 fix), implementer-run and the standard 2 reviewer's run — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. Standard 2 PASS.
 
 ## Next action
 
 1. Done: plan step 8 merged (`86dde47`, `f479736`, `73463fc`); the owner's `npm test` on `73463fc` passes.
 2. Done: the owner lifted the scratch-repositories-only limit (A-043).
-3. Waiting on the owner: 07-d's two adversarial minors (fix before merge, park, or accept), then `npm test` on `b5d4635` and merge of `feat/07-d-accept-cancel`, which carries `feat/09-scoping`.
+3. Waiting on the owner: `npm test` on `eaa5eb8` and merge of `feat/07-d-accept-cancel`, which carries `feat/09-scoping`.
 4. Next: break plan row 9 (GitHub sync, pools, release tracking, improvement loop) into tickets per [workflow.md](workflow.md), for the owner to read and approve.
