@@ -23,10 +23,12 @@ const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
 // Per evidence file, head and tail kept. A prompt is read by a model, not a log viewer; the
 // verdict's source is the event's result line, the file is detail.
 const EVIDENCE_KEEP = 16 * 1024;
-const DIFF_MAX = 256 * 1024;
+// Head and tail each, so the whole diff is sent up to twice this.
+const DIFF_MAX = 128 * 1024;
 
 const ROLE_FOR_STAGE: Partial<Record<Cycle['stage'], Role>> = { STANDARD_REVIEW: 'standard_reviewer', ADVERSARIAL_REVIEW: 'adversarial_reviewer' };
 type Verification = Extract<Event, { type: 'verification' }>;
+const EVIDENCE_EXTS = ['exit', 'stdout', 'stderr'] as const;
 
 /** One reviewer run for whichever review stage the cycle is in. Returns the replayed Cycle. */
 export async function review(store: EventStore, adapter: Adapter, cycleId: string, job: Job, opts: ReviewOptions): Promise<Cycle> {
@@ -48,6 +50,12 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
   if (!existsSync(evidenceDir)) throw new Error(`no verification evidence at ${evidenceDir}`);
   const verification = cycle.history.map((h) => h.event).filter((e): e is Verification => e.type === 'verification' && e.head === head).at(-1);
   if (!verification) throw new Error(`cycle ${cycleId} has no verification event for ${head}`);
+  for (const c of verification.checks) {
+    for (const ext of EVIDENCE_EXTS) {
+      const f = join(evidenceDir, `${c.name}.${ext}`);
+      if (!existsSync(f)) throw new Error(`verification evidence file ${f} is missing`);
+    }
+  }
 
   const prompt = buildPrompt(role, job.ticket, head, base, checkout, opts.instructions ?? ['AGENTS.md'], verification, evidenceDir);
   return execute(store, cycleId, adapter, { role, prompt, cwd: checkout }, { deadlineMs: opts.deadlineMs });
@@ -83,17 +91,16 @@ function buildPrompt(role: Role, ticket: string, head: string, base: string, che
   parts.push(...(verification.checks.length ? verification.checks.map((c) => `${c.name}: ${c.result}`) : ['no checks declared']));
   parts.push('', `---- DIFF ${base}..${head} ----`, cut(diff, DIFF_MAX));
   for (const c of verification.checks) {
-    for (const ext of ['exit', 'stdout', 'stderr']) {
-      parts.push('', `---- EVIDENCE ${c.name}.${ext} ----`, cut(read(join(evidenceDir, `${c.name}.${ext}`)), EVIDENCE_KEEP));
+    for (const ext of EVIDENCE_EXTS) {
+      parts.push('', `---- EVIDENCE ${c.name}.${ext} ----`, cut(readFileSync(join(evidenceDir, `${c.name}.${ext}`), 'utf8'), EVIDENCE_KEEP));
     }
   }
   return parts.join('\n');
 }
 
-const read = (path: string): string => { try { return readFileSync(path, 'utf8'); } catch { return '(file missing)'; } };
-
 // Head and tail, the cut marked in the text so the reviewer knows it is not seeing a whole file.
+// Counts are characters: the text is already decoded, and the reviewer reads it as text.
 function cut(text: string, keep: number): string {
   if (text.length <= 2 * keep) return text;
-  return `${text.slice(0, keep)}\n[... ${text.length - 2 * keep} bytes cut ...]\n${text.slice(-keep)}`;
+  return `${text.slice(0, keep)}\n[... ${text.length - 2 * keep} characters cut ...]\n${text.slice(-keep)}`;
 }

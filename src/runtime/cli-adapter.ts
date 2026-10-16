@@ -180,12 +180,14 @@ export const piDeveloper: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--n
 /**
  * Reviewers read; they never run anything (06-b, A-030). The controller already ran the checks,
  * and a reviewer with a shell would run candidate code again as the owner, outside any scope.
- * Only `project` settings load, as for the developer; the reviewer has no Write, so only a
- * settings file committed in the candidate could widen this (parked 05-b minor).
+ * `--restricted` loads no user, project or local settings file and confines the file tools to
+ * the cwd: without it a `.claude/settings.json` committed in the candidate adds hooks that run
+ * at session start as the owner (probed 2026-10-16: the hook ran under `--setting-sources
+ * project`, not under `--restricted`), and Read could reach the developer's worktree next door.
  */
 export const claudeReviewer: CliSpec = {
   ...claude,
-  args: ['-p', '--output-format', 'json', '--no-session-persistence', '--setting-sources', 'project', '--allowedTools', 'Read', 'Glob', 'Grep'],
+  args: ['-p', '--output-format', 'json', '--no-session-persistence', '--restricted', '--allowedTools', 'Read', 'Glob', 'Grep'],
 };
 
 /** pi's read-only tools; no bash. */
