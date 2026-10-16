@@ -46,6 +46,8 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 2026-10-16: `npm test` on `03310a6` (06-c, minors fixed), owner-run — 150 tests, 127 pass, 18 skipped, 5 todo, 0 fail. Adversarial PASS on 03310a6 (1 minor parked).
 
+2026-10-16: `npm test` on `c5322f6` (07-a), owner-run — 155 tests, 132 pass, 18 skipped, 5 todo, 0 fail. Standard review 1 FAIL (1 major, 1 minor; see the ticket log).
+
 ## Next action
 
-Step 7 (A-032): 07-a fix run implemented on `feat/07-a-fix-run` at `c5322f6` (`fix` in `src/developer.ts`); owner runs `npm test` on it, then standard review 1. 07-b (the loop, `src/main.ts`, the `tree: FAIL` check) follows stacked on 07-a.
+Step 7 (A-032): 07-a fix run on `feat/07-a-fix-run`: standard 1 FAIL on `c5322f6` (untested shared rules on the fix path; same-tree fix accepted), fixed at `6261150`; owner runs `npm test` on it, then standard review 2 (the last). 07-b (the loop, `src/main.ts`, the `tree: FAIL` check) follows stacked on 07-a.
