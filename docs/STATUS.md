@@ -52,4 +52,4 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 ## Next action
 
-Owner merges `feat/07-a-fix-run` into main (standard 1 FAIL c5322f6, standard 2 PASS 6261150, adversarial PASS 76a84cd; A-032, A-033). Then 07-b (the loop, `src/main.ts`, the `tree: FAIL` check, the 07-a parked lines) on `feat/07-b-end-to-end-loop` off main.
+Step 7: 07-a merged. 07-b implemented on `feat/07-b-end-to-end-loop` at `f3b4e12` (`src/run.ts`, `src/main.ts`, `tree: FAIL` in verify, findings coercion); live end to end passed once (claude, 54 s). Owner runs `npm test` and the live run on it, then standard review 1.
