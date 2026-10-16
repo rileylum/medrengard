@@ -1,14 +1,17 @@
 // Ticket 07-b: the owner's one command. `node src/main.ts <job.json>` runs one job through the
 // loop with the real claude and pi adapters and prints what the owner needs to diff and merge.
 // Checks, the developer (08-c) and the reviewers (08-d) run in the job's sandbox.
-import { mkdirSync, readFileSync } from 'node:fs';
+// Ticket 07-d: `accept <job.json> <sha>` and `cancel <job.json>` record the owner's decision on
+// the job's cycle, so the work ID can run again. Both refuse, writing nothing, rather than send
+// an event apply would escalate on.
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { oneLine, type DeveloperAdapter, type Job } from './developer.ts';
 import { run } from './run.ts';
 import { claudeDeveloper, claudeReviewer, cliAdapter, piDeveloper, piReviewer } from './runtime/cli-adapter.ts';
 import type { Sandbox } from './sandbox.ts';
-import { EventStore } from './store.ts';
+import { EventStore, SETTLED } from './store.ts';
 
 interface JobFile extends Omit<Job, 'ticket'> {
   ticket?: string;
@@ -35,14 +38,82 @@ function reviewer(name: string, role: string, sandbox: Sandbox): Adapter {
   throw new Error(`runtime.${role} must be claude or pi, got ${JSON.stringify(name)}`);
 }
 
-async function main(file: string | undefined): Promise<number> {
-  if (!file) throw new Error('usage: node src/main.ts <job.json>');
+const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> | cancel <job.json>';
+
+function readJob(file: string) {
   const path = resolve(file);
   const spec = JSON.parse(readFileSync(path, 'utf8')) as JobFile;
+  return { path, spec, repo: resolve(path, '..', spec.repo), runsDir: resolve(spec.runsDir ?? DEFAULT_RUNS_DIR) };
+}
+
+/** The job's store, or undefined when no run ever made one: nothing to decide on. */
+function existingStore(runsDir: string): EventStore | undefined {
+  const db = join(runsDir, 'events.sqlite');
+  return existsSync(db) ? new EventStore(db) : undefined;
+}
+
+function accept(file: string, sha: string): number {
+  const { path, spec, repo, runsDir } = readJob(file);
+  const store = existingStore(runsDir);
+  try {
+    const open = store?.cycles(spec.workId).find((c) => !SETTLED.includes(c.stage));
+    if (!store || !open) throw new Error(`no open cycle for work ${spec.workId} in ${runsDir}`);
+    const cycle = store.load(open.cycleId)!;
+    if (cycle.stage !== 'AWAITING_ACCEPTANCE') throw new Error(`cycle ${cycle.cycleId} is ${cycle.stage}, not AWAITING_ACCEPTANCE`);
+    // The full SHA only: the owner accepts the exact commit the reviews were bound to.
+    const head = cycle.candidate!.head;
+    if (sha !== head) throw new Error(`${sha} is not the candidate head ${head} of cycle ${cycle.cycleId} (${path})`);
+    const after = store.append(cycle.cycleId, { type: 'accept', head });
+    console.log(`Cycle: ${after.cycleId}`);
+    console.log(`Stage: ${after.stage}`);
+    if (after.stage !== 'ACCEPTED') return 1;
+    console.log('');
+    console.log('To merge:');
+    console.log(`  git -C ${repo} merge --no-ff ${head}`);
+    return 0;
+  } finally {
+    store?.close();
+  }
+}
+
+function cancel(file: string): number {
+  const { spec, runsDir } = readJob(file);
+  const store = existingStore(runsDir);
+  try {
+    const all = store?.cycles(spec.workId) ?? [];
+    const open = all.filter((c) => !SETTLED.includes(c.stage));
+    // With none open, every ESCALATED cycle: the store would ask a new cycle to name any of them
+    // as its parent, so cancelling only one would not free the work ID.
+    const targets = open.length > 0 ? open : all.filter((c) => c.stage === 'ESCALATED');
+    if (!store || targets.length === 0) throw new Error(`nothing to cancel for work ${spec.workId} in ${runsDir}`);
+    let code = 0;
+    for (const { cycleId } of targets) {
+      const after = store.append(cycleId, { type: 'cancel' });
+      console.log(`Cycle: ${cycleId}`);
+      console.log(`Stage: ${after.stage}`);
+      if (after.stage !== 'CANCELLED') code = 1;
+    }
+    return code;
+  } finally {
+    store?.close();
+  }
+}
+
+async function main(argv: string[]): Promise<number> {
+  const [first, ...rest] = argv;
+  if (first === 'accept') {
+    if (rest.length !== 2) throw new Error(USAGE);
+    return accept(rest[0]!, rest[1]!);
+  }
+  if (first === 'cancel') {
+    if (rest.length !== 1) throw new Error(USAGE);
+    return cancel(rest[0]!);
+  }
+  if (!first) throw new Error(USAGE);
+  const { path, spec, repo, runsDir } = readJob(first);
   const ticket = spec.ticket ?? (spec.ticketFile ? readFileSync(resolve(path, '..', spec.ticketFile), 'utf8') : undefined);
   if (!ticket) throw new Error('job needs ticket or ticketFile');
-  const job: Job = { workId: spec.workId, ticket, repo: resolve(path, '..', spec.repo), base: spec.base, parentCycleId: spec.parentCycleId, checks: spec.checks };
-  const runsDir = resolve(spec.runsDir ?? DEFAULT_RUNS_DIR);
+  const job: Job = { workId: spec.workId, ticket, repo, base: spec.base, parentCycleId: spec.parentCycleId, checks: spec.checks };
   const sandbox: Sandbox = spec.sandbox
     ? { ...spec.sandbox, read: spec.sandbox.read?.map((p) => (typeof p === 'string' ? resolve(path, '..', p) : p)) }
     : { backend: 'bwrap' };
@@ -74,9 +145,11 @@ async function main(file: string | undefined): Promise<number> {
     if (r.error) console.log(`Error: ${r.error}`);
     if (cycle.stage === 'AWAITING_ACCEPTANCE') {
       console.log('');
-      console.log('To review and merge:');
+      console.log('To review, accept and merge:');
       console.log(`  git -C ${job.repo} diff ${cycle.candidate!.base}..${cycle.candidate!.head}`);
-      console.log(`  git -C ${job.repo} merge --no-ff ${r.branch}`);
+      console.log(`  node ${process.argv[1]} accept ${path} ${cycle.candidate!.head}`);
+      // By SHA, not branch: the branch can move after the reviews; the SHA is what they passed.
+      console.log(`  git -C ${job.repo} merge --no-ff ${cycle.candidate!.head}`);
       return 0;
     }
     return 1;
@@ -85,4 +158,4 @@ async function main(file: string | undefined): Promise<number> {
   }
 }
 
-main(process.argv[2]).then((code) => { process.exitCode = code; }, (err) => { console.error(err instanceof Error ? err.message : String(err)); process.exitCode = 2; });
+main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { console.error(err instanceof Error ? err.message : String(err)); process.exitCode = 2; });
