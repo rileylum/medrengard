@@ -187,8 +187,9 @@ export const piDeveloper: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--n
  */
 export const claudeReviewer: CliSpec = {
   ...claude,
-  args: ['-p', '--output-format', 'json', '--no-session-persistence', '--restricted', '--allowedTools', 'Read', 'Glob', 'Grep'],
+  // --strict-mcp-config: a project .mcp.json in the checkout is the candidate's; --restricted alone would load it (06-c).
+  args: ['-p', '--output-format', 'json', '--no-session-persistence', '--restricted', '--strict-mcp-config', '--allowedTools', 'Read', 'Glob', 'Grep'],
 };
 
-/** pi's read-only tools; no bash. */
-export const piReviewer: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--no-session', '--tools', 'read,grep,find,ls'] };
+/** pi's read-only tools; no bash. --no-approve: project-local .pi files (extensions, skills, settings) are the candidate's and must not load, whatever trust the owner saved for a parent directory (06-c). */
+export const piReviewer: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--no-session', '--no-approve', '--tools', 'read,grep,find,ls'] };
