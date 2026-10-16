@@ -58,7 +58,8 @@ test('passing checks run in a fresh detached checkout of the head and move the c
   job.checks!.push(sh('head', `test "$(git rev-parse HEAD)" = ${head}`), sh('out', 'echo checked; echo warn >&2'));
   // Left behind by the developer after the claim: a fresh checkout must not see it.
   writeFileSync(join(devWorktree, 'junk.txt'), 'junk\n');
-  const r = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  // Default isolation: each check in its own systemd scope, as the adapters run.
+  const r = await verify(store, cycle.cycleId, job, { deadlineMs: 20_000, runsDir });
   assert.equal(r.cycle.stage, 'STANDARD_REVIEW', r.cycle.escalation);
   assert.deepEqual(r.cycle.candidate, { head, base });
   assert.deepEqual(results(r.cycle), { type: 'verification', head, checks: [{ name: 'file', result: 'PASS' }, { name: 'head', result: 'PASS' }, { name: 'out', result: 'PASS' }] });
@@ -133,15 +134,19 @@ test('no declared checks: the event is appended with no checks and the cycle esc
   store.close();
 });
 
-test('a stale -verify worktree is replaced by a checkout of the current head', async () => {
+test('a stale -verify worktree and stale evidence for the head are replaced, not reused', async () => {
   const { repo, store, runsDir, job, cycle, head, base } = await verifying([sh('file', 'test -f done.txt')]);
   const stale = join(runsDir, `${cycle.cycleId}-verify`);
   git(repo, 'worktree', 'add', '-q', '--detach', stale, base);
   writeFileSync(join(stale, 'leftover.txt'), 'x\n');
+  // Evidence from an earlier verification of this SHA with another check list must go too.
+  mkdirSync(join(runsDir, 'evidence', head), { recursive: true });
+  writeFileSync(join(runsDir, 'evidence', head, 'old.exit'), 'exit 0\n');
   const r = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
   assert.equal(r.cycle.stage, 'STANDARD_REVIEW', r.cycle.escalation);
   assert.equal(git(stale, 'rev-parse', 'HEAD'), head);
   assert.ok(!existsSync(join(stale, 'leftover.txt')));
+  assert.deepEqual(readdirSync(r.evidenceDir).sort(), ['file.exit', 'file.stderr', 'file.stdout']);
   // Deleted by hand but still registered with git: the next verification must still get a checkout.
   rmSync(stale, { recursive: true });
   const again = await verifying([sh('file', 'test -f done.txt')]);

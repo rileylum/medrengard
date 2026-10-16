@@ -2,7 +2,7 @@
 // there, writes each one's output and exit against the SHA, and appends one verification event.
 // The lifecycle decides what the results mean; this module only produces them.
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
@@ -15,7 +15,7 @@ import type { EventStore } from './store.ts';
 export interface Check {
   /** Evidence file stem: [A-Za-z0-9_.-], unique within the job. */
   name: string;
-  /** argv, run with the candidate checkout as cwd; no shell unless the command is one. */
+  /** argv, spawned directly with the candidate checkout as cwd; verify adds no shell. */
   command: string[];
 }
 
@@ -72,8 +72,11 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   if (existsSync(worktree)) git(job.repo, 'worktree', 'remove', '--force', worktree);
   // A -verify directory deleted by hand stays registered, and `worktree add` refuses the path.
   git(job.repo, 'worktree', 'prune');
-  mkdirSync(evidenceDir, { recursive: true });
   git(job.repo, 'worktree', 'add', '-q', '--detach', worktree, head);
+  // Evidence for this SHA is this run's alone: a reader listing the directory must not find a
+  // file from an earlier verification with a different check list (standard review 1 minor).
+  rmSync(evidenceDir, { recursive: true, force: true });
+  mkdirSync(evidenceDir, { recursive: true });
 
   const results: CheckResult[] = [];
   // In order, all of them: the evidence is for the owner and the reviewers, who want the whole
