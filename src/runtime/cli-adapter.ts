@@ -221,7 +221,9 @@ export function claudeDeveloper(worktree: string): CliSpec {
   // No `git log` or `git diff`: both take --output=<path> and write anywhere (05-a adversarial).
   const allowed = ['Read', 'Glob', 'Grep', `Edit(/${worktree}/**)`, `Write(/${worktree}/**)`,
     ...['add', 'commit', 'status', 'rev-parse'].map((sub) => `Bash(git ${sub}:*)`)];
-  return { ...claude, args: ['-p', '--output-format', 'json', '--no-session-persistence', '--restricted', '--strict-mcp-config', '--allowedTools', ...allowed] };
+  // --restricted also removes Bash unless --tools names it (live run 2026-10-16: the developer
+  // wrote the file and could not commit); the allow list still scopes Bash to the git subcommands.
+  return { ...claude, args: ['-p', '--output-format', 'json', '--no-session-persistence', '--restricted', '--strict-mcp-config', '--tools', 'Read', 'Glob', 'Grep', 'Edit', 'Write', 'Bash', '--allowedTools', ...allowed] };
 }
 
 /**

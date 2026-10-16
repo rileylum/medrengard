@@ -199,7 +199,8 @@ test('developer specs: claude gets a clone-scoped allow list and no settings fil
   assert.ok(c.args.includes('--strict-mcp-config'), c.args.join(' '));
   assert.ok(!c.args.includes('--setting-sources'), c.args.join(' '));
   assert.ok(piDeveloper.args.includes('--no-approve'), piDeveloper.args.join(' '));
-  assert.ok(!c.args.includes('--tools'));
+  // --restricted drops Bash unless --tools names it; the allow list above still scopes it.
+  assert.deepEqual(c.args.slice(c.args.indexOf('--tools') + 1, c.args.indexOf('--allowedTools')), ['Read', 'Glob', 'Grep', 'Edit', 'Write', 'Bash']);
   assert.ok(!c.args.includes('--dangerously-skip-permissions'));
   assert.equal(piDeveloper.name, 'pi');
   assert.ok(!piDeveloper.args.includes('--no-tools'));
