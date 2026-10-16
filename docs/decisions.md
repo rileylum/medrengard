@@ -40,6 +40,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-044 — 2026-10-17 — Ticket 07-d: owner accept and cancel commands
+
+Owner, told that nothing in plan row 9 is needed to run the factory on hobby projects one issue at a time, and that the main friction is the missing accept and cancel commands (a finished or stranded cycle blocks its work ID): “Yep, let's add the accept and cancel commands now.”
+
+Effect: ticket 07-d-accept-cancel, Fast route, on `feat/07-d-accept-cancel` stacked on `feat/09-scoping`. It is numbered under step 7 because `main.ts` is that step's command and the lifecycle already holds both events; row 9 is not split by it. The row 9 split proposed in the handoff is still waiting for the owner's answer.
+
 ### A-043 — 2026-10-17 — Lift the scratch-repositories-only limit
 
 Owner, after step 8 put developer, check and reviewer runs in bubblewrap, offered three answers on the working limit that the A-029 merge introduced (factory runs on scratch repositories only): lift it for repositories without secrets (recommended), keep it, or lift it fully. Told the two open gaps: every run has full network access, and a run can read its own CLI's config directory, credentials included, so a hostile or confused agent could send out the repository and the login. Reply: “lift it fully.”
