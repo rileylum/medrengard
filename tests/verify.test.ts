@@ -360,6 +360,15 @@ test('a check whose binary is outside the sandbox is MISSING and names sandbox.r
   again.store.close();
 });
 
+test('a committed symlink to a binary outside the sandbox is MISSING: the link is inside, its target is not (08-a)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([{ name: 'tool', command: ['./tool', '-e', 'process.exit(0)'] }],
+    committing((wt) => { writeFileSync(join(wt, 'done.txt'), 'done\n'); execFileSync('ln', ['-s', realpathSync(process.execPath), join(wt, 'tool')]); }));
+  const r = await verify(store, cycle.cycleId, job, { ...opts({ sandbox: { backend: 'bwrap' } }), runsDir });
+  assert.deepEqual(results(r.cycle).checks, [{ name: 'tool', result: 'MISSING' }]);
+  assert.match(evidence(r.evidenceDir, 'tool').exit, /outside the sandbox/);
+  store.close();
+});
+
 test('a sandbox that cannot start throws before anything is checked out (08-a)', async () => {
   const { store, runsDir, job, cycle } = await verifying([sh('ok', 'true')]);
   await assert.rejects(verify(store, cycle.cycleId, job, { ...opts({ sandbox: { backend: 'bwrap', read: ['/var/tmp/software_factory/sf-no-such-read-dir'] } }), runsDir }), /does not exist/);

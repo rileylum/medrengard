@@ -86,6 +86,14 @@ test('bwrap: the controller environment is cleared to PATH, HOME=/tmp and LANG; 
   assert.match(r.stdout, /^0$/m);
 });
 
+test('bwrap: the command runs in a session of its own, so it cannot push input into the controller terminal', async () => {
+  const { work } = scratch();
+  // Field 6 of stat is the session ID; a session led from outside the PID namespace reads as 0.
+  const r = await sh(BWRAP, { cwd: work, write: [work], read: [], network: false }, 'cut -d" " -f6 /proc/$$/stat');
+  assert.equal(r.code, 0, r.stderr);
+  assert.notEqual(r.stdout.trim(), '0');
+});
+
 test('bwrap: no network unless the policy asks for it', async () => {
   const { work } = scratch();
   const server = createServer((s) => s.end());

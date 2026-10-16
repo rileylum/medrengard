@@ -209,6 +209,23 @@ test('main.ts: the job file names the sandbox, read paths are relative to it, an
   assert.ok(!existsSync(called), 'no runtime CLI was spawned');
 });
 
+test('main.ts prints the sandbox backend: bwrap by default, none only when the job file says so (08-a)', () => {
+  const { root, repo, runsDir } = scratch();
+  const main = join(import.meta.dirname, '..', 'src', 'main.ts');
+  // A stub claude that fails at once: the developer run fails, the cycle escalates, main prints its summary.
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(bin, 'claude'), 0o755);
+  for (const [n, sandbox, printed] of [[1, undefined, 'bwrap'], [2, { backend: 'none' }, 'none']] as const) {
+    const jobFile = join(root, `job-${n}.json`);
+    writeFileSync(jobFile, JSON.stringify({ workId: `w-print-${n}`, ticket: 'x', repo, runsDir, checks: [], runtime: { developer: 'claude', standard: 'claude', adversarial: 'claude' }, sandbox }));
+    const r = spawnSync(process.execPath, [main, jobFile], { encoding: 'utf8', timeout: 30_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stdout, new RegExp(`^Sandbox: ${printed}$`, 'm'));
+  }
+});
+
 // One live run of main.ts: claude as developer and both reviewers, four paid calls, 120 s per stage.
 test('live main.ts: a job file runs end to end and prints the stage, branch and head', { timeout: 560_000 }, (t) => {
   if (!LIVE) return void t.skip('RUNTIME_SPIKE is not set');
