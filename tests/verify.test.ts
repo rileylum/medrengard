@@ -367,3 +367,14 @@ test('a sandbox that cannot start throws before anything is checked out (08-a)',
   assert.equal(store.load(cycle.cycleId)!.stage, 'VERIFYING');
   store.close();
 });
+
+test('an untracked .gitattributes planted by a check does not change how the tree is compared: attributes come from the head (08-a)', async () => {
+  // Without --attr-source, a planted `notes.txt text` makes git normalise the rewritten CRLF back to LF and call the file clean.
+  const { store, runsDir, job, cycle } = await verifying([],
+    committing((wt) => { writeFileSync(join(wt, 'done.txt'), 'done\n'); writeFileSync(join(wt, 'notes.txt'), 'a\n'); }));
+  job.checks = [sh('crlf', "printf 'a\\r\\n' > notes.txt; echo 'notes.txt text' > .gitattributes")];
+  const { cycle: c, evidenceDir } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'ESCALATED', c.escalation);
+  assert.match(evidence(evidenceDir, 'tree').stdout, /^M\tnotes\.txt$/m);
+  store.close();
+});

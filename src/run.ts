@@ -6,6 +6,7 @@ import type { Adapter } from './adapter.ts';
 import { develop, fix, type DeveloperAdapter, type Job } from './developer.ts';
 import type { Cycle } from './lifecycle.ts';
 import { review } from './review.ts';
+import { checkSandbox, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
 import { verify, type VerifyOptions } from './verify.ts';
 
@@ -24,6 +25,8 @@ export interface RunOptions {
   isolation?: VerifyOptions['isolation'];
   /** Passed to review. Default ['AGENTS.md']. */
   instructions?: string[];
+  /** Passed to verify. Default bwrap. */
+  sandbox?: Sandbox;
 }
 
 export interface RunResult {
@@ -41,6 +44,8 @@ const MAX_STEPS = 10;
 
 /** Drive one job from open to a stage the loop cannot leave. Never advances a stage itself. */
 export async function run(store: EventStore, adapters: Adapters, job: Job, opts: RunOptions): Promise<RunResult> {
+  // Before develop: a sandbox that cannot start would fail verification after a paid developer run.
+  checkSandbox(opts.sandbox ?? { backend: 'bwrap' });
   // A throw here propagates: develop cancels any cycle it opened, so there is nothing to record.
   const { cycle: opened, worktree, branch } = await develop(store, adapters.developer, job, opts);
   const { cycleId } = opened;

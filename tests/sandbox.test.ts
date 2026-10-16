@@ -54,6 +54,10 @@ test('bwrap: the command writes in its write root and nowhere else', async () =>
   const ro = await sh(BWRAP, policy, 'touch /usr/sf-sandbox-probe');
   assert.notEqual(ro.code, 0);
   assert.ok(!existsSync('/usr/sf-sandbox-probe'));
+  // bwrap's own root is a tmpfs; remounted read-only, nothing outside the binds takes a write.
+  const top = await sh(BWRAP, policy, 'touch /sf-sandbox-root-probe');
+  assert.notEqual(top.code, 0);
+  assert.match(top.stderr, /Read-only file system/);
 });
 
 test('bwrap: an undeclared path is not readable; a declared read root is, and is read-only', async () => {

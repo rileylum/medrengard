@@ -291,6 +291,9 @@ test('review refuses a checkout whose tracked files differ from the commit, appe
   writeFileSync(join(checkout, 'done.txt'), 'benign\n');
   const adapter = fakeAdapter('hang');
   await assert.rejects(review(store, adapter, cycleId, job, opts(runsDir)), /not clean/);
+  // The private index is rebuilt from the head, not trusted: without it the rewrite is still seen (08-a).
+  rmSync(`${checkout}.index`);
+  await assert.rejects(review(store, adapter, cycleId, job, opts(runsDir)), /not clean/);
   assert.equal(adapter.requests.length, 0);
   assert.equal(store.events(cycleId).length, before);
   // Untracked leftovers from a check are fine; the commit's files are what matter.
