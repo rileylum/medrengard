@@ -118,9 +118,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     results.push({ name: TREE, result: 'FAIL' });
   }
   // The reviewer reads this directory unsandboxed (08-c): a planted .git with its own config, or a
-  // symlink to the owner's files, must not be there when it does (08-a adversarial). A dirty tree
-  // escalates and no reviewer runs, and a walk that failed in treeDiff would fail here too.
-  if (!dirty) removeUntracked(worktree, git(job.repo, 'ls-tree', '-r', '-z', '--name-only', head).split('\0').filter(Boolean));
+  // symlink to the owner's files, must not be there when it does (08-a adversarial).
+  removeUntracked(worktree, git(job.repo, 'ls-tree', '-r', '-z', '--name-only', head).split('\0').filter(Boolean));
   return { cycle: store.append(cycleId, { type: 'verification', head, checks: results }), worktree, evidenceDir };
 }
 
