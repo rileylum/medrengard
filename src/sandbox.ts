@@ -123,15 +123,19 @@ export function executables(command: string, cwd: string): string[] {
   return candidates.filter((p) => { try { accessSync(p, constants.X_OK); return true; } catch { return false; } });
 }
 
+const SLASH = Buffer.from('/');
+
 /**
  * Owner read, write and search back on every directory and file under `path`, symlinks not
  * followed. A check may lock what it rewrote; git then skips the path with a warning and exit 0
  * (08-a adversarial). Only the owner bits change, never the executable bit git compares.
  */
-export function restoreAccess(path: string): void {
+export function restoreAccess(path: string | Buffer): void {
   // lstat: a symlink is neither a directory nor short of its 0777 bits, so it is never followed.
   const st = lstatSync(path);
   const want = st.isDirectory() ? 0o700 : 0o600;
   if ((st.mode & want) !== want) chmodSync(path, (st.mode & 0o7777) | want);
-  if (st.isDirectory()) for (const entry of readdirSync(path)) restoreAccess(join(path, entry));
+  // Names as bytes: one that is not valid UTF-8 does not survive a string, and the path built
+  // from it names nothing (08-d adversarial).
+  if (st.isDirectory()) for (const entry of readdirSync(path, { encoding: 'buffer' })) restoreAccess(Buffer.concat([Buffer.from(path), SLASH, entry]));
 }

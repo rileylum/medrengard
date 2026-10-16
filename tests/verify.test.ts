@@ -568,6 +568,8 @@ test('a FIFO a check leaves at a gitlink\'s .git/HEAD is tree: FAIL naming the t
   // update-index is the call that opens the FIFO: moved out of treeDiff's try, it throws out of verify.
   assert.match(evidence(evidenceDir, 'tree').stdout, /^git update-index for .* timed out after 2000 ms \(SIGKILL\)/m);
   assert.deepEqual(readdirSync(join(worktree, 'vendor')), []);
+  // The killed git's lock is gone, or every later comparison of this checkout fails on it.
+  assert.ok(!existsSync(`${worktree}.index.lock`));
   store.close();
 });
 

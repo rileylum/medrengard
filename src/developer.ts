@@ -10,7 +10,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { checkDeadline, execute } from './controller.ts';
-import { git } from './git.ts';
+import { bounded, git, stopped } from './git.ts';
 import type { Cycle, Event } from './lifecycle.ts';
 import { checkSandbox, wrap, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
@@ -86,7 +86,7 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
       cycleId,
       developer,
       { role: 'developer', prompt: prompt(job.ticket), cwd: worktree },
-      { deadlineMs: opts.deadlineMs, base, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, undefined, sandbox, claim) },
+      { deadlineMs: opts.deadlineMs, base, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, undefined, sandbox, opts.deadlineMs, claim) },
     );
     return { cycle, worktree, branch };
   } catch (err) {
@@ -134,11 +134,11 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
   if (!existsSync(join(worktree, '.git'))) throw new Error(`no clone at ${worktree}; the cycle's branch has nowhere to be fixed`);
   // The tip must be the candidate: anything else is a head change outside a fix run, which the
   // spec gives to the owner, not to a run that would quietly build on it.
-  const tip = cloneGit(sandbox, worktree, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`);
+  const tip = cloneGit(sandbox, worktree, opts.deadlineMs, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`);
   if (tip.stdout !== head) throw new Error(`worktree ${worktree} is at ${tip.stdout || '(no branch)'}, not at the candidate ${head}`);
   // On the branch, not merely with the branch at the head: a detached or switched clone would
   // take the developer's commit off the branch and spend the run on a claim refused as not the tip.
-  const ref = cloneGit(sandbox, worktree, 'symbolic-ref', '--quiet', 'HEAD');
+  const ref = cloneGit(sandbox, worktree, opts.deadlineMs, 'symbolic-ref', '--quiet', 'HEAD');
   const onto = ref.status === 0 ? ref.stdout : '(detached)';
   if (onto !== `refs/heads/${branch}`) throw new Error(`worktree ${worktree} is on ${onto}, not on ${branch}`);
   const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
@@ -147,7 +147,7 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
     cycleId,
     developer,
     { role: 'developer', prompt: prompt(job.ticket, { head, findings: verdict.findings }), cwd: worktree },
-    { deadlineMs: opts.deadlineMs, base, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, head, sandbox, claim) },
+    { deadlineMs: opts.deadlineMs, base, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, head, sandbox, opts.deadlineMs, claim) },
   );
   return { cycle: cycleAfter, worktree, branch };
 }
@@ -200,9 +200,10 @@ function clone(repo: string, dest: string, branch: string, base: string): void {
  * The claim's guard (07-a, 08-c): fetch the clone's branch into a private ref in the repository,
  * judge the head there, and move `refs/heads/<branch>` only for an accepted head. The repository's
  * git never reads the clone's config: upload-pack, the one process that does, runs in the sandbox
- * with the clone read-only, and the received objects are checked (`fetch.fsckObjects`).
+ * with the clone read-only, and the received objects are checked (`fetch.fsckObjects`). The fetch
+ * gets the stage deadline: the clone is the developer's, and a FIFO in it holds upload-pack forever.
  */
-function land(repo: string, clone: string, branch: string, cycleId: string, base: string, previous: string | undefined, sandbox: Sandbox, claim: unknown): string | undefined {
+function land(repo: string, clone: string, branch: string, cycleId: string, base: string, previous: string | undefined, sandbox: Sandbox, timeoutMs: number, claim: unknown): string | undefined {
   const head = (claim as { head?: unknown } | null)?.head;
   if (typeof head !== 'string' || !head) return undefined; // not ours to judge; the store rejects it
   const incoming = `refs/sf/incoming/${cycleId}`;
@@ -210,11 +211,13 @@ function land(repo: string, clone: string, branch: string, cycleId: string, base
     // git runs this through sh with the clone's path appended; under `none` it is plain `git upload-pack`.
     const [cmd, args] = wrap(sandbox, { cwd: clone, write: [], read: [clone], network: false }, 'git', ['upload-pack']);
     const fetchArgs = ['-c', 'fetch.fsckObjects=true', 'fetch', '-q', '--no-tags', '--no-write-fetch-head', `--upload-pack=${[cmd, ...args].map(shellQuote).join(' ')}`];
-    const fetched = spawnSync('git', [...fetchArgs, clone, `+refs/heads/${branch}:${incoming}`], { cwd: repo, encoding: 'utf8' });
+    const fetched = spawnSync('git', [...fetchArgs, clone, `+refs/heads/${branch}:${incoming}`], { cwd: repo, encoding: 'utf8', ...bounded(timeoutMs) });
+    const why = stopped(fetched, timeoutMs);
+    if (why) return `fetch of ${branch} from ${clone} ${why}`;
     if (fetched.error || fetched.status !== 0) return `fetch of ${branch} from ${clone} failed: ${(fetched.error?.message ?? fetched.stderr).trim()}`;
-    const why = refuse(repo, incoming, branch, base, previous, head);
-    if (why === undefined) git(repo, 'update-ref', `refs/heads/${branch}`, head);
-    return why;
+    const refused = refuse(repo, incoming, branch, base, previous, head);
+    if (refused === undefined) git(repo, 'update-ref', `refs/heads/${branch}`, head);
+    return refused;
   } finally {
     spawnSync('git', ['update-ref', '-d', incoming], { cwd: repo, stdio: 'ignore' });
   }
@@ -222,10 +225,15 @@ function land(repo: string, clone: string, branch: string, cycleId: string, base
 
 const shellQuote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 
-/** git in the clone through the sandbox, the clone read-only: its config, hooks and fsmonitor are the developer's. */
-function cloneGit(sandbox: Sandbox, clone: string, ...args: string[]): { status: number | null; stdout: string } {
+/**
+ * git in the clone through the sandbox, the clone read-only: its config, hooks and fsmonitor are
+ * the developer's, and so is anything there that could hold git, hence the deadline.
+ */
+function cloneGit(sandbox: Sandbox, clone: string, timeoutMs: number, ...args: string[]): { status: number | null; stdout: string } {
   const [cmd, argv] = wrap(sandbox, { cwd: clone, write: [], read: [clone], network: false }, 'git', args);
-  const r = spawnSync(cmd, argv, { cwd: clone, encoding: 'utf8' });
+  const r = spawnSync(cmd, argv, { cwd: clone, encoding: 'utf8', ...bounded(timeoutMs) });
+  const why = stopped(r, timeoutMs);
+  if (why) throw new Error(`git ${args[0]} in ${clone} ${why}`);
   return { status: r.status, stdout: (r.stdout ?? '').trim() };
 }
 

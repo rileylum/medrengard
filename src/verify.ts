@@ -12,7 +12,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync, writ
 import { join, resolve } from 'node:path';
 import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
-import { git } from './git.ts';
+import { bounded, git, stopped } from './git.ts';
 import type { Cycle, Event } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
@@ -93,7 +93,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // Before 08-a the checkout was a registered worktree; prune drops a registration left behind.
   git(job.repo, 'worktree', 'prune');
   mkdirSync(worktree, { recursive: true });
-  const tree = checkoutGit(job.repo, worktree, head);
+  const tree = checkoutGit(job.repo, worktree, head, opts.deadlineMs);
   tree('read-tree', head);
   tree('checkout-index', '--all', '--force');
   // Evidence for this SHA is this run's alone: a reader listing the directory must not find a
@@ -111,12 +111,13 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     writeFileSync(join(evidenceDir, `${check.name}.exit`), `${r.exit}\n`);
     results.push({ name: check.name, result: r.result });
   }
-  let dirty = treeDiff(job.repo, worktree, head);
+  let dirty = treeDiff(job.repo, worktree, head, opts.deadlineMs);
   // The reviewer reads this directory: a planted .git with its own config, or a symlink to the
   // owner's files, must not be there when it does (08-a adversarial). The full ls-tree format, not
   // --name-only: each record starts with its mode, so no trimming can eat a path that starts with
-  // whitespace (08-b adversarial).
-  const entries = tree('ls-tree', '-r', '-z', head).stdout.split('\0').filter(Boolean)
+  // whitespace (08-b adversarial). Paths are latin1 strings, one char per byte, so a name that is
+  // not valid UTF-8 still matches the bytes readdir returns for it (08-d adversarial).
+  const entries = tree('ls-tree', '-r', '-z', head).bytes.toString('latin1').split('\0').filter(Boolean)
     .map((e) => ({ gitlink: e.startsWith('160000 '), path: e.slice(e.indexOf('\t') + 1) }));
   // A removal that cannot finish (a locked directory under a chain past PATH_MAX) leaves entries
   // the reviewer would read; that is dirt with its reason, not a throw (08-b adversarial).
@@ -135,20 +136,29 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
  * checkout and not in it, attributes from the head. Nothing inside the checkout is read as git
  * state, so a check that writes a `.git` pointer, a `.gitattributes` or index flags changes
  * nothing here (07-b adversarial). Not the git helper: it trims, and the buffer must stay 64 MiB
- * for a formatter that touched every file of a large tree.
+ * for a formatter that touched every file of a large tree. Each call gets the stage deadline.
  */
-function checkoutGit(repo: string, checkout: string, head: string) {
+function checkoutGit(repo: string, checkout: string, head: string, timeoutMs: number) {
   const gitDir = git(repo, 'rev-parse', '--absolute-git-dir');
-  const env = { ...process.env, GIT_INDEX_FILE: `${checkout}.index` };
+  const index = `${checkout}.index`;
+  const env = { ...process.env, GIT_INDEX_FILE: index };
   // cwd is the repository: --work-tree names the checkout, and a checkout a check locked cannot be
   // a working directory at all (08-a adversarial).
   return (...args: string[]) => {
     const r = spawnSync('git', [`--git-dir=${gitDir}`, `--work-tree=${checkout}`, `--attr-source=${head}`, ...args], {
-      cwd: repo, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
+      cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, ...bounded(timeoutMs),
     });
+    const why = stopped(r, timeoutMs);
+    if (why) {
+      // A killed git leaves its lock, and every later call on this index would fail on it. Only
+      // the controller writes this index, one call at a time, so the lock is the killed call's.
+      rmSync(`${index}.lock`, { force: true });
+      throw new Error(`git ${args[0]} for ${checkout} ${why}`);
+    }
     if (r.error) throw r.error;
-    if (r.status !== 0) throw new Error(`git ${args[0]} for ${checkout} failed: ${r.stderr.trim()}`);
-    return { stdout: r.stdout, stderr: r.stderr };
+    const stderr = r.stderr.toString();
+    if (r.status !== 0) throw new Error(`git ${args[0]} for ${checkout} failed: ${stderr.trim()}`);
+    return { stdout: r.stdout.toString(), stderr, bytes: r.stdout };
   };
 }
 
@@ -159,19 +169,23 @@ function checkoutGit(repo: string, checkout: string, head: string) {
  * dirt (08-b adversarial); the rest of what a check leaves untracked is not dirt, only removed.
  */
 function removeUntracked(checkout: string, entries: { gitlink: boolean; path: string }[]): string {
+  // Names as bytes: a name that is not valid UTF-8 read as a string becomes U+FFFD, and the path
+  // built from it names nothing (08-d adversarial). `rel` is latin1, one char per byte, as in entries.
+  const at = (rel: string) => Buffer.concat([Buffer.from(`${checkout}/`), Buffer.from(rel, 'latin1')]);
+  const shown = (rel: string) => Buffer.from(rel, 'latin1').toString();
   const keep = new Set(entries.filter((e) => !e.gitlink).map((e) => e.path));
   const gitlinks = new Set(entries.filter((e) => e.gitlink).map((e) => e.path));
   const dirs = new Set(entries.flatMap((e) => e.path.split('/').slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join('/'))));
   let dirt = '';
   const walk = (rel: string) => {
-    for (const entry of readdirSync(join(checkout, rel))) {
-      const p = rel ? `${rel}/${entry}` : entry;
+    for (const entry of readdirSync(at(rel), { encoding: 'buffer' })) {
+      const p = rel ? `${rel}/${entry.toString('latin1')}` : entry.toString('latin1');
       if (keep.has(p)) continue;
-      const path = join(checkout, p);
+      const path = at(p);
       const isDir = lstatSync(path).isDirectory();
       if (isDir && gitlinks.has(p)) {
         const inside = readdirSync(path);
-        if (inside.length) dirt += `gitlink ${p} is not empty: ${inside.join(', ')}\n`;
+        if (inside.length) dirt += `gitlink ${shown(p)} is not empty: ${inside.join(', ')}\n`;
         walk(p);
       } else if (isDir && dirs.has(p)) walk(p);
       // rmSync returns without error on a dangling symlink and leaves it (08-b adversarial).
@@ -189,14 +203,15 @@ function removeUntracked(checkout: string, entries: { gitlink: boolean; path: st
  * no stat data a check could have arranged is trusted: every file is compared by content and mode.
  * Untracked files are not dirt. Shared with review, which refuses a checkout that is not clean.
  */
-export function treeDiff(repo: string, checkout: string, head: string): string {
+export function treeDiff(repo: string, checkout: string, head: string, timeoutMs: number): string {
   // A tree the controller cannot walk (a chain past PATH_MAX) is not one it can call the commit.
   try { restoreAccess(checkout); } catch (err) { return `cannot restore owner access in the checkout: ${(err as Error).message}\n`; }
-  const tree = checkoutGit(repo, checkout, head);
+  const tree = checkoutGit(repo, checkout, head, timeoutMs);
   tree('read-tree', head);
   // -q: a file that differs is not an error (exit 0); diff-files reports it. A failure here is git
   // unable to compare what a check left, such as a malformed repository at a gitlink, which
-  // diff-files opens (08-d adversarial): the checkout is not the commit, so that is dirt too.
+  // diff-files opens (08-d adversarial), or a FIFO there that holds it to the deadline (08-e
+  // adversarial): the checkout is not the commit, so that is dirt too.
   try {
     const refresh = tree('update-index', '-q', '--refresh');
     const diff = tree('diff-files', '--name-status');
