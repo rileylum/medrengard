@@ -100,12 +100,13 @@ function buildPrompt(role: Role, ticket: string, head: string, base: string, che
   ];
   for (const path of instructions) {
     parts.push('', section(`INSTRUCTIONS ${path}`));
-    parts.push(existsInCommit(checkout, head, path) ? quoteGit(checkout, 'show', `${head}:${path}`) : `${path}: not present in the candidate commit`);
+    // ls-tree answers absence with empty output and exit 0; any failure is not absence and surfaces.
+    parts.push(git(checkout, 'ls-tree', head, '--', path) ? quoteGit(checkout, 'show', `${head}:${path}`) : `${path}: not present in the candidate commit`);
   }
   parts.push('', section('VERIFICATION (run by the controller on the candidate SHA)'));
   parts.push(...(verification.checks.length ? verification.checks.map((c) => `${c.name}: ${c.result}`) : ['no checks declared']));
   // The path list is never cut: when the diff's middle goes, the reviewer still knows every file that changed.
-  parts.push('', section(`CHANGED PATHS ${base}..${head}`), git(checkout, 'diff', '--name-status', base, head));
+  parts.push('', section(`CHANGED PATHS ${base}..${head}`), quoteGit(checkout, 'diff', '--name-status', base, head));
   parts.push('', section(`DIFF ${base}..${head}`), cut(diff, DIFF_MAX));
   for (const c of verification.checks) {
     for (const ext of EVIDENCE_EXTS) {
@@ -115,18 +116,13 @@ function buildPrompt(role: Role, ticket: string, head: string, base: string, che
   return parts.join('\n');
 }
 
-// Only an absent path is "not present"; any other failure must surface, never read as absent.
-function existsInCommit(checkout: string, head: string, path: string): boolean {
-  try { git(checkout, 'cat-file', '-e', `${head}:${path}`); return true; } catch { return false; }
-}
-
 // Output past the helper's 64 MiB buffer is quoted as a placeholder, not thrown: a candidate the
 // controller verified must always reach a reviewer, and the reviewer can see why it has no text.
 function quoteGit(cwd: string, ...args: string[]): string {
   try {
     return git(cwd, ...args);
   } catch (err) {
-    if (/ENOBUFS/.test(String(err))) return `(git ${args[0]} output exceeds 64 MiB and is not quoted)`;
+    if ((err as { code?: string }).code === 'ENOBUFS') return `(git ${args[0]} output exceeds 64 MiB and is not quoted)`;
     throw err;
   }
 }

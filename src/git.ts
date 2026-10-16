@@ -12,6 +12,8 @@ export function git(cwd: string, ...args: string[]): string {
     return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: MAX_BUFFER }).trim();
   } catch (err) {
     const stderr = (err as { stderr?: string }).stderr?.toString().trim();
-    throw new Error(`git ${args.join(' ')} in ${cwd} failed: ${stderr || (err as Error).message}`);
+    // The code (ENOBUFS, ENOENT) survives the rewording: review decides on it, not on the text,
+    // which is git's stderr whenever there is any (06-c standard review).
+    throw Object.assign(new Error(`git ${args.join(' ')} in ${cwd} failed: ${stderr || (err as Error).message}`), { code: (err as { code?: string }).code });
   }
 }
