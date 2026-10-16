@@ -40,4 +40,4 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 ## Next action
 
-Owner merges `feat/06-a-verification` into main (standard 1 PASS on 5d1a34b, adversarial FAIL on 4b20fb5 parked, A-029). Then 06-b (reviewer runs): confirm the done-when list in `docs/work/06-b-reviewer-runs.md` on the Design route and start it; it should pick up the parked `MISSING`-under-cgroup minor if it touches `verify.ts`.
+Ticket 06-b (`feat/06-b-reviewer-runs`, A-030): `src/review.ts` builds the reviewer prompt from the store, the verify checkout and the evidence and runs it through `execute`; read-only `claudeReviewer` and `piReviewer`; `verify` resolves a check's binary before spawn so `MISSING` agrees under both isolations. Implementer-run tests green, both live reviewers returned a verdict. Owner runs `npm test` on the branch, then standard review 1.
