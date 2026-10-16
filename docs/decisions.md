@@ -24,6 +24,7 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | D-016 | DECIDED (A-016) | [Core lifecycle v1](specs/core-lifecycle-v1.md) is the implementation baseline. One recovery rule: anything unclassified escalates; owner chooses child cycle or cancel. Edge-case semantics are added only when a test or a real incident requires them |
 | D-017 | DECIDED (A-016) | Design documents are not put through adversarial review on their own. The 2+1 rule applies to code with executable tests |
 | D-018 | DECIDED (A-017) | Plan steps are broken into Fast or Design tickets and delivered per [workflow.md](workflow.md) |
+| D-019 | DECIDED (A-035) | Candidate code runs inside a sandbox chosen by backend name. Bubblewrap first; Docker, VMs and cloud later behind the same interface. No VM or cloud backend for now; the tool stays agnostic |
 
 ## Open
 
@@ -36,6 +37,24 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | O-009 | Staging and deployment ownership | Release tracking |
 
 ## Approval history
+
+### A-037 — 2026-10-16 — Merge 08-a and 08-b with the 08-b adversarial findings parked
+
+Owner, after the 08-b adversarial FAIL on `dc6c461` (two majors: a committed gitlink directory and a dangling symlink survive the untracked removal and reach the unsandboxed reviewer; two minors: a tracked path starting with whitespace is deleted after a clean tree check, and a deep chain plus a locked directory makes the removal throw) and the question how likely they are: “Option 2, for the most part I'm not terribly concerned about malicious code - obviously that is a worry. My primary concern is agents going outside their remit to achieve a goal which they can't otherwise do, or making a mistake - causing damage to the repo or outside (i.e. deleting data from the whole of the tmp dir instead of their own space inside it)”.
+
+Effect: `feat/08-b-tree-permissions` (08-a and 08-b) is merged by the owner with 08-a standard PASS, 08-a adversarial FAIL fixed by 08-b, 08-b standard PASS and 08-b adversarial FAIL on record. The two majors are parked against 08-c (developer and reviewer runs in the sandbox), which closes them: inside the sandbox the owner's home is not bound. The two minors are parked against the next ticket that touches `verify.ts`. Threat model for 08-c and later, in the owner's words: the first concern is an agent going outside its remit or making a mistake that damages the repository or anything outside its own space; deliberately malicious code is a secondary concern.
+
+### A-036 — 2026-10-16 — Fix ticket for the 08-a adversarial FAIL
+
+Owner, after the 08-a adversarial FAIL on `798eb1c` (one major: a check that removes the owner's permissions on a directory hides a rewritten tracked file from the tree comparison, because git warns on stderr, skips the path and exits 0; two minors: a check that removes permissions on the checkout itself makes the comparison throw, and untracked leftovers such as a planted `.git` directory or a symlink to the owner's files reach the unsandboxed reviewer): “Option 1 go”.
+
+Effect: ticket 08-b-tree-permissions, Fast route, stacked on 08-a with fresh review budget. The controller restores owner access to the checkout before comparing, records any warning from the comparison as `tree` evidence, runs its git from the repository, and removes untracked entries before review. The developer and reviewer sandbox ticket becomes 08-c.
+
+### A-035 — 2026-10-16 — Sandbox before plan row 8; five design answers
+
+Owner, choosing between the sandbox ticket and plan row 8: “Sandbox, ideally I think this implementation deserves some research. My system is currently resource constrained so I don't want VMs as the solution, I also want to keep things local so cloud solutions are out as well. Though I don't want either of those solutions to be out of the picture eventually, this tool should ideally be agnostic.” Then, after the research summary ([08-a-findings.md](work/08-a-findings.md)) and five questions (a sandbox interface that wraps a command from a policy of read paths, write paths and network, the backend named in the job file, `none` explicit and scratch-only; the developer in its own clone, the controller fetching its branch; checks on the candidate's files with no git folder, the controller comparing them to the commit; no network for checks, full network for developers and reviewers, domain filtering parked; reads start empty and bind only what is needed): “Take all”.
+
+Effect: the sandbox becomes plan row 8; GitHub sync, pools, release tracking and the improvement loop move to row 9. Row 8 is two tickets. 08-a-sandboxed-checks (Design route; READY on these five answers, its ticket text written after the reply) adds `src/sandbox.ts` with the bubblewrap backend and runs verification checks inside it on a checkout with no `.git`; it covers the parked 06-a symlink, `core.hooksPath` and evidence-file lines and the 07-b gitdir-swap, `git replace` and `core.fileMode` lines. 08-b (drafted after 08-a) moves developer and reviewer runs into the sandbox, the developer into its own clone; what claude and pi need inside comes from an owner-run probe, because listing their configuration directories was refused to this session as credential exploration.
 
 ### A-034 — 2026-10-16 — Fix ticket for the 07-b adversarial FAIL
 

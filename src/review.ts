@@ -2,6 +2,8 @@
 // from the store (ticket results from the verification event), the 06-a checkout (diff,
 // instruction files) and the evidence files, then calls execute. The lifecycle counts the
 // verdict; this module never sees a developer transcript because the controller has none.
+// Ticket 08-a: the checkout has no .git; git runs in the job's repository, and the checkout is
+// compared with the head through verify's private index.
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -11,6 +13,7 @@ import type { Job } from './developer.ts';
 import { git } from './git.ts';
 import type { Cycle, Event, Role } from './lifecycle.ts';
 import type { EventStore } from './store.ts';
+import { treeDiff } from './verify.ts';
 
 export interface ReviewOptions {
   deadlineMs: number;
@@ -45,12 +48,11 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
   const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
   const checkout = join(runsDir, `${cycleId}-verify`);
   const evidenceDir = join(runsDir, 'evidence', head);
-  if (!existsSync(join(checkout, '.git'))) throw new Error(`no verify checkout at ${checkout}; run verify first`);
-  const at = git(checkout, 'rev-parse', 'HEAD');
-  if (at !== head) throw new Error(`verify checkout ${checkout} is at ${at}, not at the candidate ${head}`);
+  if (!existsSync(checkout)) throw new Error(`no verify checkout at ${checkout}; run verify first`);
   // A check ran the candidate's code here; it may have rewritten a tracked file the reviewer
-  // would then Read instead of the commit (06-b adversarial). Untracked leftovers are allowed.
-  const dirty = git(checkout, 'status', '--porcelain', '--untracked-files=no');
+  // would then Read instead of the commit (06-b adversarial). The comparison is with the head,
+  // so a checkout of any other commit fails it too. Untracked leftovers are allowed.
+  const dirty = treeDiff(job.repo, checkout, head);
   if (dirty) throw new Error(`verify checkout ${checkout} is not clean against ${head}:\n${dirty}`);
   if (!existsSync(evidenceDir)) throw new Error(`no verification evidence at ${evidenceDir}`);
   // The last verification is the candidate's: apply admits one only in VERIFYING and only for the
@@ -65,11 +67,11 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
     }
   }
 
-  const prompt = buildPrompt(role, job.ticket, head, base, checkout, opts.instructions ?? ['AGENTS.md'], verification, evidenceDir);
+  const prompt = buildPrompt(role, job.ticket, head, base, job.repo, opts.instructions ?? ['AGENTS.md'], verification, evidenceDir);
   return execute(store, cycleId, adapter, { role, prompt, cwd: checkout }, { deadlineMs: opts.deadlineMs });
 }
 
-function buildPrompt(role: Role, ticket: string, head: string, base: string, checkout: string, instructions: string[], verification: Verification, evidenceDir: string): string {
+function buildPrompt(role: Role, ticket: string, head: string, base: string, repo: string, instructions: string[], verification: Verification, evidenceDir: string): string {
   const adversarial = role === 'adversarial_reviewer';
   // Per-run nonce in every delimiter: a committed file can contain any text, including a header
   // that looks like ours, but not one it has not seen (06-b adversarial).
@@ -77,7 +79,7 @@ function buildPrompt(role: Role, ticket: string, head: string, base: string, che
   const section = (title: string) => `==== ${nonce}: ${title} ====`;
   // --text: a committed .gitattributes with `-diff` would otherwise turn every file into
   // "Binary files differ" (06-b adversarial); the cut bounds any real binary.
-  const diff = quoteGit(checkout, 'diff', '--text', base, head);
+  const diff = quoteGit(repo, 'diff', '--text', base, head);
   const parts = [
     adversarial
       ? 'You are the adversarial reviewer for the change below. Your job is to break it: find inputs, sequences or states under which it does not do what the ticket says, and report what you can show. The current directory is a read-only checkout of the candidate commit.'
@@ -101,12 +103,12 @@ function buildPrompt(role: Role, ticket: string, head: string, base: string, che
   for (const path of instructions) {
     parts.push('', section(`INSTRUCTIONS ${path}`));
     // ls-tree answers absence with empty output and exit 0; any failure is not absence and surfaces.
-    parts.push(git(checkout, 'ls-tree', head, '--', path) ? quoteGit(checkout, 'show', `${head}:${path}`) : `${path}: not present in the candidate commit`);
+    parts.push(git(repo, 'ls-tree', head, '--', path) ? quoteGit(repo, 'show', `${head}:${path}`) : `${path}: not present in the candidate commit`);
   }
   parts.push('', section('VERIFICATION (run by the controller on the candidate SHA)'));
   parts.push(...(verification.checks.length ? verification.checks.map((c) => `${c.name}: ${c.result}`) : ['no checks declared']));
   // The path list is never cut: when the diff's middle goes, the reviewer still knows every file that changed.
-  parts.push('', section(`CHANGED PATHS ${base}..${head}`), quoteGit(checkout, 'diff', '--name-status', base, head));
+  parts.push('', section(`CHANGED PATHS ${base}..${head}`), quoteGit(repo, 'diff', '--name-status', base, head));
   parts.push('', section(`DIFF ${base}..${head}`), cut(diff, DIFF_MAX));
   for (const c of verification.checks) {
     for (const ext of EVIDENCE_EXTS) {

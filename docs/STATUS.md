@@ -20,6 +20,8 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 Plan step 7 done (A-032 to A-034), 07-a merged, 07-b and 07-c as one stacked branch awaiting merge: `src/run.ts` drives one job through `develop`, `verify`, `review`, `review` with one `fix` after a standard FAIL and stops at AWAITING_ACCEPTANCE, ESCALATED or CANCELLED; a stage that throws escalates the cycle with `reject_dispatch` naming the stage. `fix` in `src/developer.ts` reruns the developer on the cycle's worktree with the last verdict's findings; its head must be new in SHA and tree, the branch tip, descended from the base and non-empty against it. `verify` records a dirty tracked tree or an index flag after the checks as `tree: FAIL` with evidence. `node src/main.ts <job.json>` runs a job with the real adapters by name and prints the stage, head, verdicts and the two Git lines to diff and merge; exit 0 only on AWAITING_ACCEPTANCE. Live: claude in all three roles took a scratch ticket to AWAITING_ACCEPTANCE in about 50 s. Parked: the `.git` pointer swap and other writes to the shared `.git` by a check (sandbox ticket); scratch repositories only until then (A-029).
 
+Plan step 8 (sandbox, A-035 to A-037), 08-a and 08-b done on `feat/08-b-tree-permissions`, awaiting the owner's merge: every verification check runs inside bubblewrap on a checkout with no `.git`. `src/sandbox.ts` wraps a command from a policy (write roots, read roots, network) for backend `bwrap` or `none`; the job file names it, default `bwrap`. The controller writes and compares the checkout through the repository's git dir and a private index, restores owner access before comparing, counts git's warnings as dirt, and removes untracked entries before review. Closed: the parked 06-a symlink, `core.hooksPath` and evidence lines, the 07-b gitdir-swap, `git replace` and `core.fileMode` lines, and 08-a's adversarial major. Parked (A-037): a committed gitlink directory and a dangling symlink survive the untracked removal (against 08-c), and two verify minors. Developer and reviewer runs are still unsandboxed (08-c); scratch repositories only until then (A-029). Research: [08-a-findings.md](work/08-a-findings.md).
+
 ## Checks run
 
 2026-10-15: `npm test` and `RUNTIME_SPIKE=1 npm test` on `d8a9d21`, owner-run — 51 tests, 36 pass offline (10 live tests skipped with reason), 46 pass live, 5 todo, 0 fail.
@@ -56,6 +58,11 @@ Plan step 7 done (A-032 to A-034), 07-a merged, 07-b and 07-c as one stacked bra
 
 2026-10-16: `npm test` on `ef4ceea` (07-c), run by the implementer session at the owner's request (away from the computer) — 168 tests, 144 pass, 19 skipped, 5 todo, 0 fail. Standard review 1 PASS, adversarial PASS.
 
+2026-10-16: `npm test` on `21733ae` (08-a), implementer-run, not independent — 187 tests, 163 pass, 19 skipped, 5 todo, 0 fail. One live claude call was made by the red run of the new `main.ts` test before the stubs were added (ticket log).
+2026-10-16: `npm test` on `190a372` (08-a, code as `21733ae`), run by the implementer session at the owner's request — 187 tests, 163 pass, 19 skipped, 5 todo, 0 fail. Not independent.
+2026-10-16: `npm test` on `798eb1c` (08-a, standard 1 minor fixed), implementer-run, not independent — 188 tests, 164 pass, 19 skipped, 5 todo, 0 fail. Standard review 1 PASS on `21733ae`.
+
 ## Next action
 
-Owner merges `feat/07-c-tree-check` into main (it contains 07-b: standard PASS f3b4e12, adversarial FAIL f3b4e12 fixed by 07-c; 07-c: standard PASS ef4ceea, adversarial PASS ef4ceea). Step 7 is then done. Next is plan row 8 (GitHub sync, pools, release tracking, improvement loop) or the sandbox ticket that the parked 06-a and 07-b lines wait on; the owner chooses.
+1. Owner merges `feat/08-b-tree-permissions` into main (it contains 08-a: standard PASS 21733ae, adversarial FAIL 798eb1c fixed by 08-b; 08-b: standard PASS 52a17c3, adversarial FAIL dc6c461 parked, A-037).
+2. Owner runs `/var/tmp/software_factory/08-c/probes/runtime-binds.sh` (up to eight one-line paid calls) so 08-c can be drafted: what claude and pi need inside bubblewrap. 08-c covers the parked 05-a pi bash, 05-b claude settings, 06-c pi context-files and 08-b gitlink and dangling-symlink lines, with the owner's threat model from A-037: agents going outside their remit or making mistakes first, malicious code second.

@@ -1,12 +1,14 @@
 // Ticket 07-b: the owner's one command. `node src/main.ts <job.json>` runs one job through the
 // loop with the real claude and pi adapters and prints what the owner needs to diff and merge.
-// Scratch repositories only until the pi-policy or sandbox ticket (A-029).
+// Checks run in the job's sandbox (08-a); developer and reviewer runs do not yet (08-c), so
+// scratch repositories only until then (A-029).
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { oneLine, type DeveloperAdapter, type Job } from './developer.ts';
 import { run } from './run.ts';
 import { claudeDeveloper, claudeReviewer, cliAdapter, piDeveloper, piReviewer } from './runtime/cli-adapter.ts';
+import type { Sandbox } from './sandbox.ts';
 import { EventStore } from './store.ts';
 
 interface JobFile extends Omit<Job, 'ticket'> {
@@ -17,6 +19,8 @@ interface JobFile extends Omit<Job, 'ticket'> {
   runsDir?: string;
   /** Per stage. Default 120000. */
   deadlineMs?: number;
+  /** Where checks run. Default bwrap; `none` must be written out. `read` is relative to the job file. */
+  sandbox?: Sandbox;
 }
 
 const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
@@ -40,12 +44,15 @@ async function main(file: string | undefined): Promise<number> {
   if (!ticket) throw new Error('job needs ticket or ticketFile');
   const job: Job = { workId: spec.workId, ticket, repo: resolve(path, '..', spec.repo), base: spec.base, parentCycleId: spec.parentCycleId, checks: spec.checks };
   const runsDir = resolve(spec.runsDir ?? DEFAULT_RUNS_DIR);
+  const sandbox: Sandbox = spec.sandbox
+    ? { ...spec.sandbox, read: spec.sandbox.read?.map((p) => (typeof p === 'string' ? resolve(path, '..', p) : p)) }
+    : { backend: 'bwrap' };
   const adapters = { developer: developer(spec.runtime?.developer), standard: reviewer(spec.runtime?.standard, 'standard'), adversarial: reviewer(spec.runtime?.adversarial, 'adversarial') };
   // develop makes runsDir, but the store opens first.
   mkdirSync(runsDir, { recursive: true });
   const store = new EventStore(join(runsDir, 'events.sqlite'));
   try {
-    const r = await run(store, adapters, job, { deadlineMs: spec.deadlineMs ?? 120_000, runsDir });
+    const r = await run(store, adapters, job, { deadlineMs: spec.deadlineMs ?? 120_000, runsDir, sandbox });
     const { cycle } = r;
     console.log(`Stage: ${cycle.stage}`);
     console.log(`Cycle: ${cycle.cycleId}`);
@@ -53,6 +60,7 @@ async function main(file: string | undefined): Promise<number> {
     console.log(`Head: ${cycle.candidate?.head || '(none)'}`);
     console.log(`Base: ${cycle.candidate?.base ?? '(none)'}`);
     console.log(`Worktree: ${r.worktree}`);
+    console.log(`Sandbox: ${sandbox.backend}`);
     console.log(`Reviews: standard ${cycle.standard}, adversarial ${cycle.adversarial}`);
     for (const h of cycle.history) {
       const e = h.event;
