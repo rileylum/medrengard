@@ -10,6 +10,8 @@ Plan step 2 done (A-018): `src/store.ts` persists events in one `node:sqlite` ta
 
 Plan step 3 done (A-019): `src/runtime/spawn.ts` launches, observes and cancels a runtime as a child process; [03-a-findings.md](work/03-a-findings.md) records how `claude -p` and `pi -p` behave (JSON shapes, session ids, exit 143 on cancel, exit 1 with JSON or stderr on bad model and no auth, tool denial). Tickets 03-a and 03-b, merged as one stacked branch with an adversarial FAIL on record; the process-group escape and the other findings are parked for 04-a.
 
+Step 4 completed by 04-d and 04-e (A-024, A-025): `src/runtime/cli-adapter.ts` builds the real `claude` and `pi` adapters from a spec over `spawnRuntime`; the runtime ends its reply with a fenced `json` block holding the claim, found by a linear scan; `spawnRuntime` runs the child in a systemd user scope (`sf-<runId>`) and kills the whole cgroup on cancel, deadline or exit, and caps each stream at 8 MiB (`overflow`); the 03-b minors are fixed; `Adapter.name` is dropped. Tickets 04-d and 04-e merged as one stacked branch; 04-d's adversarial FAIL (regex backtracking) is fixed by 04-e, which passed both reviews. Two 04-e minors are parked for the reconcile ticket.
+
 Plan step 4 done (A-023): `src/adapter.ts` is the seam between the controller and a runtime; `src/controller.ts` starts a run with a deadline and records exactly one outcome per run through `EventStore.append`, which now returns the replayed Cycle; `run_failed` is a lifecycle event; `tests/fake-adapter.ts` drives normal, malformed, timeout, cancel and duplicate outcomes. Tickets 04-a, 04-b and 04-c, merged as one stacked branch with an adversarial FAIL on record (string-cap size bound, parked for 04-d).
 
 ## Checks run
@@ -22,6 +24,9 @@ Plan step 4 done (A-023): `src/adapter.ts` is the seam between the controller an
 2026-10-16: `npm test` on `003fdef` (04-c), owner-run — 71 tests, 56 pass, 10 skipped, 5 todo, 0 fail. Standard review 1 FAIL (BigInt and cycles pass `structuredClone` and throw in `append`); fixed with a JSON round trip.
 2026-10-16: `npm test` on `e97a045` (04-c fix), owner-run — 71 tests, 56 pass, 10 skipped, 5 todo, 0 fail. Standard review 2 PASS. Adversarial FAIL: one major (an outcome within about 60 bytes of V8's string cap survives the guard and throws `RangeError` in `append`, stranding the cycle; reproduced, needs about 3 GB heap).
 
+2026-10-16: `npm test` on `93ab46e` (04-d), owner-run — 102 tests, 83 pass, 14 skipped, 5 todo, 0 fail; `RUNTIME_SPIKE=1 npm test` 97 pass, 0 skipped, 0 fail. Standard 1 PASS; adversarial FAIL on `5347806` (claim-block regex backtracking holds the event loop past the deadline).
+2026-10-16: `npm test` on `c72625d` and `e6789d6` (04-e), owner-run — 111 tests, 92 pass, 14 skipped, 5 todo, 0 fail. Standard 1 PASS, adversarial PASS.
+
 ## Next action
 
-Branch `feat/04-e-claim-scan` (stacked on 04-d): 04-d standard PASS, adversarial FAIL (claim-block regex backtracking, A-025); 04-e fixes it, standard review 1 PASS. Owner runs `npm test` on the fix SHA, then the 04-e adversarial review, then owner merges both. Plan row 5 (real developer run in a scratch repository) follows.
+Owner merges `feat/04-e-claim-scan` into main (it contains 04-d). Then plan row 5: the first real developer run in a scratch repository through `execute` and `cliAdapter`, which needs prompt assembly (the ticket text plus the claim-block instruction), a worktree per run, tools enabled with a permission policy for `claude -p`, and recording `runtime` on the Run (spec Run record; `Adapter.name` was dropped until this reader exists). Parked lines for step 5 are in [work/parked.md](work/parked.md) (02-b `open` guards, 02-a busy timeout if two processes share a database).
