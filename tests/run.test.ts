@@ -249,8 +249,8 @@ test('main.ts runs the developer in the job sandbox: bwrap by default, unconfine
 // Ticket 08-e: every reviewer call site in main.ts, both CLIs (08-d adversarial major).
 /**
  * A stub claude or pi in its own bin directory. As the developer it commits and claims; as a
- * reviewer it PASSes, except in the role named by `target`, where it tries to write `outside` and
- * fails the run. Everything is baked in: bwrap clears the environment.
+ * reviewer it PASSes, except in the role named by `target`, where it names itself, tries to write
+ * `outside` and fails the run. Everything is baked in: bwrap clears the environment.
  */
 function reviewerStub(bin: string, cli: 'claude' | 'pi', target: string, outside: string) {
   const reply = cli === 'claude'
@@ -261,7 +261,7 @@ function reviewerStub(bin: string, cli: 'claude' | 'pi', target: string, outside
     'p=$(cat)',
     // The claim as a whole JSON object, quotes escaped for the JSON string around it.
     `reply() { esc=$(printf %s "$1" | sed 's/"/\\\\"/g'); ${reply}; }`,
-    `case "$p" in *"You are the ${target}"*) touch ${outside}; exit 1;; esac`,
+    `case "$p" in *"You are the ${target}"*) echo "stub ${cli} as the ${target}: $(touch ${outside} 2>&1)" >&2; exit 1;; esac`,
     'case "$p" in *"reviewer for the change below"*) h=$(printf %s "$p" | sed -n "s/^Candidate SHA: //p"); reply "{\\"head\\":\\"$h\\",\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"; exit 0;; esac',
     'echo done > done.txt && git add done.txt && git -c user.name=s -c user.email=s@example.invalid commit -qm done',
     'reply "{\\"head\\":\\"$(git rev-parse HEAD)\\",\\"artifacts\\":[\\"done.txt\\"]}"',
@@ -294,6 +294,8 @@ test('main.ts runs both reviewers, claude or pi, in the job sandbox: bwrap by de
         // The reviewer under test ran: the one before it passed, and its own failure is the escalation.
         assert.match(r.stdout, role === 'standard' ? /^Reviews: standard 0, adversarial 0$/m : /^Reviews: standard 1, adversarial 0$/m, label);
         assert.match(r.stdout, /^Escalation: run failed: /m, label);
+        // The CLI named in the job ran, not the other one built in its place (08-e adversarial note).
+        assert.match(r.stdout, new RegExp(`stub ${cli} as the ${role} reviewer`), label);
         // In bwrap the stub's write was refused by the read-only root; with none it landed.
         if (!escaped) assert.match(r.stdout, /touch: .*Read-only file system/, label);
         assert.equal(existsSync(outside), escaped, label);

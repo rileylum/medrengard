@@ -546,3 +546,62 @@ test('a deep chain plus a locked directory is tree: FAIL with evidence, never a 
     store.close();
   }
 });
+
+// Ticket 08-f: the controller's git over a checkout has the stage deadline as its timeout (08-e adversarial).
+// A regression here hangs this file: spawnSync blocks the event loop, so no test timeout can fire.
+const nestedRepo = (wt: string) => {
+  writeFileSync(join(wt, 'done.txt'), 'done\n');
+  mkdirSync(join(wt, 'vendor'));
+  git(join(wt, 'vendor'), 'init', '-q');
+  writeFileSync(join(wt, 'vendor', 'a'), 'a\n');
+  git(join(wt, 'vendor'), 'add', 'a');
+  git(join(wt, 'vendor'), 'commit', '-q', '-m', 'v');
+};
+
+test('a FIFO a check leaves at a gitlink\'s .git/HEAD is tree: FAIL naming the timeout, and the gitlink is emptied (08-f, 08-e adversarial major and minor)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('evil', 'mkdir -p vendor/.git; mkfifo vendor/.git/HEAD')], committing(nestedRepo));
+  const started = Date.now();
+  const { cycle: c, evidenceDir, worktree } = await verify(store, cycle.cycleId, job, { ...opts({ deadlineMs: 2000 }), runsDir });
+  assert.ok(Date.now() - started < 15_000, `verify took ${Date.now() - started} ms`);
+  assert.equal(c.stage, 'ESCALATED', c.escalation);
+  assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+  // update-index is the call that opens the FIFO: moved out of treeDiff's try, it throws out of verify.
+  assert.match(evidence(evidenceDir, 'tree').stdout, /^git update-index for .* timed out after 2000 ms \(SIGKILL\)/m);
+  assert.deepEqual(readdirSync(join(worktree, 'vendor')), []);
+  store.close();
+});
+
+test('review refuses a checkout whose comparison times out instead of hanging on it (08-f)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('ok', 'true')], committing(nestedRepo));
+  const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  mkdirSync(join(worktree, 'vendor', '.git'));
+  execFileSync('mkfifo', [join(worktree, 'vendor', '.git', 'HEAD')]);
+  const reviewer = fakeAdapter({ outcome: { status: 'completed', claim: { head: c.candidate!.head, verdict: 'PASS', findings: [] } } });
+  await assert.rejects(review(store, reviewer, cycle.cycleId, job, { deadlineMs: 2000, runsDir }), /not clean[\s\S]*timed out after 2000 ms/);
+  store.close();
+});
+
+test('untracked names that are not valid UTF-8, a locked directory among them, are removed with everything after them (08-f, parked 08-d minor)', async () => {
+  const { store, runsDir, job, cycle, repo, head } = await verifying([sh('evil', 'ln -s /etc/hostname "$(printf "notes\\377")"; echo x > "$(printf "zzz\\377")"; mkdir "$(printf "d\\377")"; echo x > "$(printf "d\\377/f")"; chmod 000 "$(printf "d\\377")"; echo x > plain')]);
+  const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  assert.deepEqual(readdirSync(worktree).sort(), git(repo, 'ls-tree', '--name-only', head).split('\n').sort());
+  store.close();
+});
+
+test('a committed directory whose name is not valid UTF-8 verifies and is reviewed (08-f, parked 08-d minor)', async () => {
+  const name = Buffer.from([0x64, 0xff]);
+  const { store, runsDir, job, cycle } = await verifying([sh('ok', 'true')], committing((wt) => {
+    writeFileSync(join(wt, 'done.txt'), 'done\n');
+    const d = Buffer.concat([Buffer.from(`${wt}/`), name]);
+    mkdirSync(d);
+    writeFileSync(Buffer.concat([d, Buffer.from('/f')]), 'x\n');
+  }));
+  const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  assert.ok(existsSync(Buffer.concat([Buffer.from(`${worktree}/`), name, Buffer.from('/f')])));
+  const reviewed = await review(store, fakeAdapter({ outcome: { status: 'completed', claim: { head: c.candidate!.head, verdict: 'PASS', findings: [] } } }), cycle.cycleId, job, { deadlineMs: 20_000, runsDir });
+  assert.equal(reviewed.stage, 'ADVERSARIAL_REVIEW', reviewed.escalation);
+  store.close();
+});
