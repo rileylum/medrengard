@@ -25,3 +25,4 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
   - Notes: all three main.ts call-site mutations fail the test, but the test cannot tell which CLI ran: building claude for `runtime: pi` passes. The 08-d malformed-gitlink minor is closed, along with gitfile, hook and FIFO variants that do not hang.
   - Probes: `/var/tmp/software_factory/08-e/probes/adv/`. Verdict: `/var/tmp/software_factory/08-e/adversarial.verdict.md`.
   - Budget: standard 2 of 2, adversarial 1 of 1. Stopped for the owner.
+- 2026-10-17 — Merged by the owner into main as `f479736` (with 08-d and 08-f, through `feat/08-f-controller-git-timeout`). `npm test` on merged main `f479736`, implementer-run, not independent: 223 tests, 199 pass, 19 skipped, 5 todo, 0 fail.
