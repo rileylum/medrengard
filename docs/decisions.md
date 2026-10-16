@@ -38,6 +38,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-037 — 2026-10-16 — Merge 08-a and 08-b with the 08-b adversarial findings parked
+
+Owner, after the 08-b adversarial FAIL on `dc6c461` (two majors: a committed gitlink directory and a dangling symlink survive the untracked removal and reach the unsandboxed reviewer; two minors: a tracked path starting with whitespace is deleted after a clean tree check, and a deep chain plus a locked directory makes the removal throw) and the question how likely they are: “Option 2, for the most part I'm not terribly concerned about malicious code - obviously that is a worry. My primary concern is agents going outside their remit to achieve a goal which they can't otherwise do, or making a mistake - causing damage to the repo or outside (i.e. deleting data from the whole of the tmp dir instead of their own space inside it)”.
+
+Effect: `feat/08-b-tree-permissions` (08-a and 08-b) is merged by the owner with 08-a standard PASS, 08-a adversarial FAIL fixed by 08-b, 08-b standard PASS and 08-b adversarial FAIL on record. The two majors are parked against 08-c (developer and reviewer runs in the sandbox), which closes them: inside the sandbox the owner's home is not bound. The two minors are parked against the next ticket that touches `verify.ts`. Threat model for 08-c and later, in the owner's words: the first concern is an agent going outside its remit or making a mistake that damages the repository or anything outside its own space; deliberately malicious code is a secondary concern.
+
 ### A-036 — 2026-10-16 — Fix ticket for the 08-a adversarial FAIL
 
 Owner, after the 08-a adversarial FAIL on `798eb1c` (one major: a check that removes the owner's permissions on a directory hides a rewritten tracked file from the tree comparison, because git warns on stderr, skips the path and exits 0; two minors: a check that removes permissions on the checkout itself makes the comparison throw, and untracked leftovers such as a planted `.git` directory or a symlink to the owner's files reach the unsandboxed reviewer): “Option 1 go”.
