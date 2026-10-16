@@ -492,6 +492,24 @@ test('a committed gitlink that a check fills is tree: FAIL and is emptied; an un
   }
 });
 
+test('a malformed nested repository left at a gitlink is tree: FAIL with git\'s error, and the gitlink is still emptied (08-e, 08-d adversarial minor)', async () => {
+  const nested = (wt: string) => {
+    writeFileSync(join(wt, 'done.txt'), 'done\n');
+    mkdirSync(join(wt, 'vendor'));
+    git(join(wt, 'vendor'), 'init', '-q');
+    writeFileSync(join(wt, 'vendor', 'a'), 'a\n');
+    git(join(wt, 'vendor'), 'add', 'a');
+    git(join(wt, 'vendor'), 'commit', '-q', '-m', 'v');
+  };
+  const { store, runsDir, job, cycle } = await verifying([sh('evil', 'echo payload > vendor/README; mkdir -p vendor/.git; echo x > vendor/.git/HEAD')], committing(nested));
+  const { cycle: c, evidenceDir, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'ESCALATED', c.escalation);
+  assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+  assert.match(evidence(evidenceDir, 'tree').stdout, /vendor/);
+  assert.deepEqual(readdirSync(join(worktree, 'vendor')), []);
+  store.close();
+});
+
 test('a dangling symlink a check leaves is removed like any other untracked entry (08-d, 08-b major)', async () => {
   const { store, runsDir, job, cycle, repo, head } = await verifying([sh('evil', 'ln -s /nonexistent/sf-dangling notes; ln -s loop loop; mkdir u; ln -s /nonexistent/x u/inner')]);
   const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });

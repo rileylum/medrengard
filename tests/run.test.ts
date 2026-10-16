@@ -246,36 +246,59 @@ test('main.ts runs the developer in the job sandbox: bwrap by default, unconfine
   }
 });
 
-test('main.ts runs the reviewers in the job sandbox: bwrap by default, unconfined only with none (08-d)', () => {
-  const { root, repo, runsDir } = scratch();
-  const main = join(import.meta.dirname, '..', 'src', 'main.ts');
-  // A stub claude: as the developer it commits and claims the head; as the standard reviewer it
-  // tries to write beside the scratch root and fails the run. Paths are baked in: bwrap clears the environment.
-  const bin = join(root, 'bin');
-  mkdirSync(bin);
-  // The reply is a whole JSON object, which the adapter takes as the claim: no fence to escape.
-  writeFileSync(join(bin, 'claude'), [
+// Ticket 08-e: every reviewer call site in main.ts, both CLIs (08-d adversarial major).
+/**
+ * A stub claude or pi in its own bin directory. As the developer it commits and claims; as a
+ * reviewer it PASSes, except in the role named by `target`, where it tries to write `outside` and
+ * fails the run. Everything is baked in: bwrap clears the environment.
+ */
+function reviewerStub(bin: string, cli: 'claude' | 'pi', target: string, outside: string) {
+  const reply = cli === 'claude'
+    ? `printf '{"type":"result","is_error":false,"result":"%s"}\n' "$esc"`
+    : `printf '{"type":"session","id":"s"}\n{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n{"type":"agent_end"}\n' "$esc"`;
+  writeFileSync(join(bin, cli), [
     '#!/bin/sh',
     'p=$(cat)',
-    `case "$p" in *"standard reviewer"*) touch ${root}/outside-review-$(basename "$(dirname "$PWD")"); exit 1;; esac`,
+    // The claim as a whole JSON object, quotes escaped for the JSON string around it.
+    `reply() { esc=$(printf %s "$1" | sed 's/"/\\\\"/g'); ${reply}; }`,
+    `case "$p" in *"You are the ${target}"*) touch ${outside}; exit 1;; esac`,
+    'case "$p" in *"reviewer for the change below"*) h=$(printf %s "$p" | sed -n "s/^Candidate SHA: //p"); reply "{\\"head\\":\\"$h\\",\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"; exit 0;; esac',
     'echo done > done.txt && git add done.txt && git -c user.name=s -c user.email=s@example.invalid commit -qm done',
-    'h=$(git rev-parse HEAD)',
-    `printf '{"type":"result","is_error":false,"result":"{\\\\"head\\\\":\\\\"%s\\\\",\\\\"artifacts\\\\":[\\\\"done.txt\\\\"]}"}\\n' "$h"`,
+    'reply "{\\"head\\":\\"$(git rev-parse HEAD)\\",\\"artifacts\\":[\\"done.txt\\"]}"',
     '',
   ].join('\n'));
-  chmodSync(join(bin, 'claude'), 0o755);
-  for (const [n, sandbox, escaped] of [[1, undefined, false], [2, { backend: 'none' }, true]] as const) {
-    const runs = join(runsDir, `r${n}`);
-    const jobFile = join(root, `job-rev-${n}.json`);
-    writeFileSync(jobFile, JSON.stringify({ workId: `w-rev-${n}`, ticket: 'x', repo, runsDir: runs, checks: [{ name: 'ok', command: ['true'] }], runtime: { developer: 'claude', standard: 'claude', adversarial: 'claude' }, sandbox }));
-    const r = spawnSync(process.execPath, [main, jobFile], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
-    assert.equal(r.status, 1, r.stderr);
-    assert.match(r.stdout, /^Head: [0-9a-f]{40}$/m, r.stdout);
-    assert.match(r.stdout, /^Stage: ESCALATED$/m, r.stdout);
-    // The stub's own exit as the reviewer, not bwrap failing to start it: the reviewer ran, and in
-    // bwrap its write was refused by the read-only root.
-    assert.match(r.stdout, escaped ? /^Escalation: run failed: claude stdout is not a JSON result \(exit 1\): empty$/m : /^Escalation: run failed: .*touch: .*Read-only file system$/m, r.stdout);
-    assert.equal(existsSync(join(root, `outside-review-r${n}`)), escaped, `sandbox ${n}: ${r.stdout}`);
+  chmodSync(join(bin, cli), 0o755);
+}
+
+test('main.ts runs both reviewers, claude or pi, in the job sandbox: bwrap by default, unconfined only with none (08-d, 08-e)', () => {
+  const { root, repo, runsDir } = scratch();
+  const main = join(import.meta.dirname, '..', 'src', 'main.ts');
+  let n = 0;
+  for (const role of ['standard', 'adversarial'] as const) {
+    for (const cli of ['claude', 'pi'] as const) {
+      for (const [sandbox, escaped] of [[undefined, false], [{ backend: 'none' }, true]] as const) {
+        n++;
+        const bin = join(root, `bin-${n}`);
+        mkdirSync(bin);
+        const outside = join(root, `outside-${n}`);
+        // The developer is always claude; the reviewer under test is `cli` in `role`, the other one claude.
+        reviewerStub(bin, 'claude', `${role} reviewer`, outside);
+        if (cli === 'pi') reviewerStub(bin, 'pi', `${role} reviewer`, outside);
+        const runtime = { developer: 'claude', standard: role === 'standard' ? cli : 'claude', adversarial: role === 'adversarial' ? cli : 'claude' };
+        const jobFile = join(root, `job-rev-${n}.json`);
+        writeFileSync(jobFile, JSON.stringify({ workId: `w-rev-${n}`, ticket: 'x', repo, runsDir: join(runsDir, `r${n}`), checks: [{ name: 'ok', command: ['true'] }], runtime, sandbox }));
+        const r = spawnSync(process.execPath, [main, jobFile], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+        const label = `${role} ${cli} ${sandbox ? 'none' : 'bwrap'}: ${r.stdout}${r.stderr}`;
+        assert.equal(r.status, 1, label);
+        assert.match(r.stdout, /^Stage: ESCALATED$/m, label);
+        // The reviewer under test ran: the one before it passed, and its own failure is the escalation.
+        assert.match(r.stdout, role === 'standard' ? /^Reviews: standard 0, adversarial 0$/m : /^Reviews: standard 1, adversarial 0$/m, label);
+        assert.match(r.stdout, /^Escalation: run failed: /m, label);
+        // In bwrap the stub's write was refused by the read-only root; with none it landed.
+        if (!escaped) assert.match(r.stdout, /touch: .*Read-only file system/, label);
+        assert.equal(existsSync(outside), escaped, label);
+      }
+    }
   }
 });
 

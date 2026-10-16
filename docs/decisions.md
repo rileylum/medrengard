@@ -38,6 +38,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-040 — 2026-10-16 — Fix ticket for the 08-d adversarial FAIL
+
+Owner, after the 08-d adversarial FAIL on `64514a0` (one major: main.ts passing the sandbox to the adversarial and pi reviewers is untested; two minors: a malformed nested repository at a gitlink makes `treeDiff` throw before cleanup, a non-UTF-8 untracked name stops the removal), offered a fix ticket stacked on 08-d covering the major and the gitlink minor with the UTF-8 minor parked, or a merge with the findings parked: “Option 1 go”.
+
+Effect: ticket 08-e-reviewer-sandbox-tests, Fast route, stacked on 08-d with fresh review budget. It tests the sandbox at every reviewer call site in main.ts and records a comparison that git cannot complete as `tree` dirt, then cleans the checkout. The UTF-8 minor goes to parked.md against the next ticket that touches `verify.ts`.
+
 ### A-039 — 2026-10-16 — Merge 08-c with the adversarial minor parked
 
 Owner, after the 08-c standard PASS and adversarial PASS on `cfdcc16` (one adversarial minor: the per-run `/tmp` cleanup in `cliAdapter` throws on a directory chain past PATH_MAX; the adversarial reviewer could not write probes), asked to merge as it stands or run a second adversarial review first, and whether to park the minor against 08-d: “Merge and park it. But I'm away from the computer so I can't merge right now”.
