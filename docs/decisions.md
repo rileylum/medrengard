@@ -25,6 +25,7 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | D-017 | DECIDED (A-016) | Design documents are not put through adversarial review on their own. The 2+1 rule applies to code with executable tests |
 | D-018 | DECIDED (A-017) | Plan steps are broken into Fast or Design tickets and delivered per [workflow.md](workflow.md) |
 | D-019 | DECIDED (A-035) | Candidate code runs inside a sandbox chosen by backend name. Bubblewrap first; Docker, VMs and cloud later behind the same interface. No VM or cloud backend for now; the tool stays agnostic |
+| D-020 | DECIDED (A-042) | Malicious code stays in scope, but the defences need not be airtight. Each adversarial finding is weighed by risk, and the recommendation can be a merge with the risk accepted. An accepted risk is recorded in [work/accepted-risks.md](work/accepted-risks.md) |
 
 ## Open
 
@@ -37,6 +38,24 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | O-009 | Staging and deployment ownership | Release tracking |
 
 ## Approval history
+
+### A-042 — 2026-10-17 — Weigh adversarial findings by risk; record accepted risks
+
+Owner, asked whether to record the rule offered after the 08-e adversarial FAIL (park findings that need deliberately hostile code and do no damage by default): “No rule, we definitely want to consider malicious code - but I don't think we need to make something airtight and waste development time. So you should weigh up the risk when these recommendations come through and potentially merge accepting them. We should probably capture them somewhere in that case though”.
+
+Effect: no default parking rule. Malicious code stays in scope, ranked after damage and leaving the remit (A-037). When an adversarial review fails, the implementer session weighs each finding's risk and recommends one of three outcomes: a fix ticket, parking against a named ticket, or a merge with the risk accepted. The owner still decides. A risk the owner accepts goes to [work/accepted-risks.md](work/accepted-risks.md), with the reason and the event that would reopen it. Unlike a parked line, an accepted risk does not gate any ticket.
+
+### A-041 — 2026-10-16 — Fix ticket for the 08-e adversarial FAIL
+
+Owner, after the 08-e adversarial FAIL on `eeffa15` (one major: a FIFO a check leaves in a gitlink's nested `.git` blocks the controller's git forever and nothing is recorded; one minor: the `update-index` arm of `treeDiff`'s catch has no test of its own), offered a fix ticket 08-f that gives the controller's git calls a timeout tied to the stage deadline, with tests for the FIFO case and the untested arm, or a merge with the hang parked: “Option 1 go”. The owner did not answer the offered rule to park hostile-check findings by default, so no such rule is recorded.
+
+Effect: ticket 08-f-controller-git-timeout, Fast route, stacked on 08-e with fresh review budget. Every controller git call over a tree a run or a check wrote gets the stage deadline as its timeout and is killed with SIGKILL past it, and the failure is recorded with its reason. The ticket also covers the same hang on the developer side (the fetch from the clone in `land`, and `fix`'s git in the clone), which the implementer session reproduced while scoping, and the parked non-UTF-8 minor, which A-040 assigned to the next ticket that touches `verify.ts`.
+
+### A-040 — 2026-10-16 — Fix ticket for the 08-d adversarial FAIL
+
+Owner, after the 08-d adversarial FAIL on `64514a0` (one major: main.ts passing the sandbox to the adversarial and pi reviewers is untested; two minors: a malformed nested repository at a gitlink makes `treeDiff` throw before cleanup, a non-UTF-8 untracked name stops the removal), offered a fix ticket stacked on 08-d covering the major and the gitlink minor with the UTF-8 minor parked, or a merge with the findings parked: “Option 1 go”.
+
+Effect: ticket 08-e-reviewer-sandbox-tests, Fast route, stacked on 08-d with fresh review budget. It tests the sandbox at every reviewer call site in main.ts and records a comparison that git cannot complete as `tree` dirt, then cleans the checkout. The UTF-8 minor goes to parked.md against the next ticket that touches `verify.ts`.
 
 ### A-039 — 2026-10-16 — Merge 08-c with the adversarial minor parked
 

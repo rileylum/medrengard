@@ -461,3 +461,149 @@ test('a directory chain past PATH_MAX left by a check is tree: FAIL with the err
   execFileSync('rm', ['-rf', worktree]);
   store.close();
 });
+
+// Ticket 08-d: the 08-b adversarial lines, from probe 08-b/probes/adv.mts.
+test('a committed gitlink that a check fills is tree: FAIL and is emptied; an untouched gitlink is clean (08-d, 08-b major)', async () => {
+  const nested = (wt: string) => {
+    writeFileSync(join(wt, 'done.txt'), 'done\n');
+    // What `git add -A` does with a nested repository: a gitlink entry.
+    mkdirSync(join(wt, 'vendor'));
+    git(join(wt, 'vendor'), 'init', '-q');
+    writeFileSync(join(wt, 'vendor', 'a'), 'a\n');
+    git(join(wt, 'vendor'), 'add', 'a');
+    git(join(wt, 'vendor'), 'commit', '-q', '-m', 'v');
+  };
+  {
+    const { store, runsDir, job, cycle, repo, head } = await verifying([sh('ok', 'true')], committing(nested));
+    assert.match(git(repo, 'ls-tree', head, 'vendor'), /^160000 commit /);
+    const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+    assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+    assert.deepEqual(readdirSync(join(worktree, 'vendor')), []);
+    store.close();
+  }
+  {
+    const { store, runsDir, job, cycle } = await verifying([sh('evil', 'ln -s /etc vendor/notes; git init -q vendor; echo payload > vendor/README')], committing(nested));
+    const { cycle: c, evidenceDir, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+    assert.equal(c.stage, 'ESCALATED', c.escalation);
+    assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+    assert.match(evidence(evidenceDir, 'tree').stdout, /vendor/);
+    assert.deepEqual(readdirSync(join(worktree, 'vendor')), []);
+    store.close();
+  }
+});
+
+test('a malformed nested repository left at a gitlink is tree: FAIL with git\'s error, and the gitlink is still emptied (08-e, 08-d adversarial minor)', async () => {
+  const nested = (wt: string) => {
+    writeFileSync(join(wt, 'done.txt'), 'done\n');
+    mkdirSync(join(wt, 'vendor'));
+    git(join(wt, 'vendor'), 'init', '-q');
+    writeFileSync(join(wt, 'vendor', 'a'), 'a\n');
+    git(join(wt, 'vendor'), 'add', 'a');
+    git(join(wt, 'vendor'), 'commit', '-q', '-m', 'v');
+  };
+  const { store, runsDir, job, cycle } = await verifying([sh('evil', 'echo payload > vendor/README; mkdir -p vendor/.git; echo x > vendor/.git/HEAD')], committing(nested));
+  const { cycle: c, evidenceDir, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'ESCALATED', c.escalation);
+  assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+  // git's own error, not only the gitlink dirt the removal adds to the same evidence (08-e standard 1).
+  assert.match(evidence(evidenceDir, 'tree').stdout, /^git diff-files for .* failed: fatal: .*not recognized as a git repository/m);
+  assert.match(evidence(evidenceDir, 'tree').stdout, /vendor/);
+  assert.deepEqual(readdirSync(join(worktree, 'vendor')), []);
+  store.close();
+});
+
+test('a dangling symlink a check leaves is removed like any other untracked entry (08-d, 08-b major)', async () => {
+  const { store, runsDir, job, cycle, repo, head } = await verifying([sh('evil', 'ln -s /nonexistent/sf-dangling notes; ln -s loop loop; mkdir u; ln -s /nonexistent/x u/inner')]);
+  const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  assert.deepEqual(readdirSync(worktree).sort(), git(repo, 'ls-tree', '--name-only', head).split('\n').sort());
+  store.close();
+});
+
+test('a tracked path that starts with whitespace survives the untracked removal, and review proceeds (08-d, 08-b minor)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('ok', 'true')], committing((wt) => { writeFileSync(join(wt, '\tfirst.txt'), 'tab\n'); writeFileSync(join(wt, 'done.txt'), 'done\n'); }));
+  const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  assert.ok(existsSync(join(worktree, '\tfirst.txt')));
+  const head = c.candidate!.head;
+  const reviewed = await review(store, fakeAdapter({ outcome: { status: 'completed', claim: { head, verdict: 'PASS', findings: [] } } }), cycle.cycleId, job, { deadlineMs: 20_000, runsDir });
+  assert.equal(reviewed.stage, 'ADVERSARIAL_REVIEW', reviewed.escalation);
+  store.close();
+});
+
+test('a deep chain plus a locked directory is tree: FAIL with evidence, never a throw from the untracked removal (08-d, 08-b minor)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('evil', 'mkdir -p zz/inner; p=$(printf "d/%.0s" $(seq 1100)); mkdir -p "$p" && (cd "$p" && mkdir -p "$p"); chmod 000 zz')]);
+  const worktree = join(runsDir, `${cycle.cycleId}-verify`);
+  try {
+    const { cycle: c, evidenceDir } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+    assert.equal(c.stage, 'ESCALATED', c.escalation);
+    assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+    assert.match(evidence(evidenceDir, 'tree').stdout, /ENAMETOOLONG|EACCES/);
+  } finally {
+    // coreutils walk relative to each directory, so they clear what Node's rmSync cannot.
+    execFileSync('chmod', ['-R', 'u+rwX', worktree]);
+    execFileSync('rm', ['-rf', worktree]);
+    store.close();
+  }
+});
+
+// Ticket 08-f: the controller's git over a checkout has the stage deadline as its timeout (08-e adversarial).
+// A regression here hangs this file: spawnSync blocks the event loop, so no test timeout can fire.
+const nestedRepo = (wt: string) => {
+  writeFileSync(join(wt, 'done.txt'), 'done\n');
+  mkdirSync(join(wt, 'vendor'));
+  git(join(wt, 'vendor'), 'init', '-q');
+  writeFileSync(join(wt, 'vendor', 'a'), 'a\n');
+  git(join(wt, 'vendor'), 'add', 'a');
+  git(join(wt, 'vendor'), 'commit', '-q', '-m', 'v');
+};
+
+test('a FIFO a check leaves at a gitlink\'s .git/HEAD is tree: FAIL naming the timeout, and the gitlink is emptied (08-f, 08-e adversarial major and minor)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('evil', 'mkdir -p vendor/.git; mkfifo vendor/.git/HEAD')], committing(nestedRepo));
+  const started = Date.now();
+  const { cycle: c, evidenceDir, worktree } = await verify(store, cycle.cycleId, job, { ...opts({ deadlineMs: 2000 }), runsDir });
+  assert.ok(Date.now() - started < 15_000, `verify took ${Date.now() - started} ms`);
+  assert.equal(c.stage, 'ESCALATED', c.escalation);
+  assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+  // update-index is the call that opens the FIFO: moved out of treeDiff's try, it throws out of verify.
+  assert.match(evidence(evidenceDir, 'tree').stdout, /^git update-index for .* timed out after 2000 ms \(SIGKILL\)/m);
+  assert.deepEqual(readdirSync(join(worktree, 'vendor')), []);
+  // The killed git's lock is gone, or every later comparison of this checkout fails on it.
+  assert.ok(!existsSync(`${worktree}.index.lock`));
+  store.close();
+});
+
+test('review refuses a checkout whose comparison times out instead of hanging on it (08-f)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('ok', 'true')], committing(nestedRepo));
+  const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  mkdirSync(join(worktree, 'vendor', '.git'));
+  execFileSync('mkfifo', [join(worktree, 'vendor', '.git', 'HEAD')]);
+  const reviewer = fakeAdapter({ outcome: { status: 'completed', claim: { head: c.candidate!.head, verdict: 'PASS', findings: [] } } });
+  await assert.rejects(review(store, reviewer, cycle.cycleId, job, { deadlineMs: 2000, runsDir }), /not clean[\s\S]*timed out after 2000 ms/);
+  store.close();
+});
+
+test('untracked names that are not valid UTF-8, a locked directory among them, are removed with everything after them (08-f, parked 08-d minor)', async () => {
+  const { store, runsDir, job, cycle, repo, head } = await verifying([sh('evil', 'ln -s /etc/hostname "$(printf "notes\\377")"; echo x > "$(printf "zzz\\377")"; mkdir "$(printf "d\\377")"; echo x > "$(printf "d\\377/f")"; chmod 000 "$(printf "d\\377")"; echo x > plain')]);
+  const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  assert.deepEqual(readdirSync(worktree).sort(), git(repo, 'ls-tree', '--name-only', head).split('\n').sort());
+  store.close();
+});
+
+test('a committed directory whose name is not valid UTF-8 verifies and is reviewed (08-f, parked 08-d minor)', async () => {
+  const name = Buffer.from([0x64, 0xff]);
+  const { store, runsDir, job, cycle } = await verifying([sh('ok', 'true')], committing((wt) => {
+    writeFileSync(join(wt, 'done.txt'), 'done\n');
+    const d = Buffer.concat([Buffer.from(`${wt}/`), name]);
+    mkdirSync(d);
+    writeFileSync(Buffer.concat([d, Buffer.from('/f')]), 'x\n');
+  }));
+  const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  assert.ok(existsSync(Buffer.concat([Buffer.from(`${worktree}/`), name, Buffer.from('/f')])));
+  const reviewed = await review(store, fakeAdapter({ outcome: { status: 'completed', claim: { head: c.candidate!.head, verdict: 'PASS', findings: [] } } }), cycle.cycleId, job, { deadlineMs: 20_000, runsDir });
+  assert.equal(reviewed.stage, 'ADVERSARIAL_REVIEW', reviewed.escalation);
+  store.close();
+});

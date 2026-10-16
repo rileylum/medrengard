@@ -1,11 +1,26 @@
 // Sync Git for the controller's own checks: develop's accept runs inside receive, which is
 // synchronous. stdio is captured so a failing command surfaces as an Error naming the command,
 // never as text on the controller's terminal.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, type SpawnSyncReturns } from 'node:child_process';
 
 // 64 MiB, not the 1 MiB default: a diff past the default threw ENOBUFS and stranded the cycle in
 // review (06-b adversarial). review cuts what it quotes; this only has to be big enough to read.
 const MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * spawnSync options for the controller's git over a tree a run or a check wrote. A FIFO left where
+ * git opens a file (a nested repository's HEAD, a clone's refs) blocks git on open() forever, and
+ * spawnSync blocks the event loop with it, so no deadline timer can fire (08-e adversarial).
+ * SIGKILL, not SIGTERM: the call is already past its deadline and nothing it does on exit is wanted.
+ */
+export const bounded = (timeoutMs: number) => ({ timeout: timeoutMs, killSignal: 'SIGKILL' as const });
+
+/** Why a `bounded` call did not exit by itself, in words; undefined if it did. */
+export function stopped(r: SpawnSyncReturns<unknown>, timeoutMs: number): string | undefined {
+  if ((r.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') return `timed out after ${timeoutMs} ms (${r.signal ?? 'SIGKILL'})`;
+  if (r.signal) return `killed by ${r.signal}`;
+  return undefined;
+}
 
 export function git(cwd: string, ...args: string[]): string {
   try {

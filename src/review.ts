@@ -52,7 +52,7 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
   // A check ran the candidate's code here; it may have rewritten a tracked file the reviewer
   // would then Read instead of the commit (06-b adversarial). The comparison is with the head,
   // so a checkout of any other commit fails it too. Untracked leftovers are allowed.
-  const dirty = treeDiff(job.repo, checkout, head);
+  const dirty = treeDiff(job.repo, checkout, head, opts.deadlineMs);
   if (dirty) throw new Error(`verify checkout ${checkout} is not clean against ${head}:\n${dirty}`);
   if (!existsSync(evidenceDir)) throw new Error(`no verification evidence at ${evidenceDir}`);
   // The last verification is the candidate's: apply admits one only in VERIFYING and only for the
