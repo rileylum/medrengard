@@ -38,6 +38,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-039 — 2026-10-16 — Merge 08-c with the adversarial minor parked
+
+Owner, after the 08-c standard PASS and adversarial PASS on `cfdcc16` (one adversarial minor: the per-run `/tmp` cleanup in `cliAdapter` throws on a directory chain past PATH_MAX; the adversarial reviewer could not write probes), asked to merge as it stands or run a second adversarial review first, and whether to park the minor against 08-d: “Merge and park it. But I'm away from the computer so I can't merge right now”.
+
+Effect: `feat/08-c-developer-sandbox` is accepted for merge as it stands, with no second adversarial review; the owner merges it on return. The minor is parked against 08-d, which is not READY to merge until its done-when list covers it. 08-d starts now on `feat/08-d-reviewer-sandbox`, stacked on 08-c.
+
 ### A-038 — 2026-10-16 — 08-c and 08-d: developer and reviewer runs in the sandbox
 
 Owner, after the runtime probe ([08-c-findings.md](work/08-c-findings.md)) and five questions (the developer's clone at `<runsDir>/<cycleId>` made with `--no-hardlinks`, its branch fetched into the repository with a sandboxed `upload-pack` and `fetch.fsckObjects`, the head checks run in the repository after the fetch; claude's configuration bound read-only and pi's as a temporary overlay, with a writable `auth.json` only if pi stops logging in; two stacked tickets, 08-c the developer with `--restricted` for claude and `--no-approve` for pi, 08-d the reviewers with the checkout read-only and `--no-context-files` for pi; 08-d also fixes the controller side of the two 08-b majors and takes the two parked verify minors; network on with `/run/systemd/resolve` bound for runtimes, `/tmp` a per-run directory on disk removed after the run): “Take all, go”.
