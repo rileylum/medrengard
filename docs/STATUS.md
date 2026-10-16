@@ -54,4 +54,4 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 ## Next action
 
-Owner decides on the 07-b adversarial FAIL on `f3b4e12`: a fix ticket 07-c stacked on 07-b (reset or refuse index flags before the `tree` status, the two minors, the `.git` pointer swap parked with the sandbox lines), or merge with the FAIL on record and park all three against the sandbox ticket.
+Step 7: 07-a merged; 07-b stopped on an adversarial FAIL (`f3b4e12`); 07-c (A-034) stacked on it at `ef4ceea` closes the index-flag variants and the two minors, the gitdir swap is parked. Owner runs `npm test` on `ef4ceea`, then standard review 1 for 07-c.
