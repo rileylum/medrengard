@@ -1,7 +1,7 @@
 // Ticket 07-b: the owner's one command. `node src/main.ts <job.json>` runs one job through the
 // loop with the real claude and pi adapters and prints what the owner needs to diff and merge.
 // Scratch repositories only until the pi-policy or sandbox ticket (A-029).
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import type { DeveloperAdapter, Job } from './developer.ts';
@@ -41,6 +41,8 @@ async function main(file: string | undefined): Promise<number> {
   const job: Job = { workId: spec.workId, ticket, repo: resolve(path, '..', spec.repo), base: spec.base, parentCycleId: spec.parentCycleId, checks: spec.checks };
   const runsDir = resolve(spec.runsDir ?? DEFAULT_RUNS_DIR);
   const adapters = { developer: developer(spec.runtime?.developer), standard: reviewer(spec.runtime?.standard, 'standard'), adversarial: reviewer(spec.runtime?.adversarial, 'adversarial') };
+  // develop makes runsDir, but the store opens first.
+  mkdirSync(runsDir, { recursive: true });
   const store = new EventStore(join(runsDir, 'events.sqlite'));
   try {
     const r = await run(store, adapters, job, { deadlineMs: spec.deadlineMs ?? 120_000, runsDir });
