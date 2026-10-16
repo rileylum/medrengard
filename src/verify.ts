@@ -113,8 +113,9 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   }
   let dirty = treeDiff(job.repo, worktree, head);
   // The reviewer reads this directory: a planted .git with its own config, or a symlink to the
-  // owner's files, must not be there when it does (08-a adversarial). Listed untrimmed through the
-  // controller's git: a tracked path may start with whitespace (08-b adversarial).
+  // owner's files, must not be there when it does (08-a adversarial). The full ls-tree format, not
+  // --name-only: each record starts with its mode, so no trimming can eat a path that starts with
+  // whitespace (08-b adversarial).
   const entries = tree('ls-tree', '-r', '-z', head).stdout.split('\0').filter(Boolean)
     .map((e) => ({ gitlink: e.startsWith('160000 '), path: e.slice(e.indexOf('\t') + 1) }));
   // A removal that cannot finish (a locked directory under a chain past PATH_MAX) leaves entries
