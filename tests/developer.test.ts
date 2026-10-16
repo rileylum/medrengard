@@ -324,15 +324,22 @@ test('fix throws and appends nothing outside a post-FAIL DEVELOPING, with a deve
     const j = job(repo, { checks: [{ name: 'ok', command: ['true'] }] });
     store.open('q1', 'wq');
     await assert.rejects(fix(store, fake(claude), 'q1', j, o(runsDir)), /QUEUED/);
+    assert.equal(events(store, 'q1'), 0);
     await assert.rejects(fix(store, fake(claude), 'nope', j, o(runsDir)), /not open/);
     const dev = await develop(store, fake(claude), j, o(runsDir));
-    await assert.rejects(fix(store, fake(claude), dev.cycle.cycleId, j, o(runsDir)), /VERIFYING/);
-    await verify(store, dev.cycle.cycleId, j, { ...o(runsDir), isolation: 'process-group' });
-    await assert.rejects(fix(store, fake(claude), dev.cycle.cycleId, j, o(runsDir)), /STANDARD_REVIEW/);
-    const before = events(store, dev.cycle.cycleId);
-    store.append(dev.cycle.cycleId, { type: 'cancel' });
-    await assert.rejects(fix(store, fake(claude), dev.cycle.cycleId, j, o(runsDir)), /CANCELLED/);
-    assert.equal(events(store, dev.cycle.cycleId), before + 1);
+    const id = dev.cycle.cycleId;
+    const unchanged = async (re: RegExp) => {
+      const before = events(store, id);
+      await assert.rejects(fix(store, fake(claude), id, j, o(runsDir)), re);
+      assert.equal(events(store, id), before);
+    };
+    await unchanged(/VERIFYING/);
+    await verify(store, id, j, { ...o(runsDir), isolation: 'process-group' });
+    await unchanged(/STANDARD_REVIEW/);
+    await review(store, fakeReviewer(claude, 'pass'), id, j, o(runsDir));
+    await unchanged(/ADVERSARIAL_REVIEW/);
+    store.append(id, { type: 'cancel' });
+    await unchanged(/CANCELLED/);
     store.close();
   }
   {
@@ -340,7 +347,9 @@ test('fix throws and appends nothing outside a post-FAIL DEVELOPING, with a deve
     const { repo, store, runsDir } = scratch();
     const dev = await develop(store, fake(claude, 'bogus'), job(repo), o(runsDir));
     assert.equal(dev.cycle.stage, 'ESCALATED');
+    const before = events(store, dev.cycle.cycleId);
     await assert.rejects(fix(store, fake(claude), dev.cycle.cycleId, job(repo), o(runsDir)), /ESCALATED/);
+    assert.equal(events(store, dev.cycle.cycleId), before);
     store.close();
   }
   {
@@ -381,7 +390,9 @@ test('fix throws and appends nothing outside a post-FAIL DEVELOPING, with a deve
     // The worktree is gone.
     const { store, runsDir, job: j, cycleId, worktree } = await failed();
     rmSync(worktree, { recursive: true, force: true });
+    const before = events(store, cycleId);
     await assert.rejects(fix(store, fake(claude), cycleId, j, o(runsDir)), /no worktree/);
+    assert.equal(events(store, cycleId), before);
     store.close();
   }
 });
