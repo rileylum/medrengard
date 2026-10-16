@@ -10,7 +10,9 @@ import { basename, dirname, join } from 'node:path';
 import type { Adapter } from '../src/adapter.ts';
 import { EventStore } from '../src/store.ts';
 import { claude, cliAdapter, type CliSpec } from '../src/runtime/cli-adapter.ts';
-import { develop, type Job } from '../src/developer.ts';
+import { develop, fix, type Job } from '../src/developer.ts';
+import { review } from '../src/review.ts';
+import { fakeAdapter } from './fake-adapter.ts';
 import { verify, type Check, type VerifyOptions } from '../src/verify.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
@@ -428,5 +430,34 @@ test('untracked entries a check leaves are removed after the tree check: the che
   const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
   assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
   assert.deepEqual(readdirSync(worktree).sort(), git(repo, 'ls-tree', '--name-only', head).split('\n').sort());
+  store.close();
+});
+
+test('a checkout locked after verify is still replaced by the next verification of the cycle (08-b standard 1)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('lock', 'chmod 000 .')]);
+  const first = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(first.cycle.stage, 'STANDARD_REVIEW', first.cycle.escalation);
+  const head = first.cycle.candidate!.head;
+  const failed = await review(store, fakeAdapter({ outcome: { status: 'completed', claim: { head, verdict: 'FAIL', findings: ['x'] } } }), cycle.cycleId, job, { deadlineMs: 20_000, runsDir });
+  assert.equal(failed.stage, 'DEVELOPING', failed.escalation);
+  // Locked between verifications, as anything run in the checkout after verify could leave it.
+  chmodSync(first.worktree, 0o000);
+  const fixed = await fix(store, fake(claude), cycle.cycleId, job, { deadlineMs: 20_000, runsDir });
+  assert.equal(fixed.cycle.stage, 'VERIFYING', fixed.cycle.escalation);
+  job.checks = [sh('file', 'test -f done.txt')];
+  const second = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(second.cycle.stage, 'STANDARD_REVIEW', second.cycle.escalation);
+  assert.equal(readFileSync(join(second.worktree, 'done.txt'), 'utf8'), git(job.repo, 'show', `${fixed.cycle.candidate!.head}:done.txt`) + '\n');
+  store.close();
+});
+
+test('a directory chain past PATH_MAX left by a check is tree: FAIL with the error as evidence, not a throw (08-b standard 1)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('deep', 'p=$(printf "d/%.0s" $(seq 1100)); mkdir -p "$p" && cd "$p" && mkdir -p "$p"')]);
+  const { cycle: c, evidenceDir, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'ESCALATED', c.escalation);
+  assert.deepEqual(results(c).checks, [{ name: 'deep', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+  assert.match(evidence(evidenceDir, 'tree').stdout, /ENAMETOOLONG/);
+  // coreutils rm walks relative to each directory; the scratch cleanup's rmSync might not.
+  execFileSync('rm', ['-rf', worktree]);
   store.close();
 });
