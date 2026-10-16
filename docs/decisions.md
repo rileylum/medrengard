@@ -37,6 +37,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-031 — 2026-10-16 — Fix ticket for the 06-b adversarial FAIL
+
+Owner, after the 06-b adversarial FAIL on `f7ed0be` (one major: a diff over 1 MiB strands the cycle on `execFileSync`'s default `maxBuffer`; six minors: `.gitattributes -diff` hides content, the cut drops the middle with no file list, the head filter untested, a check can rewrite the tracked tree the reviewer reads, pi lacks `--no-approve`, forgeable section headers): “option 1 go”.
+
+Effect: ticket 06-c-reviewer-prompt-bounds, Fast route, stacked on 06-b with fresh review budget. It fixes the major and the six minors and adds `--strict-mcp-config` to the claude reviewer. `CLAUDE.md` auto-discovery in the claude reviewer is recorded as a non-goal pending a flag probe.
+
 ### A-030 — 2026-10-16 — 06-b reviewer runs: signature, tools, evidence source
 
 Owner, after the 06-b question round (`review(store, adapter, cycleId, job, opts)` recomputing the checkout and evidence paths from `runsDir`; read-only reviewer tools, no bash; per-check results from the `verification` event with capped files attached; pick up the parked `MISSING`-under-cgroup minor): “go”.
