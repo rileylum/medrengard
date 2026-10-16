@@ -38,7 +38,7 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 2026-10-16: `npm test` on `4b20fb5` (06-a, standard 1 minors fixed), owner-run — 135 tests, 114 pass, 16 skipped, 5 todo, 0 fail. Standard 1 PASS on 5d1a34b; adversarial FAIL on 4b20fb5 (one major: a committed symlink lets a check read the developer's worktree; see the ticket log).
 
-2026-10-16: `npm test` on `09402c8` (06-b), owner-run — 144 tests, 121 pass, 18 skipped, 5 todo, 0 fail. Standard review 1 launched.
+2026-10-16: `npm test` on `09402c8` (06-b), owner-run — 144 tests, 121 pass, 18 skipped, 5 todo, 0 fail. Standard review 1 PASS (6 minors, fixed in f7ed0be with `--restricted` for the claude reviewer).
 
 ## Next action
 
