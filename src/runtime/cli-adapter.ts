@@ -165,7 +165,9 @@ export const pi: CliSpec = {
  * the worktree because the path rules are absolute; develop() calls it once the worktree exists.
  */
 export function claudeDeveloper(worktree: string): CliSpec {
-  const allowed = ['Read', 'Glob', 'Grep', `Edit(${worktree}/**)`, `Write(${worktree}/**)`,
+  // A single leading slash in a path rule is relative to the project; `//` is the filesystem root.
+  // Probed 2026-10-16: `Write(/var/tmp/.../**)` denied every write, `Write(//var/tmp/.../**)` allows them.
+  const allowed = ['Read', 'Glob', 'Grep', `Edit(/${worktree}/**)`, `Write(/${worktree}/**)`,
     ...['add', 'commit', 'status', 'diff', 'log', 'rev-parse'].map((sub) => `Bash(git ${sub}:*)`)];
   return { ...claude, args: ['-p', '--output-format', 'json', '--no-session-persistence', '--allowedTools', ...allowed] };
 }

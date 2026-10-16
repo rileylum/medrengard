@@ -109,7 +109,7 @@ test('developer specs: claude gets a worktree-scoped allow list, pi gets its too
   const c = claudeDeveloper('/var/tmp/x/wt');
   assert.equal(c.name, 'claude');
   assert.ok(c.args.includes('--allowedTools'));
-  assert.ok(c.args.includes('Edit(/var/tmp/x/wt/**)'));
+  assert.ok(c.args.includes('Edit(//var/tmp/x/wt/**)'), c.args.join(' '));
   assert.ok(c.args.includes('Bash(git commit:*)'));
   assert.ok(!c.args.includes('--tools'));
   assert.ok(!c.args.includes('--dangerously-skip-permissions'));
