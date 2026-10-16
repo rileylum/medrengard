@@ -42,7 +42,7 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 2026-10-16: `npm test` on `f7ed0be` (06-b, minors fixed), owner-run — 145 tests, 122 pass, 18 skipped, 5 todo, 0 fail. Adversarial FAIL on f7ed0be (one major: a diff over 1 MiB strands the cycle on `execFileSync`'s default `maxBuffer`; see the ticket log).
 
-2026-10-16: `npm test` on `d0fd999` (06-c), owner-run — 150 tests, 127 pass, 18 skipped, 5 todo, 0 fail. Standard review 1 launched.
+2026-10-16: `npm test` on `d0fd999` (06-c), owner-run — 150 tests, 127 pass, 18 skipped, 5 todo, 0 fail. Standard review 1 PASS (3 minors, two fixed, the CRLF one probed and not reproduced).
 
 ## Next action
 
