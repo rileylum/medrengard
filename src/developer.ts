@@ -9,6 +9,7 @@ import type { Adapter } from './adapter.ts';
 import { checkDeadline, execute } from './controller.ts';
 import type { Cycle } from './lifecycle.ts';
 import type { EventStore } from './store.ts';
+import type { Check } from './verify.ts';
 
 export interface Job {
   workId: string;
@@ -20,6 +21,11 @@ export interface Job {
   base?: string;
   /** Required when the work already has an ESCALATED cycle. */
   parentCycleId?: string;
+  /**
+   * The repository's declared checks, run by the controller on the candidate (06-a). Owner-supplied
+   * with the job, not read from the candidate: a file at the candidate SHA is the developer's to edit.
+   */
+  checks?: Check[];
 }
 
 export interface DevelopOptions {

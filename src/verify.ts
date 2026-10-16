@@ -1,0 +1,119 @@
+// Ticket 06-a: the VERIFYING stage. Checks out the candidate fresh, runs the job's declared checks
+// there, writes each one's output and exit against the SHA, and appends one verification event.
+// The lifecycle decides what the results mean; this module only produces them.
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { checkDeadline } from './controller.ts';
+import type { Job } from './developer.ts';
+import type { Cycle, Event } from './lifecycle.ts';
+import { checkScopes } from './runtime/cli-adapter.ts';
+import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
+import type { EventStore } from './store.ts';
+
+export interface Check {
+  /** Evidence file stem: [A-Za-z0-9_.-], unique within the job. */
+  name: string;
+  /** argv, run with the candidate checkout as cwd; no shell unless the command is one. */
+  command: string[];
+}
+
+export interface VerifyOptions {
+  /** Per check. A check still running at the deadline is killed and FAILs. */
+  deadlineMs: number;
+  /** Same directory `develop` used. Default /var/tmp/software_factory/runs. */
+  runsDir?: string;
+  /** `cgroup` (default) runs each check in a systemd user scope, as the adapters do, so a check's own children die with it. */
+  isolation?: 'cgroup' | 'process-group';
+  /** Per stream per check; over it the check FAILs with the output dropped. Default 8 MiB. */
+  maxOutputBytes?: number;
+  /** SIGTERM to SIGKILL on the deadline, default 5000. */
+  graceMs?: number;
+}
+
+export interface Verified {
+  cycle: Cycle;
+  /** `<runsDir>/<cycleId>-verify`, a detached checkout of the candidate head. Kept for the reviewers (06-b). */
+  worktree: string;
+  /** `<runsDir>/evidence/<head>/`, one `<name>.stdout`, `<name>.stderr`, `<name>.exit` per check. */
+  evidenceDir: string;
+}
+
+type CheckResult = Event extends infer E ? (E extends { type: 'verification' } ? E['checks'][number] : never) : never;
+
+const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
+// A file stem, nothing that could leave the evidence directory or hide a sibling's file.
+const NAME = /^[A-Za-z0-9_.-]{1,100}$/;
+
+/** Run every declared check on the cycle's candidate and record one verification event. */
+export async function verify(store: EventStore, cycleId: string, job: Job, opts: VerifyOptions): Promise<Verified> {
+  const checks = job.checks ?? [];
+  const seen = new Set<string>();
+  for (const c of checks) {
+    if (typeof c.name !== 'string' || !NAME.test(c.name) || c.name === '.' || c.name === '..') throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
+    if (seen.has(c.name)) throw new Error(`check name ${c.name} is declared twice`);
+    seen.add(c.name);
+  }
+  checkDeadline(opts.deadlineMs);
+  const isolation = opts.isolation ?? 'cgroup';
+  if (isolation === 'cgroup') checkScopes();
+  const cycle = store.load(cycleId);
+  if (!cycle) throw new Error(`cycle ${cycleId} not open`);
+  if (cycle.stage !== 'VERIFYING' || !cycle.candidate) throw new Error(`verify on a cycle in ${cycle.stage}, expected VERIFYING`);
+  const head = cycle.candidate.head;
+
+  const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
+  const worktree = join(runsDir, `${cycleId}-verify`);
+  const evidenceDir = join(runsDir, 'evidence', head);
+  // Fresh every time: the spec wants checks that ran independently of the developer, and a
+  // checkout of the commit alone is the only thing that proves it. A worktree left by an earlier
+  // verification of this cycle (a fix run moved the head) goes first.
+  if (existsSync(worktree)) git(job.repo, 'worktree', 'remove', '--force', worktree);
+  git(job.repo, 'worktree', 'prune');
+  mkdirSync(evidenceDir, { recursive: true });
+  git(job.repo, 'worktree', 'add', '-q', '--detach', worktree, head);
+
+  const results: CheckResult[] = [];
+  // In order, all of them: the evidence is for the owner and the reviewers, who want the whole
+  // picture, not the first failure.
+  for (const check of checks) {
+    const r = await runCheck(check, worktree, isolation, opts);
+    writeFileSync(join(evidenceDir, `${check.name}.stdout`), r.stdout);
+    writeFileSync(join(evidenceDir, `${check.name}.stderr`), r.stderr);
+    writeFileSync(join(evidenceDir, `${check.name}.exit`), `${r.exit}\n`);
+    results.push({ name: check.name, result: r.result });
+  }
+  return { cycle: store.append(cycleId, { type: 'verification', head, checks: results }), worktree, evidenceDir };
+}
+
+interface Outcome { result: CheckResult['result']; exit: string; stdout: string; stderr: string }
+
+// `failed` is spawnRuntime's "never started": no binary, no cwd. That is the spec's MISSING,
+// evidence that does not exist, as against FAIL, evidence that says no.
+async function runCheck(check: Check, cwd: string, isolation: 'cgroup' | 'process-group', opts: VerifyOptions): Promise<Outcome> {
+  const [command = '', ...args] = check.command;
+  const run = spawnRuntime({
+    command, args, prompt: '', cwd,
+    graceMs: opts.graceMs,
+    maxOutputBytes: opts.maxOutputBytes,
+    scope: isolation === 'cgroup' ? `sf-verify-${randomUUID()}` : undefined,
+  });
+  const timer = setTimeout(() => run.cancel(), opts.deadlineMs);
+  let r: RunResult;
+  try { r = await run; } finally { clearTimeout(timer); }
+  const base = { stdout: r.stdout, stderr: r.stderr };
+  if (r.status === 'failed') return { ...base, result: 'MISSING', exit: `missing: ${r.stderr.trim()}` };
+  if (r.status === 'cancelled') return { ...base, result: 'FAIL', exit: 'timeout' };
+  if (r.status === 'overflow') return { ...base, result: 'FAIL', exit: 'overflow' };
+  return { ...base, result: r.exitCode === 0 ? 'PASS' : 'FAIL', exit: `exit ${r.exitCode ?? `signal ${r.signal}`}` };
+}
+
+function git(cwd: string, ...args: string[]): string {
+  try {
+    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  } catch (err) {
+    const stderr = (err as { stderr?: string }).stderr?.toString().trim();
+    throw new Error(`git ${args.join(' ')} in ${cwd} failed: ${stderr || (err as Error).message}`);
+  }
+}
