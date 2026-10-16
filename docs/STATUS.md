@@ -38,6 +38,8 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 2026-10-16: `npm test` on `4b20fb5` (06-a, standard 1 minors fixed), owner-run — 135 tests, 114 pass, 16 skipped, 5 todo, 0 fail. Standard 1 PASS on 5d1a34b; adversarial FAIL on 4b20fb5 (one major: a committed symlink lets a check read the developer's worktree; see the ticket log).
 
+2026-10-16: `npm test` on `09402c8` (06-b), owner-run — 144 tests, 121 pass, 18 skipped, 5 todo, 0 fail. Standard review 1 launched.
+
 ## Next action
 
 Ticket 06-b (`feat/06-b-reviewer-runs`, A-030): `src/review.ts` builds the reviewer prompt from the store, the verify checkout and the evidence and runs it through `execute`; read-only `claudeReviewer` and `piReviewer`; `verify` resolves a check's binary before spawn so `MISSING` agrees under both isolations. Implementer-run tests green, both live reviewers returned a verdict. Owner runs `npm test` on the branch, then standard review 1.
