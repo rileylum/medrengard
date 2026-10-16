@@ -7,7 +7,7 @@ Goal: the owner can accept or cancel a job's cycle from the command line, so a w
 Done when:
 - `node src/main.ts accept <job.json> <sha>` records `accept` on the job's open cycle when it is AWAITING_ACCEPTANCE and the SHA is its candidate head. It prints the stage and the merge line by SHA, and exits 0. Verified by test.
 - `accept` writes nothing and exits 2 when the work has no open cycle, when the cycle is in another stage, or when the SHA is not the full candidate head. A typo never escalates a cycle. Verified by test.
-- `node src/main.ts cancel <job.json>` records `cancel` on the job's open cycle, or on its latest ESCALATED cycle when none is open, prints the stage and exits 0. With neither it writes nothing and exits 2. Verified by test.
+- `node src/main.ts cancel <job.json>` records `cancel` on the job's open cycle. When none is open it records `cancel` on every ESCALATED cycle of the work, since the store asks a new cycle to name any one of them as its parent. It prints each cycle and stage and exits 0. With nothing to cancel it writes nothing and exits 2. Verified by test.
 - After `accept` or `cancel`, `node src/main.ts <job.json>` opens a new cycle for the same work ID. Verified by test.
 - `node src/main.ts <job.json>` still runs the job. On AWAITING_ACCEPTANCE it also prints the `accept` command and the merge line by SHA, not by branch, so the merge takes the accepted commit even if the branch moves. Verified by test.
 - Parked 02-a note, busy timeout (the first ticket with two processes on one database): `cancel` from a second process while another connection holds the write lock waits and succeeds. Verified by test.

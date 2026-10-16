@@ -255,3 +255,16 @@ test('open enforces one open cycle per work item and an ESCALATED parent (05-a, 
   store.open('c4', 'w3');
   store.close();
 });
+
+test('a cycle whose row 0 is not the open marker fails to load, naming the cycle (07-d, parked 02-a)', async () => {
+  const path = dbPath('row0');
+  new EventStore(path).close();
+  const { DatabaseSync } = await import('node:sqlite');
+  const raw = new DatabaseSync(path);
+  raw.prepare('INSERT INTO events (cycle_id, seq, type, run_id, body) VALUES (?, 0, ?, NULL, ?)')
+    .run('bad', 'cancel', JSON.stringify({ type: 'cancel' }));
+  raw.close();
+  const store = new EventStore(path);
+  assert.throws(() => store.load('bad'), /cycle bad: row 0 is cancel, not the open marker/);
+  store.close();
+});
