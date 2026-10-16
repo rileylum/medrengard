@@ -60,8 +60,8 @@ export function receive(store: EventStore, cycleId: string, runId: string, role:
   if (o.status !== 'completed') {
     return store.append(cycleId, { type: 'run_failed', runId, reason: o.status === 'failed' ? o.reason : 'cancelled' });
   }
-  const refused = accept && refusal(accept, o.claim);
-  if (refused !== undefined && refused !== false) return store.append(cycleId, { type: 'run_failed', runId, reason: refused });
+  const refused = accept ? refusal(accept, o.claim) : undefined;
+  if (refused !== undefined) return store.append(cycleId, { type: 'run_failed', runId, reason: refused });
   try {
     return store.append(cycleId, toEvent(runId, role, o.claim));
   } catch (err) {
@@ -74,13 +74,12 @@ export function receive(store: EventStore, cycleId: string, runId: string, role:
 
 const SETTLED: Stage[] = ['ESCALATED', 'ACCEPTED', 'CANCELLED'];
 
-// accept is caller code over a claim the runtime wrote; a throw or a non-string return must still
-// end as one well-formed run_failed, never as an exception out of receive.
+// accept runs Git over a claim the runtime wrote; a throw (or an empty reason) must still end as
+// one well-formed run_failed, never as an exception out of receive.
 function refusal(accept: NonNullable<ExecuteOptions['accept']>, claim: unknown): string | undefined {
   try {
     const r = accept(claim);
-    if (r === undefined) return undefined;
-    return typeof r === 'string' && r ? r : `accept refused the claim: ${describe(r)}`;
+    return r === undefined ? undefined : r || 'accept refused the claim';
   } catch (err) {
     return `accept threw: ${describe(err)}`;
   }
