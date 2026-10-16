@@ -4,7 +4,7 @@
 // a cloud runner would be further cases of `wrap` and `checkSandbox`.
 import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readlinkSync, realpathSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
 /** Owner-supplied with the job. `none` runs candidate code as the owner, unconfined: scratch repositories only (A-029). */
 export interface Sandbox {
@@ -44,13 +44,21 @@ export function wrap(sandbox: Sandbox, policy: Policy, command: string, args: st
     '--clearenv', '--setenv', 'PATH', process.env.PATH ?? '/usr/bin', '--setenv', 'HOME', '/tmp', ...(lang ? ['--setenv', 'LANG', lang] : []),
     '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp',
     ...SYSTEM.flatMap(systemBind),
-    ...[...(sandbox.read ?? []), ...policy.read].flatMap((p) => ['--ro-bind', p, p]),
-    // Last, so a write root inside a read root is writable.
-    ...policy.write.flatMap((p) => ['--bind', p, p]),
+    ...binds([...(sandbox.read ?? []), ...policy.read], policy.write),
     // bwrap's own root is a tmpfs; read-only, so nothing outside the binds takes writes (or RAM).
     '--remount-ro', '/',
     '--chdir', policy.cwd, '--', command, ...args,
   ]];
+}
+
+// A later mount over a path hides the earlier one, so roots go parent first and each nested root
+// keeps its own mode either way round: a read root inside a write root stays read-only, a write
+// root inside a read root stays writable (standard review 1). For the same path, read-only wins.
+function binds(read: string[], write: string[]): string[] {
+  const depth = (p: string) => resolve(p).split('/').filter(Boolean).length;
+  return [...write.map((p) => ({ p, flag: '--bind', ro: 0 })), ...read.map((p) => ({ p, flag: '--ro-bind', ro: 1 }))]
+    .sort((a, b) => depth(a.p) - depth(b.p) || a.ro - b.ro)
+    .flatMap(({ p, flag }) => [flag, p, p]);
 }
 
 function systemBind(path: string): string[] {

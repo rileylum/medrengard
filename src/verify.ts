@@ -139,8 +139,8 @@ function checkoutGit(repo: string, checkout: string, head: string) {
 export function treeDiff(repo: string, checkout: string, head: string): string {
   const tree = checkoutGit(repo, checkout, head);
   tree('read-tree', head);
-  // Exit 1 when files differ is expected; -q keeps going and diff-files reports them.
-  try { tree('update-index', '-q', '--refresh'); } catch { /* the differences are diff-files' to report */ }
+  // -q: a file that differs is not an error (exit 0); diff-files reports it. Any throw is a real git failure.
+  tree('update-index', '-q', '--refresh');
   return tree('diff-files', '--name-status');
 }
 

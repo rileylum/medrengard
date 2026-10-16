@@ -77,6 +77,23 @@ test('bwrap: an undeclared path is not readable; a declared read root is, and is
   }
 });
 
+test('bwrap: nested roots keep their own mode whichever way they nest (08-a standard 1)', async () => {
+  const { work } = scratch();
+  const ro = join(work, 'vendor');
+  const rw = join(work, 'vendor', 'cache');
+  mkdirSync(rw, { recursive: true });
+  // A read root inside a write root stays read-only; a write root inside that read root stays writable.
+  for (const policy of [{ cwd: work, write: [work, rw], read: [ro], network: false }, { cwd: work, write: [rw, work], read: [ro], network: false }]) {
+    const r = await sh(BWRAP, policy, `touch ${ro}/f; touch ${rw}/g; touch ${work}/h; true`);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!existsSync(join(ro, 'f')), 'the read root under a write root is read-only');
+    assert.ok(existsSync(join(rw, 'g')), 'the write root under a read root is writable');
+    assert.ok(existsSync(join(work, 'h')));
+    rmSync(join(rw, 'g'));
+    rmSync(join(work, 'h'));
+  }
+});
+
 test('bwrap: the controller environment is cleared to PATH, HOME=/tmp and LANG; /tmp is private', async () => {
   const { work } = scratch();
   const policy: Policy = { cwd: work, write: [work], read: [], network: false };
