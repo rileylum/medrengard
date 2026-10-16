@@ -194,11 +194,17 @@ export function treeDiff(repo: string, checkout: string, head: string): string {
   try { restoreAccess(checkout); } catch (err) { return `cannot restore owner access in the checkout: ${(err as Error).message}\n`; }
   const tree = checkoutGit(repo, checkout, head);
   tree('read-tree', head);
-  // -q: a file that differs is not an error (exit 0); diff-files reports it. Any throw is a real git failure.
-  const refresh = tree('update-index', '-q', '--refresh');
-  const diff = tree('diff-files', '--name-status');
-  // A warning means git skipped something it could not compare: that is dirt, and its own evidence.
-  return diff.stdout + refresh.stderr + diff.stderr;
+  // -q: a file that differs is not an error (exit 0); diff-files reports it. A failure here is git
+  // unable to compare what a check left, such as a malformed repository at a gitlink, which
+  // diff-files opens (08-d adversarial): the checkout is not the commit, so that is dirt too.
+  try {
+    const refresh = tree('update-index', '-q', '--refresh');
+    const diff = tree('diff-files', '--name-status');
+    // A warning means git skipped something it could not compare: that is dirt, and its own evidence.
+    return diff.stdout + refresh.stderr + diff.stderr;
+  } catch (err) {
+    return `${(err as Error).message}\n`;
+  }
 }
 
 interface Outcome { result: CheckResult['result']; exit: string; stdout: string; stderr: string }
