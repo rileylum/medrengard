@@ -77,5 +77,5 @@ Ticket 07-d (A-044), on `feat/07-d-accept-cancel` stacked on `feat/09-scoping`: 
 
 1. Done: plan step 8 merged (`86dde47`, `f479736`, `73463fc`); the owner's `npm test` on `73463fc` passes.
 2. Done: the owner lifted the scratch-repositories-only limit (A-043).
-3. Waiting on the owner: `npm test` on `eaa5eb8` and merge of `feat/07-d-accept-cancel`, which carries `feat/09-scoping`.
+3. Waiting on the owner: merge of `feat/07-d-accept-cancel`, which carries `feat/09-scoping`. `npm test` on `441a568` (code as `eaa5eb8`) was run by the implementer session at the owner's request: 230 tests, 206 pass, 0 fail.
 4. Next: break plan row 9 (GitHub sync, pools, release tracking, improvement loop) into tickets per [workflow.md](workflow.md), for the owner to read and approve.
