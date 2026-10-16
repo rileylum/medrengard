@@ -66,6 +66,7 @@ Dirty tree: (1) `verify` records `tree: FAIL` (chosen); (2) `git checkout -- .` 
 | Line | How 07-b treats it |
 | --- | --- |
 | 06-c adversarial minor, dirty tree strands review | Fixed here: `tree: FAIL` recorded by `verify`. |
+| 07-a adversarial minor and note, verdict `findings` shape and newlines in the fix prompt | Fixed here: `prompt` in `developer.ts` coerces `findings` to `string[]` and flattens newlines; one test with a string `findings` and one with a newline. |
 | 02-a adversarial notes, busy timeout | Not touched: one process on the database. |
 | 05-b notes, store failure after the claim | Not touched: reconcile ticket. The loop's `error` path covers a throw before a run starts, not one between a run's outcome and its event. |
 | 06-a adversarial major and minor (symlink, hooksPath), 05-a minor (pi bash), 05-b minor (claude settings) | Not touched: `main.ts` is for scratch repositories until the pi-policy or sandbox ticket (A-029). |
@@ -76,12 +77,13 @@ Dirty tree: (1) `verify` records `tree: FAIL` (chosen); (2) `git checkout -- .` 
 - Standard FAIL then fix: with a scripted standard reviewer (FAIL then PASS) `run` returns AWAITING_ACCEPTANCE with `standard` 2, two developer runs, two verification events (the second for the new head), the FAIL findings in the fix prompt, and the second standard prompt naming the new head; verified by test through the fake adapter's requests.
 - Adversarial FAIL returns ESCALATED with `adversarial` 1 and the findings on the verdict event; second standard FAIL returns ESCALATED with `standard` 2; a failing check returns ESCALATED after one verification and no reviewer request; verified by test.
 - A stage that throws (a check named `../x` makes `verify` throw before it runs anything) returns ESCALATED with `error` set and a `reject_dispatch` event naming the stage, and no later stage is called; verified by test.
+- A FAIL verdict whose `findings` is a string, or holds a finding with a newline, still produces a fix prompt with one line per finding and no line of its own; verified by test in `tests/developer.test.ts`.
 - A check that rewrites a tracked file records `tree: FAIL` with its status output as evidence and the cycle is ESCALATED; a job with a check named `tree` is refused; verified by test in `tests/verify.test.ts`.
 - `run` never appends `developer_result`, `verification` or `verdict` itself: the only events it appends are `reject_dispatch`; verified by reading and by the event list in the happy-path test.
 - `RUNTIME_SPIKE=1 node --test tests/run.test.ts` runs `main.ts` on the 05-a scratch ticket with `claude` as developer and both reviewers, 120 s per stage, and the printed stage is AWAITING_ACCEPTANCE or ESCALATED with verdicts for the head (a real reviewer may fail the scratch change; the test asserts the loop ran to a stop with no `error`). One live run, four paid calls.
 - `npm test` offline spawns neither `claude` nor `pi`.
 
-Constraints: zero dependencies; `execute`, `lifecycle.ts`, `store.ts`, `review.ts`, `developer.ts` (after 07-a) unchanged; `verify.ts` changes only for the `tree` check.
+Constraints: zero dependencies; `execute`, `lifecycle.ts`, `store.ts`, `review.ts` unchanged; `developer.ts` changes only in `prompt` for the 07-a parked lines; `verify.ts` changes only for the `tree` check.
 Non-goals: GitHub sync, pools, parallel cycles, restart recovery and reconcile (step 8 and the reconcile ticket); the owner's `accept` event through `main.ts`; retrying a stage; cleaning worktrees or evidence; a job schema beyond the fields `main.ts` reads.
 Verification: `npm test` and `RUNTIME_SPIKE=1 node --test tests/run.test.ts`, run by the owner on the reviewed SHA. `lazy-review` on the diff before the standard review.
 
