@@ -148,8 +148,8 @@ function checkoutGit(repo: string, checkout: string, head: string) {
  * (08-a adversarial). Only the owner bits change, never the executable bit git compares.
  */
 function restoreAccess(path: string): void {
+  // lstat: a symlink is neither a directory nor short of its 0777 bits, so it is never followed.
   const st = lstatSync(path);
-  if (st.isSymbolicLink()) return;
   const want = st.isDirectory() ? 0o700 : 0o600;
   if ((st.mode & want) !== want) chmodSync(path, (st.mode & 0o7777) | want);
   if (st.isDirectory()) for (const entry of readdirSync(path)) restoreAccess(join(path, entry));

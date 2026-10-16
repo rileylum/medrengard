@@ -402,6 +402,11 @@ test('a check that rewrites a tracked file and removes the permissions on it or 
     rmSync(worktree, { recursive: true });
     store.close();
   }
+  // Locked but unchanged is the commit: git tracks only the executable bit, and the content is read once access is back.
+  const { store, runsDir, job, cycle } = await verifying([sh('lock', 'chmod 000 README.md')]);
+  const { cycle: c } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  store.close();
 });
 
 test('a check that removes the permissions on the checkout itself is classified, not thrown, and the checkout can still be replaced (08-b, 08-a adversarial minor)', async () => {
