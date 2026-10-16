@@ -4,10 +4,11 @@
 // Ticket 08-a: the checkout is a plain directory with no .git, written and compared by the
 // controller's git through an index outside it, and every check runs inside the job's sandbox.
 // Ticket 08-b: owner access is restored before every comparison, git's warnings count as dirt,
-// and what a check leaves untracked is removed before review.
+// and what a check leaves untracked is removed before review. Ticket 08-d: gitlinks are emptied
+// and checked, dangling symlinks removed, and a removal that cannot finish is dirt.
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
@@ -110,16 +111,21 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     writeFileSync(join(evidenceDir, `${check.name}.exit`), `${r.exit}\n`);
     results.push({ name: check.name, result: r.result });
   }
-  const dirty = treeDiff(job.repo, worktree, head);
+  let dirty = treeDiff(job.repo, worktree, head);
+  // The reviewer reads this directory: a planted .git with its own config, or a symlink to the
+  // owner's files, must not be there when it does (08-a adversarial). Listed untrimmed through the
+  // controller's git: a tracked path may start with whitespace (08-b adversarial).
+  const entries = tree('ls-tree', '-r', '-z', head).stdout.split('\0').filter(Boolean)
+    .map((e) => ({ gitlink: e.startsWith('160000 '), path: e.slice(e.indexOf('\t') + 1) }));
+  // A removal that cannot finish (a locked directory under a chain past PATH_MAX) leaves entries
+  // the reviewer would read; that is dirt with its reason, not a throw (08-b adversarial).
+  try { dirty += removeUntracked(worktree, entries); } catch (err) { dirty += `cannot remove untracked entries: ${(err as Error).message}\n`; }
   if (dirty) {
     writeFileSync(join(evidenceDir, `${TREE}.stdout`), dirty);
     writeFileSync(join(evidenceDir, `${TREE}.stderr`), '');
     writeFileSync(join(evidenceDir, `${TREE}.exit`), 'dirty\n');
     results.push({ name: TREE, result: 'FAIL' });
   }
-  // The reviewer reads this directory unsandboxed (08-c): a planted .git with its own config, or a
-  // symlink to the owner's files, must not be there when it does (08-a adversarial).
-  removeUntracked(worktree, git(job.repo, 'ls-tree', '-r', '-z', '--name-only', head).split('\0').filter(Boolean));
   return { cycle: store.append(cycleId, { type: 'verification', head, checks: results }), worktree, evidenceDir };
 }
 
@@ -145,19 +151,35 @@ function checkoutGit(repo: string, checkout: string, head: string) {
   };
 }
 
-/** Delete everything under `checkout` that is not a tracked path or a directory holding one. */
-function removeUntracked(checkout: string, tracked: string[]): void {
-  const keep = new Set(tracked);
-  const dirs = new Set(tracked.flatMap((t) => t.split('/').slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join('/'))));
+/**
+ * Delete everything under `checkout` that is not a tracked path or a directory holding one, and
+ * empty every gitlink. A gitlink checks out as an empty directory that diff-files never looks
+ * inside, so anything a check put in one is returned as dirt (08-b adversarial); the rest of what
+ * a check leaves untracked is not dirt, only removed.
+ */
+function removeUntracked(checkout: string, entries: { gitlink: boolean; path: string }[]): string {
+  const keep = new Set(entries.filter((e) => !e.gitlink).map((e) => e.path));
+  const gitlinks = new Set(entries.filter((e) => e.gitlink).map((e) => e.path));
+  const dirs = new Set(entries.flatMap((e) => e.path.split('/').slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join('/'))));
+  let dirt = '';
   const walk = (rel: string) => {
     for (const entry of readdirSync(join(checkout, rel))) {
       const p = rel ? `${rel}/${entry}` : entry;
       if (keep.has(p)) continue;
-      if (dirs.has(p) && lstatSync(join(checkout, p)).isDirectory()) walk(p);
-      else rmSync(join(checkout, p), { recursive: true, force: true });
+      const path = join(checkout, p);
+      const isDir = lstatSync(path).isDirectory();
+      if (isDir && gitlinks.has(p)) {
+        const inside = readdirSync(path);
+        if (inside.length) dirt += `gitlink ${p} is not empty: ${inside.join(', ')}\n`;
+        walk(p);
+      } else if (isDir && dirs.has(p)) walk(p);
+      // rmSync returns without error on a dangling symlink and leaves it (08-b adversarial).
+      else if (isDir) rmSync(path, { recursive: true, force: true });
+      else unlinkSync(path);
     }
   };
   walk('');
+  return dirt;
 }
 
 /**

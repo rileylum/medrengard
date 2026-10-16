@@ -2,11 +2,11 @@
 // is the command, its flags and a parser, and everything else (spawn, scope, byte cap, abort,
 // outcome mapping) is shared. Shapes and exit codes are from docs/work/03-a-findings.md.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Adapter, RunOutcome } from '../adapter.ts';
-import { checkSandbox, executables, restoreAccess, wrap, type Sandbox } from '../sandbox.ts';
+import { checkSandbox, executables, wrap, type Sandbox } from '../sandbox.ts';
 import { scopePath, spawnRuntime, type RunResult } from './spawn.ts';
 
 export interface CliSpec {
@@ -31,9 +31,10 @@ export interface CliAdapterOptions {
   /** SIGTERM to kill, default 5000. */
   graceMs?: number;
   /**
-   * Run the CLI inside this sandbox (08-c): it writes the request's cwd and its own /tmp, reads
-   * its binary's directory and `spec.config`, and has the network. Without one it runs as the
-   * owner, unconfined; main.ts always passes the job's sandbox.
+   * Run the CLI inside this sandbox (08-c): a developer writes the request's cwd, a reviewer only
+   * reads it (08-d); either writes its own /tmp, reads its binary's directory and `spec.config`,
+   * and has the network. Without one it runs as the owner, unconfined; main.ts always passes the
+   * job's sandbox.
    */
   sandbox?: Sandbox;
 }
@@ -64,9 +65,11 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
         // Beside the cwd, so in runsDir on disk: the run's own corner, not the shared RAM /tmp (A-038).
         tmp = join(dirname(req.cwd), `${req.runId}-tmp`);
         mkdirSync(tmp);
+        // A reviewer's cwd is the verify checkout: what it reads must stay the commit (08-d).
+        const writes = req.role === 'developer';
         [command, args] = wrap(sandbox, {
-          cwd: req.cwd, write: [req.cwd], read: [dirname(bin), ...inHome(spec.config.read)], overlay: inHome(spec.config.overlay),
-          network: true, home, tmp,
+          cwd: req.cwd, write: writes ? [req.cwd] : [], read: [dirname(bin), ...(writes ? [] : [req.cwd]), ...inHome(spec.config.read)],
+          overlay: inHome(spec.config.overlay), network: true, home, tmp,
         }, bin, spec.args);
       }
       try {
@@ -83,12 +86,21 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
         const r = await run;
         return outcome(spec, r);
       } finally {
-        // The PID namespace died with the run, so nothing writes here any more. The run may have
-        // locked what it wrote; access goes back first or rmSync cannot clear it.
-        if (tmp) { restoreAccess(tmp); rmSync(tmp, { recursive: true, force: true }); }
+        if (tmp) removeTmp(tmp);
       }
     },
   };
+}
+
+/**
+ * The PID namespace died with the run, so nothing writes in its /tmp any more. The run may have
+ * locked what it wrote or left a chain past PATH_MAX, which Node's path-based walk cannot reach
+ * (08-c adversarial); coreutils walk relative to each directory and follow no symlink. Neither
+ * throws: a leftover sits on disk in runsDir, and the run's outcome stands.
+ */
+function removeTmp(tmp: string): void {
+  spawnSync('chmod', ['-R', 'u+rwX', '--', tmp]);
+  spawnSync('rm', ['-rf', '--', tmp]);
 }
 
 // Fail at construction, not on the first run: a machine without a user systemd is a setup
@@ -246,5 +258,8 @@ export const claudeReviewer: CliSpec = {
   args: ['-p', '--output-format', 'json', '--no-session-persistence', '--restricted', '--strict-mcp-config', '--allowedTools', 'Read', 'Glob', 'Grep'],
 };
 
-/** pi's read-only tools; no bash. --no-approve: project-local .pi files (extensions, skills, settings) are the candidate's and must not load, whatever trust the owner saved for a parent directory (06-c). */
-export const piReviewer: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--no-session', '--no-approve', '--tools', 'read,grep,find,ls'] };
+/**
+ * pi's read-only tools; no bash. --no-approve: project-local .pi files (extensions, skills, settings) are the candidate's and must not load, whatever trust the owner saved for a parent directory (06-c).
+ * --no-context-files: the candidate's AGENTS.md and CLAUDE.md reach the reviewer only quoted in the prompt (06-c, 08-d).
+ */
+export const piReviewer: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--no-session', '--no-approve', '--no-context-files', '--tools', 'read,grep,find,ls'] };

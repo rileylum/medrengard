@@ -1,7 +1,6 @@
 // Ticket 07-b: the owner's one command. `node src/main.ts <job.json>` runs one job through the
 // loop with the real claude and pi adapters and prints what the owner needs to diff and merge.
-// Checks run in the job's sandbox (08-a), and so does the developer (08-c); reviewer runs do not
-// yet (08-d), so scratch repositories only until then (A-029).
+// Checks, the developer (08-c) and the reviewers (08-d) run in the job's sandbox.
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
@@ -19,7 +18,7 @@ interface JobFile extends Omit<Job, 'ticket'> {
   runsDir?: string;
   /** Per stage. Default 120000. */
   deadlineMs?: number;
-  /** Where checks and the developer run. Default bwrap; `none` must be written out. `read` is relative to the job file. */
+  /** Where checks, the developer and the reviewers run. Default bwrap; `none` must be written out. `read` is relative to the job file. */
   sandbox?: Sandbox;
 }
 
@@ -30,9 +29,9 @@ function developer(name: string, sandbox: Sandbox): DeveloperAdapter {
   if (name === 'pi') return cliAdapter(piDeveloper, { sandbox });
   throw new Error(`runtime.developer must be claude or pi, got ${JSON.stringify(name)}`);
 }
-function reviewer(name: string, role: string): Adapter {
-  if (name === 'claude') return cliAdapter(claudeReviewer);
-  if (name === 'pi') return cliAdapter(piReviewer);
+function reviewer(name: string, role: string, sandbox: Sandbox): Adapter {
+  if (name === 'claude') return cliAdapter(claudeReviewer, { sandbox });
+  if (name === 'pi') return cliAdapter(piReviewer, { sandbox });
   throw new Error(`runtime.${role} must be claude or pi, got ${JSON.stringify(name)}`);
 }
 
@@ -47,7 +46,7 @@ async function main(file: string | undefined): Promise<number> {
   const sandbox: Sandbox = spec.sandbox
     ? { ...spec.sandbox, read: spec.sandbox.read?.map((p) => (typeof p === 'string' ? resolve(path, '..', p) : p)) }
     : { backend: 'bwrap' };
-  const adapters = { developer: developer(spec.runtime?.developer, sandbox), standard: reviewer(spec.runtime?.standard, 'standard'), adversarial: reviewer(spec.runtime?.adversarial, 'adversarial') };
+  const adapters = { developer: developer(spec.runtime?.developer, sandbox), standard: reviewer(spec.runtime?.standard, 'standard', sandbox), adversarial: reviewer(spec.runtime?.adversarial, 'adversarial', sandbox) };
   // develop makes runsDir, but the store opens first.
   mkdirSync(runsDir, { recursive: true });
   const store = new EventStore(join(runsDir, 'events.sqlite'));
