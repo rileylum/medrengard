@@ -44,4 +44,4 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 ## Next action
 
-Owner decides on the 06-b adversarial FAIL on `f7ed0be` (`feat/06-b-reviewer-runs`, standard 1 PASS): fix ticket 06-c stacked on 06-b, park and merge, or cancel. Then plan row 7 (end to end).
+Ticket 06-c (`feat/06-c-reviewer-prompt-bounds`, stacked on 06-b, A-031): fixes the 06-b adversarial major (a diff over 1 MiB stranded the cycle) and the six minors. Implementer-run tests green, both live reviewers returned a verdict. Owner runs `npm test` on the branch, then standard review 1.
