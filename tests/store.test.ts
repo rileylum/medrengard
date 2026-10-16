@@ -24,7 +24,7 @@ test('events append to one SQLite table keyed by cycle', () => {
   const a = new EventStore(path);
   a.open('c1', 'w1');
   a.open('c2', 'w2');
-  a.append('c1', { type: 'claim', runId: 'dev1', base: 'B1' });
+  a.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
   a.append('c2', { type: 'reject_dispatch', reason: 'nope' });
   a.append('c1', { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] });
   a.close();
@@ -41,7 +41,7 @@ test('events append to one SQLite table keyed by cycle', () => {
 test('opening a cycle twice throws and leaves its log intact', () => {
   const store = new EventStore(dbPath('reopen'));
   store.open('c1', 'w1');
-  store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1' });
+  store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
   assert.throws(() => store.open('c1', 'w1'), /already open/);
   assert.equal(store.events('c1').length, 1);
   assert.deepEqual(stage(store.load('c1')!), ['DEVELOPING', 0, 0]);
@@ -51,16 +51,17 @@ test('opening a cycle twice throws and leaves its log intact', () => {
 test('loading a cycle replays every SC scenario (minus the five todo ones) to the same state as the in-memory run', () => {
   const store = new EventStore(dbPath('replay'));
   for (const s of scenarios) {
-    const expected = s.events.reduce(apply, newCycle(s.name, 'w1'));
+    // One work item per scenario: open refuses a second open cycle for the same work (05-a).
+    const expected = s.events.reduce(apply, newCycle(s.name, s.name));
     assert.equal(expected.stage, s.stage, `${s.name} scenario data matches lifecycle tests`);
-    store.open(s.name, 'w1');
+    store.open(s.name, s.name);
     for (const e of s.events) store.append(s.name, e);
     assert.deepEqual(state(store.load(s.name)!), state(expected), s.name);
   }
   store.close();
   const reopened = new EventStore(dbPath('replay'));
-  for (const s of scenarios) assert.deepEqual(state(reopened.load(s.name)!), state(s.events.reduce(apply, newCycle(s.name, 'w1'))), s.name);
-  const child = reopened.open('child', 'w1', 'SC-04');
+  for (const s of scenarios) assert.deepEqual(state(reopened.load(s.name)!), state(s.events.reduce(apply, newCycle(s.name, s.name))), s.name);
+  const child = reopened.open('child', 'SC-04', 'SC-04');
   assert.equal(child.parentCycleId, 'SC-04');
   assert.deepEqual(reopened.load('child'), child);
   reopened.close();
@@ -109,7 +110,7 @@ test('a duplicate event with the same run ID written twice changes nothing', () 
 test('append rejects an event apply cannot classify, before writing', () => {
   const store = new EventStore(dbPath('bogus'));
   store.open('c1', 'w1');
-  store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1' });
+  store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
   const bad = [
     { type: 'bogus' },
     { type: 'open', workId: 'w9' },
@@ -155,12 +156,12 @@ test('store dedup matches apply: a redelivered claim reaches apply, results and 
   // The 02-a adversarial reviewer's divergence sequence: claim dev2 is ignored while dev1 is active,
   // then legitimately accepted after the standard FAIL. Dropping it in the store escalated on replay.
   const events: Event[] = [
-    { type: 'claim', runId: 'dev1', base: 'B1' },
-    { type: 'claim', runId: 'dev2', base: 'B1' },
+    { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' },
+    { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' },
     { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] },
     { type: 'verification', head: 'H1', checks: PASS_CHECKS },
     { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'FAIL' },
-    { type: 'claim', runId: 'dev2', base: 'B1' },
+    { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' },
     { type: 'developer_result', runId: 'dev2', head: 'H2', artifacts: ['r'] },
   ];
   const store = new EventStore(dbPath('dedup'));
@@ -170,7 +171,7 @@ test('store dedup matches apply: a redelivered claim reaches apply, results and 
   assert.deepEqual(stage(expected), ['VERIFYING', 1, 0]);
   assert.deepEqual(stage(store.load('c1')!), stage(expected));
   // Redelivered claim after the second result: apply escalates (claim outside QUEUED); the store must not hide it.
-  const redelivered: Event = { type: 'claim', runId: 'dev2', base: 'B1' };
+  const redelivered: Event = { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' };
   assert.deepEqual(stage(store.append('c1', redelivered)), stage(apply(expected, redelivered)));
   store.close();
 });
@@ -222,10 +223,30 @@ test('one outcome per run: a run_failed after a consumed verdict or result is no
   // And the other way round: a result after a run_failed for the same run is dropped too.
   const other = new EventStore(dbPath('one-outcome-2'));
   other.open('c1', 'w1');
-  other.append('c1', { type: 'claim', runId: 'dev1', base: 'B1' });
+  other.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
   const failed = other.append('c1', { type: 'run_failed', runId: 'dev1', reason: 'timeout' });
   assert.deepEqual(other.append('c1', { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] }), failed);
   assert.equal(other.events('c1').length, 2);
   store.close();
   other.close();
+});
+
+test('open enforces one open cycle per work item and an ESCALATED parent (05-a, 02-b parked)', () => {
+  const store = new EventStore(dbPath('guards'));
+  store.open('c1', 'w1');
+  assert.throws(() => store.open('c2', 'w1'), /w1 already has an open cycle c1/);
+  assert.throws(() => store.open('c2', 'w2', 'nope'), /parent cycle nope not found/);
+  assert.throws(() => store.open('c2', 'w2', 'c1'), /parent cycle c1 is QUEUED, not ESCALATED/);
+  assert.equal(store.load('c2'), undefined);
+  // ESCALATED is not open (spec: the parent stays ESCALATED beside its child): a child opens,
+  // a sibling does not while the child is open.
+  store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
+  store.append('c1', { type: 'run_failed', runId: 'dev1', reason: 'timeout' });
+  const child = store.open('c2', 'w1', 'c1');
+  assert.equal(child.parentCycleId, 'c1');
+  assert.throws(() => store.open('c3', 'w1', 'c1'), /already has an open cycle c2/);
+  // Escalated and terminal cycles do not count as open.
+  store.append('c2', { type: 'cancel' });
+  store.open('c3', 'w1');
+  store.close();
 });

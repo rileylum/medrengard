@@ -299,3 +299,44 @@ test('a reviewer run whose cycle was cancelled or escalated while it ran is reco
     store.close();
   }
 });
+
+test('the claim event records the adapter name as the runtime (05-a)', async () => {
+  const store = fresh();
+  const c = await dev(store, { outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } });
+  assert.equal(c.stage, 'VERIFYING');
+  assert.equal(c.runs[0]!.runtime, 'fake');
+  assert.equal(store.events('c1')[0]!.type, 'claim');
+  assert.equal((store.events('c1')[0] as { runtime?: string }).runtime, 'fake');
+});
+
+test('accept: a reason from the caller turns a completed claim into run_failed; undefined lets it through (05-a)', async () => {
+  const seen: unknown[] = [];
+  const accept = (claim: unknown) => { seen.push(claim); return (claim as { head: string }).head === 'H1' ? undefined : `commit ${(claim as { head: string }).head} is not on the branch`; };
+  const go = (store: EventStore, head: string) =>
+    execute(store, 'c1', fakeAdapter({ outcome: { status: 'completed', claim: { head, artifacts: ['r'] } } }), { ...req, role: 'developer' }, { deadlineMs: 5000, base: 'B1', accept });
+  let c = await go(fresh(), 'H1');
+  assert.equal(c.stage, 'VERIFYING');
+  const store = fresh();
+  c = await go(store, 'H2');
+  assert.equal(c.stage, 'ESCALATED');
+  assert.match(c.escalation ?? '', /run failed: commit H2 is not on the branch/);
+  assert.deepEqual(store.events('c1').map((e) => e.type), ['claim', 'run_failed']);
+  assert.deepEqual(seen, [{ head: 'H1', artifacts: ['r'] }, { head: 'H2', artifacts: ['r'] }]);
+});
+
+test('accept sees plain data and is not consulted for failed or cancelled runs; a throwing accept is a failed run (05-a)', async () => {
+  let calls = 0;
+  const count = () => { calls++; return undefined; };
+  let c = await execute(fresh(), 'c1', fakeAdapter({ outcome: { status: 'failed', reason: 'boom' } }), { ...req, role: 'developer' }, { deadlineMs: 5000, base: 'B1', accept: count });
+  assert.equal(c.stage, 'ESCALATED');
+  assert.equal(calls, 0);
+  // Getters ran once in plain(); accept gets the copy.
+  let reads = 0;
+  const claim = { artifacts: ['r'], get head() { reads++; return 'H1'; } };
+  c = await execute(fresh(), 'c1', fakeAdapter({ outcome: { status: 'completed', claim } }), { ...req, role: 'developer' }, { deadlineMs: 5000, base: 'B1', accept: (x) => { (x as { head: string }).head; (x as { head: string }).head; return undefined; } });
+  assert.equal(c.stage, 'VERIFYING');
+  assert.equal(reads, 1);
+  c = await execute(fresh(), 'c1', fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } }), { ...req, role: 'developer' }, { deadlineMs: 5000, base: 'B1', accept: () => { throw new Error('git exploded'); } });
+  assert.equal(c.stage, 'ESCALATED');
+  assert.match(c.escalation ?? '', /accept threw: Error: git exploded/);
+});

@@ -26,6 +26,7 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
   const isolation = opts.isolation ?? 'cgroup';
   if (isolation === 'cgroup') checkScopes();
   return {
+    name: spec.name,
     async start(req, signal) {
       // systemd mangles characters outside this set (a space becomes \x20), so the scope would be
       // created under a different name than scopePath() computes and cgroup.kill would go nowhere.
@@ -156,3 +157,18 @@ export const pi: CliSpec = {
     return claimFrom(text, sessionId);
   },
 };
+
+/**
+ * Developer runs need tools on (05-a). Claude's allow list is scoped to the worktree: Edit and
+ * Write by path, Bash to the git subcommands a commit needs. Under -p nothing can prompt, so a
+ * tool outside the list is denied and the run ends on a missing commit or claim. A function of
+ * the worktree because the path rules are absolute; develop() calls it once the worktree exists.
+ */
+export function claudeDeveloper(worktree: string): CliSpec {
+  const allowed = ['Read', 'Glob', 'Grep', `Edit(${worktree}/**)`, `Write(${worktree}/**)`,
+    ...['add', 'commit', 'status', 'diff', 'log', 'rev-parse'].map((sub) => `Bash(git ${sub}:*)`)];
+  return { ...claude, args: ['-p', '--output-format', 'json', '--no-session-persistence', '--allowedTools', ...allowed] };
+}
+
+/** pi has no path or command scoping: bash is unrestricted inside the scope. The worktree, the scratch repository and the cgroup kill are the containment. */
+export const piDeveloper: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--no-session', '--tools', 'read,edit,write,bash'] };

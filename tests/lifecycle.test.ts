@@ -51,7 +51,7 @@ test('SC-02 first standard FAIL returns to developer; fix passes both reviews', 
   assert.deepEqual(counters(c), [1, 0]);
   c = run(
     c,
-    { type: 'claim', runId: 'dev2', base: 'B1' },
+    { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' },
     { type: 'developer_result', runId: 'dev2', head: 'H2', artifacts: ['result.json'] },
     { type: 'verification', head: 'H2', checks: PASS_CHECKS },
     { type: 'verdict', runId: 'sr2', head: 'H2', verdict: 'PASS' },
@@ -186,7 +186,7 @@ test('accept must name the candidate SHA', () => {
 });
 
 test('run_failed escalates with its reason; a duplicate run_failed is ignored (04-a)', () => {
-  let c = run(newCycle('c1', 'w1'), { type: 'claim', runId: 'dev1', base: 'B1' });
+  let c = run(newCycle('c1', 'w1'), { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
   c = apply(c, { type: 'run_failed', runId: 'dev1', reason: 'timeout' });
   assert.equal(c.stage, 'ESCALATED');
   assert.match(c.escalation ?? '', /timeout/);
@@ -205,4 +205,12 @@ test('run_failed for a run whose verdict or result is already consumed is ignore
   assert.match(after.history.at(-1)!.note ?? '', /ignored/);
   const developed = run(newCycle('c1', 'w1'), ...TO_STANDARD_REVIEW.slice(0, 2));
   assert.equal(apply(developed, { type: 'run_failed', runId: 'dev1', reason: 'cancelled' }).stage, 'VERIFYING');
+});
+
+test('a claim names its runtime and the Run carries it; a claim without one is not an event (05-a)', () => {
+  const c = run(newCycle('c1', 'w1'), ...sc('RT-01').events);
+  assert.equal(c.runs[0]!.runtime, 'pi');
+  assert.equal(isEvent({ type: 'claim', runId: 'dev1', base: 'B1' }), false);
+  assert.equal(isEvent({ type: 'claim', runId: 'dev1', base: 'B1', runtime: '' }), false);
+  assert.equal(isEvent({ type: 'claim', runId: 'dev1', base: 'B1', runtime: 'claude' }), true);
 });

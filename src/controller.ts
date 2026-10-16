@@ -10,6 +10,13 @@ export interface ExecuteOptions {
   deadlineMs: number;
   /** Base SHA for the developer's claim event; unused for reviewers. */
   base?: string;
+  /**
+   * The caller's check on a completed claim, run on the plain copy before it is recorded: the
+   * spec's "commit exists" needs Git, which the lifecycle cannot run. Return a reason to refuse
+   * the claim (recorded as run_failed, so the cycle escalates), undefined to let the store
+   * classify it. A throw is a refusal too. Not called for failed or cancelled runs.
+   */
+  accept?: (claim: unknown) => string | undefined;
 }
 
 // setTimeout silently clamps anything outside this range to 1 ms, which would time every run out.
@@ -31,7 +38,7 @@ export async function execute(
   const runId = randomUUID();
   if (req.role === 'developer') {
     if (!opts.base) throw new Error('developer run needs a base SHA');
-    const claimed = store.append(cycleId, { type: 'claim', runId, base: opts.base });
+    const claimed = store.append(cycleId, { type: 'claim', runId, base: opts.base, runtime: adapter.name });
     // apply may have ignored the claim (another developer active) or escalated it. Either way
     // the cycle did not accept this run, so nothing is launched.
     if (!claimed.runs.some((r) => r.runId === runId)) return claimed;
@@ -39,7 +46,7 @@ export async function execute(
     requireStage(store, cycleId, req.role);
   }
   const outcome = await bounded(adapter, { ...req, runId }, deadlineMs);
-  return receive(store, cycleId, runId, req.role, outcome);
+  return receive(store, cycleId, runId, req.role, outcome, opts.accept);
 }
 
 /**
@@ -47,12 +54,14 @@ export async function execute(
  * per run, so a redelivery returns the current Cycle unchanged. Never throws for what the adapter
  * returned; only for the controller's own misuse (wrong stage, unopened cycle) or a store failure.
  */
-export function receive(store: EventStore, cycleId: string, runId: string, role: Role, outcome: RunOutcome): Cycle {
+export function receive(store: EventStore, cycleId: string, runId: string, role: Role, outcome: RunOutcome, accept?: ExecuteOptions['accept']): Cycle {
   if (role !== 'developer') requireStage(store, cycleId, role, runId);
   const o = normalise(plain(outcome));
   if (o.status !== 'completed') {
     return store.append(cycleId, { type: 'run_failed', runId, reason: o.status === 'failed' ? o.reason : 'cancelled' });
   }
+  const refused = accept && refusal(accept, o.claim);
+  if (refused !== undefined && refused !== false) return store.append(cycleId, { type: 'run_failed', runId, reason: refused });
   try {
     return store.append(cycleId, toEvent(runId, role, o.claim));
   } catch (err) {
@@ -64,6 +73,18 @@ export function receive(store: EventStore, cycleId: string, runId: string, role:
 }
 
 const SETTLED: Stage[] = ['ESCALATED', 'ACCEPTED', 'CANCELLED'];
+
+// accept is caller code over a claim the runtime wrote; a throw or a non-string return must still
+// end as one well-formed run_failed, never as an exception out of receive.
+function refusal(accept: NonNullable<ExecuteOptions['accept']>, claim: unknown): string | undefined {
+  try {
+    const r = accept(claim);
+    if (r === undefined) return undefined;
+    return typeof r === 'string' && r ? r : `accept refused the claim: ${describe(r)}`;
+  } catch (err) {
+    return `accept threw: ${describe(err)}`;
+  }
+}
 
 // A reviewer verdict is counted against whatever review stage the cycle is in, so a run for the
 // wrong role would be miscounted. Refuse to start or record one; this is a controller bug, not a

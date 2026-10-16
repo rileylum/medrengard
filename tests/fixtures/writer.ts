@@ -4,7 +4,7 @@ import { EventStore } from '../../src/store.ts';
 
 const store = new EventStore(process.argv[2]);
 store.open('c1', 'w1');
-store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1' });
+store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
 console.log('1');
 store.append('c1', { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] });
 console.log('2');
