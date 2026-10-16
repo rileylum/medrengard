@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Event } from '../src/lifecycle.ts';
@@ -190,4 +190,45 @@ test('cancel from a second process waits for another connection\'s write lock (0
   const code = await closed;
   assert.equal(code, 0, out);
   assert.match(out, /^Stage: CANCELLED$/m);
+});
+
+test('the run command refuses arguments after the job file and writes nothing (07-d adversarial minor)', () => {
+  const { root, jobFile, db } = scratch();
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  const called = join(root, 'called');
+  writeFileSync(join(bin, 'claude'), `#!/bin/sh\ntouch ${called}\nexit 1\n`);
+  chmodSync(join(bin, 'claude'), 0o755);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  for (const args of [[jobFile, 'cancel'], [jobFile, 'accept', H]]) {
+    const r = sf(args, env);
+    assert.equal(r.status, 2, `${args.join(' ')}: ${r.stdout}${r.stderr}`);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, /usage/);
+  }
+  assert.ok(!existsSync(db), 'no store was made');
+  assert.ok(!existsSync(called), 'no runtime CLI was spawned');
+});
+
+test('a job naming a parent that is no longer ESCALATED is refused before any run, saying to remove the field (07-d adversarial minor)', () => {
+  const { root, repo, runsDir, jobFile, db } = scratch();
+  seed(db, 'c1', ESCALATE);
+  seed(db, 'c2', ESCALATE, 'c1');
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  const called = join(root, 'called');
+  writeFileSync(join(bin, 'claude'), `#!/bin/sh\ntouch ${called}\nexit 1\n`);
+  chmodSync(join(bin, 'claude'), 0o755);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  const child = join(root, 'child.json');
+  writeFileSync(child, JSON.stringify({ workId: 'w', ticket: 'x', repo, runsDir, parentCycleId: 'c1', checks: [], runtime: { developer: 'claude', standard: 'claude', adversarial: 'claude' } }));
+  assert.equal(sf(['cancel', jobFile]).status, 0);
+  const r = sf([child], env);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /parentCycleId c1 is CANCELLED, not ESCALATED; remove parentCycleId from .*child\.json/);
+  assert.ok(!existsSync(called), 'no runtime CLI was spawned');
+  const store = new EventStore(db);
+  assert.deepEqual(store.cycles('w').map((c) => c.stage), ['CANCELLED', 'CANCELLED']);
+  store.close();
 });

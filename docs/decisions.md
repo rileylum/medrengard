@@ -40,6 +40,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-045 — 2026-10-17 — Fix the 07-d adversarial minors before merge
+
+Owner, after 07-d's standard PASS and adversarial PASS on `b5d4635` (two minors: arguments after the job file are ignored, so `node src/main.ts job.json cancel` runs the job; after `cancel` clears an ESCALATED parent, a job file still naming `parentCycleId` is refused with no hint), offered a fix before merge, parking, or a merge with the risks accepted: “Fix”.
+
+Effect: both minors are fixed on `feat/07-d-accept-cancel`, test first. The run command refuses extra arguments with the usage line. A job whose `parentCycleId` names a cycle that is not ESCALATED is refused before any run, with a message saying to remove the field. The fix commit takes standard review 2, the ticket's last standard attempt; the adversarial budget is spent.
+
 ### A-044 — 2026-10-17 — Ticket 07-d: owner accept and cancel commands
 
 Owner, told that nothing in plan row 9 is needed to run the factory on hobby projects one issue at a time, and that the main friction is the missing accept and cancel commands (a finished or stranded cycle blocks its work ID): “Yep, let's add the accept and cancel commands now.”
