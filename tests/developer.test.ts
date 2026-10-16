@@ -60,6 +60,19 @@ for (const spec of [claude, pi]) {
   });
 }
 
+test('job.base selects the commit the worktree starts from, not the repository HEAD', async () => {
+  const { repo, store, runsDir, base } = scratch();
+  writeFileSync(join(repo, 'later.txt'), 'later\n');
+  git(repo, 'add', 'later.txt');
+  git(repo, 'commit', '-q', '-m', 'later');
+  const { cycle, worktree } = await develop(store, fake(claude), job(repo, { base }), { deadlineMs: 20_000, runsDir });
+  assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
+  assert.equal(cycle.candidate!.base, base);
+  assert.equal(git(worktree, 'rev-parse', 'HEAD~1'), base);
+  assert.ok(!existsSync(join(worktree, 'later.txt')));
+  store.close();
+});
+
 test('a claim whose head is not the branch tip, the base, unknown, or abbreviated escalates and names the SHA', async () => {
   for (const variant of ['first', 'base', 'nocommit', 'bogus', 'short']) {
     const { repo, store, runsDir } = scratch();
@@ -69,6 +82,7 @@ test('a claim whose head is not the branch tip, the base, unknown, or abbreviate
     assert.equal(last.type, 'run_failed', variant);
     const claimed = variant === 'bogus' ? 'a'.repeat(40) : variant === 'short' ? git(worktree, 'rev-parse', 'HEAD').slice(0, 7) : variant === 'first' || variant === 'base' ? git(worktree, 'rev-parse', 'HEAD~1') : git(worktree, 'rev-parse', 'HEAD');
     assert.match(cycle.escalation ?? '', new RegExp(`run failed: commit ${claimed}`), variant);
+    if (variant === 'short') assert.match(cycle.escalation ?? '', /not the full SHA/);
     store.close();
   }
 });

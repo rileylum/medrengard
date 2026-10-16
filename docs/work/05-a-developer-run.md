@@ -29,8 +29,11 @@ export interface DevelopOptions {
   runsDir?: string;
 }
 
+/** A ready adapter, or one built once the worktree path is known (claude's allow list is path-scoped). */
+export type DeveloperAdapter = Adapter | ((worktree: string) => Adapter);
+
 /** Open a cycle, run the developer once, return the replayed Cycle and where its branch lives. */
-export function develop(store: EventStore, adapter: Adapter, job: Job, opts: DevelopOptions): Promise<{ cycle: Cycle; worktree: string; branch: string }>;
+export function develop(store: EventStore, adapter: DeveloperAdapter, job: Job, opts: DevelopOptions): Promise<{ cycle: Cycle; worktree: string; branch: string }>;
 ```
 
 Behind it, in order:
@@ -89,3 +92,4 @@ Non-goals: verification checks (step 6), reviewers, the fix run after a standard
 Verification: `npm test` and `RUNTIME_SPIKE=1 npm test`, run by the owner on the reviewed SHA. `lazy-review` on the diff before the standard review.
 
 ## Log
+- 2026-10-16 — A-026 "take all recommendations". Branch `feat/05-a-developer-run`. Built test-first; offline `npm test` 125 tests, 104 pass, 16 skipped (14 earlier live, 2 new live), 5 todo, 0 fail. Live: pi reached VERIFYING first time (19 s); claude escalated on its first run and passed after the fix below (16 s). Deviations from the design note: (1) `develop` takes `Adapter | ((worktree) => Adapter)` because `claudeDeveloper` needs the worktree path, which exists only after open; (2) claude path rules need the `//` filesystem-root prefix (`Edit(//var/tmp/.../**)`); a single slash is project-relative and denied every write, found by the live run and a probe under `/var/tmp/software_factory/05-a/probe-claude/`; (3) `open` checks "cycle already open" before the work guard so the old message stays; (4) `Run.runtime` is optional on the type because reviewer runs do not set it until step 6; the claim event requires it. ESCALATED does not count as an open cycle for the one-per-work guard (spec: the parent stays ESCALATED beside its child). Observed in the probe: the owner's user-level Claude Code hooks and settings load into a developer run (a PreToolUse hook refused a commit on `main`); not a problem on `sf/<cycleId>`, noted for the policy discussion. Mutation checks, one replacement each, restored after: 15 run, 13 failed a test on the first pass; the two survivors (abbreviated-SHA guard, worktree base) got a tighter test and a new test and then failed. lazy-review: one shrink in `receive`, applied.
