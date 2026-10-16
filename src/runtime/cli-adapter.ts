@@ -53,7 +53,7 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
 // problem, and a silent fallback would hide the 03-b escape on exactly that machine. The probe
 // runs a throwaway scope exactly as spawnRuntime will and checks, from inside it, that the path
 // spawnRuntime computes is the scope's real cgroup and that its cgroup.kill is writable.
-function checkScopes(): void {
+export function checkScopes(): void {
   const unit = `sf-probe-${process.pid}-${Date.now()}`;
   const expected = scopePath(unit);
   const probe = spawnSync('systemd-run', ['--user', '--scope', '-q', '--slice-inherit', `--unit=${unit}`, '--', 'sh', '-c',

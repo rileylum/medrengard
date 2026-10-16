@@ -14,6 +14,8 @@ Step 4 completed by 04-d and 04-e (A-024, A-025): `src/runtime/cli-adapter.ts` b
 
 Plan step 4 done (A-023): `src/adapter.ts` is the seam between the controller and a runtime; `src/controller.ts` starts a run with a deadline and records exactly one outcome per run through `EventStore.append`, which now returns the replayed Cycle; `run_failed` is a lifecycle event; `tests/fake-adapter.ts` drives normal, malformed, timeout, cancel and duplicate outcomes. Tickets 04-a, 04-b and 04-c, merged as one stacked branch with an adversarial FAIL on record (string-cap size bound, parked for 04-d).
 
+Plan step 6, ticket 06-a (A-028, A-029): `src/verify.ts` checks out the candidate detached at `<runsDir>/<cycleId>-verify`, runs `job.checks` there through `spawnRuntime` with a deadline, byte cap and scope, writes `<name>.stdout|stderr|exit` under `<runsDir>/evidence/<head>/`, and appends `verification`; `Job.checks` declares the commands; `src/git.ts` is the shared sync Git helper. Standard 1 PASS, adversarial FAIL (committed-symlink escape, pi only) parked for the pi-policy or sandbox ticket. 06-b (reviewer runs) is drafted.
+
 Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a, 05-b): `src/developer.ts` opens a cycle, makes a worktree per cycle on `sf/<cycleId>`, prompts the developer and refuses a claim whose head is not the branch tip through the new `accept` option on `execute`; the `claim` event carries `runtime`; `EventStore.open` enforces one open cycle per work item and an ESCALATED parent; `claudeDeveloper(worktree)` and `piDeveloper` are the tools-on specs. Both real CLIs reached VERIFYING live.
 
 ## Checks run
@@ -32,6 +34,10 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 2026-10-16: `npm test` on `c8e7cf4` (05-b), owner-run — 129 tests, 108 pass, 16 skipped, 5 todo, 0 fail. Live claude run with the 05-b grant: implementer-run only, VERIFYING in 19.6 s. Standard 1 PASS, 4 notes. Adversarial PASS, 1 minor (project settings file inside the worktree joins the grant) and 5 notes, parked.
 2026-10-16: `npm test` on `18421ff` (05-a), owner-run — 126 tests, 105 pass, 16 skipped, 5 todo, 0 fail. Adversarial FAIL: two majors (a throw after `open` strands a QUEUED cycle and blocks the work; `git log --output` and `git diff --output` write outside the worktree under the claude allow list); see the ticket log.
 
+2026-10-16: `npm test` on `5d1a34b` (06-a), owner-run — 135 tests, 114 pass, 16 skipped, 5 todo, 0 fail. Standard review 1 launched.
+
+2026-10-16: `npm test` on `4b20fb5` (06-a, standard 1 minors fixed), owner-run — 135 tests, 114 pass, 16 skipped, 5 todo, 0 fail. Standard 1 PASS on 5d1a34b; adversarial FAIL on 4b20fb5 (one major: a committed symlink lets a check read the developer's worktree; see the ticket log).
+
 ## Next action
 
-Owner merges `feat/05-b-contain-developer-run` into main (it contains 05-a; standard PASS and adversarial PASS on `c8e7cf4`). Then After 05-a: plan row 6 (verification checks run by the controller, then reviewer runs through the same seam), and the 02-a busy timeout when a second process shares the database.
+Owner merges `feat/06-a-verification` into main (standard 1 PASS on 5d1a34b, adversarial FAIL on 4b20fb5 parked, A-029). Then 06-b (reviewer runs): confirm the done-when list in `docs/work/06-b-reviewer-runs.md` on the Design route and start it; it should pick up the parked `MISSING`-under-cgroup minor if it touches `verify.ts`.
