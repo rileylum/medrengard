@@ -37,6 +37,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-032 — 2026-10-16 — Step 7 tickets: fix run and end-to-end loop
+
+Owner, after reading the 07-a and 07-b design notes and five questions (two stacked tickets; `fix` beside `develop` reading findings from the store; a stage that throws escalates with `reject_dispatch`; `verify` records a dirty tracked tree as `tree: FAIL`; `run` returns the Cycle, branch and worktree with a thin `src/main.ts` over a job file, the "PR" being the local branch): “Take all recommendations”.
+
+Effect: 07-a-fix-run and 07-b-end-to-end-loop are READY on the Design route with the recommended answers, 07-b stacked on 07-a. The 06-c parked minor is picked up by 07-b.
+
 ### A-031 — 2026-10-16 — Fix ticket for the 06-b adversarial FAIL
 
 Owner, after the 06-b adversarial FAIL on `f7ed0be` (one major: a diff over 1 MiB strands the cycle on `execFileSync`'s default `maxBuffer`; six minors: `.gitattributes -diff` hides content, the cut drops the middle with no file list, the head filter untested, a check can rewrite the tracked tree the reviewer reads, pi lacks `--no-approve`, forgeable section headers): “option 1 go”.
