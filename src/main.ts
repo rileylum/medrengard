@@ -109,7 +109,8 @@ async function main(argv: string[]): Promise<number> {
     if (rest.length !== 1) throw new Error(USAGE);
     return cancel(rest[0]!);
   }
-  if (!first) throw new Error(USAGE);
+  // Extra words are refused, not ignored: `job.json cancel` would otherwise start a paid run.
+  if (!first || rest.length !== 0) throw new Error(USAGE);
   const { path, spec, repo, runsDir } = readJob(first);
   const ticket = spec.ticket ?? (spec.ticketFile ? readFileSync(resolve(path, '..', spec.ticketFile), 'utf8') : undefined);
   if (!ticket) throw new Error('job needs ticket or ticketFile');
@@ -122,6 +123,11 @@ async function main(argv: string[]): Promise<number> {
   mkdirSync(runsDir, { recursive: true });
   const store = new EventStore(join(runsDir, 'events.sqlite'));
   try {
+    // `cancel` can settle the parent a job file still names. The store would refuse it too, but
+    // without saying that the fix is in the job file.
+    const parent = job.parentCycleId === undefined ? undefined : store.load(job.parentCycleId);
+    if (parent && parent.stage !== 'ESCALATED')
+      throw new Error(`parentCycleId ${parent.cycleId} is ${parent.stage}, not ESCALATED; remove parentCycleId from ${path} to start the work fresh`);
     const r = await run(store, adapters, job, { deadlineMs: spec.deadlineMs ?? 120_000, runsDir, sandbox });
     const { cycle } = r;
     console.log(`Stage: ${cycle.stage}`);

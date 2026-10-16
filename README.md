@@ -30,7 +30,7 @@ node src/main.ts accept job.json <sha>   # accept the full candidate SHA the run
 node src/main.ts cancel job.json         # cancel the open cycle, else every ESCALATED one
 ```
 
-A work ID runs again once its cycle is accepted or cancelled. Merging stays with you: the run and `accept` print the merge line. A `cancel` of an open child cycle leaves its ESCALATED parent; a second `cancel` clears it.
+A work ID runs again once its cycle is accepted or cancelled. Merging stays with you: the run and `accept` print the merge line. A `cancel` of an open child cycle leaves its ESCALATED parent; a second `cancel` clears it. Once the parent is cancelled, remove `parentCycleId` from the job file.
 
 ## Layout
 
