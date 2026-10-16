@@ -14,6 +14,17 @@ function commit(prompt: string): string {
   const git = (...a: string[]) => execFileSync('git', ['-c', 'user.name=fake', '-c', 'user.email=fake@example.invalid', ...a], { encoding: 'utf8' }).trim();
   const base = git('rev-parse', 'HEAD');
   if (variant === 'nocommit') return claim(base);
+  if (variant === 'empty') { git('commit', '-q', '--allow-empty', '-m', 'fake developer: nothing'); return claim(git('rev-parse', 'HEAD')); }
+  if (variant === 'orphan') {
+    // An unrestricted developer rewrites the branch to a root commit: the tip, but not descended from the base.
+    const branch = git('symbolic-ref', '--short', 'HEAD');
+    git('checkout', '-q', '--orphan', 'tmp-orphan');
+    git('commit', '-q', '-m', 'fake developer: orphan');
+    git('branch', '-f', branch, 'HEAD');
+    git('checkout', '-q', branch);
+    git('branch', '-D', 'tmp-orphan');
+    return claim(git('rev-parse', 'HEAD'));
+  }
   writeFileSync('done.txt', prompt.split('\n')[0] + '\n');
   git('add', 'done.txt');
   git('commit', '-q', '-m', 'fake developer: done');

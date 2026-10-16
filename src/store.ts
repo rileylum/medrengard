@@ -53,6 +53,7 @@ export class EventStore {
       const parent = this.load(parentCycleId);
       if (!parent) throw new Error(`parent cycle ${parentCycleId} not found`);
       if (parent.stage !== 'ESCALATED') throw new Error(`parent cycle ${parentCycleId} is ${parent.stage}, not ESCALATED`);
+      if (parent.workId !== workId) throw new Error(`parent cycle ${parentCycleId} belongs to work ${parent.workId}, not ${workId}`);
     }
     const open = this.openCycleFor(workId);
     if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);

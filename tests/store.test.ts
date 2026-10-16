@@ -242,6 +242,7 @@ test('open enforces one open cycle per work item and an ESCALATED parent (05-a, 
   // a sibling does not while the child is open.
   store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
   store.append('c1', { type: 'run_failed', runId: 'dev1', reason: 'timeout' });
+  assert.throws(() => store.open('c2', 'w2', 'c1'), /parent cycle c1 belongs to work w1, not w2/);
   const child = store.open('c2', 'w1', 'c1');
   assert.equal(child.parentCycleId, 'c1');
   assert.throws(() => store.open('c3', 'w1', 'c1'), /already has an open cycle c2/);

@@ -51,7 +51,7 @@ for (const spec of [claude, pi]) {
     assert.equal(cycle.runs[0]!.runtime, spec.name);
     assert.equal(cycle.runs[0]!.runId, (store.events(cycle.cycleId)[0] as { runId: string }).runId);
     assert.deepEqual(store.load(cycle.cycleId), cycle);
-    // The branch is visible from the repository; the repository itself is untouched.
+    // The branch is visible from the repository; its HEAD and working tree are untouched.
     assert.equal(git(repo, 'rev-parse', branch), cycle.candidate!.head);
     assert.equal(git(repo, 'rev-parse', 'HEAD'), base);
     assert.equal(git(repo, 'status', '--porcelain'), '');
@@ -74,7 +74,7 @@ test('job.base selects the commit the worktree starts from, not the repository H
 });
 
 test('a claim whose head is not the branch tip, the base, unknown, or abbreviated escalates and names the SHA', async () => {
-  for (const variant of ['first', 'base', 'nocommit', 'bogus', 'short']) {
+  for (const variant of ['first', 'base', 'nocommit', 'bogus', 'short', 'empty', 'orphan']) {
     const { repo, store, runsDir } = scratch();
     const { cycle, worktree } = await develop(store, fake(claude, variant), job(repo), { deadlineMs: 20_000, runsDir });
     assert.equal(cycle.stage, 'ESCALATED', variant);
@@ -83,6 +83,8 @@ test('a claim whose head is not the branch tip, the base, unknown, or abbreviate
     const claimed = variant === 'bogus' ? 'a'.repeat(40) : variant === 'short' ? git(worktree, 'rev-parse', 'HEAD').slice(0, 7) : variant === 'first' || variant === 'base' ? git(worktree, 'rev-parse', 'HEAD~1') : git(worktree, 'rev-parse', 'HEAD');
     assert.match(cycle.escalation ?? '', new RegExp(`run failed: commit ${claimed}`), variant);
     if (variant === 'short') assert.match(cycle.escalation ?? '', /not the full SHA/);
+    if (variant === 'empty') assert.match(cycle.escalation ?? '', /no changes against the base/);
+    if (variant === 'orphan') assert.match(cycle.escalation ?? '', /not descended from the base/);
     store.close();
   }
 });
@@ -100,6 +102,20 @@ test('develop refuses a second open cycle for the work and an unknown base befor
   assert.equal(cycle.stage, 'ESCALATED');
   await assert.rejects(develop(store, fakeAdapter('hang'), job(repo, { workId: 'w2', base: 'no-such-ref' }), { deadlineMs: 500, runsDir }), /no-such-ref/);
   assert.equal(readdirSync(runsDir).length, 1);
+  store.close();
+});
+
+test('a worktree that cannot be made cancels the cycle it opened, so the work is not blocked', async () => {
+  const { repo, store, runsDir } = scratch();
+  writeFileSync(runsDir, 'not a directory\n');
+  const adapter = fakeAdapter('hang');
+  await assert.rejects(develop(store, adapter, job(repo), { deadlineMs: 500, runsDir }), /EEXIST|git worktree add/);
+  assert.equal(adapter.requests.length, 0);
+  // The cycle it opened is CANCELLED, not left QUEUED behind the one-open-cycle guard: the next
+  // develop for the same work must open.
+  rmSync(runsDir);
+  const { cycle } = await develop(store, fake(claude), job(repo), { deadlineMs: 20_000, runsDir });
+  assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
   store.close();
 });
 

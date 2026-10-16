@@ -1,7 +1,7 @@
 // Ticket 05-a: one developer run from open to outcome. Resolves the base, opens the cycle, makes
 // a worktree on the cycle's branch, assembles the prompt, calls execute, and refuses any claim
 // whose commit is not the branch tip. Callers learn this one function; the loop is step 7.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -52,8 +52,15 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
   const runsDir = opts.runsDir ?? DEFAULT_RUNS_DIR;
   const worktree = join(runsDir, cycleId);
   store.open(cycleId, job.workId, job.parentCycleId);
-  mkdirSync(runsDir, { recursive: true });
-  git(job.repo, 'worktree', 'add', '-q', '-b', branch, worktree, base);
+  try {
+    mkdirSync(runsDir, { recursive: true });
+    git(job.repo, 'worktree', 'add', '-q', '-b', branch, worktree, base);
+  } catch (err) {
+    // A QUEUED cycle with no run would hold the one-open-cycle guard against this work until the
+    // owner cancelled it by hand; an infrastructure failure before any run is ours to close.
+    store.append(cycleId, { type: 'cancel' });
+    throw err;
+  }
   const cycle = await execute(
     store,
     cycleId,
@@ -67,7 +74,8 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
 /**
  * The spec's "commit exists" guard, plus its evidence rule that the diff is non-empty. The head
  * must be the full SHA at the tip of the cycle's branch: the tip, not any reachable commit, so
- * what is verified and reviewed is what the developer left behind, nothing on top of it.
+ * what is verified and reviewed is what the developer left behind, nothing on top of it. It
+ * must descend from the base and differ from it, or `base..head` means nothing to step 6.
  */
 function refuse(worktree: string, branch: string, base: string, claim: unknown): string | undefined {
   const head = (claim as { head?: unknown } | null)?.head;
@@ -77,7 +85,14 @@ function refuse(worktree: string, branch: string, base: string, claim: unknown):
   if (head !== tip) {
     return isCommit(worktree, head) ? `commit ${head} is not the tip of ${branch} (${tip})` : `commit ${head} is not the full SHA of a commit on ${branch} (tip ${tip})`;
   }
+  if (!gitOk(worktree, 'merge-base', '--is-ancestor', base, head)) return `commit ${head} is not descended from the base ${base}`;
+  if (gitOk(worktree, 'diff', '--quiet', base, head)) return `commit ${head} has no changes against the base ${base}`;
   return undefined;
+}
+
+// Exit status as a boolean, for the git subcommands whose answer is their exit code.
+function gitOk(cwd: string, ...args: string[]): boolean {
+  return spawnSync('git', args, { cwd, stdio: 'ignore' }).status === 0;
 }
 
 // Full SHA only: an abbreviation would resolve here and name a commit the claim did not.
