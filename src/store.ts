@@ -1,5 +1,6 @@
 // SQLite event store for cycles (ticket 02-a). One append-only table; the state machine in
-// lifecycle.ts stays pure and is replayed on load. No leases, no cross-process concurrency.
+// lifecycle.ts stays pure and is replayed on load. No leases. A second process (the owner's
+// cancel during a run, 07-d) waits for the write lock rather than failing.
 import { DatabaseSync } from 'node:sqlite';
 import { apply, isEvent, newCycle, type Cycle, type Event, type Stage } from './lifecycle.ts';
 
@@ -18,7 +19,8 @@ function requireId(v: unknown, what: string): asserts v is string {
 }
 
 const DEDUP: Event['type'][] = ['developer_result', 'verdict', 'run_failed'];
-const SETTLED: Stage[] = ['ESCALATED', 'ACCEPTED', 'CANCELLED'];
+/** Stages that hold no open cycle: escalated cycles wait for the owner and never move again. */
+export const SETTLED: Stage[] = ['ESCALATED', 'ACCEPTED', 'CANCELLED'];
 
 /** append refused the event because apply could not classify its serialised form. */
 export class UnclassifiableEvent extends Error {}
@@ -28,6 +30,9 @@ export class EventStore {
 
   constructor(path: string) {
     this.db = new DatabaseSync(path);
+    // Every write here is one short statement, so a second process waits at most for one append.
+    // At 0 (SQLite's default) `main.ts cancel` during a run fails with `database is locked`.
+    this.db.exec('PRAGMA busy_timeout = 5000');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS events (
         cycle_id TEXT NOT NULL,
@@ -104,7 +109,9 @@ export class EventStore {
   load(cycleId: string): Cycle | undefined {
     const [first, ...rest] = this.rows(cycleId);
     if (!first) return undefined;
-    const head = first as OpenRow;
+    // workId and parent come from this row; any other type would replay as a cycle of no work.
+    if (first.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(first.type)}, not the open marker`);
+    const head = first;
     return (rest as Event[]).reduce(apply, newCycle(cycleId, head.workId, head.parentCycleId));
   }
 
@@ -123,15 +130,20 @@ export class EventStore {
       .run(cycleId, type, runId, body, cycleId);
   }
 
-  // Open means still able to move: escalated cycles wait for the owner and never move again.
-  private cyclesFor(workId: string): { open?: string; escalated?: string } {
-    const stages = this.db
+  /** Every cycle of a work item with its replayed stage, ordered by cycle ID. */
+  cycles(workId: string): { cycleId: string; stage: Stage }[] {
+    return this.db
       .prepare("SELECT cycle_id FROM events WHERE seq = 0 AND json_extract(body, '$.workId') = ? ORDER BY cycle_id")
       .all(workId)
-      .map((r) => [r.cycle_id as string, this.load(r.cycle_id as string)!.stage] as const);
+      .map((r) => ({ cycleId: r.cycle_id as string, stage: this.load(r.cycle_id as string)!.stage }));
+  }
+
+  // Open means still able to move: escalated cycles wait for the owner and never move again.
+  private cyclesFor(workId: string): { open?: string; escalated?: string } {
+    const all = this.cycles(workId);
     return {
-      open: stages.find(([, stage]) => !SETTLED.includes(stage))?.[0],
-      escalated: stages.findLast(([, stage]) => stage === 'ESCALATED')?.[0],
+      open: all.find((c) => !SETTLED.includes(c.stage))?.cycleId,
+      escalated: all.findLast((c) => c.stage === 'ESCALATED')?.cycleId,
     };
   }
 

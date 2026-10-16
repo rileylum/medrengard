@@ -11,6 +11,7 @@ import { EventStore } from '../src/store.ts';
 import { claude, cliAdapter, type CliSpec } from '../src/runtime/cli-adapter.ts';
 import type { DeveloperAdapter, Job } from '../src/developer.ts';
 import { run, type Adapters, type RunOptions } from '../src/run.ts';
+import { reviewerStub } from './stub-cli.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
 mkdirSync('/var/tmp/software_factory', { recursive: true });
@@ -247,29 +248,6 @@ test('main.ts runs the developer in the job sandbox: bwrap by default, unconfine
 });
 
 // Ticket 08-e: every reviewer call site in main.ts, both CLIs (08-d adversarial major).
-/**
- * A stub claude or pi in its own bin directory. As the developer it commits and claims; as a
- * reviewer it PASSes, except in the role named by `target`, where it names itself, tries to write
- * `outside` and fails the run. Everything is baked in: bwrap clears the environment.
- */
-function reviewerStub(bin: string, cli: 'claude' | 'pi', target: string, outside: string) {
-  const reply = cli === 'claude'
-    ? `printf '{"type":"result","is_error":false,"result":"%s"}\n' "$esc"`
-    : `printf '{"type":"session","id":"s"}\n{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"%s"}]}}\n{"type":"agent_end"}\n' "$esc"`;
-  writeFileSync(join(bin, cli), [
-    '#!/bin/sh',
-    'p=$(cat)',
-    // The claim as a whole JSON object, quotes escaped for the JSON string around it.
-    `reply() { esc=$(printf %s "$1" | sed 's/"/\\\\"/g'); ${reply}; }`,
-    `case "$p" in *"You are the ${target}"*) echo "stub ${cli} as the ${target}: $(touch ${outside} 2>&1)" >&2; exit 1;; esac`,
-    'case "$p" in *"reviewer for the change below"*) h=$(printf %s "$p" | sed -n "s/^Candidate SHA: //p"); reply "{\\"head\\":\\"$h\\",\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"; exit 0;; esac',
-    'echo done > done.txt && git add done.txt && git -c user.name=s -c user.email=s@example.invalid commit -qm done',
-    'reply "{\\"head\\":\\"$(git rev-parse HEAD)\\",\\"artifacts\\":[\\"done.txt\\"]}"',
-    '',
-  ].join('\n'));
-  chmodSync(join(bin, cli), 0o755);
-}
-
 test('main.ts runs both reviewers, claude or pi, in the job sandbox: bwrap by default, unconfined only with none (08-d, 08-e)', () => {
   const { root, repo, runsDir } = scratch();
   const main = join(import.meta.dirname, '..', 'src', 'main.ts');

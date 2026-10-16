@@ -26,6 +26,7 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | D-018 | DECIDED (A-017) | Plan steps are broken into Fast or Design tickets and delivered per [workflow.md](workflow.md) |
 | D-019 | DECIDED (A-035) | Candidate code runs inside a sandbox chosen by backend name. Bubblewrap first; Docker, VMs and cloud later behind the same interface. No VM or cloud backend for now; the tool stays agnostic |
 | D-020 | DECIDED (A-042) | Malicious code stays in scope, but the defences need not be airtight. Each adversarial finding is weighed by risk, and the recommendation can be a merge with the risk accepted. An accepted risk is recorded in [work/accepted-risks.md](work/accepted-risks.md) |
+| D-021 | DECIDED (A-043) | The factory may run on any repository, not only scratch ones. Runs keep full network access and can read their own CLI's credentials |
 
 ## Open
 
@@ -38,6 +39,24 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | O-009 | Staging and deployment ownership | Release tracking |
 
 ## Approval history
+
+### A-045 — 2026-10-17 — Fix the 07-d adversarial minors before merge
+
+Owner, after 07-d's standard PASS and adversarial PASS on `b5d4635` (two minors: arguments after the job file are ignored, so `node src/main.ts job.json cancel` runs the job; after `cancel` clears an ESCALATED parent, a job file still naming `parentCycleId` is refused with no hint), offered a fix before merge, parking, or a merge with the risks accepted: “Fix”.
+
+Effect: both minors are fixed on `feat/07-d-accept-cancel`, test first. The run command refuses extra arguments with the usage line. A job whose `parentCycleId` names a cycle that is not ESCALATED is refused before any run, with a message saying to remove the field. The fix commit takes standard review 2, the ticket's last standard attempt; the adversarial budget is spent.
+
+### A-044 — 2026-10-17 — Ticket 07-d: owner accept and cancel commands
+
+Owner, told that nothing in plan row 9 is needed to run the factory on hobby projects one issue at a time, and that the main friction is the missing accept and cancel commands (a finished or stranded cycle blocks its work ID): “Yep, let's add the accept and cancel commands now.”
+
+Effect: ticket 07-d-accept-cancel, Fast route, on `feat/07-d-accept-cancel` stacked on `feat/09-scoping`. It is numbered under step 7 because `main.ts` is that step's command and the lifecycle already holds both events; row 9 is not split by it. The row 9 split proposed in the handoff is still waiting for the owner's answer.
+
+### A-043 — 2026-10-17 — Lift the scratch-repositories-only limit
+
+Owner, after step 8 put developer, check and reviewer runs in bubblewrap, offered three answers on the working limit that the A-029 merge introduced (factory runs on scratch repositories only): lift it for repositories without secrets (recommended), keep it, or lift it fully. Told the two open gaps: every run has full network access, and a run can read its own CLI's config directory, credentials included, so a hostile or confused agent could send out the repository and the login. Reply: “lift it fully.”
+
+Effect: the factory may run on any repository, including one that holds secrets. The two gaps stay open and are accepted for now. The network line in [work/parked.md](work/parked.md) is no longer tied to the first repository holding secrets; it waits for a later ticket. The parked lines that cite the limit are marked lifted.
 
 ### A-042 — 2026-10-17 — Weigh adversarial findings by risk; record accepted risks
 
