@@ -294,3 +294,14 @@ test('runtime specs bind claude config read-only and overlay pi config', () => {
   assert.deepEqual(claude.config, { read: ['.claude', '.claude.json'], overlay: [] });
   assert.deepEqual(pi.config, { read: [], overlay: ['.pi'] });
 });
+
+test('a sandbox that cannot start refuses at construction, naming none, before any run', () => {
+  const path = process.env.PATH;
+  process.env.PATH = join(dir, 'empty-path');
+  try {
+    assert.throws(() => cliAdapter(fake(claude, 'ping'), { ...offline, sandbox: { backend: 'bwrap' } }), /"none"/);
+    cliAdapter(fake(claude, 'ping'), { ...offline, sandbox: { backend: 'none' } });
+  } finally {
+    process.env.PATH = path;
+  }
+});
