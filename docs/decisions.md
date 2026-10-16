@@ -37,6 +37,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-033 — 2026-10-16 — 07-a same-tree refusal on a fix run
+
+Owner, after standard review 2 on `6261150` noted that `refuse` on a fix run also rejects a commit whose tree equals the failed candidate's (an empty commit on top of it), beyond A-032's "the head must differ from the previous head": “go with your recommendation”.
+
+Effect: the rule stays. A fix run must produce a new SHA with a new tree; the reviewers still judge `base..head`, and descent from the previous head is still not required.
+
 ### A-032 — 2026-10-16 — Step 7 tickets: fix run and end-to-end loop
 
 Owner, after reading the 07-a and 07-b design notes and five questions (two stacked tickets; `fix` beside `develop` reading findings from the store; a stage that throws escalates with `reject_dispatch`; `verify` records a dirty tracked tree as `tree: FAIL`; `run` returns the Cycle, branch and worktree with a thin `src/main.ts` over a job file, the "PR" being the local branch): “Take all recommendations”.
