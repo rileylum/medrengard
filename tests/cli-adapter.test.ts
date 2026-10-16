@@ -279,7 +279,10 @@ test('sandboxed adapter: a binary reached through a symlink outside the bound ro
   process.env.PATH = `${bin}:${path}`;
   try {
     const adapter = cliAdapter({ ...fake(claude, 'ping'), command: 'node-link', config: { read: [], overlay: [] } }, { ...offline, sandbox: { backend: 'bwrap', read: [import.meta.dirname] } });
-    const o = await adapter.start({ ...req(), cwd: root }, new AbortController().signal);
+    // A cwd inside the scratch root, so the run's /tmp (beside the cwd) is inside it too.
+    const cwd = join(root, 'cwd');
+    mkdirSync(cwd);
+    const o = await adapter.start({ ...req(), cwd }, new AbortController().signal);
     assert.equal(o.status, 'completed', JSON.stringify(o));
   } finally {
     process.env.PATH = path;
