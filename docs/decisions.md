@@ -37,6 +37,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-030 — 2026-10-16 — 06-b reviewer runs: signature, tools, evidence source
+
+Owner, after the 06-b question round (`review(store, adapter, cycleId, job, opts)` recomputing the checkout and evidence paths from `runsDir`; read-only reviewer tools, no bash; per-check results from the `verification` event with capped files attached; pick up the parked `MISSING`-under-cgroup minor): “go”.
+
+Effect: 06-b is READY on the Design route with the recommended answers; A-028's `Bash(npm test)` for claude reviewers is withdrawn. `src/review.ts` builds the prompt and calls `execute`; `claudeReviewer` and `piReviewer` are read-only specs.
+
 ### A-029 — 2026-10-16 — Merge 06-a with the adversarial findings parked
 
 Owner, after the 06-a adversarial FAIL on `4b20fb5` (one major: a symlink committed in the candidate lets a check read the developer's worktree, so evidence for a SHA depends on files in no commit; two minors: an unknown binary is `FAIL` not `MISSING` under cgroup isolation, and `git worktree add` runs a committed `post-checkout` hook through `core.hooksPath`): “option 2 go”.
