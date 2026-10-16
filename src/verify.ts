@@ -7,7 +7,7 @@
 // and what a check leaves untracked is removed before review.
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { accessSync, chmodSync, constants, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
@@ -85,6 +85,9 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // Fresh every time: the spec wants checks that ran independently of the developer, and a
   // checkout of the commit alone is the only thing that proves it. A checkout left by an earlier
   // verification of this cycle (a fix run moved the head) goes first.
+  // Anything run in the old checkout after verify (the reviewers, until 08-c) may have locked it,
+  // and rmSync cannot clear a directory it cannot read (08-b standard review 1).
+  if (existsSync(worktree)) restoreAccess(worktree);
   rmSync(worktree, { recursive: true, force: true });
   // Before 08-a the checkout was a registered worktree; prune drops a registration left behind.
   git(job.repo, 'worktree', 'prune');
@@ -115,8 +118,9 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     results.push({ name: TREE, result: 'FAIL' });
   }
   // The reviewer reads this directory unsandboxed (08-c): a planted .git with its own config, or a
-  // symlink to the owner's files, must not be there when it does (08-a adversarial).
-  removeUntracked(worktree, git(job.repo, 'ls-tree', '-r', '-z', '--name-only', head).split('\0').filter(Boolean));
+  // symlink to the owner's files, must not be there when it does (08-a adversarial). A dirty tree
+  // escalates and no reviewer runs, and a walk that failed in treeDiff would fail here too.
+  if (!dirty) removeUntracked(worktree, git(job.repo, 'ls-tree', '-r', '-z', '--name-only', head).split('\0').filter(Boolean));
   return { cycle: store.append(cycleId, { type: 'verification', head, checks: results }), worktree, evidenceDir };
 }
 
@@ -177,7 +181,8 @@ function removeUntracked(checkout: string, tracked: string[]): void {
  * Untracked files are not dirt. Shared with review, which refuses a checkout that is not clean.
  */
 export function treeDiff(repo: string, checkout: string, head: string): string {
-  restoreAccess(checkout);
+  // A tree the controller cannot walk (a chain past PATH_MAX) is not one it can call the commit.
+  try { restoreAccess(checkout); } catch (err) { return `cannot restore owner access in the checkout: ${(err as Error).message}\n`; }
   const tree = checkoutGit(repo, checkout, head);
   tree('read-tree', head);
   // -q: a file that differs is not an error (exit 0); diff-files reports it. Any throw is a real git failure.
