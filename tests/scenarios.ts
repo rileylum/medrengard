@@ -5,7 +5,7 @@ import type { Event, Stage } from '../src/lifecycle.ts';
 export const PASS_CHECKS = [{ name: 'tests', result: 'PASS' as const }];
 
 export const toStandardReview: Event[] = [
-  { type: 'claim', runId: 'dev1', base: 'B1' },
+  { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' },
   { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['result.json'] },
   { type: 'verification', head: 'H1', checks: PASS_CHECKS },
 ];
@@ -34,7 +34,7 @@ export const scenarios: Scenario[] = [
     events: [
       ...toStandardReview,
       { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'FAIL', findings: ['f1'] },
-      { type: 'claim', runId: 'dev2', base: 'B1' },
+      { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' },
       { type: 'developer_result', runId: 'dev2', head: 'H2', artifacts: ['result.json'] },
       { type: 'verification', head: 'H2', checks: PASS_CHECKS },
       { type: 'verdict', runId: 'sr2', head: 'H2', verdict: 'PASS' },
@@ -47,7 +47,7 @@ export const scenarios: Scenario[] = [
     events: [
       ...toStandardReview,
       { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'FAIL' },
-      { type: 'claim', runId: 'dev2', base: 'B1' },
+      { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' },
       { type: 'developer_result', runId: 'dev2', head: 'H2', artifacts: ['r'] },
       { type: 'verification', head: 'H2', checks: PASS_CHECKS },
       { type: 'verdict', runId: 'sr2', head: 'H2', verdict: 'FAIL' },
@@ -70,7 +70,7 @@ export const scenarios: Scenario[] = [
       ...toStandardReview,
       { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' },
       { type: 'verdict', runId: 'ar1', head: 'H1', verdict: 'FAIL' },
-      { type: 'claim', runId: 'dev2', base: 'B1' },
+      { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' },
     ],
   },
   {
@@ -86,16 +86,16 @@ export const scenarios: Scenario[] = [
     name: 'SC-07',
     stage: 'ESCALATED', counters: [0, 0],
     events: [
-      { type: 'claim', runId: 'dev1', base: 'B1' },
+      { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' },
       { type: 'developer_result', runId: 'dev1', artifacts: [] },
-      { type: 'claim', runId: 'dev2', base: 'B1' },
+      { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' },
     ],
   },
   {
     name: 'SC-08',
     stage: 'ESCALATED', counters: [0, 0],
     events: [
-      { type: 'claim', runId: 'dev1', base: 'B1' },
+      { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' },
       { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] },
       { type: 'verification', head: 'H2', checks: PASS_CHECKS },
     ],
@@ -104,7 +104,7 @@ export const scenarios: Scenario[] = [
     name: 'SC-11',
     stage: 'ESCALATED', counters: [0, 0],
     events: [
-      { type: 'claim', runId: 'dev1', base: 'B1' },
+      { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' },
       { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] },
       { type: 'verification', head: 'H1', checks: [{ name: 'security', result: 'FAIL' }] },
       { type: 'verdict', runId: 'stranger', head: 'H1', verdict: 'PASS' },
@@ -116,7 +116,7 @@ export const scenarios: Scenario[] = [
     name: 'RF-01',
     stage: 'ESCALATED', counters: [0, 0],
     events: [
-      { type: 'claim', runId: 'dev1', base: 'B1' },
+      { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' },
       { type: 'run_failed', runId: 'dev1', reason: 'timeout' },
       { type: 'run_failed', runId: 'dev1', reason: 'timeout' },
     ],
@@ -156,5 +156,11 @@ export const scenarios: Scenario[] = [
     name: 'SC-19',
     stage: 'ACCEPTED', counters: [1, 1],
     events: [...bothPass, { type: 'accept', head: 'H1' }, { type: 'base_changed', base: 'B2' }],
+  },
+  // 05-a: the claim names the runtime; the Run carries it (asserted by lifecycle.test.ts).
+  {
+    name: 'RT-01',
+    stage: 'ESCALATED', counters: [0, 0],
+    events: [{ type: 'claim', runId: 'dev1', base: 'B1', runtime: 'pi' }, { type: 'run_failed', runId: 'dev1', reason: 'timeout' }],
   },
 ];

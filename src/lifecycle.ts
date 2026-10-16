@@ -26,12 +26,14 @@ export interface Candidate {
 export interface Run {
   runId: string;
   role: Role;
+  /** Which runtime ran it (the adapter's name); spec Run record. Set by the claim; reviewers follow in step 6. */
+  runtime?: string;
   /** Candidate the run was given as input; undefined for the first developer run. */
   input?: Candidate;
 }
 
 export type Event =
-  | { type: 'claim'; runId: string; base: string }
+  | { type: 'claim'; runId: string; base: string; runtime: string }
   | { type: 'developer_result'; runId: string; head?: string; artifacts: string[] }
   | { type: 'verification'; head: string; checks: { name: string; result: 'PASS' | 'FAIL' | 'MISSING' }[] }
   | { type: 'verdict'; runId: string; head: string; verdict: 'PASS' | 'FAIL'; findings?: string[] }
@@ -52,7 +54,7 @@ const isCheck = (v: unknown) => obj(v) && str(v.name) && ['PASS', 'FAIL', 'MISSI
 // Shape checks, one per Event type. Everything apply dereferences must be present; anything else
 // is the sender's business. Extra fields are tolerated so an older controller can read newer logs.
 const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
-  claim: (e) => str(e.runId) && str(e.base),
+  claim: (e) => str(e.runId) && str(e.base) && str(e.runtime),
   developer_result: (e) => str(e.runId) && arr(e.artifacts, str) && (e.head === undefined || typeof e.head === 'string'),
   verification: (e) => str(e.head) && arr(e.checks, isCheck),
   verdict: (e) => str(e.runId) && str(e.head) && (e.verdict === 'PASS' || e.verdict === 'FAIL'),
@@ -119,7 +121,7 @@ export function apply(c: Cycle, e: Event): Cycle {
       if (c.stage !== 'QUEUED' && c.stage !== 'DEVELOPING') return escalate(c, e, 'claim outside QUEUED');
       if (c.runs.some((r) => r.role === 'developer' && !c.consumed.includes(r.runId)))
         return record(c, e, c.stage, {}, 'ignored: developer run already active');
-      const run: Run = { runId: e.runId, role: 'developer', input: c.candidate };
+      const run: Run = { runId: e.runId, role: 'developer', runtime: e.runtime, input: c.candidate };
       return record(c, e, 'DEVELOPING', { runs: [...c.runs, run], candidate: c.candidate ?? { head: '', base: e.base } });
     }
 

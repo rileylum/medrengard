@@ -14,6 +14,8 @@ Step 4 completed by 04-d and 04-e (A-024, A-025): `src/runtime/cli-adapter.ts` b
 
 Plan step 4 done (A-023): `src/adapter.ts` is the seam between the controller and a runtime; `src/controller.ts` starts a run with a deadline and records exactly one outcome per run through `EventStore.append`, which now returns the replayed Cycle; `run_failed` is a lifecycle event; `tests/fake-adapter.ts` drives normal, malformed, timeout, cancel and duplicate outcomes. Tickets 04-a, 04-b and 04-c, merged as one stacked branch with an adversarial FAIL on record (string-cap size bound, parked for 04-d).
 
+Step 5 in progress: ticket 05-a on `feat/05-a-developer-run` (A-026). `src/developer.ts` opens a cycle, makes a worktree per cycle on `sf/<cycleId>`, prompts the developer and refuses a claim whose head is not the branch tip through the new `accept` option on `execute`; the `claim` event carries `runtime`; `EventStore.open` enforces one open cycle per work item and an ESCALATED parent; `claudeDeveloper(worktree)` and `piDeveloper` are the tools-on specs. Both real CLIs reached VERIFYING live.
+
 ## Checks run
 
 2026-10-15: `npm test` and `RUNTIME_SPIKE=1 npm test` on `d8a9d21`, owner-run — 51 tests, 36 pass offline (10 live tests skipped with reason), 46 pass live, 5 todo, 0 fail.
@@ -26,7 +28,10 @@ Plan step 4 done (A-023): `src/adapter.ts` is the seam between the controller an
 
 2026-10-16: `npm test` on `93ab46e` (04-d), owner-run — 102 tests, 83 pass, 14 skipped, 5 todo, 0 fail; `RUNTIME_SPIKE=1 npm test` 97 pass, 0 skipped, 0 fail. Standard 1 PASS; adversarial FAIL on `5347806` (claim-block regex backtracking holds the event loop past the deadline).
 2026-10-16: `npm test` on `c72625d` and `e6789d6` (04-e), owner-run — 111 tests, 92 pass, 14 skipped, 5 todo, 0 fail. Standard 1 PASS, adversarial PASS.
+2026-10-16: `npm test` on `c7adae7` (05-a), owner-run — 125 tests, 104 pass, 16 skipped, 5 todo, 0 fail; `RUNTIME_SPIKE=1 node --test tests/developer.test.ts` 9 pass, both live developer runs reach VERIFYING. Standard 1 PASS (2 minors, 3 notes, fixed in `18421ff`).
+2026-10-16: `npm test` on `c8e7cf4` (05-b), owner-run — 129 tests, 108 pass, 16 skipped, 5 todo, 0 fail. Live claude run with the 05-b grant: implementer-run only, VERIFYING in 19.6 s. Standard 1 PASS, 4 notes. Adversarial PASS, 1 minor (project settings file inside the worktree joins the grant) and 5 notes, parked.
+2026-10-16: `npm test` on `18421ff` (05-a), owner-run — 126 tests, 105 pass, 16 skipped, 5 todo, 0 fail. Adversarial FAIL: two majors (a throw after `open` strands a QUEUED cycle and blocks the work; `git log --output` and `git diff --output` write outside the worktree under the claude allow list); see the ticket log.
 
 ## Next action
 
-Owner merges `feat/04-e-claim-scan` into main (it contains 04-d). Then plan row 5: the first real developer run in a scratch repository through `execute` and `cliAdapter`, which needs prompt assembly (the ticket text plus the claim-block instruction), a worktree per run, tools enabled with a permission policy for `claude -p`, and recording `runtime` on the Run (spec Run record; `Adapter.name` was dropped until this reader exists). Parked lines for step 5 are in [work/parked.md](work/parked.md) (02-b `open` guards, 02-a busy timeout if two processes share a database).
+Owner merges `feat/05-b-contain-developer-run` into main (it contains 05-a; standard PASS and adversarial PASS on `c8e7cf4`). Then After 05-a: plan row 6 (verification checks run by the controller, then reviewer runs through the same seam), and the 02-a busy timeout when a second process shares the database.

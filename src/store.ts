@@ -1,7 +1,7 @@
 // SQLite event store for cycles (ticket 02-a). One append-only table; the state machine in
 // lifecycle.ts stays pure and is replayed on load. No leases, no cross-process concurrency.
 import { DatabaseSync } from 'node:sqlite';
-import { apply, isEvent, newCycle, type Cycle, type Event } from './lifecycle.ts';
+import { apply, isEvent, newCycle, type Cycle, type Event, type Stage } from './lifecycle.ts';
 
 // Row 0 of every cycle is the store's own "open" marker; it is not a lifecycle Event and never
 // reaches apply. Keeping it in the same table honours the one-table constraint.
@@ -18,6 +18,7 @@ function requireId(v: unknown, what: string): asserts v is string {
 }
 
 const DEDUP: Event['type'][] = ['developer_result', 'verdict', 'run_failed'];
+const SETTLED: Stage[] = ['ESCALATED', 'ACCEPTED', 'CANCELLED'];
 
 /** append refused the event because apply could not classify its serialised form. */
 export class UnclassifiableEvent extends Error {}
@@ -45,9 +46,23 @@ export class EventStore {
   open(cycleId: string, workId: string, parentCycleId?: string): Cycle {
     requireId(cycleId, 'cycle ID');
     requireId(workId, 'work ID');
+    if (this.exists(cycleId)) throw new Error(`cycle ${cycleId} already open`);
+    // Spec: one work item has at most one open cycle, and a new cycle names an ESCALATED parent
+    // (02-b adversarial; openChild checks the parent in memory, this is the store's copy).
+    if (parentCycleId !== undefined) {
+      const parent = this.load(parentCycleId);
+      if (!parent) throw new Error(`parent cycle ${parentCycleId} not found`);
+      if (parent.stage !== 'ESCALATED') throw new Error(`parent cycle ${parentCycleId} is ${parent.stage}, not ESCALATED`);
+      if (parent.workId !== workId) throw new Error(`parent cycle ${parentCycleId} belongs to work ${parent.workId}, not ${workId}`);
+    }
+    const { open, escalated } = this.cyclesFor(workId);
+    if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
+    // Spec: a new cycle for the same work names its parent; an escalated cycle is waiting for one.
+    if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
     const row: OpenRow = { type: 'open', workId, parentCycleId };
-    // Fixed seq 0, not MAX+1: a second open must collide on the primary key and be ignored,
-    // otherwise it would land mid-log and reach apply, which has no 'open' case.
+    // Fixed seq 0, not MAX+1: a second open (racing the check above on another connection)
+    // must collide on the primary key and be ignored, otherwise it would land mid-log and reach
+    // apply, which has no 'open' case.
     const result = this.db
       .prepare('INSERT OR IGNORE INTO events (cycle_id, seq, type, run_id, body) VALUES (?, 0, ?, NULL, ?)')
       .run(cycleId, row.type, JSON.stringify(row));
@@ -106,6 +121,18 @@ export class EventStore {
          SELECT ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ? FROM events WHERE cycle_id = ?`,
       )
       .run(cycleId, type, runId, body, cycleId);
+  }
+
+  // Open means still able to move: escalated cycles wait for the owner and never move again.
+  private cyclesFor(workId: string): { open?: string; escalated?: string } {
+    const stages = this.db
+      .prepare("SELECT cycle_id FROM events WHERE seq = 0 AND json_extract(body, '$.workId') = ? ORDER BY cycle_id")
+      .all(workId)
+      .map((r) => [r.cycle_id as string, this.load(r.cycle_id as string)!.stage] as const);
+    return {
+      open: stages.find(([, stage]) => !SETTLED.includes(stage))?.[0],
+      escalated: stages.findLast(([, stage]) => stage === 'ESCALATED')?.[0],
+    };
   }
 
   private exists(cycleId: string): boolean {

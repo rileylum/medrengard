@@ -37,6 +37,18 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-027 — 2026-10-16 — Fix ticket for the 05-a adversarial FAIL
+
+Owner, after the 05-a adversarial FAIL on `18421ff` (two majors: a throw after `open` strands a QUEUED cycle and blocks the work item; `git log --output` and `git diff --output` let a claude developer write outside the worktree under the allow list): “option 1 go”.
+
+Effect: ticket 05-b-contain-developer-run, Fast route, stacked on 05-a with fresh review budget. It fixes both majors, the four minors (parentless cycle after ESCALATED, relative `runsDir`, non-string `accept` return, user settings joining the grant) and the two mechanical notes; the pre-existing-commit note goes to step 6 in parked.md.
+
+### A-026 — 2026-10-16 — 05-a developer run design
+
+Owner, after reading the 05-a design note and five questions (one `develop()` seam; `accept` option on `execute` for the commit check; worktree per cycle on `sf/<cycleId>`, kept; scoped `--allowedTools` for claude and pi's unscoped bash recorded as a limit; `runtime` on the `claim` event with `Adapter.name` restored): “take all recommendations”.
+
+Effect: 05-a is READY on the Design route with the recommended answers. `src/developer.ts` opens the cycle, makes the worktree, assembles the prompt and calls `execute`; `receive` rejects a claim the caller's `accept` refuses as `run_failed`; `EventStore.open` enforces the 02-b parked guards; the `claim` event carries `runtime`.
+
 ### A-025 — 2026-10-16 — Fix ticket for the 04-d adversarial FAIL
 
 Owner, after the 04-d adversarial FAIL on `5347806` (one major: the claim-block regex backtracks catastrophically on an unclosed fence followed by blank lines, holding the controller's event loop past the deadline): “option 1 go”.

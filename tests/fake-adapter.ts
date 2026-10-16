@@ -17,6 +17,7 @@ export interface FakeAdapter extends Adapter {
 export function fakeAdapter(...script: Step[]): FakeAdapter {
   const requests: RunRequest[] = [];
   const fake: FakeAdapter = {
+    name: 'fake',
     requests,
     aborted: 0,
     start(req, signal) {
