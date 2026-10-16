@@ -207,12 +207,9 @@ function land(repo: string, clone: string, branch: string, cycleId: string, base
   if (typeof head !== 'string' || !head) return undefined; // not ours to judge; the store rejects it
   const incoming = `refs/sf/incoming/${cycleId}`;
   try {
-    const fetchArgs = ['-c', 'fetch.fsckObjects=true', 'fetch', '-q', '--no-tags', '--no-write-fetch-head'];
-    if (sandbox.backend !== 'none') {
-      const [cmd, args] = wrap(sandbox, { cwd: clone, write: [], read: [clone], network: false }, 'git', ['upload-pack']);
-      // git runs this through sh with the clone's path appended.
-      fetchArgs.push(`--upload-pack=${[cmd, ...args].map(shellQuote).join(' ')}`);
-    }
+    // git runs this through sh with the clone's path appended; under `none` it is plain `git upload-pack`.
+    const [cmd, args] = wrap(sandbox, { cwd: clone, write: [], read: [clone], network: false }, 'git', ['upload-pack']);
+    const fetchArgs = ['-c', 'fetch.fsckObjects=true', 'fetch', '-q', '--no-tags', '--no-write-fetch-head', `--upload-pack=${[cmd, ...args].map(shellQuote).join(' ')}`];
     const fetched = spawnSync('git', [...fetchArgs, clone, `+refs/heads/${branch}:${incoming}`], { cwd: repo, encoding: 'utf8' });
     if (fetched.error || fetched.status !== 0) return `fetch of ${branch} from ${clone} failed: ${(fetched.error?.message ?? fetched.stderr).trim()}`;
     const why = refuse(repo, incoming, branch, base, previous, head);
