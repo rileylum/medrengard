@@ -114,13 +114,26 @@ test('a failing exit, a missing binary, a timeout and an overflow are recorded, 
   });
   assert.deepEqual(evidence(r.evidenceDir, 'bad'), { stdout: 'partial\n', stderr: 'broken\n', exit: 'exit 3\n' });
   const absent = evidence(r.evidenceDir, 'absent');
-  assert.match(absent.exit, /^missing: .*ENOENT/);
+  assert.match(absent.exit, /^missing: /);
   assert.equal(evidence(r.evidenceDir, 'slow').exit, 'timeout\n');
   const fl = evidence(r.evidenceDir, 'flood');
   assert.equal(fl.exit, 'overflow\n');
   assert.equal(fl.stdout, '');
   assert.match(fl.stderr, /stdout exceeded 65536 bytes/);
   assert.equal(evidence(r.evidenceDir, 'good').exit, 'exit 0\n');
+  store.close();
+});
+
+test('an unknown binary, by path or by PATH name, is MISSING under cgroup isolation too (06-b, parked 06-a minor)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([
+    { name: 'abs', command: ['/nonexistent/sf-no-such-binary', '--version'] },
+    { name: 'path', command: ['sf-no-such-binary-on-path'] },
+    sh('ok', 'true'),
+  ]);
+  const r = await verify(store, cycle.cycleId, job, { deadlineMs: 20_000, runsDir });
+  assert.deepEqual(results(r.cycle).checks, [{ name: 'abs', result: 'MISSING' }, { name: 'path', result: 'MISSING' }, { name: 'ok', result: 'PASS' }]);
+  assert.match(evidence(r.evidenceDir, 'abs').exit, /^missing: .*sf-no-such-binary/);
+  assert.match(evidence(r.evidenceDir, 'path').exit, /^missing: .*sf-no-such-binary-on-path/);
   store.close();
 });
 

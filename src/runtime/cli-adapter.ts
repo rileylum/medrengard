@@ -176,3 +176,20 @@ export function claudeDeveloper(worktree: string): CliSpec {
 
 /** pi has no path or command scoping: bash is unrestricted inside the scope. The worktree, the scratch repository and the cgroup kill are the containment. */
 export const piDeveloper: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--no-session', '--tools', 'read,edit,write,bash'] };
+
+/**
+ * Reviewers read; they never run anything (06-b, A-030). The controller already ran the checks,
+ * and a reviewer with a shell would run candidate code again as the owner, outside any scope.
+ * `--restricted` loads no user, project or local settings file and confines the file tools to
+ * the cwd: without it a `.claude/settings.json` committed in the candidate adds hooks that run
+ * at session start as the owner (probed 2026-10-16: the hook ran under `--setting-sources
+ * project`, not under `--restricted`), and Read could reach the developer's worktree next door.
+ */
+export const claudeReviewer: CliSpec = {
+  ...claude,
+  // --strict-mcp-config: a project .mcp.json in the checkout is the candidate's; --restricted alone would load it (06-c).
+  args: ['-p', '--output-format', 'json', '--no-session-persistence', '--restricted', '--strict-mcp-config', '--allowedTools', 'Read', 'Glob', 'Grep'],
+};
+
+/** pi's read-only tools; no bash. --no-approve: project-local .pi files (extensions, skills, settings) are the candidate's and must not load, whatever trust the owner saved for a parent directory (06-c). */
+export const piReviewer: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--no-session', '--no-approve', '--tools', 'read,grep,find,ls'] };

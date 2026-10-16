@@ -35,11 +35,23 @@ function commit(prompt: string): string {
 }
 const claim = (head: string) => `Committed.\n\n\`\`\`json\n${JSON.stringify({ head, artifacts: ['done.txt'] })}\n\`\`\`\n`;
 
+// 06-b: stand in for a reviewer. The candidate SHA is read from the prompt line review() writes;
+// variants give a verdict for it, a FAIL with findings, a verdict for some other SHA, or no block.
+function verdict(prompt: string): string {
+  const head = /^Candidate SHA: ([0-9a-f]{40})$/m.exec(prompt)?.[1] ?? 'no-sha-in-prompt';
+  if (variant === 'noblock') return 'I reviewed it and it looks fine.\n';
+  const v = variant === 'fail'
+    ? { head, verdict: 'FAIL', findings: ['[major] done.txt:1 — fixture finding'] }
+    : { head: variant === 'stale' ? 'a'.repeat(40) : head, verdict: 'PASS', findings: [] };
+  return `Reviewed.\n\n\`\`\`json\n${JSON.stringify(v)}\n\`\`\`\n`;
+}
+
 let prompt = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (c) => (prompt += c));
 process.stdin.on('end', () => {
   if (kase === 'commit') REPLY = commit(prompt);
+  if (kase === 'verdict') REPLY = verdict(prompt);
   runtime === 'claude' ? claude() : pi();
 });
 
@@ -51,6 +63,7 @@ function claude() {
   switch (kase) {
     case 'ping':
     case 'commit':
+    case 'verdict':
       out(JSON.stringify({ ...base, is_error: false, terminal_reason: 'completed', api_error_status: null, result: REPLY }) + '\n');
       break;
     case 'echo-prompt':
@@ -83,6 +96,7 @@ function pi() {
   switch (kase) {
     case 'ping':
     case 'commit':
+    case 'verdict':
     case 'echo-prompt': {
       line(session); line({ type: 'agent_start' }); line({ type: 'turn_start' });
       line({ type: 'message_start', message: { role: 'system', content: [{ type: 'text', text: 'system prompt' }] } });

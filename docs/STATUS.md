@@ -14,7 +14,7 @@ Step 4 completed by 04-d and 04-e (A-024, A-025): `src/runtime/cli-adapter.ts` b
 
 Plan step 4 done (A-023): `src/adapter.ts` is the seam between the controller and a runtime; `src/controller.ts` starts a run with a deadline and records exactly one outcome per run through `EventStore.append`, which now returns the replayed Cycle; `run_failed` is a lifecycle event; `tests/fake-adapter.ts` drives normal, malformed, timeout, cancel and duplicate outcomes. Tickets 04-a, 04-b and 04-c, merged as one stacked branch with an adversarial FAIL on record (string-cap size bound, parked for 04-d).
 
-Plan step 6, ticket 06-a (A-028, A-029): `src/verify.ts` checks out the candidate detached at `<runsDir>/<cycleId>-verify`, runs `job.checks` there through `spawnRuntime` with a deadline, byte cap and scope, writes `<name>.stdout|stderr|exit` under `<runsDir>/evidence/<head>/`, and appends `verification`; `Job.checks` declares the commands; `src/git.ts` is the shared sync Git helper. Standard 1 PASS, adversarial FAIL (committed-symlink escape, pi only) parked for the pi-policy or sandbox ticket. 06-b (reviewer runs) is drafted.
+Plan step 6 done (A-028 to A-031), 06-a merged, 06-b and 06-c as one stacked branch awaiting merge: `src/review.ts` builds the reviewer prompt from the store (per-check results from the `verification` event), the verify checkout (`--text` diff cut to 128 KiB a side after an uncut path list, instruction files from the commit) and the evidence files (16 KiB a side), with nonce delimiters, refuses a missing, stale or dirty checkout or missing evidence, and runs the reviewer through `execute`; `claudeReviewer` is `--restricted --strict-mcp-config` with Read, Glob, Grep; `piReviewer` is `--no-approve --tools read,grep,find,ls`; the shared `git` helper reads 64 MiB and keeps the error code. Both real reviewers return verdicts live. 06-a: `src/verify.ts` checks out the candidate detached at `<runsDir>/<cycleId>-verify`, runs `job.checks` there through `spawnRuntime` with a deadline, byte cap and scope, writes `<name>.stdout|stderr|exit` under `<runsDir>/evidence/<head>/`, and appends `verification`; `Job.checks` declares the commands; `src/git.ts` is the shared sync Git helper. Standard 1 PASS, adversarial FAIL (committed-symlink escape, pi only) parked for the pi-policy or sandbox ticket. 06-b (reviewer runs) is drafted.
 
 Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a, 05-b): `src/developer.ts` opens a cycle, makes a worktree per cycle on `sf/<cycleId>`, prompts the developer and refuses a claim whose head is not the branch tip through the new `accept` option on `execute`; the `claim` event carries `runtime`; `EventStore.open` enforces one open cycle per work item and an ESCALATED parent; `claudeDeveloper(worktree)` and `piDeveloper` are the tools-on specs. Both real CLIs reached VERIFYING live.
 
@@ -38,6 +38,14 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 2026-10-16: `npm test` on `4b20fb5` (06-a, standard 1 minors fixed), owner-run — 135 tests, 114 pass, 16 skipped, 5 todo, 0 fail. Standard 1 PASS on 5d1a34b; adversarial FAIL on 4b20fb5 (one major: a committed symlink lets a check read the developer's worktree; see the ticket log).
 
+2026-10-16: `npm test` on `09402c8` (06-b), owner-run — 144 tests, 121 pass, 18 skipped, 5 todo, 0 fail. Standard review 1 PASS (6 minors, fixed in f7ed0be with `--restricted` for the claude reviewer).
+
+2026-10-16: `npm test` on `f7ed0be` (06-b, minors fixed), owner-run — 145 tests, 122 pass, 18 skipped, 5 todo, 0 fail. Adversarial FAIL on f7ed0be (one major: a diff over 1 MiB strands the cycle on `execFileSync`'s default `maxBuffer`; see the ticket log).
+
+2026-10-16: `npm test` on `d0fd999` (06-c), owner-run — 150 tests, 127 pass, 18 skipped, 5 todo, 0 fail. Standard review 1 PASS (3 minors, two fixed, the CRLF one probed and not reproduced).
+
+2026-10-16: `npm test` on `03310a6` (06-c, minors fixed), owner-run — 150 tests, 127 pass, 18 skipped, 5 todo, 0 fail. Adversarial PASS on 03310a6 (1 minor parked).
+
 ## Next action
 
-Owner merges `feat/06-a-verification` into main (standard 1 PASS on 5d1a34b, adversarial FAIL on 4b20fb5 parked, A-029). Then 06-b (reviewer runs): confirm the done-when list in `docs/work/06-b-reviewer-runs.md` on the Design route and start it; it should pick up the parked `MISSING`-under-cgroup minor if it touches `verify.ts`.
+Owner merges `feat/06-c-reviewer-prompt-bounds` into main (it contains 06-b; 06-b standard PASS 09402c8, adversarial FAIL f7ed0be fixed by 06-c; 06-c standard PASS d0fd999, adversarial PASS 03310a6). Then plan row 7: one ticket READY to a human-reviewable PR with no manual stage advancement, including one standard FAIL and fix, over `develop`, `verify` and `review`; its first design question is the parked 06-c minor (a check that dirties the tracked tree).
