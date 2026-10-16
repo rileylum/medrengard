@@ -59,9 +59,10 @@ Plan step 8 (sandbox, A-035) in progress on `feat/08-a-sandbox`: 08-a runs every
 2026-10-16: `npm test` on `ef4ceea` (07-c), run by the implementer session at the owner's request (away from the computer) — 168 tests, 144 pass, 19 skipped, 5 todo, 0 fail. Standard review 1 PASS, adversarial PASS.
 
 2026-10-16: `npm test` on `21733ae` (08-a), implementer-run, not independent — 187 tests, 163 pass, 19 skipped, 5 todo, 0 fail. One live claude call was made by the red run of the new `main.ts` test before the stubs were added (ticket log).
+2026-10-16: `npm test` on `190a372` (08-a, code as `21733ae`), run by the implementer session at the owner's request — 187 tests, 163 pass, 19 skipped, 5 todo, 0 fail. Not independent.
 
 ## Next action
 
 1. Owner reads [08-a-sandboxed-checks.md](work/08-a-sandboxed-checks.md); the five answers were approved (A-035), the ticket text was written after.
-2. Owner runs `npm test` on `21733ae` on `feat/08-a-sandbox`. Then standard review 1, then the adversarial review.
+2. Tests run on `190a372` at the owner's request (Checks run). Next: standard review 1, then the adversarial review.
 3. Owner runs `/var/tmp/software_factory/08-b/probes/runtime-binds.sh` (up to eight one-line paid calls) so 08-b can be drafted: what claude and pi need inside bubblewrap.
