@@ -272,8 +272,9 @@ test('main.ts runs the reviewers in the job sandbox: bwrap by default, unconfine
     assert.equal(r.status, 1, r.stderr);
     assert.match(r.stdout, /^Head: [0-9a-f]{40}$/m, r.stdout);
     assert.match(r.stdout, /^Stage: ESCALATED$/m, r.stdout);
-    // The stub's own exit as the reviewer, not bwrap failing to start it: the reviewer ran.
-    assert.match(r.stdout, /^Escalation: run failed: claude stdout is not a JSON result \(exit 1\): empty$/m, r.stdout);
+    // The stub's own exit as the reviewer, not bwrap failing to start it: the reviewer ran, and in
+    // bwrap its write was refused by the read-only root.
+    assert.match(r.stdout, escaped ? /^Escalation: run failed: claude stdout is not a JSON result \(exit 1\): empty$/m : /^Escalation: run failed: .*touch: .*Read-only file system$/m, r.stdout);
     assert.equal(existsSync(join(root, `outside-review-r${n}`)), escaped, `sandbox ${n}: ${r.stdout}`);
   }
 });
