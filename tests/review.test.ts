@@ -4,8 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { EventStore } from '../src/store.ts';
 import { claude, claudeReviewer, cliAdapter, pi, piReviewer, type CliSpec } from '../src/runtime/cli-adapter.ts';
 import { develop, fix, type Job } from '../src/developer.ts';
@@ -321,15 +321,18 @@ test('reviewer specs are read-only: claude gets Read, Glob, Grep under project s
   assert.ok(!piReviewer.args.includes('--no-tools'));
   assert.deepEqual(piReviewer.args.slice(piReviewer.args.indexOf('--tools'), piReviewer.args.indexOf('--tools') + 2), ['--tools', 'read,grep,find,ls']);
   assert.ok(piReviewer.args.includes('--no-approve'), '06-c: a saved trust decision would load .pi/extensions from the candidate');
+  // 08-d, the 06-c parked note: the candidate's AGENTS.md and CLAUDE.md reach the reviewer only quoted in the prompt.
+  assert.ok(piReviewer.args.includes('--no-context-files'), piReviewer.args.join(' '));
   assert.equal(piReviewer.parse, pi.parse);
 });
 
 // Two paid runs, read-only tools; a 120 s deadline each. The developer is the fixture: the point is the reviewer.
 for (const [name, spec] of [['claude', claudeReviewer], ['pi', piReviewer]] as const) {
-  test(`live ${name}: a real standard review records a verdict for the candidate SHA`, { timeout: 150_000 }, async (t) => {
+  test(`live ${name}: a real standard review in the sandbox records a verdict for the candidate SHA`, { timeout: 150_000 }, async (t) => {
     if (!LIVE) return void t.skip('RUNTIME_SPIKE is not set');
     const { store, runsDir, job, cycleId, head } = await reviewable();
-    const c = await review(store, cliAdapter(spec), cycleId, job, { deadlineMs: 120_000, runsDir });
+    // 08-d: inside bwrap with the checkout read-only, as main.ts runs it; node is outside /usr on this machine.
+    const c = await review(store, cliAdapter(spec, { sandbox: { backend: 'bwrap', read: [dirname(dirname(realpathSync(process.execPath)))] } }), cycleId, job, { deadlineMs: 120_000, runsDir });
     assert.notEqual(c.stage, 'ESCALATED', c.escalation);
     assert.ok(['ADVERSARIAL_REVIEW', 'DEVELOPING'].includes(c.stage), c.stage);
     const e = c.history.at(-1)!.event as { type: string; head?: string };

@@ -461,3 +461,68 @@ test('a directory chain past PATH_MAX left by a check is tree: FAIL with the err
   execFileSync('rm', ['-rf', worktree]);
   store.close();
 });
+
+// Ticket 08-d: the 08-b adversarial lines, from probe 08-b/probes/adv.mts.
+test('a committed gitlink that a check fills is tree: FAIL and is emptied; an untouched gitlink is clean (08-d, 08-b major)', async () => {
+  const nested = (wt: string) => {
+    writeFileSync(join(wt, 'done.txt'), 'done\n');
+    // What `git add -A` does with a nested repository: a gitlink entry.
+    mkdirSync(join(wt, 'vendor'));
+    git(join(wt, 'vendor'), 'init', '-q');
+    writeFileSync(join(wt, 'vendor', 'a'), 'a\n');
+    git(join(wt, 'vendor'), 'add', 'a');
+    git(join(wt, 'vendor'), 'commit', '-q', '-m', 'v');
+  };
+  {
+    const { store, runsDir, job, cycle, repo, head } = await verifying([sh('ok', 'true')], committing(nested));
+    assert.match(git(repo, 'ls-tree', head, 'vendor'), /^160000 commit /);
+    const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+    assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+    assert.deepEqual(readdirSync(join(worktree, 'vendor')), []);
+    store.close();
+  }
+  {
+    const { store, runsDir, job, cycle } = await verifying([sh('evil', 'ln -s /etc vendor/notes; git init -q vendor; echo payload > vendor/README')], committing(nested));
+    const { cycle: c, evidenceDir, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+    assert.equal(c.stage, 'ESCALATED', c.escalation);
+    assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+    assert.match(evidence(evidenceDir, 'tree').stdout, /vendor/);
+    assert.deepEqual(readdirSync(join(worktree, 'vendor')), []);
+    store.close();
+  }
+});
+
+test('a dangling symlink a check leaves is removed like any other untracked entry (08-d, 08-b major)', async () => {
+  const { store, runsDir, job, cycle, repo, head } = await verifying([sh('evil', 'ln -s /nonexistent/sf-dangling notes; ln -s loop loop; mkdir u; ln -s /nonexistent/x u/inner')]);
+  const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  assert.deepEqual(readdirSync(worktree).sort(), git(repo, 'ls-tree', '--name-only', head).split('\n').sort());
+  store.close();
+});
+
+test('a tracked path that starts with whitespace survives the untracked removal, and review proceeds (08-d, 08-b minor)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('ok', 'true')], committing((wt) => { writeFileSync(join(wt, '\tfirst.txt'), 'tab\n'); writeFileSync(join(wt, 'done.txt'), 'done\n'); }));
+  const { cycle: c, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  assert.ok(existsSync(join(worktree, '\tfirst.txt')));
+  const head = c.candidate!.head;
+  const reviewed = await review(store, fakeAdapter({ outcome: { status: 'completed', claim: { head, verdict: 'PASS', findings: [] } } }), cycle.cycleId, job, { deadlineMs: 20_000, runsDir });
+  assert.equal(reviewed.stage, 'ADVERSARIAL_REVIEW', reviewed.escalation);
+  store.close();
+});
+
+test('a deep chain plus a locked directory is tree: FAIL with evidence, never a throw from the untracked removal (08-d, 08-b minor)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('evil', 'mkdir -p zz/inner; p=$(printf "d/%.0s" $(seq 1100)); mkdir -p "$p" && (cd "$p" && mkdir -p "$p"); chmod 000 zz')]);
+  const worktree = join(runsDir, `${cycle.cycleId}-verify`);
+  try {
+    const { cycle: c, evidenceDir } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+    assert.equal(c.stage, 'ESCALATED', c.escalation);
+    assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+    assert.match(evidence(evidenceDir, 'tree').stdout, /ENAMETOOLONG|EACCES/);
+  } finally {
+    // coreutils walk relative to each directory, so they clear what Node's rmSync cannot.
+    execFileSync('chmod', ['-R', 'u+rwX', worktree]);
+    execFileSync('rm', ['-rf', worktree]);
+    store.close();
+  }
+});

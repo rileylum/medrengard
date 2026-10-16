@@ -305,3 +305,46 @@ test('a sandbox that cannot start refuses at construction, naming none, before a
     process.env.PATH = path;
   }
 });
+
+// Ticket 08-d: a reviewer reads its cwd (the verify checkout) and writes only its own /tmp.
+test('sandboxed adapter: a reviewer run cannot write its cwd; a developer run can (08-d)', async () => {
+  const root = mkdtempSync('/var/tmp/software_factory/sf-cli-sandbox-');
+  const cwd = join(root, 'checkout');
+  mkdirSync(cwd);
+  writeFileSync(join(cwd, 'README.md'), 'tracked\n');
+  const probe = join(import.meta.dirname, 'fixtures', 'sandbox-probe.ts');
+  const spec: CliSpec = { ...claude, command: process.execPath, args: [probe, `read:readme=${join(cwd, 'README.md')}`, `cwd=${join(cwd, 'README.md')}`, `tmp=/tmp/x`], config: { read: [], overlay: [] } };
+  const adapter = cliAdapter(spec, { ...offline, sandbox: { backend: 'bwrap', read: [dirname(dirname(realpathSync(process.execPath))), import.meta.dirname] } });
+  try {
+    for (const [role, writes] of [['standard_reviewer', false], ['adversarial_reviewer', false], ['developer', true]] as const) {
+      writeFileSync(join(cwd, 'README.md'), 'tracked\n');
+      const o = await adapter.start({ runId: `r-${role}`, role, prompt: '', cwd }, new AbortController().signal);
+      assert.equal(o.status, 'completed', JSON.stringify(o));
+      const r = (o as { claim: Record<string, string> }).claim;
+      assert.equal(r['read:readme'], 'tracked\n', role);
+      assert.equal(r.cwd === 'ok', writes, role);
+      assert.equal(readFileSync(join(cwd, 'README.md'), 'utf8'), writes ? 'x\n' : 'tracked\n', role);
+      assert.equal(r.tmp, 'ok', role);
+    }
+    assert.deepEqual(readdirSync(root), ['checkout']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a directory chain past PATH_MAX left in the run\'s /tmp does not turn a completed run into a throw (08-d, 08-c adversarial minor)', async () => {
+  const root = mkdtempSync('/var/tmp/software_factory/sf-cli-sandbox-');
+  const cwd = join(root, 'cwd');
+  mkdirSync(cwd);
+  const reply = JSON.stringify({ type: 'result', is_error: false, session_id: 's', result: '```json\n{"head":"H1"}\n```' });
+  const script = `p=$(printf "d/%.0s" $(seq 1100)); cd /tmp && mkdir -p "$p" && cd "$p" && mkdir -p "$p"; chmod 000 /tmp/d; echo '${reply}'`;
+  const adapter = cliAdapter({ ...claude, command: 'sh', args: ['-c', script], config: { read: [], overlay: [] } }, { ...offline, sandbox: { backend: 'bwrap' } });
+  try {
+    const o = await adapter.start({ runId: 'r-deep', role: 'developer', prompt: '', cwd }, new AbortController().signal);
+    assert.deepEqual(o, { status: 'completed', claim: { head: 'H1' }, sessionId: 's' });
+    assert.deepEqual(readdirSync(root), ['cwd'], 'the run\'s /tmp is removed');
+  } finally {
+    spawnSync('chmod', ['-R', 'u+rwX', root]);
+    spawnSync('rm', ['-rf', root]);
+  }
+});

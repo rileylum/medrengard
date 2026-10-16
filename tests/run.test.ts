@@ -246,6 +246,36 @@ test('main.ts runs the developer in the job sandbox: bwrap by default, unconfine
   }
 });
 
+test('main.ts runs the reviewers in the job sandbox: bwrap by default, unconfined only with none (08-d)', () => {
+  const { root, repo, runsDir } = scratch();
+  const main = join(import.meta.dirname, '..', 'src', 'main.ts');
+  // A stub claude: as the developer it commits and claims the head; as the standard reviewer it
+  // tries to write beside the scratch root and fails the run. Paths are baked in: bwrap clears the environment.
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  // The reply is a whole JSON object, which the adapter takes as the claim: no fence to escape.
+  writeFileSync(join(bin, 'claude'), [
+    '#!/bin/sh',
+    'p=$(cat)',
+    `case "$p" in *"standard reviewer"*) touch ${root}/outside-review-$(basename "$(dirname "$PWD")"); exit 1;; esac`,
+    'echo done > done.txt && git add done.txt && git -c user.name=s -c user.email=s@example.invalid commit -qm done',
+    'h=$(git rev-parse HEAD)',
+    `printf '{"type":"result","is_error":false,"result":"{\\\\"head\\\\":\\\\"%s\\\\",\\\\"artifacts\\\\":[\\\\"done.txt\\\\"]}"}\\n' "$h"`,
+    '',
+  ].join('\n'));
+  chmodSync(join(bin, 'claude'), 0o755);
+  for (const [n, sandbox, escaped] of [[1, undefined, false], [2, { backend: 'none' }, true]] as const) {
+    const runs = join(runsDir, `r${n}`);
+    const jobFile = join(root, `job-rev-${n}.json`);
+    writeFileSync(jobFile, JSON.stringify({ workId: `w-rev-${n}`, ticket: 'x', repo, runsDir: runs, checks: [{ name: 'ok', command: ['true'] }], runtime: { developer: 'claude', standard: 'claude', adversarial: 'claude' }, sandbox }));
+    const r = spawnSync(process.execPath, [main, jobFile], { encoding: 'utf8', timeout: 60_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stdout, /^Head: [0-9a-f]{40}$/m, r.stdout);
+    assert.match(r.stdout, /^Stage: ESCALATED$/m, r.stdout);
+    assert.equal(existsSync(join(root, `outside-review-r${n}`)), escaped, `sandbox ${n}: ${r.stdout}`);
+  }
+});
+
 // One live run of main.ts: claude as developer and both reviewers, four paid calls, 120 s per stage.
 test('live main.ts: a job file runs end to end and prints the stage, branch and head', { timeout: 560_000 }, (t) => {
   if (!LIVE) return void t.skip('RUNTIME_SPIKE is not set');
