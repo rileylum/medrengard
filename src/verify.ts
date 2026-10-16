@@ -1,6 +1,7 @@
 // Ticket 06-a: the VERIFYING stage. Checks out the candidate fresh, runs the job's declared checks
 // there, writes each one's output and exit against the SHA, and appends one verification event.
 // The lifecycle decides what the results mean; this module only produces them.
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { accessSync, constants, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
@@ -45,6 +46,11 @@ type CheckResult = Extract<Event, { type: 'verification' }>['checks'][number];
 const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
 // A file stem, nothing that could leave the evidence directory or hide a sibling's file.
 const NAME = /^(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/;
+// The controller's own check, recorded only when it fails: a check that rewrote a tracked file
+// (formatter, codegen) left a checkout that is not the commit, so what the reviewers would read
+// is not what was verified. Recording it escalates the cycle with evidence instead of leaving it
+// in STANDARD_REVIEW with review refusing the dirty checkout on every call (06-c adversarial).
+const TREE = 'tree';
 
 /** Run every declared check on the cycle's candidate and record one verification event. */
 export async function verify(store: EventStore, cycleId: string, job: Job, opts: VerifyOptions): Promise<Verified> {
@@ -52,6 +58,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   const seen = new Set<string>();
   for (const c of checks) {
     if (typeof c.name !== 'string' || !NAME.test(c.name)) throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
+    if (c.name === TREE) throw new Error(`check name ${TREE} is reserved for the controller's own tracked-tree check`);
     if (seen.has(c.name)) throw new Error(`check name ${c.name} is declared twice`);
     seen.add(c.name);
   }
@@ -87,6 +94,15 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     writeFileSync(join(evidenceDir, `${check.name}.stderr`), r.stderr);
     writeFileSync(join(evidenceDir, `${check.name}.exit`), `${r.exit}\n`);
     results.push({ name: check.name, result: r.result });
+  }
+  // Not through the git helper: it trims, and the leading column of a porcelain line (" M" is a
+  // worktree edit, "M " a staged one) is the evidence.
+  const dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: worktree, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (dirty) {
+    writeFileSync(join(evidenceDir, `${TREE}.stdout`), dirty);
+    writeFileSync(join(evidenceDir, `${TREE}.stderr`), '');
+    writeFileSync(join(evidenceDir, `${TREE}.exit`), 'dirty\n');
+    results.push({ name: TREE, result: 'FAIL' });
   }
   return { cycle: store.append(cycleId, { type: 'verification', head, checks: results }), worktree, evidenceDir };
 }

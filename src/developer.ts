@@ -121,7 +121,7 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
     store,
     cycleId,
     developer,
-    { role: 'developer', prompt: prompt(job.ticket, { head, findings: verdict.findings ?? [] }), cwd: worktree },
+    { role: 'developer', prompt: prompt(job.ticket, { head, findings: verdict.findings }), cwd: worktree },
     { deadlineMs: opts.deadlineMs, base, accept: (claim) => refuse(worktree, branch, base, head, claim) },
   );
   return { cycle: cycleAfter, worktree, branch };
@@ -173,14 +173,19 @@ function isCommit(worktree: string, sha: string): boolean {
 // adapters parse (04-d). The fence text is asserted by tests/developer.test.ts. A fix run gets
 // the findings after the ticket; its first line differs from the first run's, which the fixture
 // developer relies on to produce a different commit.
-function prompt(ticket: string, fixing?: { head: string; findings: string[] }): string {
+function prompt(ticket: string, fixing?: { head: string; findings: unknown }): string {
+  // The verdict shape does not check findings (07-a adversarial): a list is a line each, a bare
+  // string one line, anything else nothing; a newline inside one would otherwise open a line of
+  // its own in this prompt, such as a second Rules: section.
+  const raw = fixing?.findings;
+  const findings = (Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []).map((f) => `- ${String(f).replace(/\s*\n\s*/g, ' ')}`);
   return [
     fixing
       ? 'You are the developer fixing review findings on the ticket below. The current directory is a Git worktree on the branch for this work, at your earlier commit.'
       : 'You are the developer for the ticket below. The current directory is a Git worktree on the branch for this work.',
     '',
     ticket.trim(),
-    ...(fixing ? ['', `A review of your commit ${fixing.head} FAILED. Fix these findings, then commit:`, ...(fixing.findings.length ? fixing.findings.map((f) => `- ${f}`) : ['- (the reviewer listed no findings)'])] : []),
+    ...(fixing ? ['', `A review of your commit ${fixing.head} FAILED. Fix these findings, then commit:`, ...(findings.length ? findings : ['- (the reviewer listed no findings)'])] : []),
     '',
     'Rules:',
     '- Make the change and commit it on the current branch. Do not push, do not switch or create branches, do not amend commits that were already there.',

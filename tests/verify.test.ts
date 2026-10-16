@@ -189,3 +189,33 @@ test('verify outside VERIFYING, or with a bad check name, throws before anything
   assert.equal(store.events(cycle.cycleId).length, before + 1);
   store.close();
 });
+
+// Ticket 07-b: a check that rewrites a tracked file leaves a checkout that is not the commit. Recorded
+// as a failed check with the status as evidence, so the cycle escalates instead of waiting on review.
+test('a check that modifies a tracked file records tree: FAIL with the status as evidence and the cycle escalates (07-b, parked 06-c minor)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('fmt', 'echo formatted >> README.md'), sh('after', 'true')]);
+  const { cycle: c, evidenceDir } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'ESCALATED');
+  assert.deepEqual(results(c).checks, [{ name: 'fmt', result: 'PASS' }, { name: 'after', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
+  const ev = evidence(evidenceDir, 'tree');
+  assert.match(ev.stdout, /^ M README\.md$/m);
+  assert.equal(ev.stderr, '');
+  assert.equal(ev.exit, 'dirty\n');
+  store.close();
+});
+
+test('a clean tree after the checks records no tree check; an untracked leftover is not dirt (07-b)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('leave', 'echo x > leftover.txt')]);
+  const { cycle: c } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  assert.deepEqual(results(c).checks, [{ name: 'leave', result: 'PASS' }]);
+  store.close();
+});
+
+test('a declared check named tree is refused before anything is written (07-b)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('tree', 'true')]);
+  await assert.rejects(verify(store, cycle.cycleId, job, { ...opts(), runsDir }), /tree.*reserved/);
+  assert.ok(!existsSync(join(runsDir, `${cycle.cycleId}-verify`)));
+  assert.equal(store.load(cycle.cycleId)!.stage, 'VERIFYING');
+  store.close();
+});
