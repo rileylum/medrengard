@@ -176,3 +176,17 @@ export function claudeDeveloper(worktree: string): CliSpec {
 
 /** pi has no path or command scoping: bash is unrestricted inside the scope. The worktree, the scratch repository and the cgroup kill are the containment. */
 export const piDeveloper: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--no-session', '--tools', 'read,edit,write,bash'] };
+
+/**
+ * Reviewers read; they never run anything (06-b, A-030). The controller already ran the checks,
+ * and a reviewer with a shell would run candidate code again as the owner, outside any scope.
+ * Only `project` settings load, as for the developer; the reviewer has no Write, so only a
+ * settings file committed in the candidate could widen this (parked 05-b minor).
+ */
+export const claudeReviewer: CliSpec = {
+  ...claude,
+  args: ['-p', '--output-format', 'json', '--no-session-persistence', '--setting-sources', 'project', '--allowedTools', 'Read', 'Glob', 'Grep'],
+};
+
+/** pi's read-only tools; no bash. */
+export const piReviewer: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--no-session', '--tools', 'read,grep,find,ls'] };

@@ -2,8 +2,8 @@
 // there, writes each one's output and exit against the SHA, and appends one verification event.
 // The lifecycle decides what the results mean; this module only produces them.
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { accessSync, constants, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
 import { git } from './git.ts';
@@ -93,10 +93,22 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
 
 interface Outcome { result: CheckResult['result']; exit: string; stdout: string; stderr: string }
 
+// The shell's rule: a name with a slash is a path (relative to the checkout), anything else is looked up on PATH.
+function executable(command: string, cwd: string): boolean {
+  if (command === '') return false;
+  const candidates = command.includes('/') || isAbsolute(command)
+    ? [resolve(cwd, command)]
+    : (process.env.PATH ?? '').split(delimiter).filter(Boolean).map((d) => join(d, command));
+  return candidates.some((p) => { try { accessSync(p, constants.X_OK); return true; } catch { return false; } });
+}
+
 // `failed` is spawnRuntime's "never started": no binary, no cwd. That is the spec's MISSING,
 // evidence that does not exist, as against FAIL, evidence that says no.
 async function runCheck(check: Check, cwd: string, isolation: 'cgroup' | 'process-group', opts: VerifyOptions): Promise<Outcome> {
   const [command = '', ...args] = check.command;
+  // Resolved here, not by the spawn: under a scope systemd-run does the lookup and exits 1 on a
+  // missing binary, which would read as FAIL. MISSING must mean the same under both isolations.
+  if (!executable(command, cwd)) return { stdout: '', stderr: '', result: 'MISSING', exit: `missing: ${command || '(empty command)'} not found` };
   const run = spawnRuntime({
     command, args, prompt: '', cwd,
     graceMs: opts.graceMs,
