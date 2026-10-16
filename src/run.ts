@@ -48,7 +48,6 @@ export async function run(store: EventStore, adapters: Adapters, job: Job, opts:
   for (let step = 0; ; step++) {
     const stage = cycle.stage;
     try {
-      if (step >= MAX_STEPS) throw new Error(`loop made ${step} steps without leaving ${stage}`);
       switch (stage) {
         // Reached only after a standard FAIL: apply never returns a cycle to DEVELOPING otherwise.
         case 'DEVELOPING': cycle = (await fix(store, adapters.developer, cycleId, job, opts)).cycle; break;
@@ -57,6 +56,7 @@ export async function run(store: EventStore, adapters: Adapters, job: Job, opts:
         case 'ADVERSARIAL_REVIEW': cycle = await review(store, adapters.adversarial, cycleId, job, opts); break;
         default: return { cycle, worktree, branch };
       }
+      if (step + 1 >= MAX_STEPS) throw new Error(`loop made ${step + 1} steps without stopping; last stage ${stage}`);
     } catch (err) {
       const error = `${stage}: ${err instanceof Error ? err.message : String(err)}`;
       // reject_dispatch is the one event that escalates with a reason and counts nothing. The

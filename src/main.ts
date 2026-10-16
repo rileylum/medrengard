@@ -4,7 +4,7 @@
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
-import type { DeveloperAdapter, Job } from './developer.ts';
+import { oneLine, type DeveloperAdapter, type Job } from './developer.ts';
 import { run } from './run.ts';
 import { claudeDeveloper, claudeReviewer, cliAdapter, piDeveloper, piReviewer } from './runtime/cli-adapter.ts';
 import { EventStore } from './store.ts';
@@ -60,7 +60,7 @@ async function main(file: string | undefined): Promise<number> {
       if (e.type === 'verdict') {
         const role = h.from === 'STANDARD_REVIEW' ? 'standard_reviewer' : h.from === 'ADVERSARIAL_REVIEW' ? 'adversarial_reviewer' : 'reviewer';
         console.log(`${role} ${e.head.slice(0, 7)}: ${e.verdict}`);
-        for (const f of Array.isArray(e.findings) ? e.findings : []) console.log(`  - ${String(f).replace(/\s*\n\s*/g, ' ')}`);
+        for (const f of Array.isArray(e.findings) ? e.findings : []) console.log(`  - ${oneLine(f)}`);
       }
     }
     if (cycle.escalation) console.log(`Escalation: ${cycle.escalation}`);

@@ -95,9 +95,15 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     writeFileSync(join(evidenceDir, `${check.name}.exit`), `${r.exit}\n`);
     results.push({ name: check.name, result: r.result });
   }
-  // Not through the git helper: it trims, and the leading column of a porcelain line (" M" is a
-  // worktree edit, "M " a staged one) is the evidence.
-  const dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: worktree, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  // Index flags first: a check that set skip-worktree (S) or assume-unchanged (h) on a file it
+  // rewrote has hidden it from status (07-b adversarial), so the flag itself is the evidence.
+  // Then status. Neither goes through the git helper: it trims, and the leading column of a
+  // porcelain line (" M" is a worktree edit, "M " a staged one) is the evidence; and the buffer
+  // is the helper's 64 MiB, not execFileSync's 1 MiB, so a formatter over a large tree is still
+  // a classified FAIL and not a throw.
+  const status = (...args: string[]) => execFileSync('git', args, { cwd: worktree, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  const flagged = status('ls-files', '-v').split('\n').filter((l) => l && !l.startsWith('H ')).join('\n');
+  const dirty = (flagged ? `${flagged}\n` : '') + status('status', '--porcelain', '--untracked-files=no');
   if (dirty) {
     writeFileSync(join(evidenceDir, `${TREE}.stdout`), dirty);
     writeFileSync(join(evidenceDir, `${TREE}.stderr`), '');

@@ -87,6 +87,15 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
 type Verdict = Extract<Event, { type: 'verdict' }>;
 
 /**
+ * One finding, one line: every terminator JavaScript's `m` flag or a terminal treats as a line
+ * break (\n, \r, \r\n, U+2028, U+2029, U+0085) becomes a space, so a reviewer's finding cannot
+ * open a line of its own in the developer prompt or overwrite the owner's terminal (07-b adversarial).
+ */
+export function oneLine(finding: unknown): string {
+  return String(finding).replace(/\s*(?:\r\n?|[\n\u2028\u2029\u0085])\s*/g, ' ');
+}
+
+/**
  * Run the developer again on the cycle's worktree after a standard FAIL. Everything comes from
  * the store and runsDir, as for verify and review: the findings are the last verdict's, the base
  * the candidate's, the worktree where develop left it. Returns the replayed Cycle and where its
@@ -178,7 +187,7 @@ function prompt(ticket: string, fixing?: { head: string; findings: unknown }): s
   // string one line, anything else nothing; a newline inside one would otherwise open a line of
   // its own in this prompt, such as a second Rules: section.
   const raw = fixing?.findings;
-  const findings = (Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []).map((f) => `- ${String(f).replace(/\s*\n\s*/g, ' ')}`);
+  const findings = (Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []).map((f) => `- ${oneLine(f)}`);
   return [
     fixing
       ? 'You are the developer fixing review findings on the ticket below. The current directory is a Git worktree on the branch for this work, at your earlier commit.'
