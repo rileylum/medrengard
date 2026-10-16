@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Adapter, RunRequest } from '../src/adapter.ts';
 import { EventStore } from '../src/store.ts';
@@ -169,6 +169,46 @@ test('a develop failure propagates: develop cancelled what it opened and the loo
   store.close();
 });
 
+// Ticket 08-a: the sandbox is checked before develop, so a job that could never verify spends no developer run.
+test('a sandbox that cannot start throws before develop opens a cycle (08-a)', async () => {
+  const { repo, store, runsDir } = scratch();
+  const developer = recording(fake(claude));
+  for (const sandbox of [{ backend: 'nope' }, { backend: 'bwrap', read: [join(runsDir, 'no-such-dir')] }]) {
+    await assert.rejects(run(store, adapters(developer, scripted('PASS'), scripted('PASS')), job(repo), opts(runsDir, { sandbox: sandbox as RunOptions['sandbox'] })), /backend|does not exist/);
+  }
+  assert.equal(developer.requests.length, 0);
+  assert.equal(git(repo, 'branch', '--list', 'sf/*'), '');
+  store.close();
+});
+
+test('main.ts: the job file names the sandbox, read paths are relative to it, and a sandbox that cannot start exits 2 with nothing run (08-a)', () => {
+  const { root, repo, runsDir } = scratch();
+  const main = join(import.meta.dirname, '..', 'src', 'main.ts');
+  // main.ts builds the real adapters by name. Stubs first on PATH: if the sandbox check ever
+  // stops running before develop, the stub records the call instead of a paid claude run.
+  const bin = join(root, 'bin');
+  const called = join(root, 'cli-called');
+  mkdirSync(bin);
+  for (const cli of ['claude', 'pi']) {
+    writeFileSync(join(bin, cli), `#!/bin/sh\ntouch ${called}\nexit 1\n`);
+    chmodSync(join(bin, cli), 0o755);
+  }
+  const write = (sandbox: unknown) => {
+    const jobFile = join(root, 'job.json');
+    writeFileSync(jobFile, JSON.stringify({ workId: 'w-main', ticket: 'x', repo, runsDir, checks: [], runtime: { developer: 'claude', standard: 'claude', adversarial: 'claude' }, sandbox }));
+    return spawnSync(process.execPath, [main, jobFile], { encoding: 'utf8', timeout: 30_000, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+  };
+  const relative = write({ backend: 'bwrap', read: ['tools'] });
+  assert.equal(relative.status, 2, relative.stderr);
+  assert.match(relative.stderr, new RegExp(`${join(root, 'tools')}.*does not exist`));
+  assert.equal(relative.stdout, '');
+  const unknown = write({ backend: 'docker' });
+  assert.equal(unknown.status, 2, unknown.stderr);
+  assert.match(unknown.stderr, /backend/);
+  assert.equal(git(repo, 'branch', '--list', 'sf/*'), '');
+  assert.ok(!existsSync(called), 'no runtime CLI was spawned');
+});
+
 // One live run of main.ts: claude as developer and both reviewers, four paid calls, 120 s per stage.
 test('live main.ts: a job file runs end to end and prints the stage, branch and head', { timeout: 560_000 }, (t) => {
   if (!LIVE) return void t.skip('RUNTIME_SPIKE is not set');
@@ -189,6 +229,7 @@ test('live main.ts: a job file runs end to end and prints the stage, branch and 
   assert.ok(!/^Error: /m.test(r.stdout), r.stdout);
   assert.match(r.stdout, /^Branch: sf\//m);
   assert.match(r.stdout, /^Head: [0-9a-f]{40}$/m);
+  assert.match(r.stdout, /^Sandbox: bwrap$/m);
   assert.match(r.stdout, /standard_reviewer .*(PASS|FAIL)/);
   assert.equal(r.status, stage === 'AWAITING_ACCEPTANCE' ? 0 : 1, r.stdout);
 });

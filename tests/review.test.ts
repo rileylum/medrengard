@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EventStore } from '../src/store.ts';
 import { claude, claudeReviewer, cliAdapter, pi, piReviewer, type CliSpec } from '../src/runtime/cli-adapter.ts';
@@ -145,21 +145,23 @@ test('the prompt carries the role, ticket, SHAs, instructions from the commit, e
 });
 
 test('review throws and appends nothing outside a review stage, without the checkout at the head, or without evidence', async () => {
-  const { repo, store, runsDir, job, cycleId, head, base, checkout, evidenceDir } = await reviewable();
+  const { store, runsDir, job, cycleId, checkout, evidenceDir } = await reviewable();
   const before = store.events(cycleId).length;
   const adapter = fakeAdapter('hang', 'hang', 'hang', 'hang', 'hang');
-  // Checkout moved off the head.
-  git(checkout, 'checkout', '-q', '--detach', base);
-  await assert.rejects(review(store, adapter, cycleId, job, opts(runsDir)), /not at the candidate/);
-  // Checkout gone.
-  git(repo, 'worktree', 'remove', '--force', checkout);
-  await assert.rejects(review(store, adapter, cycleId, job, opts(runsDir)), /checkout/);
-  // Checkout back at the head, evidence gone.
-  git(repo, 'worktree', 'add', '-q', '--detach', checkout, head);
+  // Evidence gone, checkout intact.
+  const kept = readFileSync(join(evidenceDir, 'file.stdout'));
   rmSync(join(evidenceDir, 'file.stdout'));
   await assert.rejects(review(store, adapter, cycleId, job, opts(runsDir)), /file\.stdout is missing/);
   rmSync(evidenceDir, { recursive: true });
   await assert.rejects(review(store, adapter, cycleId, job, opts(runsDir)), /evidence/);
+  mkdirSync(evidenceDir);
+  writeFileSync(join(evidenceDir, 'file.stdout'), kept);
+  // Checkout back at the base's files: the head added done.txt (08-a: no .git, so the files are the only state).
+  rmSync(join(checkout, 'done.txt'));
+  await assert.rejects(review(store, adapter, cycleId, job, opts(runsDir)), /not clean against/);
+  // Checkout gone.
+  rmSync(checkout, { recursive: true });
+  await assert.rejects(review(store, adapter, cycleId, job, opts(runsDir)), /no verify checkout/);
   assert.equal(adapter.requests.length, 0);
   assert.equal(store.events(cycleId).length, before);
   store.close();
@@ -285,13 +287,14 @@ test('a forged section header in a committed instruction file matches no delimit
 test('review refuses a checkout whose tracked files differ from the commit, appending nothing (06-c)', async () => {
   const { store, runsDir, job, cycleId, checkout } = await reviewable();
   const before = store.events(cycleId).length;
+  const original = readFileSync(join(checkout, 'done.txt'));
   writeFileSync(join(checkout, 'done.txt'), 'benign\n');
   const adapter = fakeAdapter('hang');
   await assert.rejects(review(store, adapter, cycleId, job, opts(runsDir)), /not clean/);
   assert.equal(adapter.requests.length, 0);
   assert.equal(store.events(cycleId).length, before);
   // Untracked leftovers from a check are fine; the commit's files are what matter.
-  git(checkout, 'checkout', '--', 'done.txt');
+  writeFileSync(join(checkout, 'done.txt'), original);
   writeFileSync(join(checkout, 'build-output.tmp'), 'x\n');
   const ok = await review(store, fake(claude, 'verdict', 'pass'), cycleId, job, opts(runsDir));
   assert.equal(ok.stage, 'ADVERSARIAL_REVIEW', ok.escalation);
