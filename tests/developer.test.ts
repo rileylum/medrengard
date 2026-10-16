@@ -473,11 +473,15 @@ const sandboxed = (spec: CliSpec, variant: string) =>
   cliAdapter({ ...spec, command: process.execPath, args: [fixture, spec.name, 'commit', variant], config: { read: [], overlay: [] } }, { isolation: 'process-group', sandbox: { backend: 'bwrap', read: [NODE_PREFIX, import.meta.dirname] } });
 
 for (const spec of [claude, pi]) {
-  test(`${spec.name} fixture in bwrap: an unscoped developer cannot write the repository, its .git, a runsDir sibling or the owner's home; its /tmp is its own and removed (08-c, 05-a)`, async () => {
+  test(`${spec.name} fixture in bwrap: an unscoped developer cannot write the repository, its .git, a runsDir sibling or the owner's home; its /tmp is its own and removed (08-c, 05-a)`, async (t) => {
     const { repo, store, runsDir } = scratch();
     const home = process.env.HOME!;
     const targets = [join(repo, 'escape.txt'), join(repo, '.git', 'config'), join(runsDir, 'sibling.txt'), join(home, `sf-escape-${process.pid}`)];
     const config = readFileSync(join(repo, '.git', 'config'), 'utf8');
+    // Outside the scratch tree: an escaped run (or a red run with no sandbox) leaves them on the host.
+    const outside = [targets[3]!, '/tmp/sf-escape-marker'];
+    for (const f of outside) rmSync(f, { force: true });
+    t.after(() => { for (const f of outside) rmSync(f, { force: true }); });
     const { cycle, worktree } = await develop(store, sandboxed(spec, 'escape'), job(repo, { ticket: `ESCAPE ${targets.join(' ')}` }), { deadlineMs: 20_000, runsDir });
     assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
     const report = JSON.parse(readFileSync(join(worktree, 'escape.json'), 'utf8')) as Record<string, string>;
@@ -508,9 +512,11 @@ test('the controller runs none of the filters, fsmonitor or hooks a developer se
   assert.equal(ver.cycle.stage, 'STANDARD_REVIEW', ver.cycle.escalation);
   const rev = await review(store, fakeReviewer(claude, 'fail'), dev.cycle.cycleId, j, { deadlineMs: 20_000, runsDir });
   assert.equal(rev.stage, 'DEVELOPING', rev.escalation);
-  const fixed = await fix(store, fake(claude), dev.cycle.cycleId, j, { deadlineMs: 20_000, runsDir });
-  assert.equal(fixed.cycle.stage, 'VERIFYING', fixed.cycle.escalation);
+  // The fix developer's own git add runs the clean filter; in bwrap the marker is out of its reach,
+  // so only the controller could write it.
+  const fixed = await fix(store, sandboxed(claude, 'ok'), dev.cycle.cycleId, j, { deadlineMs: 20_000, runsDir });
   assert.ok(!existsSync(marker), 'fix ran something from the clone config');
+  assert.equal(fixed.cycle.stage, 'VERIFYING', fixed.cycle.escalation);
   store.close();
 });
 

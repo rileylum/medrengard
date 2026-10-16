@@ -32,13 +32,16 @@ function commit(prompt: string): string {
     // in this repository's config, each writing the marker the ticket names. Anything the
     // controller runs with this repository's config writes it.
     const marker = /^MARKER (.+)$/m.exec(prompt)![1]!;
-    const run = `sh -c 'echo ran >> ${marker}; cat'`;
+    // A subshell, so a marker out of reach (in bwrap) does not stop the filter passing content through.
+    const run = `sh -c '(echo ran >> ${marker}) 2>/dev/null; cat'`;
     writeFileSync('.gitattributes', '* filter=sf\n');
     git('add', '.gitattributes');
     git('commit', '-q', '-m', 'fake developer: done');
     mkdirSync('.hooks', { recursive: true });
-    for (const hook of ['post-checkout', 'reference-transaction', 'pre-auto-gc']) writeFileSync(`.hooks/${hook}`, `#!/bin/sh\necho ran >> ${marker}\n`, { mode: 0o755 });
-    for (const [k, v] of [['filter.sf.smudge', run], ['filter.sf.clean', run], ['core.fsmonitor', run], ['core.hooksPath', `${process.cwd()}/.hooks`]]) git('config', k!, v!);
+    for (const hook of ['post-checkout', 'reference-transaction', 'pre-auto-gc']) writeFileSync(`.hooks/${hook}`, `#!/bin/sh\n(echo ran >> ${marker}) 2>/dev/null\nexit 0\n`, { mode: 0o755 });
+    // An fsmonitor that fails makes git fall back to a full scan, so the developer's own git still works.
+    const monitor = `sh -c '(echo ran >> ${marker}) 2>/dev/null; exit 1'`;
+    for (const [k, v] of [['filter.sf.smudge', run], ['filter.sf.clean', run], ['core.fsmonitor', monitor], ['core.hooksPath', `${process.cwd()}/.hooks`]]) git('config', k!, v!);
     return claim(git('rev-parse', 'HEAD'));
   }
   git('commit', '-q', '-m', 'fake developer: done');

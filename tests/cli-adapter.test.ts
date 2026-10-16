@@ -241,6 +241,9 @@ test('sandboxed adapter: writes its cwd and its own /tmp only; read config is re
   const probe = join(import.meta.dirname, 'fixtures', 'sandbox-probe.ts');
   const targets = { cwd: join(cwd, 'f'), tmp: '/tmp/sf-probe', ro: join(home, '.ro', 'config'), ov: join(home, '.ov', 'config'), home: join(home, 'f'), runs: join(runs, 'sibling'), varTmp: '/var/tmp/sf-cli-sandbox-escape' };
   const spec: CliSpec = { ...claude, command: process.execPath, args: [probe, ...Object.entries(targets).map(([k, v]) => `${k}=${v}`)], config: { read: ['.ro'], overlay: ['.ov'] } };
+  // Outside the scratch root: a run that escaped (or a red run with no sandbox) leaves them on the host.
+  const outside = [targets.tmp, targets.varTmp];
+  for (const f of outside) rmSync(f, { force: true });
   const was = process.env.HOME;
   process.env.HOME = home;
   try {
@@ -262,6 +265,7 @@ test('sandboxed adapter: writes its cwd and its own /tmp only; read config is re
   } finally {
     process.env.HOME = was;
     rmSync(root, { recursive: true, force: true });
+    for (const f of outside) rmSync(f, { force: true });
   }
 });
 

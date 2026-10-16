@@ -2,6 +2,8 @@
 // a worktree on the cycle's branch, assembles the prompt, calls execute, and refuses any claim
 // whose commit is not the branch tip. Ticket 07-a adds the fix run: the same developer on the
 // same worktree after a standard FAIL, prompted with the findings, under the same head guard.
+// Ticket 08-c: the worktree is a clone of its own, which the developer's sandbox may write; the
+// controller fetches the branch back into the repository and judges the head there.
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -10,6 +12,7 @@ import type { Adapter } from './adapter.ts';
 import { checkDeadline, execute } from './controller.ts';
 import { git } from './git.ts';
 import type { Cycle, Event } from './lifecycle.ts';
+import { checkSandbox, wrap, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
 import type { Check } from './verify.ts';
 
@@ -34,6 +37,11 @@ export interface DevelopOptions {
   deadlineMs: number;
   /** Where worktrees live, one per cycle. Default /var/tmp/software_factory/runs (on disk; /tmp is RAM here). */
   runsDir?: string;
+  /**
+   * Where the controller runs git that reads the clone: the fetch's upload-pack and fix's branch
+   * checks. Default bwrap. The developer's own sandbox is its adapter's (cliAdapter's `sandbox`).
+   */
+  sandbox?: Sandbox;
 }
 
 /**
@@ -44,7 +52,10 @@ export type DeveloperAdapter = Adapter | ((worktree: string) => Adapter);
 
 export interface Developed {
   cycle: Cycle;
-  /** `<runsDir>/<cycleId>`, checked out on `branch`. Kept for the owner and the fix run; nothing here deletes it. */
+  /**
+   * `<runsDir>/<cycleId>`, a clone of the repository checked out on `branch`. Kept for the owner and the fix run;
+   * nothing here deletes it. Its `.git` is the developer's: the controller never runs git there outside the sandbox.
+   */
   worktree: string;
   branch: string;
 }
@@ -63,17 +74,19 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
   // Everything that can throw without Git or the store goes before open, so a setup failure
   // (no user systemd for cliAdapter, a bad deadline) leaves nothing to clean up.
   checkDeadline(opts.deadlineMs);
+  const sandbox = opts.sandbox ?? { backend: 'bwrap' };
+  checkSandbox(sandbox);
   const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
   store.open(cycleId, job.workId, job.parentCycleId);
   try {
     mkdirSync(runsDir, { recursive: true });
-    git(job.repo, 'worktree', 'add', '-q', '-b', branch, worktree, base);
+    clone(job.repo, worktree, branch, base);
     const cycle = await execute(
       store,
       cycleId,
       developer,
       { role: 'developer', prompt: prompt(job.ticket), cwd: worktree },
-      { deadlineMs: opts.deadlineMs, base, accept: (claim) => refuse(worktree, branch, base, undefined, claim) },
+      { deadlineMs: opts.deadlineMs, base, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, undefined, sandbox, claim) },
     );
     return { cycle, worktree, branch };
   } catch (err) {
@@ -116,14 +129,17 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
   const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
   const worktree = join(runsDir, cycleId);
   const branch = `sf/${cycleId}`;
-  if (!existsSync(join(worktree, '.git'))) throw new Error(`no worktree at ${worktree}; the cycle's branch has nowhere to be fixed`);
+  const sandbox = opts.sandbox ?? { backend: 'bwrap' };
+  checkSandbox(sandbox);
+  if (!existsSync(join(worktree, '.git'))) throw new Error(`no clone at ${worktree}; the cycle's branch has nowhere to be fixed`);
   // The tip must be the candidate: anything else is a head change outside a fix run, which the
   // spec gives to the owner, not to a run that would quietly build on it.
-  const tip = git(worktree, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`);
-  if (tip !== head) throw new Error(`worktree ${worktree} is at ${tip}, not at the candidate ${head}`);
-  // On the branch, not merely with the branch at the head: a detached or switched worktree would
+  const tip = cloneGit(sandbox, worktree, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`);
+  if (tip.stdout !== head) throw new Error(`worktree ${worktree} is at ${tip.stdout || '(no branch)'}, not at the candidate ${head}`);
+  // On the branch, not merely with the branch at the head: a detached or switched clone would
   // take the developer's commit off the branch and spend the run on a claim refused as not the tip.
-  const onto = gitStatus(worktree, 'symbolic-ref', '--quiet', 'HEAD') === 0 ? git(worktree, 'symbolic-ref', '--quiet', 'HEAD') : '(detached)';
+  const ref = cloneGit(sandbox, worktree, 'symbolic-ref', '--quiet', 'HEAD');
+  const onto = ref.status === 0 ? ref.stdout : '(detached)';
   if (onto !== `refs/heads/${branch}`) throw new Error(`worktree ${worktree} is on ${onto}, not on ${branch}`);
   const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
   const cycleAfter = await execute(
@@ -131,40 +147,89 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
     cycleId,
     developer,
     { role: 'developer', prompt: prompt(job.ticket, { head, findings: verdict.findings }), cwd: worktree },
-    { deadlineMs: opts.deadlineMs, base, accept: (claim) => refuse(worktree, branch, base, head, claim) },
+    { deadlineMs: opts.deadlineMs, base, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, head, sandbox, claim) },
   );
   return { cycle: cycleAfter, worktree, branch };
 }
 
 /**
- * The spec's "commit exists" guard, plus its evidence rule that the diff is non-empty. The head
- * must be the full SHA at the tip of the cycle's branch: the tip, not any reachable commit, so
+ * The spec's "commit exists" guard, plus its evidence rule that the diff is non-empty, judged in
+ * the repository on the branch as fetched from the clone (`incoming`). The head must be the full
+ * SHA at the tip of the cycle's branch: the tip, not any reachable commit, so
  * what is verified and reviewed is what the developer left behind, nothing on top of it. It
  * must descend from the base and differ from it, or `base..head` means nothing to step 6. A fix
  * run must also produce a new SHA with a new tree: the previous candidate is the one that failed
  * review, and a commit with its exact tree (an empty commit on top of it) fixed nothing and would
  * spend the second verification and standard review on the diff that already failed.
  */
-function refuse(worktree: string, branch: string, base: string, previous: string | undefined, claim: unknown): string | undefined {
-  const head = (claim as { head?: unknown } | null)?.head;
-  if (typeof head !== 'string' || !head) return undefined; // not ours to judge; the store rejects it
-  const tip = git(worktree, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`);
+function refuse(repo: string, incoming: string, branch: string, base: string, previous: string | undefined, head: string): string | undefined {
+  const tip = git(repo, 'rev-parse', '--verify', '--quiet', incoming);
   if (head === base) return `commit ${head} is the base, not a new commit`;
   if (head === previous) return `commit ${head} is the previous candidate, not a new commit`;
   if (head !== tip) {
-    return isCommit(worktree, head) ? `commit ${head} is not the tip of ${branch} (${tip})` : `commit ${head} is not the full SHA of a commit on ${branch} (tip ${tip})`;
+    return isCommit(repo, head) ? `commit ${head} is not the tip of ${branch} (${tip})` : `commit ${head} is not the full SHA of a commit on ${branch} (tip ${tip})`;
   }
-  if (gitStatus(worktree, 'merge-base', '--is-ancestor', base, head) !== 0) return `commit ${head} is not descended from the base ${base}`;
+  if (gitStatus(repo, 'merge-base', '--is-ancestor', base, head) !== 0) return `commit ${head} is not descended from the base ${base}`;
   // --quiet answers in the exit code: 0 same, 1 different, anything else an error (a missing object is 128).
-  const diff = gitStatus(worktree, 'diff', '--quiet', base, head);
+  const diff = gitStatus(repo, 'diff', '--quiet', base, head);
   if (diff === 0) return `commit ${head} has no changes against the base ${base}`;
   if (diff !== 1) return `commit ${head}: git diff ${base} ${head} failed with exit ${diff}`;
   if (previous !== undefined) {
-    const same = gitStatus(worktree, 'diff', '--quiet', previous, head);
+    const same = gitStatus(repo, 'diff', '--quiet', previous, head);
     if (same === 0) return `commit ${head} has no changes against the previous candidate ${previous}`;
     if (same !== 1) return `commit ${head}: git diff ${previous} ${head} failed with exit ${same}`;
   }
   return undefined;
+}
+
+/**
+ * The clone for a cycle: `--no-hardlinks`, because a hardlinked object file is the repository's
+ * own file and the developer's sandbox may write anything in the clone. The owner's ~/.gitconfig
+ * is not bound in the sandbox, so the identity a commit needs is copied into the clone's config.
+ */
+function clone(repo: string, dest: string, branch: string, base: string): void {
+  git(repo, 'clone', '-q', '--no-hardlinks', '--no-checkout', repo, dest);
+  git(dest, 'checkout', '-q', '-b', branch, base);
+  for (const key of ['user.name', 'user.email']) {
+    const v = spawnSync('git', ['config', '--get', key], { cwd: repo, encoding: 'utf8' });
+    if (v.status === 0) git(dest, 'config', key, v.stdout.trim());
+  }
+}
+
+/**
+ * The claim's guard (07-a, 08-c): fetch the clone's branch into a private ref in the repository,
+ * judge the head there, and move `refs/heads/<branch>` only for an accepted head. The repository's
+ * git never reads the clone's config: upload-pack, the one process that does, runs in the sandbox
+ * with the clone read-only, and the received objects are checked (`fetch.fsckObjects`).
+ */
+function land(repo: string, clone: string, branch: string, cycleId: string, base: string, previous: string | undefined, sandbox: Sandbox, claim: unknown): string | undefined {
+  const head = (claim as { head?: unknown } | null)?.head;
+  if (typeof head !== 'string' || !head) return undefined; // not ours to judge; the store rejects it
+  const incoming = `refs/sf/incoming/${cycleId}`;
+  try {
+    const fetchArgs = ['-c', 'fetch.fsckObjects=true', 'fetch', '-q', '--no-tags', '--no-write-fetch-head'];
+    if (sandbox.backend !== 'none') {
+      const [cmd, args] = wrap(sandbox, { cwd: clone, write: [], read: [clone], network: false }, 'git', ['upload-pack']);
+      // git runs this through sh with the clone's path appended.
+      fetchArgs.push(`--upload-pack=${[cmd, ...args].map(shellQuote).join(' ')}`);
+    }
+    const fetched = spawnSync('git', [...fetchArgs, clone, `+refs/heads/${branch}:${incoming}`], { cwd: repo, encoding: 'utf8' });
+    if (fetched.error || fetched.status !== 0) return `fetch of ${branch} from ${clone} failed: ${(fetched.error?.message ?? fetched.stderr).trim()}`;
+    const why = refuse(repo, incoming, branch, base, previous, head);
+    if (why === undefined) git(repo, 'update-ref', `refs/heads/${branch}`, head);
+    return why;
+  } finally {
+    spawnSync('git', ['update-ref', '-d', incoming], { cwd: repo, stdio: 'ignore' });
+  }
+}
+
+const shellQuote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
+
+/** git in the clone through the sandbox, the clone read-only: its config, hooks and fsmonitor are the developer's. */
+function cloneGit(sandbox: Sandbox, clone: string, ...args: string[]): { status: number | null; stdout: string } {
+  const [cmd, argv] = wrap(sandbox, { cwd: clone, write: [], read: [clone], network: false }, 'git', args);
+  const r = spawnSync(cmd, argv, { cwd: clone, encoding: 'utf8' });
+  return { status: r.status, stdout: (r.stdout ?? '').trim() };
 }
 
 // Exit status for the git subcommands whose answer is their exit code; null if git did not run.
@@ -173,9 +238,9 @@ function gitStatus(cwd: string, ...args: string[]): number | null {
 }
 
 // Full SHA only: an abbreviation would resolve here and name a commit the claim did not.
-function isCommit(worktree: string, sha: string): boolean {
+function isCommit(repo: string, sha: string): boolean {
   if (!/^[0-9a-f]{40}$/.test(sha)) return false;
-  try { return git(worktree, 'cat-file', '-t', sha) === 'commit'; } catch { return false; }
+  try { return git(repo, 'cat-file', '-t', sha) === 'commit'; } catch { return false; }
 }
 
 // Two rules the developer cannot infer from the ticket, then the claim in the exact shape the
@@ -190,8 +255,8 @@ function prompt(ticket: string, fixing?: { head: string; findings: unknown }): s
   const findings = (Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []).map((f) => `- ${oneLine(f)}`);
   return [
     fixing
-      ? 'You are the developer fixing review findings on the ticket below. The current directory is a Git worktree on the branch for this work, at your earlier commit.'
-      : 'You are the developer for the ticket below. The current directory is a Git worktree on the branch for this work.',
+      ? 'You are the developer fixing review findings on the ticket below. The current directory is a Git clone on the branch for this work, at your earlier commit.'
+      : 'You are the developer for the ticket below. The current directory is a Git clone on the branch for this work.',
     '',
     ticket.trim(),
     ...(fixing ? ['', `A review of your commit ${fixing.head} FAILED. Fix these findings, then commit:`, ...(findings.length ? findings : ['- (the reviewer listed no findings)'])] : []),
