@@ -273,12 +273,13 @@ test('scope: a child that writes a large result and exits at once loses none of 
 });
 
 // Ticket 04-e: after the child exited under a scope, the group is reaped and must not be signalled.
-test('scope: cancel() after the child exited while a grandchild holds the pipe writes cgroup.kill and signals no group', async (t) => {
+// Smoke test only: under a scope the exit-time cgroup.kill frees the pipe within one event-loop
+// turn, so no test can hold the run in "exited but not settled" to observe the cancel() branch.
+// The branch itself is verified by reading; this guards that the call is harmless.
+test('scope: cancel() after the child exited while a grandchild held the pipe signals no group', async (t) => {
   if (!scoped(t)) return;
   const run = spawnRuntime({ command: process.execPath, args: [fixture('exit-early.ts')], prompt: '', cwd: dir, scope: `sf-test-${process.pid}-exit-early` });
   await run.ready;
-  // Under a scope the exit-time cgroup.kill normally frees the pipe by itself; wait for exit,
-  // then cancel while the run may or may not have settled. Either way process.kill is not called.
   await new Promise((res) => setTimeout(res, 400));
   const kill = process.kill;
   let calls = 0;

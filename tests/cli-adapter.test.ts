@@ -186,7 +186,8 @@ for (const spec of [claude, pi]) {
   });
 
   test(`${spec.name}: fences with no newline after the tag or before the closer are accepted`, async () => {
-    for (const reply of ['```json{"head":"H3","artifacts":[]}```', 'ok\n```json\n{"head":"H3","artifacts":[]}```\n', '```json {"head":"H3","artifacts":[]}\n```']) {
+    // The last variant is a closed block followed by a fence the model never closed.
+    for (const reply of ['```json{"head":"H3","artifacts":[]}```', 'ok\n```json\n{"head":"H3","artifacts":[]}```\n', '```json {"head":"H3","artifacts":[]}\n```', '```json\n{"head":"H3","artifacts":[]}\n```\nand also\n```json\n{"head":']) {
       assert.deepEqual((await start(spec, 'echo-prompt', reply) as any).claim, { head: 'H3', artifacts: [] }, JSON.stringify(reply));
     }
   });
@@ -205,11 +206,14 @@ test('a run ID that is not a valid unit-name fragment is failed before anything 
 });
 
 test('a reason cut at 1 KB is well-formed even when the cut lands inside a surrogate pair', async () => {
-  // claude's result text, 900 ASCII then astral characters, lands as the is_error reason.
-  const reply = 'a'.repeat(900) + '\u{1F600}'.repeat(200);
-  const adapter = cliAdapter({ ...claude, command: process.execPath, args: ['-e', `process.stdout.write(JSON.stringify({ type: 'result', is_error: true, result: ${JSON.stringify(reply)} }))`] }, offline);
-  const o = await adapter.start(req(), new AbortController().signal);
-  assert.equal(o.status, 'failed');
-  assert.ok((o as any).reason.isWellFormed(), 'reason has a lone surrogate');
-  assert.ok((o as any).reason.length <= 1024);
+  // claude's result text, some ASCII then astral characters, lands as the is_error reason with a
+  // prefix of unknown length; two adjacent ASCII lengths guarantee one cut splits a pair.
+  for (const ascii of [900, 901]) {
+    const reply = 'a'.repeat(ascii) + '\u{1F600}'.repeat(200);
+    const adapter = cliAdapter({ ...claude, command: process.execPath, args: ['-e', `process.stdout.write(JSON.stringify({ type: 'result', is_error: true, result: ${JSON.stringify(reply)} }))`] }, offline);
+    const o = await adapter.start(req(), new AbortController().signal);
+    assert.equal(o.status, 'failed');
+    assert.ok((o as any).reason.isWellFormed(), `reason has a lone surrogate at ascii=${ascii}`);
+    assert.ok((o as any).reason.length <= 1024);
+  }
 });
