@@ -1,7 +1,8 @@
 // Ticket 03-a: how a runtime behaves as a launched, observed and cancelled child process.
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnRuntime } from '../src/runtime/spawn.ts';
@@ -149,4 +150,146 @@ test('a missing binary is reported as failed to start, not thrown', async () => 
   const r = await spawnRuntime({ command: join(dir, 'no-such-binary'), args: [], prompt: '', cwd: dir });
   assert.equal(r.status, 'failed');
   assert.match(r.stderr, /ENOENT/);
+});
+
+// Ticket 04-d: the 03-b minors, the size bound and cgroup isolation.
+const hasUserSystemd = spawnSync('systemd-run', ['--user', '--scope', '-q', '--', 'true']).status === 0;
+const scoped = (t: TestContext) => (hasUserSystemd ? true : (t.skip('no user systemd: systemd-run --user --scope failed'), false));
+
+test('cancel() after the run has resolved signals nothing', async () => {
+  const run = spawnRuntime({ command: process.execPath, args: ['-e', '1'], prompt: '', cwd: dir });
+  await run;
+  const kill = process.kill;
+  let calls = 0;
+  process.kill = ((...args: Parameters<typeof kill>) => { calls++; return kill(...args); }) as typeof kill;
+  try {
+    run.cancel();
+    run.cancel();
+  } finally {
+    process.kill = kill;
+  }
+  assert.equal(calls, 0, 'cancel after resolve called process.kill');
+});
+
+test('an empty command is reported as failed, not thrown', async () => {
+  const r = await spawnRuntime({ command: '', args: [], prompt: '', cwd: dir });
+  assert.equal(r.status, 'failed');
+  assert.match(r.stderr, /command is empty/);
+});
+
+test('an unreadable cwd is reported against the cwd, not the binary', async (t) => {
+  if (process.getuid?.() === 0) return void t.skip('root can read anything');
+  const cwd = join(dir, 'locked');
+  mkdirSync(cwd);
+  chmodSync(cwd, 0o000);
+  try {
+    const r = await spawnRuntime({ command: process.execPath, args: ['-e', '1'], prompt: '', cwd });
+    assert.equal(r.status, 'failed');
+    assert.match(r.stderr, /^cwd .*locked/);
+    assert.doesNotMatch(r.stderr, /spawn/);
+  } finally {
+    chmodSync(cwd, 0o700);
+  }
+});
+
+test('ready resolves on the first stderr byte of a child that never writes stdout', async () => {
+  const run = spawnRuntime({
+    command: process.execPath,
+    args: ['-e', 'console.error("ready"); setInterval(() => {}, 1000)'],
+    prompt: '',
+    cwd: dir,
+  });
+  const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('ready never fired')), 3000));
+  await Promise.race([run.ready, timeout]);
+  run.cancel();
+  await run;
+});
+
+test('output past maxOutputBytes stops the run inside the grace bound and reports overflow with nothing kept', async () => {
+  const started = Date.now();
+  const r = await spawnRuntime({
+    command: process.execPath,
+    args: [fixture('flood.ts')],
+    prompt: '',
+    cwd: dir,
+    graceMs: 300,
+    maxOutputBytes: 65536,
+  });
+  const took = Date.now() - started;
+  assert.equal(r.status, 'overflow');
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /stdout exceeded 65536 bytes/);
+  assert.ok(took < 300 + 1000, `took ${took}ms`);
+});
+
+test('scope: cancel kills a grandchild that left the process group with setsid', async (t) => {
+  if (!scoped(t)) return;
+  const marker = join(dir, 'escaped-marker.txt');
+  const run = spawnRuntime({
+    command: process.execPath,
+    args: [fixture('escape.ts'), marker],
+    prompt: '',
+    cwd: dir,
+    graceMs: 300,
+    scope: `sf-test-${process.pid}-escape`,
+  });
+  await run.ready;
+  run.cancel();
+  const r = await run;
+  assert.equal(r.status, 'cancelled');
+  await new Promise((res) => setTimeout(res, 3000));
+  assert.equal(existsSync(marker), false, 'setsid grandchild outlived the cancel');
+});
+
+test('scope: a child that re-parents itself with exec setsid leaves no worker behind', async (t) => {
+  if (!scoped(t)) return;
+  const marker = join(dir, 'reparent-marker.txt');
+  const worker = `setTimeout(() => require("fs").writeFileSync(${JSON.stringify(marker)}, "late"), 2500)`;
+  const r = await spawnRuntime({
+    command: 'sh',
+    args: ['-c', `exec setsid "${process.execPath}" -e ${JSON.stringify(worker)}`],
+    prompt: '',
+    cwd: dir,
+    scope: `sf-test-${process.pid}-reparent`,
+  });
+  assert.equal(r.status, 'exited');
+  await new Promise((res) => setTimeout(res, 3000));
+  assert.equal(existsSync(marker), false, 'worker outlived the exited child');
+});
+
+test('scope: a child that writes a large result and exits at once loses none of it', async (t) => {
+  if (!scoped(t)) return;
+  const r = await spawnRuntime({
+    command: process.execPath,
+    // Exit in the write callback: a bare process.exit after an async pipe write flushes only 64 KB
+    // in the child itself, which would make the test about the fixture, not the pipe.
+    args: ['-e', 'process.stdout.write("y".repeat(1 << 20), () => process.exit(0))'],
+    prompt: '',
+    cwd: dir,
+    scope: `sf-test-${process.pid}-large`,
+  });
+  assert.equal(r.status, 'exited');
+  assert.equal(r.stdout.length, 1 << 20);
+});
+
+// Ticket 04-e: after the child exited under a scope, the group is reaped and must not be signalled.
+// Smoke test only: under a scope the exit-time cgroup.kill frees the pipe within one event-loop
+// turn, so no test can hold the run in "exited but not settled" to observe the cancel() branch.
+// The branch itself is verified by reading; this guards that the call is harmless.
+test('scope: cancel() after the child exited while a grandchild held the pipe signals no group', async (t) => {
+  if (!scoped(t)) return;
+  const run = spawnRuntime({ command: process.execPath, args: [fixture('exit-early.ts')], prompt: '', cwd: dir, scope: `sf-test-${process.pid}-exit-early` });
+  await run.ready;
+  await new Promise((res) => setTimeout(res, 400));
+  const kill = process.kill;
+  let calls = 0;
+  process.kill = ((...args: Parameters<typeof kill>) => { calls++; return kill(...args); }) as typeof kill;
+  try {
+    run.cancel();
+    const r = await run;
+    assert.equal(r.status, 'exited');
+  } finally {
+    process.kill = kill;
+  }
+  assert.equal(calls, 0, 'cancel after exit under a scope signalled the process group');
 });

@@ -37,6 +37,18 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-025 — 2026-10-16 — Fix ticket for the 04-d adversarial FAIL
+
+Owner, after the 04-d adversarial FAIL on `5347806` (one major: the claim-block regex backtracks catastrophically on an unclosed fence followed by blank lines, holding the controller's event loop past the deadline): “option 1 go”.
+
+Effect: ticket 04-e-claim-scan, Fast route, stacked on 04-d with fresh review budget, replaces the regex with a linear scan and takes the four minors (unit-name validation, no group signal after exit under a scope, well-formed reason cut, probe timeout). 04-d and 04-e merge together.
+
+### A-024 — 2026-10-16 — 04-d real adapters design
+
+Owner, after reading the 04-d design note and five questions (cgroup logic inside `spawnRuntime`; refuse at construction without a user systemd; fenced `json` claim block; drop `Adapter.name`; four live runs): “go with all recommendations”.
+
+Effect: 04-d is READY on the Design route with the recommended answers. `spawnRuntime` grows `isolation` and `maxOutputBytes`; `src/runtime/cli-adapter.ts` builds the claude and pi adapters from a spec; the runtime ends its reply with a fenced `json` block holding the claim; `Adapter.name` is dropped until the step 5 loop records `runtime` on the Run.
+
 ### A-023 — 2026-10-16 — Merge 04-a/04-b/04-c with the 04-c adversarial finding parked
 
 Owner, after the 04-c adversarial FAIL on `e97a045` (one major: an outcome within about 60 bytes of V8's string cap strands a cycle; needs about 3 GB of heap to produce): “Yep I agree I think, we should really just accept it here and move on to actually implementing what we're trying to guard against right?”

@@ -26,7 +26,6 @@ export type RunOutcome =
   | { status: 'cancelled' };
 
 export interface Adapter {
-  readonly name: string;
   /**
    * Must settle after `signal` aborts. The controller does not wait past its deadline either
    * way, so an adapter that ignores abort only leaks its own process; it cannot hold a cycle.
