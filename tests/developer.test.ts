@@ -544,3 +544,24 @@ test('the fetch runs upload-pack through bwrap; a refused claim leaves no branch
     store.close();
   }
 });
+
+test('a branch tip that fails fsck is refused at the fetch, and the repository keeps no branch for it (08-c)', async () => {
+  const { repo, store, runsDir } = scratch();
+  // A developer that writes a malformed commit object (no author line) with plumbing and moves its branch to it.
+  const malformed: DeveloperAdapter = {
+    name: 'malformed',
+    async start(req) {
+      const tree = git(req.cwd, 'rev-parse', 'HEAD^{tree}');
+      const parent = git(req.cwd, 'rev-parse', 'HEAD');
+      const body = `tree ${tree}\nparent ${parent}\ncommitter x <x@example.invalid> 0 +0000\n\nno author\n`;
+      const sha = execFileSync('git', ['hash-object', '--literally', '-t', 'commit', '-w', '--stdin'], { cwd: req.cwd, input: body, encoding: 'utf8' }).trim();
+      git(req.cwd, 'update-ref', 'HEAD', sha);
+      return { status: 'completed', claim: { head: sha, artifacts: [] } };
+    },
+  };
+  const { cycle } = await develop(store, malformed, job(repo), { deadlineMs: 5000, runsDir });
+  assert.equal(cycle.stage, 'ESCALATED');
+  assert.match(cycle.escalation ?? '', /fetch of sf\/\S+ from .* failed/);
+  assert.equal(git(repo, 'for-each-ref', '--format=%(refname)', 'refs/heads/sf', 'refs/sf'), '');
+  store.close();
+});

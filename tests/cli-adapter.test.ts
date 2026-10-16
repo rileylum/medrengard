@@ -240,7 +240,7 @@ test('sandboxed adapter: writes its cwd and its own /tmp only; read config is re
   writeFileSync(join(home, '.ov', 'config'), 'ov\n');
   const probe = join(import.meta.dirname, 'fixtures', 'sandbox-probe.ts');
   const targets = { cwd: join(cwd, 'f'), tmp: '/tmp/sf-probe', ro: join(home, '.ro', 'config'), ov: join(home, '.ov', 'config'), home: join(home, 'f'), runs: join(runs, 'sibling'), varTmp: '/var/tmp/sf-cli-sandbox-escape' };
-  const spec: CliSpec = { ...claude, command: process.execPath, args: [probe, ...Object.entries(targets).map(([k, v]) => `${k}=${v}`)], config: { read: ['.ro'], overlay: ['.ov'] } };
+  const spec: CliSpec = { ...claude, command: process.execPath, args: [probe, `read:ro=${targets.ro}`, ...Object.entries(targets).map(([k, v]) => `${k}=${v}`)], config: { read: ['.ro'], overlay: ['.ov'] } };
   // Outside the scratch root: a run that escaped (or a red run with no sandbox) leaves them on the host.
   const outside = [targets.tmp, targets.varTmp];
   for (const f of outside) rmSync(f, { force: true });
@@ -252,6 +252,7 @@ test('sandboxed adapter: writes its cwd and its own /tmp only; read config is re
     assert.equal(o.status, 'completed', JSON.stringify(o));
     const r = (o as { claim: Record<string, string> }).claim;
     assert.equal(r.HOME, home);
+    assert.equal(r['read:ro'], 'ro\n', 'the read config is bound');
     assert.equal(r.cwd, 'ok');
     assert.equal(r.tmp, 'ok');
     assert.equal(r.ov, 'ok');
