@@ -390,16 +390,18 @@ test('an untracked .gitattributes planted by a check does not change how the tre
 
 // Ticket 08-b: permissions a check leaves behind (08-a adversarial). git skips a path it cannot
 // lstat with a warning and exit 0, so the controller restores owner access before comparing.
-test('a check that rewrites a tracked file and removes the permissions on its directory records tree: FAIL (08-b, 08-a adversarial major)', async () => {
-  const { store, runsDir, job, cycle } = await verifying([],
-    committing((wt) => { writeFileSync(join(wt, 'done.txt'), 'done\n'); mkdirSync(join(wt, 'src')); writeFileSync(join(wt, 'src', 'lib.js'), 'module.exports = 1;\n'); }));
-  job.checks = [sh('evil', 'echo "module.exports = 2;" > src/lib.js; chmod 000 src')];
-  const { cycle: c, evidenceDir, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
-  assert.equal(c.stage, 'ESCALATED', c.escalation);
-  assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }]);
-  assert.match(evidence(evidenceDir, 'tree').stdout, /^M\tsrc\/lib\.js$/m);
-  rmSync(worktree, { recursive: true });
-  store.close();
+test('a check that rewrites a tracked file and removes the permissions on it or its directory records tree: FAIL (08-b, 08-a adversarial major)', async () => {
+  for (const lock of ['chmod 000 src', 'chmod 000 src/lib.js']) {
+    const { store, runsDir, job, cycle } = await verifying([],
+      committing((wt) => { writeFileSync(join(wt, 'done.txt'), 'done\n'); mkdirSync(join(wt, 'src')); writeFileSync(join(wt, 'src', 'lib.js'), 'module.exports = 1;\n'); }));
+    job.checks = [sh('evil', `echo "module.exports = 2;" > src/lib.js; ${lock}`)];
+    const { cycle: c, evidenceDir, worktree } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+    assert.equal(c.stage, 'ESCALATED', `${lock}: ${c.escalation}`);
+    assert.deepEqual(results(c).checks, [{ name: 'evil', result: 'PASS' }, { name: 'tree', result: 'FAIL' }], lock);
+    assert.match(evidence(evidenceDir, 'tree').stdout, /^M\tsrc\/lib\.js$/m, lock);
+    rmSync(worktree, { recursive: true });
+    store.close();
+  }
 });
 
 test('a check that removes the permissions on the checkout itself is classified, not thrown, and the checkout can still be replaced (08-b, 08-a adversarial minor)', async () => {

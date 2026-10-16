@@ -3,9 +3,11 @@
 // The lifecycle decides what the results mean; this module only produces them.
 // Ticket 08-a: the checkout is a plain directory with no .git, written and compared by the
 // controller's git through an index outside it, and every check runs inside the job's sandbox.
-import { execFileSync } from 'node:child_process';
+// Ticket 08-b: owner access is restored before every comparison, git's warnings count as dirt,
+// and what a check leaves untracked is removed before review.
+import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { accessSync, constants, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
@@ -112,6 +114,9 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     writeFileSync(join(evidenceDir, `${TREE}.exit`), 'dirty\n');
     results.push({ name: TREE, result: 'FAIL' });
   }
+  // The reviewer reads this directory unsandboxed (08-c): a planted .git with its own config, or a
+  // symlink to the owner's files, must not be there when it does (08-a adversarial).
+  removeUntracked(worktree, git(job.repo, 'ls-tree', '-r', '-z', '--name-only', head).split('\0').filter(Boolean));
   return { cycle: store.append(cycleId, { type: 'verification', head, checks: results }), worktree, evidenceDir };
 }
 
@@ -125,9 +130,44 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
 function checkoutGit(repo: string, checkout: string, head: string) {
   const gitDir = git(repo, 'rev-parse', '--absolute-git-dir');
   const env = { ...process.env, GIT_INDEX_FILE: `${checkout}.index` };
-  return (...args: string[]) => execFileSync('git', [`--git-dir=${gitDir}`, `--work-tree=${checkout}`, `--attr-source=${head}`, ...args], {
-    cwd: checkout, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
-  });
+  // cwd is the repository: --work-tree names the checkout, and a checkout a check locked cannot be
+  // a working directory at all (08-a adversarial).
+  return (...args: string[]) => {
+    const r = spawnSync('git', [`--git-dir=${gitDir}`, `--work-tree=${checkout}`, `--attr-source=${head}`, ...args], {
+      cwd: repo, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
+    });
+    if (r.error) throw r.error;
+    if (r.status !== 0) throw new Error(`git ${args[0]} for ${checkout} failed: ${r.stderr.trim()}`);
+    return { stdout: r.stdout, stderr: r.stderr };
+  };
+}
+
+/**
+ * Owner read, write and search back on every directory and file under `path`, symlinks not
+ * followed. A check may lock what it rewrote; git then skips the path with a warning and exit 0
+ * (08-a adversarial). Only the owner bits change, never the executable bit git compares.
+ */
+function restoreAccess(path: string): void {
+  const st = lstatSync(path);
+  if (st.isSymbolicLink()) return;
+  const want = st.isDirectory() ? 0o700 : 0o600;
+  if ((st.mode & want) !== want) chmodSync(path, (st.mode & 0o7777) | want);
+  if (st.isDirectory()) for (const entry of readdirSync(path)) restoreAccess(join(path, entry));
+}
+
+/** Delete everything under `checkout` that is not a tracked path or a directory holding one. */
+function removeUntracked(checkout: string, tracked: string[]): void {
+  const keep = new Set(tracked);
+  const dirs = new Set(tracked.flatMap((t) => t.split('/').slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join('/'))));
+  const walk = (rel: string) => {
+    for (const entry of readdirSync(join(checkout, rel))) {
+      const p = rel ? `${rel}/${entry}` : entry;
+      if (keep.has(p)) continue;
+      if (dirs.has(p) && lstatSync(join(checkout, p)).isDirectory()) walk(p);
+      else rmSync(join(checkout, p), { recursive: true, force: true });
+    }
+  };
+  walk('');
 }
 
 /**
@@ -137,11 +177,14 @@ function checkoutGit(repo: string, checkout: string, head: string) {
  * Untracked files are not dirt. Shared with review, which refuses a checkout that is not clean.
  */
 export function treeDiff(repo: string, checkout: string, head: string): string {
+  restoreAccess(checkout);
   const tree = checkoutGit(repo, checkout, head);
   tree('read-tree', head);
   // -q: a file that differs is not an error (exit 0); diff-files reports it. Any throw is a real git failure.
-  tree('update-index', '-q', '--refresh');
-  return tree('diff-files', '--name-status');
+  const refresh = tree('update-index', '-q', '--refresh');
+  const diff = tree('diff-files', '--name-status');
+  // A warning means git skipped something it could not compare: that is dirt, and its own evidence.
+  return diff.stdout + refresh.stderr + diff.stderr;
 }
 
 interface Outcome { result: CheckResult['result']; exit: string; stdout: string; stderr: string }
