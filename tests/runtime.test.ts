@@ -271,3 +271,24 @@ test('scope: a child that writes a large result and exits at once loses none of 
   assert.equal(r.status, 'exited');
   assert.equal(r.stdout.length, 1 << 20);
 });
+
+// Ticket 04-e: after the child exited under a scope, the group is reaped and must not be signalled.
+test('scope: cancel() after the child exited while a grandchild holds the pipe writes cgroup.kill and signals no group', async (t) => {
+  if (!scoped(t)) return;
+  const run = spawnRuntime({ command: process.execPath, args: [fixture('exit-early.ts')], prompt: '', cwd: dir, scope: `sf-test-${process.pid}-exit-early` });
+  await run.ready;
+  // Under a scope the exit-time cgroup.kill normally frees the pipe by itself; wait for exit,
+  // then cancel while the run may or may not have settled. Either way process.kill is not called.
+  await new Promise((res) => setTimeout(res, 400));
+  const kill = process.kill;
+  let calls = 0;
+  process.kill = ((...args: Parameters<typeof kill>) => { calls++; return kill(...args); }) as typeof kill;
+  try {
+    run.cancel();
+    const r = await run;
+    assert.equal(r.status, 'exited');
+  } finally {
+    process.kill = kill;
+  }
+  assert.equal(calls, 0, 'cancel after exit under a scope signalled the process group');
+});

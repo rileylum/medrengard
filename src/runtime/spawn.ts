@@ -193,7 +193,8 @@ export function spawnRuntime(opts: SpawnOptions): Run {
     if (settled || status === 'cancelled' || status === 'overflow') return;
     if (exited) {
       // The child is already dead on its own; only a descendant on the pipe can be holding us.
-      killTree();
+      // The child is reaped, so under a scope its pgid is not ours to signal; cgroup.kill is.
+      if (cgroup) killScope(); else signalGroup('SIGKILL');
       dropPipes();
       return;
     }

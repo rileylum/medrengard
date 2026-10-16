@@ -172,3 +172,44 @@ for (const spec of [claude, pi]) {
     store.close();
   });
 }
+
+// Ticket 04-e: the 04-d adversarial findings.
+for (const spec of [claude, pi]) {
+  test(`${spec.name}: an unclosed fence followed by 100 000 blank lines is rejected in linear time`, async () => {
+    const started = Date.now();
+    const o = await start(spec, 'echo-prompt', 'Here is the claim:\n```json\n' + ' \n'.repeat(100_000) + 'oops');
+    const took = Date.now() - started;
+    assert.deepEqual(o, { status: 'failed', reason: 'no claim block in reply' });
+    assert.ok(took < 2000, `took ${took}ms including the fixture spawn`);
+    const closed = await start(spec, 'echo-prompt', '```json\n' + ' \n'.repeat(100_000) + '{"head":"H9","artifacts":[]}\n```');
+    assert.deepEqual((closed as any).claim, { head: 'H9', artifacts: [] });
+  });
+
+  test(`${spec.name}: fences with no newline after the tag or before the closer are accepted`, async () => {
+    for (const reply of ['```json{"head":"H3","artifacts":[]}```', 'ok\n```json\n{"head":"H3","artifacts":[]}```\n', '```json {"head":"H3","artifacts":[]}\n```']) {
+      assert.deepEqual((await start(spec, 'echo-prompt', reply) as any).claim, { head: 'H3', artifacts: [] }, JSON.stringify(reply));
+    }
+  });
+}
+
+test('a run ID that is not a valid unit-name fragment is failed before anything is spawned under cgroup isolation', async (t) => {
+  if (!hasUserSystemd) return void t.skip('no user systemd');
+  const marker = join(dir, 'bad-unit-marker.txt');
+  const adapter = cliAdapter({ ...claude, command: process.execPath, args: ['-e', `require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")`] });
+  for (const runId of ['r 1', 'é', 'a/b', 'x'.repeat(201)]) {
+    const o = await adapter.start({ ...req(), runId }, new AbortController().signal);
+    assert.equal(o.status, 'failed', runId);
+    assert.match((o as any).reason, /run ID .* unit name/, runId);
+  }
+  assert.equal(existsSync(marker), false, 'a child was spawned for an invalid run ID');
+});
+
+test('a reason cut at 1 KB is well-formed even when the cut lands inside a surrogate pair', async () => {
+  // claude's result text, 900 ASCII then astral characters, lands as the is_error reason.
+  const reply = 'a'.repeat(900) + '\u{1F600}'.repeat(200);
+  const adapter = cliAdapter({ ...claude, command: process.execPath, args: ['-e', `process.stdout.write(JSON.stringify({ type: 'result', is_error: true, result: ${JSON.stringify(reply)} }))`] }, offline);
+  const o = await adapter.start(req(), new AbortController().signal);
+  assert.equal(o.status, 'failed');
+  assert.ok((o as any).reason.isWellFormed(), 'reason has a lone surrogate');
+  assert.ok((o as any).reason.length <= 1024);
+});
