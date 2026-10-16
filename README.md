@@ -20,6 +20,18 @@ Node 24 or later, no dependencies.
 npm test
 ```
 
+## Use
+
+Write a job file naming the work ID, the ticket, the repository, its checks and the runtimes. Then:
+
+```
+node src/main.ts job.json                # run the job to AWAITING_ACCEPTANCE or ESCALATED
+node src/main.ts accept job.json <sha>   # accept the full candidate SHA the run printed
+node src/main.ts cancel job.json         # cancel the open cycle, else every ESCALATED one
+```
+
+A work ID runs again once its cycle is accepted or cancelled. Merging stays with you: the run and `accept` print the merge line. A `cancel` of an open child cycle leaves its ESCALATED parent; a second `cancel` clears it.
+
 ## Layout
 
 - `src/lifecycle.ts`: pure state machine for one delivery cycle.
