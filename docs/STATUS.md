@@ -32,6 +32,8 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 2026-10-16: `npm test` on `c8e7cf4` (05-b), owner-run — 129 tests, 108 pass, 16 skipped, 5 todo, 0 fail. Live claude run with the 05-b grant: implementer-run only, VERIFYING in 19.6 s. Standard 1 PASS, 4 notes. Adversarial PASS, 1 minor (project settings file inside the worktree joins the grant) and 5 notes, parked.
 2026-10-16: `npm test` on `18421ff` (05-a), owner-run — 126 tests, 105 pass, 16 skipped, 5 todo, 0 fail. Adversarial FAIL: two majors (a throw after `open` strands a QUEUED cycle and blocks the work; `git log --output` and `git diff --output` write outside the worktree under the claude allow list); see the ticket log.
 
+2026-10-16: `npm test` on `5d1a34b` (06-a), owner-run — 135 tests, 114 pass, 16 skipped, 5 todo, 0 fail. Standard review 1 launched.
+
 ## Next action
 
 Step 6 in progress (A-028). Ticket 06-a (`feat/06-a-verification`): `src/verify.ts` runs the job's declared checks in a fresh detached checkout of the candidate, writes evidence under `<runsDir>/evidence/<head>/` and appends `verification`. 06-b (reviewer runs) is drafted and follows after 06-a's standard PASS. The 02-a busy timeout waits for the first ticket with two processes on one database.
