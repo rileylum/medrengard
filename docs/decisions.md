@@ -25,6 +25,7 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | D-017 | DECIDED (A-016) | Design documents are not put through adversarial review on their own. The 2+1 rule applies to code with executable tests |
 | D-018 | DECIDED (A-017) | Plan steps are broken into Fast or Design tickets and delivered per [workflow.md](workflow.md) |
 | D-019 | DECIDED (A-035) | Candidate code runs inside a sandbox chosen by backend name. Bubblewrap first; Docker, VMs and cloud later behind the same interface. No VM or cloud backend for now; the tool stays agnostic |
+| D-020 | DECIDED (A-042) | Malicious code stays in scope, but the defences need not be airtight. Each adversarial finding is weighed by risk, and the recommendation can be a merge with the risk accepted. An accepted risk is recorded in [work/accepted-risks.md](work/accepted-risks.md) |
 
 ## Open
 
@@ -37,6 +38,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | O-009 | Staging and deployment ownership | Release tracking |
 
 ## Approval history
+
+### A-042 — 2026-10-17 — Weigh adversarial findings by risk; record accepted risks
+
+Owner, asked whether to record the rule offered after the 08-e adversarial FAIL (park findings that need deliberately hostile code and do no damage by default): “No rule, we definitely want to consider malicious code - but I don't think we need to make something airtight and waste development time. So you should weigh up the risk when these recommendations come through and potentially merge accepting them. We should probably capture them somewhere in that case though”.
+
+Effect: no default parking rule. Malicious code stays in scope, ranked after damage and leaving the remit (A-037). When an adversarial review fails, the implementer session weighs each finding's risk and recommends one of three outcomes: a fix ticket, parking against a named ticket, or a merge with the risk accepted. The owner still decides. A risk the owner accepts goes to [work/accepted-risks.md](work/accepted-risks.md), with the reason and the event that would reopen it. Unlike a parked line, an accepted risk does not gate any ticket.
 
 ### A-041 — 2026-10-16 — Fix ticket for the 08-e adversarial FAIL
 
