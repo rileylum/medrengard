@@ -62,6 +62,7 @@ Plan step 8 (sandbox, A-035 to A-037), 08-a and 08-b merged by the owner as `f5e
 2026-10-16: `npm test` on `190a372` (08-a, code as `21733ae`), run by the implementer session at the owner's request — 187 tests, 163 pass, 19 skipped, 5 todo, 0 fail. Not independent.
 2026-10-16: `npm test` on `798eb1c` (08-a, standard 1 minor fixed), implementer-run, not independent — 188 tests, 164 pass, 19 skipped, 5 todo, 0 fail. Standard review 1 PASS on `21733ae`.
 
+2026-10-16: `npm test` on `4991a9e` (08-d), implementer-run, not independent — 215 tests, 191 pass, 19 skipped, 5 todo, 0 fail. `RUNTIME_SPIKE=1` live reviewers (claude, pi) in bwrap recorded verdicts; 2 paid calls.
 2026-10-16: `npm test` on `cfdcc16` (08-c), implementer-run, not independent — 208 tests, 184 pass, 19 skipped, 5 todo, 0 fail. `RUNTIME_SPIKE=1` live developer runs (claude, pi) in bwrap reached VERIFYING; 4 paid calls in all, including 2 diagnostics.
 
 ## Next action
@@ -70,4 +71,4 @@ Plan step 8 (sandbox, A-035 to A-037), 08-a and 08-b merged by the owner as `f5e
 2. Done: the runtime probe ran (implementer session, at the owner's request): claude runs with its config read-only; pi needs its config writable but runs with a temporary overlay. [08-c-findings.md](work/08-c-findings.md).
 3. Done: the owner answered the 08-c question round, “Take all, go” (A-038). 08-c-developer-sandbox is implemented on `feat/08-c-developer-sandbox` at code SHA `cfdcc16`: the developer runs in bwrap in its own clone, and its branch comes back through a sandboxed `upload-pack`. Live claude and pi developer runs reached VERIFYING inside bwrap.
 4. Standard review 1 on `cfdcc16`: PASS (2 minors, already logged as mutation survivors). Adversarial review on `cfdcc16`: PASS, 1 minor (the per-run `/tmp` cleanup can throw on a chain past PATH_MAX), found by reading; the reviewer could not write probes. Owner: “Merge and park it” (A-039); the owner merges `feat/08-c-developer-sandbox` on return. The minor is parked against 08-d.
-5. 08-d-reviewer-sandbox on `feat/08-d-reviewer-sandbox`, stacked on 08-c: tests first. 08-d-reviewer-sandbox is READY (A-038) and comes next, stacked on 08-c.
+5. 08-d-reviewer-sandbox on `feat/08-d-reviewer-sandbox`, stacked on 08-c, implemented at `4991a9e`. Reviewers run in bwrap with the checkout read-only. The 08-b gitlink, dangling-symlink, whitespace and deep-chain lines, the 06-c pi line and the 08-c minor are covered. Live claude and pi reviewers in bwrap recorded verdicts. Standard review 1 is running. 08-d-reviewer-sandbox is READY (A-038) and comes next, stacked on 08-c.
