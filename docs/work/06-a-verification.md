@@ -80,3 +80,4 @@ Verification: `npm test`, run by the owner on the reviewed SHA. `lazy-review` on
 
 ## Log
 - 2026-10-16 — A-028 "take all". Branch `feat/06-a-verification`.
+- 2026-10-16 — tests first (`tests/verify.test.ts`, six tests, red without the module), then `src/verify.ts`; `Job.checks` added; `checkScopes` exported from `cli-adapter.ts`; the `git` helper moved from `developer.ts` to `src/git.ts` for both callers (lazy-review). Deviations from the design note: `VerifyOptions.graceMs` added so the timeout and overflow tests finish quickly; a stale `-verify` directory deleted by hand is pruned before the new checkout. Mutation checks on `37a1940` and `7b25bf6`, one replacement each, restored after: 14 run, all 14 fail a test. Implementer-run `npm test`: 135 tests, 114 pass, 16 skipped (live), 5 todo, 0 fail. Awaiting owner-run tests, then standard review 1.
