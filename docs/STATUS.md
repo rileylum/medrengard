@@ -50,6 +50,8 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 2026-10-16: `npm test` on `6261150` (07-a, standard 1 fixed), owner-run — 155 tests, 132 pass, 18 skipped, 5 todo, 0 fail. Standard review 2 PASS (4 notes; one test note closed in 76a84cd).
 2026-10-16: `npm test` on `76a84cd` (07-a), owner-run — 155 tests, 132 pass, 18 skipped, 5 todo, 0 fail. Adversarial PASS (1 minor parked for 07-b).
 
+2026-10-16: `npm test` on `f3b4e12` (07-b), owner-run — 165 tests, 141 pass, 19 skipped, 5 todo, 0 fail; live `main.ts` AWAITING_ACCEPTANCE in 49.7 s. Standard review 1 PASS (1 minor, documented). Adversarial FAIL (1 major: a check running git inside the verify checkout hides a rewritten tracked file from the `tree` check and review's guard; 2 minors; see the ticket log).
+
 ## Next action
 
-Step 7: 07-a merged. 07-b implemented on `feat/07-b-end-to-end-loop` at `f3b4e12` (`src/run.ts`, `src/main.ts`, `tree: FAIL` in verify, findings coercion); live end to end passed once (claude, 54 s). Owner runs `npm test` and the live run on it, then standard review 1.
+Owner decides on the 07-b adversarial FAIL on `f3b4e12`: a fix ticket 07-c stacked on 07-b (reset or refuse index flags before the `tree` status, the two minors, the `.git` pointer swap parked with the sandbox lines), or merge with the FAIL on record and park all three against the sandbox ticket.
