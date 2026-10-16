@@ -100,7 +100,9 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
  */
 function removeTmp(tmp: string): void {
   spawnSync('chmod', ['-R', 'u+rwX', '--', tmp]);
-  spawnSync('rm', ['-rf', '--', tmp]);
+  const rm = spawnSync('rm', ['-rf', '--', tmp], { encoding: 'utf8' });
+  // A trace for the owner, so a growing runsDir has a reason.
+  if (rm.status !== 0) console.error(`could not remove ${tmp}: ${rm.error?.message ?? rm.stderr.trim()}`);
 }
 
 // Fail at construction, not on the first run: a machine without a user systemd is a setup

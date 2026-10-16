@@ -313,7 +313,11 @@ test('sandboxed adapter: a reviewer run cannot write its cwd; a developer run ca
   mkdirSync(cwd);
   writeFileSync(join(cwd, 'README.md'), 'tracked\n');
   const probe = join(import.meta.dirname, 'fixtures', 'sandbox-probe.ts');
-  const spec: CliSpec = { ...claude, command: process.execPath, args: [probe, `read:readme=${join(cwd, 'README.md')}`, `cwd=${join(cwd, 'README.md')}`, `tmp=/tmp/x`], config: { read: [], overlay: [] } };
+  // Outside the scratch root: an escaped run (or a red run with no sandbox) leaves them on the host.
+  const outside = { home: join(process.env.HOME!, `sf-review-escape-${process.pid}`), varTmp: '/var/tmp/sf-review-escape' };
+  for (const f of Object.values(outside)) rmSync(f, { force: true });
+  const targets = { cwd: join(cwd, 'README.md'), tmp: '/tmp/x', runs: join(root, 'sibling'), ...outside };
+  const spec: CliSpec = { ...claude, command: process.execPath, args: [probe, `read:readme=${join(cwd, 'README.md')}`, ...Object.entries(targets).map(([k, v]) => `${k}=${v}`)], config: { read: [], overlay: [] } };
   const adapter = cliAdapter(spec, { ...offline, sandbox: { backend: 'bwrap', read: [dirname(dirname(realpathSync(process.execPath))), import.meta.dirname] } });
   try {
     for (const [role, writes] of [['standard_reviewer', false], ['adversarial_reviewer', false], ['developer', true]] as const) {
@@ -325,10 +329,15 @@ test('sandboxed adapter: a reviewer run cannot write its cwd; a developer run ca
       assert.equal(r.cwd === 'ok', writes, role);
       assert.equal(readFileSync(join(cwd, 'README.md'), 'utf8'), writes ? 'x\n' : 'tracked\n', role);
       assert.equal(r.tmp, 'ok', role);
+      for (const k of ['runs', 'home', 'varTmp'] as const) {
+        assert.notEqual(r[k], 'ok', `${role} ${k}`);
+        assert.ok(!existsSync(targets[k]), `${role} ${k}`);
+      }
     }
     assert.deepEqual(readdirSync(root), ['checkout']);
   } finally {
     rmSync(root, { recursive: true, force: true });
+    for (const f of Object.values(outside)) rmSync(f, { force: true });
   }
 });
 
