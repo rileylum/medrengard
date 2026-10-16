@@ -1,0 +1,91 @@
+# 05-a — Real developer run in a scratch repository
+
+Route: Design. The developer-run loop is the seam step 6 (verification, reviews) and step 7 (end to end) build on; where the commit check sits and how tools are granted have real alternatives.
+
+Goal: one READY ticket in a scratch Git repository, run through `execute` with the real `claude` or `pi` adapter, produces a commit in an isolated worktree, and the cycle reaches VERIFYING only if that commit exists on the cycle's branch.
+
+## Design note
+
+### Seam
+
+One module, `src/developer.ts`. It owns the cycle from open to the first developer outcome: it opens the cycle, creates the worktree, assembles the prompt, calls `execute`, and hands back the Cycle the store replayed. Callers (step 7's loop, the tests) learn one function.
+
+```ts
+export interface Job {
+  workId: string;
+  /** The contract: ticket text as the developer sees it. */
+  ticket: string;
+  /** Path of the repository to work in; the worktree is made from it. */
+  repo: string;
+  /** Ref to start from; resolved to a SHA at open. Default HEAD. */
+  base?: string;
+  /** Required when the work already has an ESCALATED cycle. */
+  parentCycleId?: string;
+}
+
+export interface DevelopOptions {
+  deadlineMs: number;
+  /** Where worktrees live. Default /var/tmp/software_factory/runs. */
+  runsDir?: string;
+}
+
+/** Open a cycle, run the developer once, return the replayed Cycle and where its branch lives. */
+export function develop(store: EventStore, adapter: Adapter, job: Job, opts: DevelopOptions): Promise<{ cycle: Cycle; worktree: string; branch: string }>;
+```
+
+Behind it, in order:
+
+1. `git -C repo rev-parse --verify <base>^{commit}` gives the base SHA; a ref that does not resolve throws before anything is opened.
+2. `store.open(cycleId, workId, parentCycleId)` with `cycleId = randomUUID()`. `open` now enforces the 02-b parked line: the parent must exist and be ESCALATED, and no other cycle for the same work may be open (QUEUED to AWAITING_ACCEPTANCE). Both throw; nothing is launched.
+3. `git -C repo worktree add -b sf/<cycleId> <runsDir>/<cycleId> <baseSha>`. One worktree per cycle, not per run: the Candidate is `repo, branch, head, base`, and a fix run after a standard FAIL continues on the same branch. The worktree is not deleted by this ticket; the owner inspects it, and the reconcile ticket owns cleanup. Tests delete their own.
+4. Prompt: the ticket text, then the working rules (commit the work on the current branch, do not push, do not change branch), then the claim instruction with the exact fence the live tests already use: end the reply with ```` ```json {"head": "<full commit sha>", "artifacts": ["<paths>"]} ``` ````. A template string in `developer.ts`; no template engine.
+5. `execute(store, cycleId, adapter, { role: 'developer', prompt, cwd: worktree }, { deadlineMs, base: baseSha, accept })`.
+
+**Commit check.** The spec's DEVELOPING → VERIFYING guard is "result valid, commit exists, run matches". `apply` checks the first; the third is the run ID. "Commit exists" needs Git, which the pure lifecycle cannot run, so it goes into the controller's receive path: `ExecuteOptions` grows `accept?: (claim: unknown) => string | undefined`. `receive` calls it after `plain()` and before `append`; a returned string is the reason for a `run_failed` event (the cycle escalates with `commit <sha> is not on <branch>`, the same path as a malformed result). `develop` supplies an `accept` that requires `head` to be a full SHA that `git -C worktree cat-file -e <head>^{commit}` finds, that `git merge-base --is-ancestor <baseSha> <head>` holds, that `head` is the branch tip, and that `head != baseSha` (spec evidence rule: the diff is non-empty). All `spawnSync`, so `receive` stays synchronous.
+
+**`runtime` and `model` on the Run.** `Adapter` regains `name: string` (dropped in 04-d until a reader existed; this is the reader). The `claim` event gains `runtime: string` and the lifecycle `Run` carries it. `isEvent` requires it; `apply` copies it. `model` is left off the event until something sets it: neither spec passes `--model` today, so the value would be the CLI's default and unknown to the controller. One new scenario in `tests/scenarios.ts` covers the field; existing scenarios gain `runtime: 'fake'` on their claims.
+
+**Tools.** Developer runs need tools on, so `develop` does not use the specs' default `args`. The caller passes an adapter already configured; this ticket ships two ready-made specs in `cli-adapter.ts` beside the tool-less ones:
+
+- `claudeDeveloper(worktree)`: `-p --output-format json --no-session-persistence --allowedTools Read Glob Grep "Edit(<worktree>/**)" "Write(<worktree>/**)" "Bash(git add:*)" "Bash(git commit:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)" "Bash(git rev-parse:*)"`. A function of the worktree because the Edit and Write rules are path-scoped. Anything outside the list is denied and the run fails on a missing claim or a missing commit; no permission prompt is possible under `-p`.
+- `piDeveloper`: `-p --mode json --no-session --tools read,edit,write,bash`. `pi` has no path or command scoping: `bash` is unrestricted inside the scope. The containment is the scratch repository, the worktree cwd and the cgroup kill. Recorded as a known limit.
+
+Rejected: `--dangerously-skip-permissions` for claude (no reason to widen beyond the list for a scratch repository), and having the controller make the commit after the developer edits (removes git from the policy, but then the developer cannot name the head in its claim and the spec's "developer result must name the commit" has nothing to check).
+
+### Alternatives
+
+Seam:
+1. **`develop()` owns open, worktree, prompt and execute** (chosen). One entry point; the step 7 loop and the tests cross the same seam; the worktree and prompt have no second adapter, so they get no seam of their own.
+2. **A `Workspace` module (worktree add, head, remove) plus glue in the caller.** Smaller functions, but open, prompt and execute then recur in every caller and test. Rejected by the deletion test.
+
+Commit check:
+1. **`accept` option on `execute`, run inside `receive`** (chosen). The controller decides; a rejected claim is `run_failed` like every other invalid result; the check is a function so the fake adapter tests can exercise the path offline.
+2. **A wrapping adapter that checks the commit before returning the claim.** Keeps the controller untouched, but then an adapter decides whether a claim is valid, against the first rule in AGENTS.md.
+3. **Check after `execute` returns and append `head_changed` or `cancel`.** The cycle is already in VERIFYING by then; the result would have been recorded as valid. Rejected.
+
+Worktree:
+1. **Per cycle, branch `sf/<cycleId>`, kept** (chosen). Matches the Candidate record; a fix run continues the branch.
+2. **Per run, detached at the base.** Simpler naming, but a fix run would start from a fresh checkout of the base and lose the first run's commit.
+
+### Parked lines
+
+| Line | How 05-a covers it |
+| --- | --- |
+| 02-b minor, `open` guards | `EventStore.open` throws when `parentCycleId` names a cycle that is missing or not ESCALATED, and when another cycle for the same `workId` is open; tests in `store.test.ts` |
+| 02-a notes, busy timeout | Not touched: one process on the database in this ticket. Stays parked for step 6 |
+
+## Done when
+
+- `develop` against a scratch repository (`git init`, one commit) and the fixture CLI case `commit` (writes a file in its cwd, commits it, replies with the real SHA) leaves the cycle in VERIFYING with `candidate.head` equal to the worktree's branch tip and `runs[0].runtime` set; verified by `tests/developer.test.ts` through `store.load()`, offline.
+- A claim whose `head` is not a commit, is not on the branch, is not the tip, or equals the base makes the cycle ESCALATED with a `run_failed` whose reason names the SHA; verified offline with fixture cases and with the fake adapter through `execute` and `accept`.
+- The worktree is `<runsDir>/<cycleId>` on branch `sf/<cycleId>`, created from the resolved base SHA, and `repo` itself is unchanged (`git status --porcelain` empty, HEAD unmoved); verified by test.
+- `store.open` rejects a missing or non-ESCALATED parent and a second open cycle for one work item; a child of an ESCALATED cycle opens; verified by `store.test.ts`.
+- The `claim` event carries `runtime`; `Run` exposes it; a new scenario in `tests/scenarios.ts` passes through `lifecycle.test.ts` and `store.test.ts` replay.
+- `RUNTIME_SPIKE=1 npm test` runs one developer run per real CLI with `claudeDeveloper` and `piDeveloper` on a ticket of the form "create FILE with CONTENT and commit it" and reaches VERIFYING; two live runs, each with a 120 s deadline, worktrees under a temporary `runsDir` that the test deletes.
+- `npm test` offline adds no skipped tests beyond the two live ones and spawns neither `claude` nor `pi`.
+
+Constraints: zero dependencies; `node:child_process` (`spawnSync`) for Git, `node:fs` for directories; `execute`, `cliAdapter` and `EventStore` as they are, plus the `accept` option, the `name` field and the `open` guards. Worktrees under `/var/tmp`, never `/tmp`.
+Non-goals: verification checks (step 6), reviewers, the fix run after a standard FAIL (the branch is ready for it; the loop is step 7), deleting worktrees, `model` on the Run, retries, two processes on one database.
+Verification: `npm test` and `RUNTIME_SPIKE=1 npm test`, run by the owner on the reviewed SHA. `lazy-review` on the diff before the standard review.
+
+## Log
