@@ -339,4 +339,8 @@ test('accept sees plain data and is not consulted for failed or cancelled runs; 
   c = await execute(fresh(), 'c1', fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } }), { ...req, role: 'developer' }, { deadlineMs: 5000, base: 'B1', accept: () => { throw new Error('git exploded'); } });
   assert.equal(c.stage, 'ESCALATED');
   assert.match(c.escalation ?? '', /accept threw: Error: git exploded/);
+  // 05-b: a non-string return is a refusal with a reason the store can write, not an exception.
+  c = await execute(fresh(), 'c1', fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } }), { ...req, role: 'developer' }, { deadlineMs: 5000, base: 'B1', accept: (() => 42) as unknown as () => string });
+  assert.equal(c.stage, 'ESCALATED');
+  assert.match(c.escalation ?? '', /accept refused the claim: 42/);
 });

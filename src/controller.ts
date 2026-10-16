@@ -22,6 +22,12 @@ export interface ExecuteOptions {
 // setTimeout silently clamps anything outside this range to 1 ms, which would time every run out.
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
+/** Throws for a deadline execute would refuse. Exported so a caller can fail before it opens anything. */
+export function checkDeadline(deadlineMs: number): void {
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= 0 || deadlineMs > MAX_TIMEOUT_MS)
+    throw new Error(`deadlineMs must be a positive integer at or below ${MAX_TIMEOUT_MS}, got ${String(deadlineMs)}`);
+}
+
 const REVIEW_STAGE: Partial<Record<Role, Stage>> = { standard_reviewer: 'STANDARD_REVIEW', adversarial_reviewer: 'ADVERSARIAL_REVIEW' };
 
 /** Mint a run ID, claim the cycle for a developer, start the adapter, and record the outcome. */
@@ -33,8 +39,7 @@ export async function execute(
   opts: ExecuteOptions,
 ): Promise<Cycle> {
   const { deadlineMs } = opts;
-  if (!Number.isSafeInteger(deadlineMs) || deadlineMs <= 0 || deadlineMs > MAX_TIMEOUT_MS)
-    throw new Error(`deadlineMs must be a positive integer at or below ${MAX_TIMEOUT_MS}, got ${String(deadlineMs)}`);
+  checkDeadline(deadlineMs);
   const runId = randomUUID();
   if (req.role === 'developer') {
     if (!opts.base) throw new Error('developer run needs a base SHA');
@@ -78,8 +83,10 @@ const SETTLED: Stage[] = ['ESCALATED', 'ACCEPTED', 'CANCELLED'];
 // one well-formed run_failed, never as an exception out of receive.
 function refusal(accept: NonNullable<ExecuteOptions['accept']>, claim: unknown): string | undefined {
   try {
-    const r = accept(claim);
-    return r === undefined ? undefined : r || 'accept refused the claim';
+    const r: unknown = accept(claim);
+    if (r === undefined) return undefined;
+    // Types are stripped, not checked: a non-string reason would fail isEvent and escape as a throw.
+    return typeof r === 'string' && r ? r : `accept refused the claim: ${describe(r)}`;
   } catch (err) {
     return `accept threw: ${describe(err)}`;
   }

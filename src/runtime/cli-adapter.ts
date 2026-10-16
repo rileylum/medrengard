@@ -162,14 +162,16 @@ export const pi: CliSpec = {
  * Developer runs need tools on (05-a). Claude's allow list is scoped to the worktree: Edit and
  * Write by path, Bash to the git subcommands a commit needs. Under -p nothing can prompt, so a
  * tool outside the list is denied and the run ends on a missing commit or claim. A function of
- * the worktree because the path rules are absolute; develop() calls it once the worktree exists.
+ * the worktree because the path rules are absolute. Only `project` settings load: the owner's
+ * user and local allow rules and hooks would otherwise join this grant (05-a adversarial).
  */
 export function claudeDeveloper(worktree: string): CliSpec {
   // A single leading slash in a path rule is relative to the project; `//` is the filesystem root.
   // Probed 2026-10-16: `Write(/var/tmp/.../**)` denied every write, `Write(//var/tmp/.../**)` allows them.
+  // No `git log` or `git diff`: both take --output=<path> and write anywhere (05-a adversarial).
   const allowed = ['Read', 'Glob', 'Grep', `Edit(/${worktree}/**)`, `Write(/${worktree}/**)`,
-    ...['add', 'commit', 'status', 'diff', 'log', 'rev-parse'].map((sub) => `Bash(git ${sub}:*)`)];
-  return { ...claude, args: ['-p', '--output-format', 'json', '--no-session-persistence', '--allowedTools', ...allowed] };
+    ...['add', 'commit', 'status', 'rev-parse'].map((sub) => `Bash(git ${sub}:*)`)];
+  return { ...claude, args: ['-p', '--output-format', 'json', '--no-session-persistence', '--setting-sources', 'project', '--allowedTools', ...allowed] };
 }
 
 /** pi has no path or command scoping: bash is unrestricted inside the scope. The worktree, the scratch repository and the cgroup kill are the containment. */

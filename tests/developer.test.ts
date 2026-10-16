@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { join } from 'node:path';
 import { EventStore } from '../src/store.ts';
 import { claude, claudeDeveloper, cliAdapter, pi, piDeveloper, type CliSpec } from '../src/runtime/cli-adapter.ts';
-import { develop, type Job } from '../src/developer.ts';
+import { develop, type DeveloperAdapter, type Job } from '../src/developer.ts';
 import { fakeAdapter } from './fake-adapter.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
@@ -93,8 +93,8 @@ test('develop refuses a second open cycle for the work and an unknown base befor
   const { repo, store, runsDir } = scratch();
   const adapter = fakeAdapter('hang');
   const first = develop(store, adapter, job(repo), { deadlineMs: 500, runsDir });
-  // Wait for the first run to be claimed, then the second must be refused by open, not by apply.
-  await new Promise((r) => setTimeout(r, 100));
+  // Wait for the first run to start, then the second must be refused by open, not by apply.
+  while (adapter.requests.length === 0) await new Promise((r) => setTimeout(r, 5));
   await assert.rejects(develop(store, fakeAdapter('hang'), job(repo), { deadlineMs: 500, runsDir }), /already has an open cycle/);
   assert.equal(readdirSync(runsDir).length, 1);
   assert.equal(adapter.requests.length, 1);
@@ -116,6 +116,54 @@ test('a worktree that cannot be made cancels the cycle it opened, so the work is
   rmSync(runsDir);
   const { cycle } = await develop(store, fake(claude), job(repo), { deadlineMs: 20_000, runsDir });
   assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
+  store.close();
+});
+
+test('a bad deadline or a throwing adapter factory leaves no open cycle and no worktree behind (05-b)', async () => {
+  const { repo, store, runsDir } = scratch();
+  await assert.rejects(develop(store, fake(claude), job(repo), { deadlineMs: 0, runsDir }), /deadlineMs/);
+  await assert.rejects(develop(store, () => { throw new Error('no user systemd'); }, job(repo), { deadlineMs: 5000, runsDir }), /no user systemd/);
+  assert.ok(!existsSync(runsDir) || readdirSync(runsDir).length === 0);
+  const { cycle } = await develop(store, fake(claude), job(repo), { deadlineMs: 20_000, runsDir });
+  assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
+  store.close();
+});
+
+test('a relative runsDir is resolved against the process cwd, and the repository stays clean (05-b)', async () => {
+  const { repo, store, base } = scratch();
+  const rel = `sf-rel-${process.pid}-${n}`;
+  try {
+    const { cycle, worktree } = await develop(store, fake(claude), job(repo), { deadlineMs: 20_000, runsDir: rel });
+    assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
+    assert.equal(worktree, join(process.cwd(), rel, cycle.cycleId));
+    assert.ok(existsSync(join(worktree, 'done.txt')));
+    assert.equal(git(repo, 'status', '--porcelain'), '');
+    assert.equal(git(repo, 'rev-parse', 'HEAD'), base);
+  } finally {
+    git(repo, 'worktree', 'prune');
+    rmSync(rel, { recursive: true, force: true });
+    store.close();
+  }
+});
+
+test('a git diff that errors is a refusal naming the exit code, not a pass (05-b)', async () => {
+  const { repo, store, runsDir } = scratch();
+  // A developer that commits, then makes the base tree unreadable: the claim names the real tip,
+  // so the ancestor check passes and only the diff step can refuse.
+  const corrupt: DeveloperAdapter = (wt) => ({
+    name: 'corrupt',
+    async start() {
+      writeFileSync(join(wt, 'done.txt'), 'x\n');
+      git(wt, 'add', 'done.txt');
+      git(wt, 'commit', '-q', '-m', 'done');
+      const tree = git(wt, 'rev-parse', 'HEAD~1^{tree}');
+      rmSync(join(repo, '.git', 'objects', tree.slice(0, 2), tree.slice(2)));
+      return { status: 'completed', claim: { head: git(wt, 'rev-parse', 'HEAD'), artifacts: ['done.txt'] } };
+    },
+  });
+  const { cycle } = await develop(store, corrupt, job(repo), { deadlineMs: 20_000, runsDir });
+  assert.equal(cycle.stage, 'ESCALATED');
+  assert.match(cycle.escalation ?? '', /git diff .* failed with exit 128/);
   store.close();
 });
 
@@ -141,6 +189,9 @@ test('developer specs: claude gets a worktree-scoped allow list, pi gets its too
   assert.ok(c.args.includes('--allowedTools'));
   assert.ok(c.args.includes('Edit(//var/tmp/x/wt/**)'), c.args.join(' '));
   assert.ok(c.args.includes('Bash(git commit:*)'));
+  // 05-b: --output=<path> on log and diff writes anywhere; the owner's settings must not join the grant.
+  assert.ok(!c.args.some((a) => /git (log|diff)/.test(a)), c.args.join(' '));
+  assert.deepEqual(c.args.slice(c.args.indexOf('--setting-sources'), c.args.indexOf('--setting-sources') + 2), ['--setting-sources', 'project']);
   assert.ok(!c.args.includes('--tools'));
   assert.ok(!c.args.includes('--dangerously-skip-permissions'));
   assert.equal(piDeveloper.name, 'pi');

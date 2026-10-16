@@ -4,9 +4,9 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
-import { execute } from './controller.ts';
+import { checkDeadline, execute } from './controller.ts';
 import type { Cycle } from './lifecycle.ts';
 import type { EventStore } from './store.ts';
 
@@ -49,26 +49,31 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
   const base = git(job.repo, 'rev-parse', '--verify', '--end-of-options', `${job.base ?? 'HEAD'}^{commit}`);
   const cycleId = randomUUID();
   const branch = `sf/${cycleId}`;
-  const runsDir = opts.runsDir ?? DEFAULT_RUNS_DIR;
+  // Absolute: git -C repo would resolve a relative path against the repository, mkdir against cwd.
+  const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
   const worktree = join(runsDir, cycleId);
+  // Everything that can throw without Git or the store goes before open, so a setup failure
+  // (no user systemd for cliAdapter, a bad deadline) leaves nothing to clean up.
+  checkDeadline(opts.deadlineMs);
+  const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
   store.open(cycleId, job.workId, job.parentCycleId);
   try {
     mkdirSync(runsDir, { recursive: true });
     git(job.repo, 'worktree', 'add', '-q', '-b', branch, worktree, base);
+    const cycle = await execute(
+      store,
+      cycleId,
+      developer,
+      { role: 'developer', prompt: prompt(job.ticket), cwd: worktree },
+      { deadlineMs: opts.deadlineMs, base, accept: (claim) => refuse(worktree, branch, base, claim) },
+    );
+    return { cycle, worktree, branch };
   } catch (err) {
-    // A QUEUED cycle with no run would hold the one-open-cycle guard against this work until the
-    // owner cancelled it by hand; an infrastructure failure before any run is ours to close.
-    store.append(cycleId, { type: 'cancel' });
+    // An open cycle with no outcome would hold the one-open-cycle guard against this work until
+    // the owner cancelled it by hand; a failure that never produced a run outcome is ours to close.
+    try { store.append(cycleId, { type: 'cancel' }); } catch { /* the store is the error; the original wins */ }
     throw err;
   }
-  const cycle = await execute(
-    store,
-    cycleId,
-    typeof adapter === 'function' ? adapter(worktree) : adapter,
-    { role: 'developer', prompt: prompt(job.ticket), cwd: worktree },
-    { deadlineMs: opts.deadlineMs, base, accept: (claim) => refuse(worktree, branch, base, claim) },
-  );
-  return { cycle, worktree, branch };
 }
 
 /**
@@ -85,14 +90,17 @@ function refuse(worktree: string, branch: string, base: string, claim: unknown):
   if (head !== tip) {
     return isCommit(worktree, head) ? `commit ${head} is not the tip of ${branch} (${tip})` : `commit ${head} is not the full SHA of a commit on ${branch} (tip ${tip})`;
   }
-  if (!gitOk(worktree, 'merge-base', '--is-ancestor', base, head)) return `commit ${head} is not descended from the base ${base}`;
-  if (gitOk(worktree, 'diff', '--quiet', base, head)) return `commit ${head} has no changes against the base ${base}`;
+  if (gitStatus(worktree, 'merge-base', '--is-ancestor', base, head) !== 0) return `commit ${head} is not descended from the base ${base}`;
+  // --quiet answers in the exit code: 0 same, 1 different, anything else an error (a missing object is 128).
+  const diff = gitStatus(worktree, 'diff', '--quiet', base, head);
+  if (diff === 0) return `commit ${head} has no changes against the base ${base}`;
+  if (diff !== 1) return `commit ${head}: git diff ${base} ${head} failed with exit ${diff}`;
   return undefined;
 }
 
-// Exit status as a boolean, for the git subcommands whose answer is their exit code.
-function gitOk(cwd: string, ...args: string[]): boolean {
-  return spawnSync('git', args, { cwd, stdio: 'ignore' }).status === 0;
+// Exit status for the git subcommands whose answer is their exit code; null if git did not run.
+function gitStatus(cwd: string, ...args: string[]): number | null {
+  return spawnSync('git', args, { cwd, stdio: 'ignore' }).status;
 }
 
 // Full SHA only: an abbreviation would resolve here and name a commit the claim did not.

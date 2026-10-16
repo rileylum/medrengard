@@ -55,8 +55,10 @@ export class EventStore {
       if (parent.stage !== 'ESCALATED') throw new Error(`parent cycle ${parentCycleId} is ${parent.stage}, not ESCALATED`);
       if (parent.workId !== workId) throw new Error(`parent cycle ${parentCycleId} belongs to work ${parent.workId}, not ${workId}`);
     }
-    const open = this.openCycleFor(workId);
+    const { open, escalated } = this.cyclesFor(workId);
     if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
+    // Spec: a new cycle for the same work names its parent; an escalated cycle is waiting for one.
+    if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
     const row: OpenRow = { type: 'open', workId, parentCycleId };
     // Fixed seq 0, not MAX+1: a second open (racing the check above on another connection)
     // must collide on the primary key and be ignored, otherwise it would land mid-log and reach
@@ -122,12 +124,15 @@ export class EventStore {
   }
 
   // Open means still able to move: escalated cycles wait for the owner and never move again.
-  private openCycleFor(workId: string): string | undefined {
-    const ids = this.db
+  private cyclesFor(workId: string): { open?: string; escalated?: string } {
+    const stages = this.db
       .prepare("SELECT cycle_id FROM events WHERE seq = 0 AND json_extract(body, '$.workId') = ? ORDER BY cycle_id")
       .all(workId)
-      .map((r) => r.cycle_id as string);
-    return ids.find((id) => !SETTLED.includes(this.load(id)!.stage));
+      .map((r) => [r.cycle_id as string, this.load(r.cycle_id as string)!.stage] as const);
+    return {
+      open: stages.find(([, stage]) => !SETTLED.includes(stage))?.[0],
+      escalated: stages.findLast(([, stage]) => stage === 'ESCALATED')?.[0],
+    };
   }
 
   private exists(cycleId: string): boolean {

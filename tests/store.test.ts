@@ -246,8 +246,12 @@ test('open enforces one open cycle per work item and an ESCALATED parent (05-a, 
   const child = store.open('c2', 'w1', 'c1');
   assert.equal(child.parentCycleId, 'c1');
   assert.throws(() => store.open('c3', 'w1', 'c1'), /already has an open cycle c2/);
-  // Escalated and terminal cycles do not count as open.
+  // Escalated and terminal cycles do not count as open, but an ESCALATED one must be named as the
+  // parent (05-b): the spec's new cycle for the same work is a child.
   store.append('c2', { type: 'cancel' });
-  store.open('c3', 'w1');
+  assert.throws(() => store.open('c3', 'w1'), /work w1 has an ESCALATED cycle c1; name it as the parent/);
+  store.open('c3', 'w1', 'c1');
+  store.append('c3', { type: 'cancel' });
+  store.open('c4', 'w3');
   store.close();
 });
