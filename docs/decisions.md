@@ -38,6 +38,18 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-039 — 2026-10-16 — Merge 08-c with the adversarial minor parked
+
+Owner, after the 08-c standard PASS and adversarial PASS on `cfdcc16` (one adversarial minor: the per-run `/tmp` cleanup in `cliAdapter` throws on a directory chain past PATH_MAX; the adversarial reviewer could not write probes), asked to merge as it stands or run a second adversarial review first, and whether to park the minor against 08-d: “Merge and park it. But I'm away from the computer so I can't merge right now”.
+
+Effect: `feat/08-c-developer-sandbox` is accepted for merge as it stands, with no second adversarial review; the owner merges it on return. The minor is parked against 08-d, which is not READY to merge until its done-when list covers it. 08-d starts now on `feat/08-d-reviewer-sandbox`, stacked on 08-c.
+
+### A-038 — 2026-10-16 — 08-c and 08-d: developer and reviewer runs in the sandbox
+
+Owner, after the runtime probe ([08-c-findings.md](work/08-c-findings.md)) and five questions (the developer's clone at `<runsDir>/<cycleId>` made with `--no-hardlinks`, its branch fetched into the repository with a sandboxed `upload-pack` and `fetch.fsckObjects`, the head checks run in the repository after the fetch; claude's configuration bound read-only and pi's as a temporary overlay, with a writable `auth.json` only if pi stops logging in; two stacked tickets, 08-c the developer with `--restricted` for claude and `--no-approve` for pi, 08-d the reviewers with the checkout read-only and `--no-context-files` for pi; 08-d also fixes the controller side of the two 08-b majors and takes the two parked verify minors; network on with `/run/systemd/resolve` bound for runtimes, `/tmp` a per-run directory on disk removed after the run): “Take all, go”.
+
+Effect: 08-c-developer-sandbox is READY on the Design route with these answers; 08-d-reviewer-sandbox is drafted, stacked on 08-c, and becomes READY after 08-c's standard PASS. 08-c covers the parked 05-a pi bash and 05-b claude settings lines and the 08-a note on the controller's git reading the developer's git config; 08-d covers the 06-c pi context-files line, the two 08-b majors and the two 08-b minors.
+
 ### A-037 — 2026-10-16 — Merge 08-a and 08-b with the 08-b adversarial findings parked
 
 Owner, after the 08-b adversarial FAIL on `dc6c461` (two majors: a committed gitlink directory and a dangling symlink survive the untracked removal and reach the unsandboxed reviewer; two minors: a tracked path starting with whitespace is deleted after a clean tree check, and a deep chain plus a locked directory makes the removal throw) and the question how likely they are: “Option 2, for the most part I'm not terribly concerned about malicious code - obviously that is a worry. My primary concern is agents going outside their remit to achieve a goal which they can't otherwise do, or making a mistake - causing damage to the repo or outside (i.e. deleting data from the whole of the tmp dir instead of their own space inside it)”.

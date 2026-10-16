@@ -226,6 +226,26 @@ test('main.ts prints the sandbox backend: bwrap by default, none only when the j
   }
 });
 
+test('main.ts runs the developer in the job sandbox: bwrap by default, unconfined only with none (08-c)', () => {
+  const { root, repo, runsDir } = scratch();
+  const main = join(import.meta.dirname, '..', 'src', 'main.ts');
+  // A stub claude that marks its cwd (the clone), tries to write beside the scratch root, and fails.
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'claude'), `#!/bin/sh\ntouch ran\ntouch ${root}/outside-$SF_N\nexit 1\n`);
+  chmodSync(join(bin, 'claude'), 0o755);
+  for (const [n, sandbox, escaped] of [[1, undefined, false], [2, { backend: 'none' }, true]] as const) {
+    const jobFile = join(root, `job-dev-${n}.json`);
+    writeFileSync(jobFile, JSON.stringify({ workId: `w-dev-${n}`, ticket: 'x', repo, runsDir, checks: [], runtime: { developer: 'claude', standard: 'claude', adversarial: 'claude' }, sandbox }));
+    const r = spawnSync(process.execPath, [main, jobFile], { encoding: 'utf8', timeout: 30_000, env: { ...process.env, SF_N: String(n), PATH: `${bin}:${process.env.PATH}` } });
+    assert.equal(r.status, 1, r.stderr);
+    const clone = /^Worktree: (.+)$/m.exec(r.stdout)![1]!;
+    assert.ok(existsSync(join(clone, 'ran')), `the stub ran in the clone (${n})`);
+    // Under bwrap the environment is cleared too, so the stub's own name for the file is outside-.
+    assert.equal(existsSync(join(root, `outside-${n}`)) || existsSync(join(root, 'outside-')), escaped, `sandbox ${n}`);
+  }
+});
+
 // One live run of main.ts: claude as developer and both reviewers, four paid calls, 120 s per stage.
 test('live main.ts: a job file runs end to end and prints the stage, branch and head', { timeout: 560_000 }, (t) => {
   if (!LIVE) return void t.skip('RUNTIME_SPIKE is not set');

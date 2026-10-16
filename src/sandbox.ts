@@ -3,8 +3,8 @@
 // involved: the wrapped argv goes into the systemd scope like any other command. Docker, a VM or
 // a cloud runner would be further cases of `wrap` and `checkSandbox`.
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, readlinkSync, realpathSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { accessSync, chmodSync, constants, existsSync, lstatSync, readdirSync, readlinkSync, realpathSync } from 'node:fs';
+import { delimiter, isAbsolute, join, resolve } from 'node:path';
 
 /** Owner-supplied with the job. `none` runs candidate code as the owner, unconfined: scratch repositories only (A-029). */
 export interface Sandbox {
@@ -21,6 +21,12 @@ export interface Policy {
   /** Bound read-only, on top of the system directories and Sandbox.read. */
   read: string[];
   network: boolean;
+  /** Mounted as a temporary overlay: writes succeed inside and are dropped. pi must write its config directory but must not keep the writes (08-c-findings.md). */
+  overlay?: string[];
+  /** HOME inside. Default /tmp; a runtime finds its config under the owner's real home. */
+  home?: string;
+  /** Host directory bound at /tmp. Default a tmpfs, which is RAM on this machine until the command exits. */
+  tmp?: string;
 }
 
 // The system directories every command needs: binaries, libraries, the dynamic loader and /etc.
@@ -28,6 +34,7 @@ export interface Policy {
 // /bin, /sbin, /lib and /lib64 are symlinks and are recreated as symlinks.
 const SYSTEM = ['/usr', '/etc', '/opt', '/bin', '/sbin', '/lib', '/lib64'];
 const BACKENDS = ['bwrap', 'none'];
+const RESOLVE = '/run/systemd/resolve';
 
 export function wrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]] {
   if (sandbox.backend === 'none') return [command, args];
@@ -41,10 +48,13 @@ export function wrap(sandbox: Sandbox, policy: Policy, command: string, args: st
     // A new session: the command cannot push input into the controller's terminal (TIOCSTI).
     '--new-session',
     // The controller's environment may hold tokens; the command gets a path, a home and a locale.
-    '--clearenv', '--setenv', 'PATH', process.env.PATH ?? '/usr/bin', '--setenv', 'HOME', '/tmp', ...(lang ? ['--setenv', 'LANG', lang] : []),
-    '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp',
+    '--clearenv', '--setenv', 'PATH', process.env.PATH ?? '/usr/bin', '--setenv', 'HOME', policy.home ?? '/tmp', ...(lang ? ['--setenv', 'LANG', lang] : []),
+    '--proc', '/proc', '--dev', '/dev', ...(policy.tmp ? ['--bind', policy.tmp, '/tmp'] : ['--tmpfs', '/tmp']),
     ...SYSTEM.flatMap(systemBind),
+    // /etc/resolv.conf is a symlink into /run/systemd/resolve under systemd-resolved: no DNS without it.
+    ...(policy.network && existsSync(RESOLVE) ? ['--ro-bind', RESOLVE, RESOLVE] : []),
     ...binds([...(sandbox.read ?? []), ...policy.read], policy.write),
+    ...(policy.overlay ?? []).flatMap((p) => ['--overlay-src', p, '--tmp-overlay', p]),
     // bwrap's own root is a tmpfs; read-only, so nothing outside the binds takes writes (or RAM).
     '--remount-ro', '/',
     '--chdir', policy.cwd, '--', command, ...args,
@@ -102,4 +112,26 @@ export function checkSandbox(sandbox: Sandbox): void {
   if (why !== undefined) {
     throw new Error(`sandbox bwrap cannot start (${why}); install bubblewrap and allow unprivileged user namespaces, or set the sandbox backend to "none" for scratch repositories only`);
   }
+}
+
+// The shell's rule: a name with a slash is a path (relative to the checkout), anything else is looked up on PATH.
+export function executables(command: string, cwd: string): string[] {
+  if (command === '') return [];
+  const candidates = command.includes('/') || isAbsolute(command)
+    ? [resolve(cwd, command)]
+    : (process.env.PATH ?? '').split(delimiter).filter(Boolean).map((d) => join(d, command));
+  return candidates.filter((p) => { try { accessSync(p, constants.X_OK); return true; } catch { return false; } });
+}
+
+/**
+ * Owner read, write and search back on every directory and file under `path`, symlinks not
+ * followed. A check may lock what it rewrote; git then skips the path with a warning and exit 0
+ * (08-a adversarial). Only the owner bits change, never the executable bit git compares.
+ */
+export function restoreAccess(path: string): void {
+  // lstat: a symlink is neither a directory nor short of its 0777 bits, so it is never followed.
+  const st = lstatSync(path);
+  const want = st.isDirectory() ? 0o700 : 0o600;
+  if ((st.mode & want) !== want) chmodSync(path, (st.mode & 0o7777) | want);
+  if (st.isDirectory()) for (const entry of readdirSync(path)) restoreAccess(join(path, entry));
 }

@@ -143,3 +143,37 @@ test('checkSandbox: passes for none and for a working bwrap; throws naming none 
     process.env.PATH = path;
   }
 });
+
+// Ticket 08-c: what a runtime's policy adds. pi needs to write its config directory but must not
+// keep the writes (08-c-findings.md); a runtime finds its config under the owner's HOME; each
+// run's /tmp is its own corner on disk, not the shared RAM tmpfs (A-038).
+test('bwrap: an overlay directory takes writes inside and leaves the host directory unchanged', async () => {
+  const { root, work } = scratch();
+  const config = join(root, 'config');
+  mkdirSync(config);
+  writeFileSync(join(config, 'settings.json'), 'original\n');
+  const policy: Policy = { cwd: work, write: [work], read: [], overlay: [config], network: false };
+  const r = await sh(BWRAP, policy, `mkdir ${config}/settings.json.lock && echo changed > ${config}/settings.json && cat ${config}/settings.json`);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.stdout, 'changed\n');
+  assert.equal(readFileSync(join(config, 'settings.json'), 'utf8'), 'original\n');
+  assert.ok(!existsSync(join(config, 'settings.json.lock')));
+});
+
+test('bwrap: home sets HOME; tmp binds a host directory at /tmp', async () => {
+  const { root, work } = scratch();
+  const tmp = join(root, 'run-tmp');
+  mkdirSync(tmp);
+  const policy: Policy = { cwd: work, write: [work], read: [], network: false, home: root, tmp };
+  const r = await sh(BWRAP, policy, 'echo "home=$HOME"; echo x > /tmp/marker');
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, new RegExp(`^home=${root}$`, 'm'));
+  assert.equal(readFileSync(join(tmp, 'marker'), 'utf8'), 'x\n');
+});
+
+test('bwrap: with network, the resolver directory is bound read-only for DNS; without, it is not', () => {
+  const policy: Policy = { cwd: '/x', write: ['/x'], read: [], network: false };
+  const has = (argv: string[]) => argv.some((a, i) => a === '--ro-bind' && argv[i + 1] === '/run/systemd/resolve');
+  assert.ok(!has(wrap(BWRAP, policy, 'true', [])[1]));
+  assert.equal(has(wrap(BWRAP, { ...policy, network: true }, 'true', [])[1]), existsSync('/run/systemd/resolve'));
+});

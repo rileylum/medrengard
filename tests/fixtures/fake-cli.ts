@@ -2,7 +2,7 @@
 // Every shape and exit code is copied from docs/work/03-a-findings.md; the reply text is the
 // only thing invented, and it carries the claim block the adapter is expected to extract.
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 
 const [, , runtime, kase, variant] = process.argv;
 const BLOCK = '```json\n{"head":"H1","artifacts":["result.json"]}\n```';
@@ -27,7 +27,34 @@ function commit(prompt: string): string {
   }
   writeFileSync('done.txt', prompt.split('\n')[0] + '\n');
   git('add', 'done.txt');
+  if (variant === 'config') {
+    // 08-c: commit an attribute naming a filter, then define the filter, an fsmonitor and hooks
+    // in this repository's config, each writing the marker the ticket names. Anything the
+    // controller runs with this repository's config writes it.
+    const marker = /^MARKER (.+)$/m.exec(prompt)![1]!;
+    // A subshell, so a marker out of reach (in bwrap) does not stop the filter passing content through.
+    const run = `sh -c '(echo ran >> ${marker}) 2>/dev/null; cat'`;
+    writeFileSync('.gitattributes', '* filter=sf\n');
+    git('add', '.gitattributes');
+    git('commit', '-q', '-m', 'fake developer: done');
+    mkdirSync('.hooks', { recursive: true });
+    for (const hook of ['post-checkout', 'reference-transaction', 'pre-auto-gc']) writeFileSync(`.hooks/${hook}`, `#!/bin/sh\n(echo ran >> ${marker}) 2>/dev/null\nexit 0\n`, { mode: 0o755 });
+    // An fsmonitor that fails makes git fall back to a full scan, so the developer's own git still works.
+    const monitor = `sh -c '(echo ran >> ${marker}) 2>/dev/null; exit 1'`;
+    for (const [k, v] of [['filter.sf.smudge', run], ['filter.sf.clean', run], ['core.fsmonitor', monitor], ['core.hooksPath', `${process.cwd()}/.hooks`]]) git('config', k!, v!);
+    return claim(git('rev-parse', 'HEAD'));
+  }
   git('commit', '-q', '-m', 'fake developer: done');
+  if (variant === 'escape') {
+    // 08-c, the 05-a pi bash line: an unscoped developer writes wherever it can. ESCAPE names the
+    // paths; what happened is left in escape.json in the cwd, untracked, for the test to read.
+    const targets = /^ESCAPE (.+)$/m.exec(prompt)![1]!.split(' ');
+    const report: Record<string, string> = {};
+    for (const t of [...targets, '/tmp/sf-escape-marker']) {
+      try { appendFileSync(t, 'escaped\n'); report[t] = 'ok'; } catch (err) { report[t] = (err as NodeJS.ErrnoException).code ?? 'error'; }
+    }
+    writeFileSync('escape.json', JSON.stringify(report));
+  }
   const first = git('rev-parse', 'HEAD');
   if (variant === 'first') { writeFileSync('more.txt', 'more\n'); git('add', 'more.txt'); git('commit', '-q', '-m', 'fake developer: more'); }
   const head = variant === 'base' ? base : variant === 'bogus' ? 'a'.repeat(40) : variant === 'short' ? first.slice(0, 7) : first;

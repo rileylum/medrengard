@@ -2,7 +2,11 @@
 // is the command, its flags and a parser, and everything else (spawn, scope, byte cap, abort,
 // outcome mapping) is shared. Shapes and exit codes are from docs/work/03-a-findings.md.
 import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import type { Adapter, RunOutcome } from '../adapter.ts';
+import { checkSandbox, executables, restoreAccess, wrap, type Sandbox } from '../sandbox.ts';
 import { scopePath, spawnRuntime, type RunResult } from './spawn.ts';
 
 export interface CliSpec {
@@ -11,6 +15,12 @@ export interface CliSpec {
   args: string[];
   /** Turn a finished child into an outcome. Called only for status `exited`. A throw is a failed run, via the controller. */
   parse(stdout: string, stderr: string, exitCode: number | null): RunOutcome;
+  /**
+   * What the CLI needs of the owner's home inside a sandbox, relative to it; a path that does not
+   * exist is skipped. `read` is bound read-only, `overlay` takes writes that are dropped after the
+   * run (docs/work/08-c-findings.md).
+   */
+  config: { read: string[]; overlay: string[] };
 }
 
 export interface CliAdapterOptions {
@@ -20,11 +30,19 @@ export interface CliAdapterOptions {
   maxOutputBytes?: number;
   /** SIGTERM to kill, default 5000. */
   graceMs?: number;
+  /**
+   * Run the CLI inside this sandbox (08-c): it writes the request's cwd and its own /tmp, reads
+   * its binary's directory and `spec.config`, and has the network. Without one it runs as the
+   * owner, unconfined; main.ts always passes the job's sandbox.
+   */
+  sandbox?: Sandbox;
 }
 
 export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter {
   const isolation = opts.isolation ?? 'cgroup';
   if (isolation === 'cgroup') checkScopes();
+  const sandbox = opts.sandbox?.backend === 'none' ? undefined : opts.sandbox;
+  if (sandbox) checkSandbox(sandbox);
   return {
     name: spec.name,
     async start(req, signal) {
@@ -33,18 +51,42 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
       if (isolation === 'cgroup' && !/^[A-Za-z0-9:_.-]{1,200}$/.test(req.runId)) {
         return failed(`run ID ${JSON.stringify(req.runId.slice(0, 40))} is not usable as a systemd unit name`);
       }
-      const run = spawnRuntime({
-        command: spec.command,
-        args: spec.args,
-        prompt: req.prompt,
-        cwd: req.cwd,
-        graceMs: opts.graceMs,
-        maxOutputBytes: opts.maxOutputBytes,
-        scope: isolation === 'cgroup' ? `sf-${req.runId}` : undefined,
-      });
-      signal.addEventListener('abort', () => run.cancel(), { once: true });
-      const r = await run;
-      return outcome(spec, r);
+      let [command, args] = [spec.command, spec.args];
+      let tmp: string | undefined;
+      if (sandbox) {
+        // By its real path: the PATH entry is often a symlink in a directory that is not bound
+        // (~/.local/bin here), and binding that directory would expose every tool in it.
+        const found = executables(spec.command, req.cwd)[0];
+        if (!found) return failed(`${spec.command} not found on PATH`);
+        const bin = realpathSync(found);
+        const home = homedir();
+        const inHome = (paths: string[]) => paths.map((p) => join(home, p)).filter((p) => existsSync(p));
+        // Beside the cwd, so in runsDir on disk: the run's own corner, not the shared RAM /tmp (A-038).
+        tmp = join(dirname(req.cwd), `${req.runId}-tmp`);
+        mkdirSync(tmp);
+        [command, args] = wrap(sandbox, {
+          cwd: req.cwd, write: [req.cwd], read: [dirname(bin), ...inHome(spec.config.read)], overlay: inHome(spec.config.overlay),
+          network: true, home, tmp,
+        }, bin, spec.args);
+      }
+      try {
+        const run = spawnRuntime({
+          command,
+          args,
+          prompt: req.prompt,
+          cwd: req.cwd,
+          graceMs: opts.graceMs,
+          maxOutputBytes: opts.maxOutputBytes,
+          scope: isolation === 'cgroup' ? `sf-${req.runId}` : undefined,
+        });
+        signal.addEventListener('abort', () => run.cancel(), { once: true });
+        const r = await run;
+        return outcome(spec, r);
+      } finally {
+        // The PID namespace died with the run, so nothing writes here any more. The run may have
+        // locked what it wrote; access goes back first or rmSync cannot clear it.
+        if (tmp) { restoreAccess(tmp); rmSync(tmp, { recursive: true, force: true }); }
+      }
     },
   };
 }
@@ -126,6 +168,8 @@ export const claude: CliSpec = {
   name: 'claude',
   command: 'claude',
   args: ['-p', '--output-format', 'json', '--tools', '', '--no-session-persistence'],
+  // Read-only is enough for a -p run; writable, every run leaves project and plugin state behind.
+  config: { read: ['.claude', '.claude.json'], overlay: [] },
   parse(stdout, stderr, exitCode) {
     const result = parseJson(stdout);
     if (!result) return failed(`claude stdout is not a JSON result (exit ${exitCode}): ${firstLine(stderr) || firstLine(stdout) || 'empty'}`);
@@ -143,6 +187,9 @@ export const pi: CliSpec = {
   name: 'pi',
   command: 'pi',
   args: ['-p', '--mode', 'json', '--no-tools', '--no-session'],
+  // pi takes a lock file beside settings.json before it reads its key, so read-only fails. If a
+  // token refresh inside the overlay is ever lost, bind agent/auth.json writable on top (A-038).
+  config: { read: [], overlay: ['.pi'] },
   parse(stdout, stderr, exitCode) {
     const events = stdout.split('\n').map(parseJson).filter((e) => e !== undefined);
     const session = events.find((e) => e.type === 'session');
@@ -162,8 +209,11 @@ export const pi: CliSpec = {
  * Developer runs need tools on (05-a). Claude's allow list is scoped to the worktree: Edit and
  * Write by path, Bash to the git subcommands a commit needs. Under -p nothing can prompt, so a
  * tool outside the list is denied and the run ends on a missing commit or claim. A function of
- * the worktree because the path rules are absolute. Only `project` settings load: the owner's
- * user and local allow rules and hooks would otherwise join this grant (05-a adversarial).
+ * the clone because the path rules are absolute. `--restricted` loads no settings file at all:
+ * the owner's user and local allow rules would join this grant (05-a adversarial), and a
+ * `.claude/settings.json` committed in the repository or written by the developer could add
+ * allow rules and hooks (05-b adversarial). `--strict-mcp-config`: a `.mcp.json` in the clone
+ * is the repository's, not the owner's.
  */
 export function claudeDeveloper(worktree: string): CliSpec {
   // A single leading slash in a path rule is relative to the project; `//` is the filesystem root.
@@ -171,11 +221,16 @@ export function claudeDeveloper(worktree: string): CliSpec {
   // No `git log` or `git diff`: both take --output=<path> and write anywhere (05-a adversarial).
   const allowed = ['Read', 'Glob', 'Grep', `Edit(/${worktree}/**)`, `Write(/${worktree}/**)`,
     ...['add', 'commit', 'status', 'rev-parse'].map((sub) => `Bash(git ${sub}:*)`)];
-  return { ...claude, args: ['-p', '--output-format', 'json', '--no-session-persistence', '--setting-sources', 'project', '--allowedTools', ...allowed] };
+  // --restricted also removes Bash unless --tools names it (live run 2026-10-16: the developer
+  // wrote the file and could not commit); the allow list still scopes Bash to the git subcommands.
+  return { ...claude, args: ['-p', '--output-format', 'json', '--no-session-persistence', '--restricted', '--strict-mcp-config', '--tools', 'Read', 'Glob', 'Grep', 'Edit', 'Write', 'Bash', '--allowedTools', ...allowed] };
 }
 
-/** pi has no path or command scoping: bash is unrestricted inside the scope. The worktree, the scratch repository and the cgroup kill are the containment. */
-export const piDeveloper: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--no-session', '--tools', 'read,edit,write,bash'] };
+/**
+ * pi has no path or command scoping: bash is unrestricted inside the scope, and the sandbox is the
+ * containment (08-c). --no-approve: project-local .pi files in the clone are the repository's.
+ */
+export const piDeveloper: CliSpec = { ...pi, args: ['-p', '--mode', 'json', '--no-session', '--no-approve', '--tools', 'read,edit,write,bash'] };
 
 /**
  * Reviewers read; they never run anything (06-b, A-030). The controller already ran the checks,

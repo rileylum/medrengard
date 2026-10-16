@@ -7,15 +7,15 @@
 // and what a check leaves untracked is removed before review.
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { delimiter, isAbsolute, join, resolve } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
 import { git } from './git.ts';
 import type { Cycle, Event } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
-import { checkSandbox, reachable, wrap, type Policy, type Sandbox } from './sandbox.ts';
+import { checkSandbox, executables, reachable, restoreAccess, wrap, type Policy, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
 
 export interface Check {
@@ -145,19 +145,6 @@ function checkoutGit(repo: string, checkout: string, head: string) {
   };
 }
 
-/**
- * Owner read, write and search back on every directory and file under `path`, symlinks not
- * followed. A check may lock what it rewrote; git then skips the path with a warning and exit 0
- * (08-a adversarial). Only the owner bits change, never the executable bit git compares.
- */
-function restoreAccess(path: string): void {
-  // lstat: a symlink is neither a directory nor short of its 0777 bits, so it is never followed.
-  const st = lstatSync(path);
-  const want = st.isDirectory() ? 0o700 : 0o600;
-  if ((st.mode & want) !== want) chmodSync(path, (st.mode & 0o7777) | want);
-  if (st.isDirectory()) for (const entry of readdirSync(path)) restoreAccess(join(path, entry));
-}
-
 /** Delete everything under `checkout` that is not a tracked path or a directory holding one. */
 function removeUntracked(checkout: string, tracked: string[]): void {
   const keep = new Set(tracked);
@@ -192,15 +179,6 @@ export function treeDiff(repo: string, checkout: string, head: string): string {
 }
 
 interface Outcome { result: CheckResult['result']; exit: string; stdout: string; stderr: string }
-
-// The shell's rule: a name with a slash is a path (relative to the checkout), anything else is looked up on PATH.
-function executables(command: string, cwd: string): string[] {
-  if (command === '') return [];
-  const candidates = command.includes('/') || isAbsolute(command)
-    ? [resolve(cwd, command)]
-    : (process.env.PATH ?? '').split(delimiter).filter(Boolean).map((d) => join(d, command));
-  return candidates.filter((p) => { try { accessSync(p, constants.X_OK); return true; } catch { return false; } });
-}
 
 // `failed` is spawnRuntime's "never started": no binary, no cwd. That is the spec's MISSING,
 // evidence that does not exist, as against FAIL, evidence that says no.

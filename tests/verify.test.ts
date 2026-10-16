@@ -88,7 +88,7 @@ test('passing checks run in a fresh checkout of the head with no .git and move t
   assert.ok(!existsSync(join(r.worktree, '.git')));
   assert.deepEqual(readdirSync(r.worktree).sort(), git(repo, 'ls-tree', '--name-only', head).split('\n').sort());
   assert.ok(!existsSync(join(r.worktree, 'junk.txt')));
-  assert.deepEqual(git(repo, 'worktree', 'list', '--porcelain').match(/^worktree /gm)?.length, 2, 'only the repository and the developer worktree are registered');
+  assert.deepEqual(git(repo, 'worktree', 'list', '--porcelain').match(/^worktree /gm)?.length, 1, 'only the repository is registered: the developer has a clone (08-c)');
   // The developer's worktree and the repository are untouched.
   assert.ok(existsSync(join(devWorktree, 'junk.txt')));
   assert.equal(git(devWorktree, 'rev-parse', 'HEAD'), head);

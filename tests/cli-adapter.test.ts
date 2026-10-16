@@ -4,9 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { RunOutcome } from '../src/adapter.ts';
 import { execute } from '../src/controller.ts';
 import { claude, cliAdapter, pi, type CliSpec } from '../src/runtime/cli-adapter.ts';
@@ -223,5 +223,85 @@ test('a reason cut at 1 KB is well-formed even when the cut lands inside a surro
     assert.equal(o.status, 'failed');
     assert.ok((o as any).reason.isWellFormed(), `reason has a lone surrogate at ascii=${ascii}`);
     assert.ok((o as any).reason.length <= 1024);
+  }
+});
+
+// Ticket 08-c: a runtime inside the job's sandbox (A-038). The fixture stands in for the CLI;
+// HOME is pointed at a scratch home so the config binds are the test's, not the owner's.
+test('sandboxed adapter: writes its cwd and its own /tmp only; read config is read-only, overlay config is dropped; the per-run /tmp is removed', async () => {
+  const root = mkdtempSync('/var/tmp/software_factory/sf-cli-sandbox-');
+  const home = join(root, 'home');
+  const runs = join(root, 'runs');
+  const cwd = join(runs, 'cycle');
+  mkdirSync(join(home, '.ro'), { recursive: true });
+  mkdirSync(join(home, '.ov'), { recursive: true });
+  mkdirSync(cwd, { recursive: true });
+  writeFileSync(join(home, '.ro', 'config'), 'ro\n');
+  writeFileSync(join(home, '.ov', 'config'), 'ov\n');
+  const probe = join(import.meta.dirname, 'fixtures', 'sandbox-probe.ts');
+  const targets = { cwd: join(cwd, 'f'), tmp: '/tmp/sf-probe', ro: join(home, '.ro', 'config'), ov: join(home, '.ov', 'config'), home: join(home, 'f'), runs: join(runs, 'sibling'), varTmp: '/var/tmp/sf-cli-sandbox-escape' };
+  const spec: CliSpec = { ...claude, command: process.execPath, args: [probe, `read:ro=${targets.ro}`, ...Object.entries(targets).map(([k, v]) => `${k}=${v}`)], config: { read: ['.ro'], overlay: ['.ov'] } };
+  // Outside the scratch root: a run that escaped (or a red run with no sandbox) leaves them on the host.
+  const outside = [targets.tmp, targets.varTmp];
+  for (const f of outside) rmSync(f, { force: true });
+  const was = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const adapter = cliAdapter(spec, { ...offline, sandbox: { backend: 'bwrap', read: [dirname(dirname(realpathSync(process.execPath))), import.meta.dirname] } });
+    const o = await adapter.start({ runId: 'r-sandboxed', role: 'developer', prompt: '', cwd }, new AbortController().signal);
+    assert.equal(o.status, 'completed', JSON.stringify(o));
+    const r = (o as { claim: Record<string, string> }).claim;
+    assert.equal(r.HOME, home);
+    assert.equal(r['read:ro'], 'ro\n', 'the read config is bound');
+    assert.equal(r.cwd, 'ok');
+    assert.equal(r.tmp, 'ok');
+    assert.equal(r.ov, 'ok');
+    for (const k of ['ro', 'home', 'runs', 'varTmp']) assert.notEqual(r[k], 'ok', k);
+    assert.equal(readFileSync(targets.ro, 'utf8'), 'ro\n');
+    assert.equal(readFileSync(targets.ov, 'utf8'), 'ov\n');
+    assert.ok(!existsSync(targets.home) && !existsSync(targets.runs) && !existsSync(targets.varTmp) && !existsSync(targets.tmp));
+    assert.ok(existsSync(targets.cwd));
+    // The run's /tmp lived beside its cwd and is gone after the run.
+    assert.deepEqual(readdirSync(runs), ['cycle']);
+  } finally {
+    process.env.HOME = was;
+    rmSync(root, { recursive: true, force: true });
+    for (const f of outside) rmSync(f, { force: true });
+  }
+});
+
+test('sandboxed adapter: a binary reached through a symlink outside the bound roots still runs, by its resolved path', async () => {
+  const root = mkdtempSync('/var/tmp/software_factory/sf-cli-sandbox-');
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  symlinkSync(process.execPath, join(bin, 'node-link'));
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    const adapter = cliAdapter({ ...fake(claude, 'ping'), command: 'node-link', config: { read: [], overlay: [] } }, { ...offline, sandbox: { backend: 'bwrap', read: [import.meta.dirname] } });
+    // A cwd inside the scratch root, so the run's /tmp (beside the cwd) is inside it too.
+    const cwd = join(root, 'cwd');
+    mkdirSync(cwd);
+    const o = await adapter.start({ ...req(), cwd }, new AbortController().signal);
+    assert.equal(o.status, 'completed', JSON.stringify(o));
+  } finally {
+    process.env.PATH = path;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runtime specs bind claude config read-only and overlay pi config', () => {
+  assert.deepEqual(claude.config, { read: ['.claude', '.claude.json'], overlay: [] });
+  assert.deepEqual(pi.config, { read: [], overlay: ['.pi'] });
+});
+
+test('a sandbox that cannot start refuses at construction, naming none, before any run', () => {
+  const path = process.env.PATH;
+  process.env.PATH = join(dir, 'empty-path');
+  try {
+    assert.throws(() => cliAdapter(fake(claude, 'ping'), { ...offline, sandbox: { backend: 'bwrap' } }), /"none"/);
+    cliAdapter(fake(claude, 'ping'), { ...offline, sandbox: { backend: 'none' } });
+  } finally {
+    process.env.PATH = path;
   }
 });
