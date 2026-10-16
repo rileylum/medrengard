@@ -176,11 +176,19 @@ for (const spec of [claude, pi]) {
 // Ticket 04-e: the 04-d adversarial findings.
 for (const spec of [claude, pi]) {
   test(`${spec.name}: an unclosed fence followed by 100 000 blank lines is rejected in linear time`, async () => {
+    const reply = 'Here is the claim:\n```json\n' + ' \n'.repeat(100_000) + 'oops';
+    // The parser alone, against the done-when bound; the fixture spawn below proves the same
+    // path through start().
+    const stdout = spec.name === 'claude'
+      ? JSON.stringify({ type: 'result', is_error: false, result: reply })
+      : [{ type: 'session', id: 's' }, { type: 'turn_end', message: { content: [{ type: 'text', text: reply }] } }, { type: 'agent_end' }].map((e) => JSON.stringify(e)).join('\n');
     const started = Date.now();
-    const o = await start(spec, 'echo-prompt', 'Here is the claim:\n```json\n' + ' \n'.repeat(100_000) + 'oops');
+    const direct = spec.parse(stdout, '', 0);
     const took = Date.now() - started;
+    assert.deepEqual(direct, { status: 'failed', reason: 'no claim block in reply' });
+    assert.ok(took < 200, `parse took ${took}ms`);
+    const o = await start(spec, 'echo-prompt', reply);
     assert.deepEqual(o, { status: 'failed', reason: 'no claim block in reply' });
-    assert.ok(took < 2000, `took ${took}ms including the fixture spawn`);
     const closed = await start(spec, 'echo-prompt', '```json\n' + ' \n'.repeat(100_000) + '{"head":"H9","artifacts":[]}\n```');
     assert.deepEqual((closed as any).claim, { head: 'H9', artifacts: [] });
   });

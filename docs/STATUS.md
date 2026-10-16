@@ -24,4 +24,4 @@ Plan step 4 done (A-023): `src/adapter.ts` is the seam between the controller an
 
 ## Next action
 
-Ticket 04-d on branch `feat/04-d-real-adapters`: implemented, standard review 1 PASS. Owner runs `npm test` on the fix SHA, then adversarial review, then owner merge. Plan row 5 (real developer run in a scratch repository) follows.
+Branch `feat/04-e-claim-scan` (stacked on 04-d): 04-d standard PASS, adversarial FAIL (claim-block regex backtracking, A-025); 04-e fixes it, standard review 1 PASS. Owner runs `npm test` on the fix SHA, then the 04-e adversarial review, then owner merges both. Plan row 5 (real developer run in a scratch repository) follows.
