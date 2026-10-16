@@ -34,6 +34,8 @@ Plan step 5 done (A-026, A-027), merged at `ade1195` as one stacked branch (05-a
 
 2026-10-16: `npm test` on `5d1a34b` (06-a), owner-run — 135 tests, 114 pass, 16 skipped, 5 todo, 0 fail. Standard review 1 launched.
 
+2026-10-16: `npm test` on `4b20fb5` (06-a, standard 1 minors fixed), owner-run — 135 tests, 114 pass, 16 skipped, 5 todo, 0 fail. Standard 1 PASS on 5d1a34b; adversarial launched on 4b20fb5.
+
 ## Next action
 
 Step 6 in progress (A-028). Ticket 06-a (`feat/06-a-verification`): `src/verify.ts` runs the job's declared checks in a fresh detached checkout of the candidate, writes evidence under `<runsDir>/evidence/<head>/` and appends `verification`. 06-b (reviewer runs) is drafted and follows after 06-a's standard PASS. The 02-a busy timeout waits for the first ticket with two processes on one database.
