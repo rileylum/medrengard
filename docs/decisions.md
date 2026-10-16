@@ -37,6 +37,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-034 — 2026-10-16 — Fix ticket for the 07-b adversarial FAIL
+
+Owner, after the 07-b adversarial FAIL on `f3b4e12` (one major: a check running git inside the verify checkout hides a rewritten tracked file from the `tree` check and review's guard through `skip-worktree`, `assume-unchanged` or a `.git` pointer swap; two minors: the newline flatten misses `\r` and the Unicode line separators, the `tree` status has a 1 MiB buffer): “Option 1 go”.
+
+Effect: ticket 07-c-tree-check, Fast route, stacked on 07-b with fresh review budget. It records index flags as `tree` evidence before the status, widens the buffer, fixes the flatten in the prompt and in `main.ts`, and moves the step cap after the stop. The `.git` pointer swap, `git replace` and `core.fileMode` go to parked.md against the sandbox ticket: no git command run from inside a swapped checkout can see it.
+
 ### A-033 — 2026-10-16 — 07-a same-tree refusal on a fix run
 
 Owner, after standard review 2 on `6261150` noted that `refuse` on a fix run also rejects a commit whose tree equals the failed candidate's (an empty commit on top of it), beyond A-032's "the head must differ from the previous head": “go with your recommendation”.
