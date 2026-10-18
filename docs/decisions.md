@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-058 — 2026-10-19 — 09-a reviews waived; spec rewrite after 09-c
+
+Owner, asked whether 09-a's two standard reviews and one adversarial review are waived, run now, or run with 09-b's as a stacked branch: “waive”. Earlier, offered an overview of 09-a instead of a review: “okay I'm happy with that lets start on 09-b in a fresh context”. Asked where the spec rewrite that A-054 calls for goes: “up to you, should it happen now or after? Should it include changes from 09-c?”. Asked whether to commit the untracked 09-a plan: “No we can cut that plan document”.
+
+Effect: 09-a carries no reviews; it merges with 09-b and 09-c on the owner's word, with the waiver on record. The spec rewrite of [specs/core-lifecycle-v1.md](specs/core-lifecycle-v1.md) is a docs ticket, 09-d, after 09-c, so it describes the driver (09-b) and the workflow and prompt version records (09-c) once, not twice. `plans/2026-10-19-workflow-engine.md` is deleted uncommitted; the design note and the ticket log keep what it decided.
+
 ### A-057 — 2026-10-19 — 09-a engine shape
 
 Owner, offered three approaches for the inside of `apply` (keep the switch on event type; a handler table by step kind; a compiled lookup table, with the first recommended) and three questions (Q1 replace `standard` and `adversarial` with `Cycle.budgets` and edit their read sites in callers, widening the ticket's constraint; Q2 `QUEUED` as a fourth engine stage, with the workflow naming its `start`; Q3 `apply(c, e, workflow = defaultWorkflow)` and an optional workflow on `EventStore`, recording nothing new on the open marker): “take all recommendations”. Then, given [design/2026-10-19-workflow-engine.md](design/2026-10-19-workflow-engine.md): “design is approved”. Then, offered three interface answers (the `EventStore` constructor runs `checkWorkflow` and `apply` trusts its caller; keep the three-argument `apply` and wrap each `reduce(apply, …)`; second workflows live in the tests only) and generic escalation reasons (`<STAGE> FAIL`, `<STAGE> FAIL at budget limit <n>`), which change two regexes in `tests/run.test.ts`: “take all”, then “Take all recommendations”.
