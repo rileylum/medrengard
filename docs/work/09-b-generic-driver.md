@@ -19,3 +19,4 @@ Non-goals: finding orphaned runs and relaunching (row 11); extension steps (row 
 Verification: `npm test`, run by the owner on the reviewed SHA.
 
 ## Log
+- 2026-10-19 — drafted on `feat/docs-core-principles` (A-056). Owner, asked to read the three tickets and say go: “merge, I'm happy. We'll then start work on a fresh context”. Read as go for 09-a to 09-c; READY.

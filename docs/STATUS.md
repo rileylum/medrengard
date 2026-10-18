@@ -103,4 +103,5 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 12. Done (on `feat/docs-core-principles`, not merged): the core principles are recorded as A-054 and D-023. The workflow becomes user-definable, with today's lifecycle as the default. Open parts are in O-016.
 13. Done: the owner approved the order (A-055). Plan rows 9 (workflow engine) and 10 (extension host and observation stream) come before recovery; the plan lists what later work needs from them.
 14. Done: the row 9 design answers are recorded (A-056). Tickets 09-a, 09-b and 09-c are drafted under `docs/work/`.
-15. Owner: read the three tickets and say go. Then 09-a starts on `feat/09-a-workflow-engine`, test first.
+15. Done: the owner said go (“merge, I'm happy”) and asked for the docs branch to be merged. Tickets 09-a to 09-c are READY.
+16. Next: 09-a on `feat/09-a-workflow-engine` off main, test first, in a fresh session.

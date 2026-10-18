@@ -22,3 +22,4 @@ Non-goals: driving a workflow (09-b); prompts (09-c); extension steps and observ
 Verification: `npm test`, run by the owner on the reviewed SHA.
 
 ## Log
+- 2026-10-19 — drafted on `feat/docs-core-principles` (A-056). Owner, asked to read the three tickets and say go: “merge, I'm happy. We'll then start work on a fresh context”. Read as go for 09-a to 09-c; READY.
