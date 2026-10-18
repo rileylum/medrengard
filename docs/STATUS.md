@@ -4,6 +4,8 @@
 
 Design iteration stopped (A-016). Implementing [core lifecycle v1](specs/core-lifecycle-v1.md).
 
+Open questions and the research behind them: [open-questions.md](open-questions.md).
+
 Plan step 1 done: `src/lifecycle.ts` is the pure state machine; `tests/lifecycle.test.ts` and `tests/scenarios.ts` hold SC-01 to SC-19.
 
 Plan step 2 done (A-018): `src/store.ts` persists events in one `node:sqlite` table and replays them through `apply`.
