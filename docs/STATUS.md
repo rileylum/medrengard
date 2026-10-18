@@ -86,6 +86,7 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 2026-10-18: `npm test` on `feat/proto-herdr-tui` (uncommitted: sandboxed herdr adapter), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. Live in an isolated herdr session: `demo-clamp` READY to ACCEPTED from the board with all three stages in bwrap and detected by herdr (sonnet; paid calls: 1 developer, 2 reviewers, plus 1 spike prompt).
 2026-10-18: `npm test` on `feat/proto-learn` (stacked on `feat/research-list`), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. `npm run test:learn` — 6 tests, 6 pass.
 2026-10-19: `npm test` on `596f620` (main after the A-049 and A-050 merges), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. `npm run test:learn` — 6 tests, 6 pass. No file in `src/` imports from `proto/` or `learn/`.
+2026-10-19: `npm test` on `4bd3605` (09-a, `feat/09-a-workflow-engine`), implementer-run, not independent — 246 tests, 222 pass, 19 skipped, 5 todo, 0 fail. Mutation checks on `4d45a54`: each of 11 mutants (entry guard, step check, isEvent step, loop, settled path, engine name, start, stale-verdict count, default budget, store refusal, store replay workflow) fails at least one test.
 
 ## Next action
 
@@ -104,4 +105,5 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 13. Done: the owner approved the order (A-055). Plan rows 9 (workflow engine) and 10 (extension host and observation stream) come before recovery; the plan lists what later work needs from them.
 14. Done: the row 9 design answers are recorded (A-056). Tickets 09-a, 09-b and 09-c are drafted under `docs/work/`.
 15. Done: the owner said go (“merge, I'm happy”) and asked for the docs branch to be merged. Tickets 09-a to 09-c are READY.
-16. Next: 09-a on `feat/09-a-workflow-engine` off main, test first, in a fresh session.
+16. Done: 09-a implemented on `feat/09-a-workflow-engine` (A-057; design `docs/design/2026-10-19-workflow-engine.md`, plan `plans/2026-10-19-workflow-engine.md`), head `4bd3605`.
+17. Next: 09-a standard review 1 on `4bd3605`, then adversarial review, per `docs/workflow.md`. Owner: run `npm test` on the reviewed SHA. Owner: decide where the spec rewrite goes (A-054 says when the engine is built; 09-a does not list it).
