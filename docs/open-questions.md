@@ -1,0 +1,75 @@
+# Open questions
+
+What the owner has not decided yet. When a question is decided, record the quoted answer in [decisions.md](decisions.md) and remove its row here; if it creates work, the work goes on the [plan](plan.md). Review findings tied to a ticket go in [work/parked.md](work/parked.md), not here.
+
+O-001 to O-010 moved here from `decisions.md` on 2026-10-18; the IDs are unchanged. Questions with a section below carry the research behind them: why it matters, what is true today, and what would settle it.
+
+| ID | Question | Needed by |
+| --- | --- | --- |
+| O-001 | Pi and Claude Code: structured output, cancellation, isolation. `-p` and JSON modes exist on both CLIs; nothing else checked | Runtime spike |
+| O-005 | Default quality checks per repository type; who may waive; how each "done when" line gets verification the developer cannot edit ([below](#o-005-independent-verification-of-done-when)) | First real repository |
+| O-006 | Foreground process or daemon; GitHub remote; merge mechanism | Integration |
+| O-007 | Backpressure: max outstanding PRs, cost and time limits | Before unattended runs |
+| O-009 | Staging and deployment ownership | Release tracking |
+| O-010 | How an owner's answer to an agent in its herdr tab becomes evidence the reviewers can see ([work/herdr-findings.md](work/herdr-findings.md)) | The herdr frontend |
+| O-011 | What a cycle that runs out of review budget should lead to: what a child cycle inherits, and when the owner rewrites the ticket instead ([below](#o-011-what-to-do-when-a-cycle-runs-out-of-review-budget)) | Before unattended runs |
+| O-012 | Whether and when the Design Studio gets a plan row, and which part comes first ([below](#o-012-the-design-studio)) | After plan row 9 |
+| O-013 | The initial prompt for each role, the skills each role gets, and how a run records which versions it used ([below](#o-013-role-prompts-and-skills)) | Before the first real repository's tickets |
+| O-014 | Survey of skills libraries, harnesses and other factories: what to borrow, and whether our flow should change ([below](#o-014-survey-skills-libraries-harnesses-and-other-factories)) | Before O-011 and O-013 are decided |
+
+## O-005 Independent verification of "done when"
+
+Raised 2026-10-18, guide walkthrough.
+
+**Why it matters.** The controller judges a check by its exit code alone, on the exact candidate SHA. That is deterministic, but the checks usually run the candidate's own tests, which the developer wrote. PASS shows the code agrees with its own tests, not that it does what the ticket asked.
+
+**Today.** Checks are argv lists in the job file (`Check` in `src/verify.ts`); the owner declares them, so the developer cannot remove them. Reviewers read the diff and the evidence and are the only judge of test quality. Untested: a check that runs owner-held tests from outside the candidate, readable through the job's `sandbox.read`.
+
+**Would settle it.** The design asks that each "done when" line name an independent verification method (source §04, "Definition of Ready is risk-aware") and that quality profiles set required checks per risk tier (source §09, "Quality profiles and independent gates"; defaults OPEN in §15). Decide whether owner-held acceptance tests become standard, prove the `sandbox.read` route with a test, and decide who writes those tests.
+
+## O-011 What to do when a cycle runs out of review budget
+
+Raised 2026-10-18, guide walkthrough.
+
+**Why it matters.** The budget is the factory's brake: two standard reviews and one adversarial review per cycle, then stop. Most agent pipelines set a budget like this. Few say what a good next move is once it is spent, and the factory's answer decides how much owner time an escalation costs.
+
+**Today.** A second standard FAIL or any adversarial FAIL moves the cycle to ESCALATED (`src/lifecycle.ts`, `case 'verdict'`). The owner has two moves in `src/main.ts`: `cancel`, or run the job again with `parentCycleId` to open a child cycle with a fresh budget. The child starts from a new clone at `job.base` with the ticket alone; the parent's findings and branch are not carried over (`src/developer.ts`). Source §15 lists "Post-human revisions" as OPEN: when a fresh cycle and budget may be authorised, and who authorises a budget reset.
+
+**Would settle it.** A survey of how other agent pipelines and human code review handle repeated rejection; a record of real escalations from this factory (cause, owner's move, outcome); then an owner decision on what a child cycle inherits and when the owner should rewrite the ticket instead.
+
+## O-012 The Design Studio
+
+Raised 2026-10-18, guide walkthrough.
+
+**Why it matters.** The factory starts at a READY ticket. The design puts a Design Studio before it: intake, exploration, prototypes, an approved spec, and its split into tickets (source §03). Ticket quality limits everything downstream, O-005 included.
+
+**Today.** Not built and on no plan row; row 9 covers source §§6, 11 and 13. Tickets are written by hand under [workflow.md](workflow.md).
+
+**Would settle it.** An owner decision on whether and when the Design Studio gets a plan row, and which part to build first.
+
+## O-013 Role prompts and skills
+
+Raised 2026-10-18, guide walkthrough.
+
+**Why it matters.** Every developer and reviewer run starts from the role prompt. What a reviewer looks for, and how hard the adversary tries, comes from that text and from whatever skills the runtime has. The budget and the checks only bound the runs; the prompts decide their quality.
+
+**Today.** Each prompt is a template string written by the implementer session to fit its ticket: `prompt()` in `src/developer.ts` (ticket 05-a) and `buildPrompt()` in `src/review.ts` (ticket 06-b). Most of the text is the contract the controller parses: the rules, the fenced json claim or verdict, the SHAs, and delimiters hardened by adversarial reviews. The judgement each role is asked for is about one sentence. No run is given skills, and the prompt carries no version, so a finding cannot be traced to the wording that produced it. Source §05 ("Portable skills and repository instructions") plans a versioned SKILL.md library: reusable skills for implementation, normal review, adversarial review and evidence collection, kept apart from project conventions. Source §08 asks that skill and policy versions be stored with each run.
+
+**Would settle it.** Two answers, each from a survey of published practice and a trial on this factory's own tickets:
+1. The initial prompt for each role: developer, fix run, standard reviewer, adversarial reviewer.
+2. The supplementary skills each role gets, and how a run records which prompt and skill versions it used.
+
+## O-014 Survey: skills libraries, harnesses and other factories
+
+Raised 2026-10-18, guide walkthrough.
+
+**Why it matters.** The factory's flow was designed from first principles in the source document and built ticket by ticket. Nobody has compared it with what others have built for the same job. O-011, O-005 and O-013 each ask one part of this question; the survey asks it for the whole.
+
+**Today.** The source says the owner's current workflow uses "Superpowers-inspired skills" coordinated through herdr (source §01). No survey of other work is recorded.
+
+**Would settle it.** A written survey of three groups:
+1. Popular, well-regarded skills libraries: which skills they provide, and what those skills say.
+2. Agent harnesses: how they structure roles, prompts, verification, review and failure.
+3. Other software factories, meaning systems that take a ticket to a reviewed change: their stages, gates, budgets and what they do on failure.
+
+For each group, two outputs: what to borrow for O-013 (prompts and skills), and whether our flow (develop, verify, standard review, adversarial review, owner acceptance) is the right one or could be improved. Findings that would change the flow go to the owner as proposals.

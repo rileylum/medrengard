@@ -7,6 +7,7 @@
 - `docs/specs/core-lifecycle-v1.md`: the lifecycle being implemented. Two pages. This is the spec.
 - The ticket you are working on, under `docs/work/`.
 - `docs/decisions.md`: what the owner has decided. Latest entry wins.
+- `docs/open-questions.md`: what is still undecided. Check it before proposing a design.
 
 ## Rules
 

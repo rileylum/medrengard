@@ -30,16 +30,15 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Open
 
-| ID | Question | Needed by |
-| --- | --- | --- |
-| O-001 | Pi and Claude Code: structured output, cancellation, isolation. `-p` and JSON modes exist on both CLIs; nothing else checked | Runtime spike |
-| O-005 | Default quality checks per repository type; who may waive | First real repository |
-| O-006 | Foreground process or daemon; GitHub remote; merge mechanism | Integration |
-| O-007 | Backpressure: max outstanding PRs, cost and time limits | Before unattended runs |
-| O-009 | Staging and deployment ownership | Release tracking |
-| O-010 | How an owner's answer to an agent in its herdr tab becomes evidence the reviewers can see ([work/herdr-findings.md](work/herdr-findings.md)) | The herdr frontend |
+Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
+
+### A-049 — 2026-10-18 — Open questions move to their own file
+
+Owner, during the guide walkthrough, after asking for somewhere to flag questions for later research and finding it odd to keep them in a file titled decisions: “yes that makes sense, lets split the file and reference it from decisions as well just in case something is expecting them to still be there.”
+
+Effect: [open-questions.md](open-questions.md) holds every open question, O-001 to O-014, with the research behind the new ones (O-005 widened; O-011 review budget exhaustion; O-012 the Design Studio; O-013 role prompts and skills; O-014 a survey of skills libraries, harnesses and other factories). The `## Open` section here points to it. A decided question is recorded here with the owner's quoted reply and its row leaves that file. `AGENTS.md` lists the file under "Read first".
 
 ### A-048 — 2026-10-18 — Merge the herdr TUI prototype to main as experimental
 
