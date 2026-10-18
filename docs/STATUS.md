@@ -24,6 +24,8 @@ Plan step 8 done (sandbox, A-035 to A-042). 08-a and 08-b merged by the owner as
 
 Ticket 07-d (A-044), on `feat/07-d-accept-cancel` stacked on `feat/09-scoping`: `node src/main.ts accept <job.json> <sha>` and `cancel <job.json>` record the owner's decision, so a work ID can run again. A refused command writes nothing. The store waits 5 s for another process's write lock and checks row 0 (two parked 02-a notes). Standard 1 PASS and adversarial PASS on `b5d4635`. The owner chose to fix the two adversarial minors (A-045): the run command refuses extra arguments, and a job naming a parent that is no longer ESCALATED is refused with a hint. Standard 2 PASS on `eaa5eb8`. Merged by the owner as `e61eb91`.
 
+Experimental herdr TUI (A-046 to A-048), merged to main from `feat/proto-herdr-tui` and outside the ticket workflow: `proto/` is a herdr TUI. `proto/board.ts` lists jobs with stage, live agent and what needs the owner. `proto/run.ts` runs each stage as interactive claude in a herdr tab through `proto/herdr-adapter.ts`, inside the job's bwrap sandbox with three changes for interactive runs (A-047). See [proto/README.md](../proto/README.md). In live runs, two demo tickets reached AWAITING_ACCEPTANCE. A third, where the owner answered the developer in its tab, escalated: the reviewers cannot see what the owner says in a tab (O-010). The goal is a factory that runs in herdr (A-047); findings in [work/herdr-findings.md](work/herdr-findings.md).
+
 ## Checks run
 
 2026-10-15: `npm test` and `RUNTIME_SPIKE=1 npm test` on `d8a9d21`, owner-run — 51 tests, 36 pass offline (10 live tests skipped with reason), 46 pass live, 5 todo, 0 fail.
@@ -73,9 +75,14 @@ Ticket 07-d (A-044), on `feat/07-d-accept-cancel` stacked on `feat/09-scoping`: 
 2026-10-17: `npm test` on `b5d4635` (07-d), implementer-run, not independent — 228 tests, 204 pass, 19 skipped, 5 todo, 0 fail. Standard 1 PASS, adversarial PASS (2 minors).
 2026-10-17: `npm test` on `eaa5eb8` (07-d, A-045 fix), implementer-run and the standard 2 reviewer's run — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. Standard 2 PASS.
 
+2026-10-18: `npm test` on `feat/proto-herdr-tui` (src unchanged), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. Prototype exercised live in a separate herdr session (sonnet, 3 jobs; paid calls: 3 developer runs, 1 fix run, 6 reviewer runs).
+2026-10-18: `npm test` on `feat/proto-herdr-tui` (uncommitted: board line wrap, README, workflow.md), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. Board's wrapped key and status lines checked by eye in an isolated herdr session at 53 columns. Sandbox spike: interactive claude in the unchanged developer bwrap policy runs, but herdr does not detect it (1 paid call, sonnet); details in `proto/README.md`.
+2026-10-18: `npm test` on `feat/proto-herdr-tui` (uncommitted: sandboxed herdr adapter), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. Live in an isolated herdr session: `demo-clamp` READY to ACCEPTED from the board with all three stages in bwrap and detected by herdr (sonnet; paid calls: 1 developer, 2 reviewers, plus 1 spike prompt).
+
 ## Next action
 
 1. Done: plan step 8 merged (`86dde47`, `f479736`, `73463fc`); the owner's `npm test` on `73463fc` passes.
 2. Done: the owner lifted the scratch-repositories-only limit (A-043).
 3. Done: 07-d merged as `e61eb91`, with `feat/09-scoping`. `npm test` on `441a568` (code as `eaa5eb8`) was run by the implementer session at the owner's request: 230 tests, 206 pass, 0 fail.
 4. Next: break plan row 9 (GitHub sync, pools, release tracking, improvement loop) into tickets per [workflow.md](workflow.md), for the owner to read and approve.
+5. Owner: use the experimental herdr TUI (`proto/README.md`, A-048) while testing the factory. Findings and open questions for the real herdr frontend: [work/herdr-findings.md](work/herdr-findings.md).

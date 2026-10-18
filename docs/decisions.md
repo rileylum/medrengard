@@ -37,8 +37,27 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | O-006 | Foreground process or daemon; GitHub remote; merge mechanism | Integration |
 | O-007 | Backpressure: max outstanding PRs, cost and time limits | Before unattended runs |
 | O-009 | Staging and deployment ownership | Release tracking |
+| O-010 | How an owner's answer to an agent in its herdr tab becomes evidence the reviewers can see ([work/herdr-findings.md](work/herdr-findings.md)) | The herdr frontend |
 
 ## Approval history
+
+### A-048 — 2026-10-18 — Merge the herdr TUI prototype to main as experimental
+
+Owner, after the prototype's stage runs were sandboxed (A-047) and asked whether `proto/` should merge to main as experimental, replacing A-046's "no merge": “Okay commit and then merge (you'll need to hand me the command to execute”.
+
+Effect: `proto/` merges to main as an experimental interface while the factory is developed. It stays outside the ticket workflow: no ticket, no tests first, no reviews. `src/` must not import from `proto/`, so deleting the directory removes it. The owner runs the merge. This replaces A-046's "no merge to main"; the rest of A-046 stands.
+
+### A-047 — 2026-10-18 — Sandbox the prototype's stage runs; the factory's goal is to run in herdr
+
+Owner, told that interactive claude in the unchanged bwrap policy works but herdr cannot detect it, and offered two routes to a merge (make the sandbox work first, or merge with stages unsandboxed behind a job-file opt-in): “Okay yes lets make the sandbox work first, and make sure that we record these findings as the end goal will be having this run in herdr.”
+
+Effect: `proto/herdr-adapter.ts` runs every stage in the job's sandbox, with three changes to cliAdapter's policy for interactive runs ([work/herdr-findings.md](work/herdr-findings.md)). A job whose sandbox is `none` still runs claude unconfined. The findings file records what a herdr frontend needs, and O-010 holds the evidence question. Whether `proto/` merges to main is still open; A-046's "no merge" stands until the owner decides.
+
+### A-046 — 2026-10-18 — Throwaway herdr TUI prototype
+
+Owner, asking for "the quickest demo prototype we can - this will likely be thrown out" of a TUI that works inside herdr, and then answering five questions (exempt the prototype from the ticket workflow; branch name `feat/proto-herdr-tui`; stages as interactive claude sessions in herdr tabs rather than headless `claude -p`; claude only; no diff-comment key): “1. Yes 2. Sounds good 3. Yes 4. Yes claude only 5. Yes we can leave it out.” Then: “Okay now go away and build it by yourself with no input from me, its a prototype and so it only really maters once the final thing is done at which point I will review and we can collaborate on it.”
+
+Effect: `proto/` holds the prototype on `feat/proto-herdr-tui`, outside the ticket workflow: no ticket, no tests first, no reviews, and no merge to main. For prototype runs only, herdr is in use, which overrides workflow.md's "herdr is not part of this setup". Interactive stage runs are not sandboxed; the demo points them at a scratch repository. `src/` is unchanged.
 
 ### A-045 — 2026-10-17 — Fix the 07-d adversarial minors before merge
 
