@@ -95,10 +95,11 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 4. Done: `feat/research-list` (A-049) and `feat/proto-learn` (A-050) merged as `5959506` and `596f620`.
 5. Owner: choose the next stage. Either a first real run on a hobby repository, one issue at a time (nothing in row 9 is needed for it), or row 9 tickets. Open questions that name the first real repository as their deadline: O-005 (independent verification of "done when") and O-013 (role prompts and skills); O-014 (survey) comes before O-013. Decide whether the first run waits for them.
 6. Done: acceptance evidence designed and parked (A-051, O-015). Plan rows 9 (recovery) and 10 (tracker and code host sync) set (A-052).
-7. Next: write row 9 (recovery) tickets per [workflow.md](workflow.md), for the owner to approve.
-8. Later: the owner chose on 2026-10-19 to leave row 11 (pools, acceptance evidence, structured findings, improvement loop, release tracking) as it is, and to explore later how to split it and what each part does. The small metrics script that reads the event store waits for that too.
+7. Superseded by A-055: recovery is now row 11, after the workflow engine (row 9) and the extension host (row 10).
+8. Later: the owner chose on 2026-10-19 to leave row 13, formerly 11 (pools, acceptance evidence, structured findings, improvement loop, release tracking) as it is, and to explore later how to split it and what each part does. The small metrics script that reads the event store waits for that too.
 9. Done: the parked 02-a schema cleanup is dropped (A-053).
 10. Done: the scratch files for 02-a to 07-d under `/var/tmp/software_factory/` were deleted at the owner's request (2026-10-19). The 08-a to 08-f files are kept.
 11. Owner: use the experimental herdr TUI (`proto/README.md`, A-048) while testing the factory. Findings and open questions for the real herdr frontend: [work/herdr-findings.md](work/herdr-findings.md).
 12. Done (on `feat/docs-core-principles`, not merged): the core principles are recorded as A-054 and D-023. The workflow becomes user-definable, with today's lifecycle as the default. Open parts are in O-016.
-13. Owner: approve the plan order. Proposed: build the workflow engine before recovery, then add acceptance evidence as the first stage written in the workflow format.
+13. Done: the owner approved the order (A-055). Plan rows 9 (workflow engine) and 10 (extension host and observation stream) come before recovery; the plan lists what later work needs from them.
+14. Next: the owner answers the O-016 design questions; then write the row 9 tickets per [workflow.md](workflow.md).

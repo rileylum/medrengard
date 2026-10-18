@@ -13,11 +13,11 @@ O-001 to O-010 moved here from `decisions.md` on 2026-10-18; the IDs are unchang
 | O-009 | Staging and deployment ownership | Release tracking |
 | O-010 | How an owner's answer to an agent in its herdr tab becomes evidence the reviewers can see ([work/herdr-findings.md](work/herdr-findings.md)) | The herdr frontend |
 | O-011 | What a cycle that runs out of review budget should lead to: what a child cycle inherits, and when the owner rewrites the ticket instead ([below](#o-011-what-to-do-when-a-cycle-runs-out-of-review-budget)) | Before unattended runs |
-| O-012 | Whether and when the Design Studio gets a plan row, and which part comes first ([below](#o-012-the-design-studio)) | After plan row 9 |
+| O-012 | Whether and when the Design Studio gets a plan row, and which part comes first ([below](#o-012-the-design-studio)) | After plan row 11 (recovery) |
 | O-013 | The initial prompt for each role, the skills each role gets, and how a run records which versions it used ([below](#o-013-role-prompts-and-skills)) | Before the first real repository's tickets |
 | O-014 | Survey of skills libraries, harnesses and other factories: what to borrow, and whether our flow should change ([below](#o-014-survey-skills-libraries-harnesses-and-other-factories)) | Before O-011 and O-013 are decided |
 | O-015 | Acceptance evidence (A-051): which tickets need it, which artifact type comes first, and when it gets a plan row ([below](#o-015-acceptance-evidence)) | When the stage gets a plan row |
-| O-016 | The workflow definition and the extension host (A-054): the workflow format, how the engine enforces its guarantees on a user workflow, the extension protocol, grants for outward effects, and where this goes in the plan ([below](#o-016-workflow-definition-and-extension-host)) | Before the engine's first ticket |
+| O-016 | The workflow definition and the extension host (A-054): the workflow format, how the engine enforces its guarantees on a user workflow, the extension protocol, grants for outward effects, and where this goes in the plan ([below](#o-016-workflow-definition-and-extension-host)) | Before the row 9 tickets |
 
 ## O-005 Independent verification of "done when"
 
@@ -45,7 +45,7 @@ Raised 2026-10-18, guide walkthrough.
 
 **Why it matters.** The factory starts at a READY ticket. The design puts a Design Studio before it: intake, exploration, prototypes, an approved spec, and its split into tickets (source §03). Ticket quality limits everything downstream, O-005 included.
 
-**Today.** Not built and on no plan row; row 9 covers source §§6, 11 and 13. Tickets are written by hand under [workflow.md](workflow.md).
+**Today.** Not built and on no plan row; row 13 covers source §§6, 11 and 13. Tickets are written by hand under [workflow.md](workflow.md).
 
 **Would settle it.** An owner decision on whether and when the Design Studio gets a plan row, and which part to build first.
 
@@ -104,4 +104,4 @@ Raised 2026-10-19; principles agreed in A-054.
 4. Grants for outward effects. A merge or deploy extension needs code-host credentials, which A-052 keeps with the controller. Decide how a workflow grants a capability to an extension, and how a merge is bound to the accepted SHA.
 5. The observation stream: how observers get events (read the event log, or a push from the controller), and how a reaction comes back as a claim or command.
 6. Configuration layers: factory defaults, personal, repository, job.
-7. Plan order. Proposed: the engine before recovery (row 9), so recovery is built once; acceptance evidence (A-051) as the first stage added through the workflow format.
+Plan order decided in A-055: the engine (row 9) and the extension host (row 10) before recovery (row 11).

@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-055 — 2026-10-19 — Build the workflow engine now, before recovery
+
+Owner, after the core principles (A-054): “Okay I think this is the right path, and I'd want to implement this sooner rather than later so we don't build up too much debt as to what and how things run.” Then, offered the order (the engine before recovery; acceptance evidence as the first stage written in the workflow format): “Yes lets do this now. Part refactor part new features - we should also look forward in the plan so that we're considering the future features and work (like adding skills and initial prompts)”.
+
+Effect: two new plan rows before recovery. Row 9 is the workflow engine, a refactor of `src/lifecycle.ts` and `src/run.ts`. Row 10 is the extension host and the observation stream, new features. Recovery moves to row 11, tracker and code host sync to row 12, and the unsplit rest to row 13; A-052's order between recovery and sync stands. [plan.md](plan.md) gains a table of what each later row and open question needs from rows 9 and 10, so the engine is designed with them in view. The design questions for row 9 are in [open-questions.md](open-questions.md), O-016.
+
 ### A-054 — 2026-10-19 — Strong core, user-definable workflow, extensions
 
 Owner, opening an architectural discussion: “Basically I want to publish a strong core application, this is probably the state machine. Then the rest of the application is sort of plug and play, adapatable and configurable [...] The other thing that I would want is that the factory itself is modifiable outside the core, not just in configuration but we should look for opportunities to allow something like lua or ts code to be written by a user that is personal and works with our core.”
