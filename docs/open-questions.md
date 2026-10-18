@@ -8,7 +8,7 @@ O-001 to O-010 moved here from `decisions.md` on 2026-10-18; the IDs are unchang
 | --- | --- | --- |
 | O-001 | Pi and Claude Code: structured output, cancellation, isolation. `-p` and JSON modes exist on both CLIs; nothing else checked | Runtime spike |
 | O-005 | Default quality checks per repository type; who may waive; how each "done when" line gets verification the developer cannot edit ([below](#o-005-independent-verification-of-done-when)) | First real repository |
-| O-006 | Foreground process or daemon; GitHub remote; merge mechanism | Integration |
+| O-006 | Foreground process or daemon. (Remote and merge mechanism decided in A-052: the owner merges on the code host, and the next sync records it) | Integration |
 | O-007 | Backpressure: max outstanding PRs, cost and time limits | Before unattended runs |
 | O-009 | Staging and deployment ownership | Release tracking |
 | O-010 | How an owner's answer to an agent in its herdr tab becomes evidence the reviewers can see ([work/herdr-findings.md](work/herdr-findings.md)) | The herdr frontend |
@@ -16,6 +16,7 @@ O-001 to O-010 moved here from `decisions.md` on 2026-10-18; the IDs are unchang
 | O-012 | Whether and when the Design Studio gets a plan row, and which part comes first ([below](#o-012-the-design-studio)) | After plan row 9 |
 | O-013 | The initial prompt for each role, the skills each role gets, and how a run records which versions it used ([below](#o-013-role-prompts-and-skills)) | Before the first real repository's tickets |
 | O-014 | Survey of skills libraries, harnesses and other factories: what to borrow, and whether our flow should change ([below](#o-014-survey-skills-libraries-harnesses-and-other-factories)) | Before O-011 and O-013 are decided |
+| O-015 | Acceptance evidence (A-051): which tickets need it, which artifact type comes first, and when it gets a plan row ([below](#o-015-acceptance-evidence)) | When the stage gets a plan row |
 
 ## O-005 Independent verification of "done when"
 
@@ -73,3 +74,16 @@ Raised 2026-10-18, guide walkthrough.
 3. Other software factories, meaning systems that take a ticket to a reviewed change: their stages, gates, budgets and what they do on failure.
 
 For each group, two outputs: what to borrow for O-013 (prompts and skills), and whether our flow (develop, verify, standard review, adversarial review, owner acceptance) is the right one or could be improved. Findings that would change the flow go to the owner as proposals.
+
+## O-015 Acceptance evidence
+
+Raised 2026-10-19; design agreed in A-051, building it parked.
+
+**Why it matters.** The checks and reviewers judge the code. Nothing yet shows the owner that the change does what the ticket asked: a video of a UI change, a screenshot, a recorded command or test run. This is also part of O-005's answer: the verification agent works from the ticket alone, apart from the developer.
+
+**Today.** Not built. A cycle goes from ADVERSARIAL_REVIEW PASS straight to AWAITING_ACCEPTANCE (`src/lifecycle.ts`), and the owner sees the `main.ts` output and the branch.
+
+**Would settle it.**
+1. Whether every ticket needs acceptance evidence, or the ticket names it (source §04's `verification: [unit-tests, browser-demo]`; a backend-only fix need not produce screenshots).
+2. Which artifact type comes first: browser video and screenshots, or a recorded command or test run. Browsers in bwrap need a probe first.
+3. When it gets a plan row, and whether GitHub sync comes before it so the artifacts have a PR page to go on.

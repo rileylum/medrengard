@@ -27,12 +27,36 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | D-019 | DECIDED (A-035) | Candidate code runs inside a sandbox chosen by backend name. Bubblewrap first; Docker, VMs and cloud later behind the same interface. No VM or cloud backend for now; the tool stays agnostic |
 | D-020 | DECIDED (A-042) | Malicious code stays in scope, but the defences need not be airtight. Each adversarial finding is weighed by risk, and the recommendation can be a merge with the risk accepted. An accepted risk is recorded in [work/accepted-risks.md](work/accepted-risks.md) |
 | D-021 | DECIDED (A-043) | The factory may run on any repository, not only scratch ones. Runs keep full network access and can read their own CLI's credentials |
+| D-022 | DECIDED (A-052) | Task tracking and source control are separate seams, `Tracker` and `CodeHost`, each chosen by adapter name in the job file. GitHub first; Linear, GitLab and others behind the same interfaces. Providers report; the controller decides |
 
 ## Open
 
 Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
+
+### A-053 — 2026-10-19 — Drop the parked 02-a schema cleanup
+
+Owner, told that `WITHOUT ROWID` on the events table and `WHERE run_id IS NOT NULL` on its unique index change no behaviour (SQLite never treats two NULLs as equal in a unique index), and that removing them reaches only new databases because the table is made with `CREATE TABLE IF NOT EXISTS`, so existing ones would need a migration: “Okay yes lets drop the task”.
+
+Effect: both clauses stay in `src/store.ts`. The schema cleanup half of the 02-a notes line in [work/parked.md](work/parked.md) is dropped and gates no ticket.
+
+### A-052 — 2026-10-19 — Tracker and code host sync: two seams; recovery first
+
+Owner, on GitHub sync: “This all looks good, and I do basically only use github - but like the rest of the factory this should be agnostic and work with other providers or something like linear (seperating source control from task tracking)”. Then, offered a design with two seams (a tracker for tickets in and status out, a code host for the branch and the owner's review, each with a `local` adapter for today's behaviour and a `github` one) and five questions (Q1 the issue named on the command line, the job file still giving the repository and checks; Q2 a merge on the host is accept when the merged head equals the candidate's SHA, otherwise the cycle escalates, and the factory never merges; Q3 a PR closed without merge is cancel, changes requested does nothing automatic; Q4 the PR description is the review package and the issue gets one status comment edited in place; Q5 GitHub sync right after recovery and before the acceptance evidence stage): “Yep they all look good to me - so lets record those”.
+
+Effect: plan row 9 is recovery; row 10 is tracker and code host sync; the rest of the old row 9 moves to row 11, its order not yet decided. The sync design:
+- `Tracker` reads a ticket by reference and returns a provider-qualified work ID (`github:owner/repo#42`, `linear:ENG-123`), and reports status. `CodeHost` publishes the candidate branch with the review package, and reads the owner's disposition. The job file names each adapter. The first ticket builds `local` and `github` for both; Linear and GitLab come later.
+- The providers report what happened; the controller decides. A merged review is `accept` only when its head is the candidate's SHA; otherwise the cycle escalates. A review closed unmerged is `cancel`. Changes requested is left to the owner, who opens a child cycle (source §15, post-human revisions).
+- Sync is its own pass, `sync(store, tracker, host)`, that reconciles the store against the providers; `run.ts` does not call it. A failed report never changes a cycle and is retried by the next sync.
+- Provider credentials stay with the controller. No developer, check or reviewer sandbox can read them, and a test pins that.
+- Runs start one issue at a time from the command line; finding READY issues by label is scheduler work for the pools row.
+
+### A-051 — 2026-10-19 — Acceptance evidence stage: design agreed, built later
+
+Owner, after proposing a stage at the end of the cycle in which a verification agent produces an artifact (a video, an image or a test run) proving the work meets its done-when lines, for the PR, and after four points in reply (the agent writes the demo script and the controller runs it at the SHA in the sandbox; a failed demo: escalate, count as a standard FAIL, or rerun the agent once when its script is broken and escalate when the behaviour is wrong; the demo is not reviewed by an agent, so the PR says so and maps each done-when line to its item; the cost: a new stage before AWAITING_ACCEPTANCE, browsers in bwrap, the name "acceptance evidence", and GitHub sync to show it): “1. soumds good. 2. c 3. agree 4. Well, should it sit between adversarial review and awaiting acceptance? Have we built the 'review desk' part of the factory maybe it should sit there? I suppose that does sit between those two stage. I think we should maybe park this second half to later development”.
+
+Effect: verification has two halves. The first is today's VERIFYING stage and stays as built: the controller checks the SHA and base and runs the declared checks, and the reviewers read the results. The second, acceptance evidence, is parked for later development, with this design: a verification agent in a fresh context writes a demo script from the ticket and the candidate; the controller runs it at the head SHA in the sandbox and keeps the output under `evidence/<head>/`; a broken script reruns the agent once, a demo showing wrong behaviour escalates; the PR shows the script and its output, marked as not reviewed by an agent, with each done-when line mapped to its evidence. It sits after ADVERSARIAL_REVIEW and before AWAITING_ACCEPTANCE; the Review Desk (source §10, not built) presents it. What is still open is in [open-questions.md](open-questions.md), O-015.
 
 ### A-050 — 2026-10-18 — Merge the guide to main as experimental; its tests leave npm test
 
