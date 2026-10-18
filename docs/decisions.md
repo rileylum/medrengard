@@ -40,6 +40,12 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 
 ## Approval history
 
+### A-046 — 2026-10-18 — Throwaway herdr TUI prototype
+
+Owner, asking for "the quickest demo prototype we can - this will likely be thrown out" of a TUI that works inside herdr, and then answering five questions (exempt the prototype from the ticket workflow; branch name `feat/proto-herdr-tui`; stages as interactive claude sessions in herdr tabs rather than headless `claude -p`; claude only; no diff-comment key): “1. Yes 2. Sounds good 3. Yes 4. Yes claude only 5. Yes we can leave it out.” Then: “Okay now go away and build it by yourself with no input from me, its a prototype and so it only really maters once the final thing is done at which point I will review and we can collaborate on it.”
+
+Effect: `proto/` holds the prototype on `feat/proto-herdr-tui`, outside the ticket workflow: no ticket, no tests first, no reviews, and no merge to main. For prototype runs only, herdr is in use, which overrides workflow.md's "herdr is not part of this setup". Interactive stage runs are not sandboxed; the demo points them at a scratch repository. `src/` is unchanged.
+
 ### A-045 — 2026-10-17 — Fix the 07-d adversarial minors before merge
 
 Owner, after 07-d's standard PASS and adversarial PASS on `b5d4635` (two minors: arguments after the job file are ignored, so `node src/main.ts job.json cancel` runs the job; after `cancel` clears an ESCALATED parent, a job file still naming `parentCycleId` is refused with no hint), offered a fix before merge, parking, or a merge with the risks accepted: “Fix”.

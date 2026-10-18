@@ -24,6 +24,8 @@ Plan step 8 done (sandbox, A-035 to A-042). 08-a and 08-b merged by the owner as
 
 Ticket 07-d (A-044), on `feat/07-d-accept-cancel` stacked on `feat/09-scoping`: `node src/main.ts accept <job.json> <sha>` and `cancel <job.json>` record the owner's decision, so a work ID can run again. A refused command writes nothing. The store waits 5 s for another process's write lock and checks row 0 (two parked 02-a notes). Standard 1 PASS and adversarial PASS on `b5d4635`. The owner chose to fix the two adversarial minors (A-045): the run command refuses extra arguments, and a job naming a parent that is no longer ESCALATED is refused with a hint. Standard 2 PASS on `eaa5eb8`. Merged by the owner as `e61eb91`.
 
+Prototype (A-046), on `feat/proto-herdr-tui`, outside the ticket workflow and never for main: `proto/` is a herdr TUI. `proto/board.ts` lists jobs with stage, live agent and what needs the owner. `proto/run.ts` runs each stage as interactive claude in a herdr tab through `proto/herdr-adapter.ts`, which is not sandboxed, so it runs on scratch repositories only. See [proto/README.md](../proto/README.md). In live runs, two demo tickets reached AWAITING_ACCEPTANCE. A third, where the owner answered the developer in its tab, escalated: the reviewers cannot see what the owner says in a tab.
+
 ## Checks run
 
 2026-10-15: `npm test` and `RUNTIME_SPIKE=1 npm test` on `d8a9d21`, owner-run — 51 tests, 36 pass offline (10 live tests skipped with reason), 46 pass live, 5 todo, 0 fail.
@@ -73,9 +75,12 @@ Ticket 07-d (A-044), on `feat/07-d-accept-cancel` stacked on `feat/09-scoping`: 
 2026-10-17: `npm test` on `b5d4635` (07-d), implementer-run, not independent — 228 tests, 204 pass, 19 skipped, 5 todo, 0 fail. Standard 1 PASS, adversarial PASS (2 minors).
 2026-10-17: `npm test` on `eaa5eb8` (07-d, A-045 fix), implementer-run and the standard 2 reviewer's run — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. Standard 2 PASS.
 
+2026-10-18: `npm test` on `feat/proto-herdr-tui` (src unchanged), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. Prototype exercised live in a separate herdr session (sonnet, 3 jobs; paid calls: 3 developer runs, 1 fix run, 6 reviewer runs).
+
 ## Next action
 
 1. Done: plan step 8 merged (`86dde47`, `f479736`, `73463fc`); the owner's `npm test` on `73463fc` passes.
 2. Done: the owner lifted the scratch-repositories-only limit (A-043).
 3. Done: 07-d merged as `e61eb91`, with `feat/09-scoping`. `npm test` on `441a568` (code as `eaa5eb8`) was run by the implementer session at the owner's request: 230 tests, 206 pass, 0 fail.
 4. Next: break plan row 9 (GitHub sync, pools, release tracking, improvement loop) into tickets per [workflow.md](workflow.md), for the owner to read and approve.
+5. Owner: try the prototype (`proto/README.md`) and decide what the real frontend keeps.
