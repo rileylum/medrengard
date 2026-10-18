@@ -34,6 +34,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-050 — 2026-10-18 — Merge the guide to main as experimental; its tests leave npm test
+
+Owner, after walking through the guide (`learn/`, built as a prototype without a ticket) and asked whether it merges to main as experimental like `proto/` (A-048), and whether its tests stay in the default `npm test`: “1. yes merge as experimental 2. No they should go out, I don't know the best way to keep them but avoid having it mess with regular tests - worst case we can cut them”.
+
+Effect: `learn/` merges to main as an experimental guide, outside the ticket workflow: no ticket, no reviews. Its tests move to `learn/learn.test.ts` and run with `npm run test:learn`; `npm test` no longer runs them, so a change to `src/` can break the guide without failing the factory's tests. `src/` must not import from `learn/`. If keeping the guide in step costs too much, its tests, or the guide, can be cut. The owner runs the merge.
+
 ### A-049 — 2026-10-18 — Open questions move to their own file
 
 Owner, during the guide walkthrough, after asking for somewhere to flag questions for later research and finding it odd to keep them in a file titled decisions: “yes that makes sense, lets split the file and reference it from decisions as well just in case something is expecting them to still be there.”

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Reviews and the budget · Software Factory guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="boot.js"></script>
+<link rel="stylesheet" href="learn.css">
+<style>
+  .rp-sec { color: var(--amber); font-weight: 700; }
+  .rp-fake { color: var(--red); text-decoration: underline wavy #ff6b6b88; }
+</style>
+</head>
+<body>
+<main class="deck">
+
+<section class="slide" id="idea" data-lv="1">
+  <h2>Fresh eyes, nothing but the evidence</h2>
+  <div class="cols">
+    <div>
+      <p class="lead">A reviewer is a new agent <a class="w" href="words.html#run">run</a> that has never seen the developer at work. It reads what the controller hands it, and returns a <a class="w" href="words.html#verdict">verdict</a> bound to one <a class="w" href="words.html#sha">SHA</a>.</p>
+      <p>Why fresh? A reviewer who reads the developer's reasoning tends to agree with it. A reviewer who only has the ticket and the diff has to check the work itself.</p>
+    </div>
+    <div class="cols" style="gap:12px">
+      <div class="card green"><h3>It gets</h3><ul class="small">
+        <li>The <a class="w" href="words.html#ticket">ticket</a></li>
+        <li><code>AGENTS.md</code>, read from the candidate commit</li>
+        <li>Each check's result</li>
+        <li>Every changed path</li>
+        <li>The diff, base to head</li>
+        <li>The <a class="w" href="words.html#evidence">evidence</a> files</li>
+        <li>A read-only <a class="w" href="words.html#checkout">checkout</a> of the commit</li></ul></div>
+      <div class="card red"><h3>It never gets</h3><ul class="small">
+        <li>The developer's transcript</li>
+        <li>The developer's clone</li>
+        <li>A shell, or any write</li>
+        <li>The owner's settings, hooks or MCP servers</li></ul>
+        <p class="small muted">The controller has no transcript to leak: the adapter keeps only the claim.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="two-kinds" data-lv="1">
+  <h2>Two kinds of reviewer</h2>
+  <div class="cols">
+    <div class="card cyan"><h3>Standard</h3><p>"Judge the diff against the ticket, the repository instructions and the verification evidence." PASS only if every requirement is met by the diff and shown by the evidence. A FAIL must name a file and a line.</p><p class="small muted">Up to two per cycle. The first FAIL sends the findings back to the developer for one <a class="w" href="words.html#fix-run">fix run</a>.</p></div>
+    <div class="card red"><h3>Adversarial</h3><p>"Your job is to break it: find inputs, sequences or states under which it does not do what the ticket says, and report what you can show."</p><p class="small muted">One per cycle, after a standard PASS. A FAIL stops the cycle at once: there is no second chance.</p></div>
+  </div>
+  <p>Both end their reply with the same claim: <code>{"head": "&lt;sha&gt;", "verdict": "PASS" | "FAIL", "findings": [...]}</code>. A verdict for any other SHA is recorded and counted, but cannot move the cycle.</p>
+</section>
+
+<section class="slide" id="budget" data-lv="1">
+  <h2>Try it: spend the budget</h2>
+  <p>Every cycle has a <a class="w" href="words.html#budget">budget</a> of <b>two standard reviews and one adversarial review</b>. Pick each verdict. The events go through the factory's real <code>apply</code>, which moves the cycle and the counters.</p>
+  <div class="demo real" data-demo="rev-budget"></div>
+  <p class="small muted">Counters never go down. A fix run does not reset them: the second standard review is the last. After an <a class="w" href="words.html#escalation">escalation</a> only the <a class="w" href="words.html#owner">owner</a> can go on, by cancelling or by opening a <a class="w" href="words.html#child-cycle">child cycle</a> with its own fresh budget.</p>
+</section>
+
+<section class="slide" id="prompt" data-lv="2">
+  <h2>Try it: the reviewer's prompt</h2>
+  <p>This is the prompt the factory's own <code>buildPrompt</code> writes for a candidate in the simulator's todo repository. Click a section to jump to it.</p>
+  <p>Every section header carries a <a class="w" href="words.html#nonce">nonce</a>: eight random hex characters, new for every run. The ticket, the commit and the evidence can hold any text, including a line that looks like a header. They cannot hold one with a nonce they have never seen. Press <b>Hide a fake section in the ticket</b>: the fake header is quoted text, and the prompt says so.</p>
+  <div class="demo real" data-demo="rev-prompt"></div>
+</section>
+
+<section class="slide" id="cut" data-lv="2">
+  <h2>Try it: a diff too big to send</h2>
+  <p>A model reads a prompt; it is not a log viewer. The diff is cut to its first and last 128 KiB, with a marker where the middle was. Each evidence file is cut the same way at 16 KiB a side.</p>
+  <div class="demo real" data-demo="rev-cut"></div>
+</section>
+
+<section class="slide" id="guards" data-lv="2">
+  <h2>What review refuses before it starts</h2>
+  <p>A reviewer is never started on something the controller did not verify. <code>review()</code> throws, and the loop escalates with <a class="w" href="words.html#reject-dispatch">reject_dispatch</a>, if:</p>
+  <ul>
+    <li>the cycle is not in a review stage, or has no candidate;</li>
+    <li>the verify checkout is missing, or is not clean against the head (a check rewrote a file);</li>
+    <li>there is no verification event, or it is for another SHA;</li>
+    <li>any evidence file is missing.</li>
+  </ul>
+  <p>The reviewer's runtime is locked down too. <code>claude</code> runs <code>--restricted</code> with only Read, Glob and Grep, and <code>--strict-mcp-config</code>. A <code>.claude/settings.json</code> committed in the candidate could otherwise add hooks that run as the owner. <code>pi</code> runs with read-only tools, <code>--no-approve</code> and <code>--no-context-files</code>. Both run in <a class="w" href="words.html#bwrap">bubblewrap</a> with the checkout read-only.</p>
+  <a class="portal" href="sandbox.html#builder">the reviewer's sandbox policy</a>
+</section>
+
+<section class="slide" id="code-review" data-lv="3">
+  <h2>src/review.ts: review</h2>
+  <pre data-code="src/review.ts#review"></pre>
+</section>
+
+<section class="slide" id="code-prompt" data-lv="3">
+  <h2>src/review.ts: buildPrompt and cut</h2>
+  <pre data-code="src/review.ts#buildPrompt,cut"></pre>
+</section>
+
+<section class="slide" id="code-runtimes" data-lv="3">
+  <h2>How the reviewers are launched</h2>
+  <pre data-code="src/runtime/cli-adapter.ts#claudeReviewer,piReviewer"></pre>
+</section>
+
+<section class="slide" id="takeaway" data-lv="1">
+  <h2>Takeaway</h2>
+  <p class="lead">Two reviewers who never saw the developer work, one of them told to break it, each bound to one SHA. Three verdicts at most per cycle. Then a human decides.</p>
+  <a class="portal" href="sandbox.html">next: keeping candidate code in a box</a>
+</section>
+
+</main>
+<script type="module" src="deck.js"></script>
+</body>
+</html>

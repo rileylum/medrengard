@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The sandbox · Software Factory guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="boot.js"></script>
+<link rel="stylesheet" href="learn.css">
+<style>
+  .rogues { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+  .rogues .card p { font-size: 13.5px; margin: 0 0 6px; }
+  .rogues .card a { font: 11px var(--mono); }
+</style>
+</head>
+<body>
+<main class="deck">
+
+<section class="slide" id="idea" data-lv="1">
+  <h2>Candidate code is untrusted</h2>
+  <div class="cols">
+    <div>
+      <p class="lead">The factory runs code nobody has reviewed yet: the developer's commit, its tests, its build scripts. Any of it could be wrong, and some of it could be hostile.</p>
+      <p>So everything that touches candidate code runs inside a <a class="w" href="words.html#sandbox">sandbox</a>: <a class="w" href="words.html#bwrap">bubblewrap</a>, a small Linux tool that starts a process in its own namespaces and shows it only the directories it is given.</p>
+      <p>The defences need not be airtight (A-037). What matters first is that a run cannot damage the owner's machine or leave its remit; malicious code comes second.</p>
+    </div>
+    <div class="card amber">
+      <h3>Everyone gets</h3>
+      <ul class="small">
+        <li>The system directories (<code>/usr</code>, <code>/etc</code>, <code>/opt</code>…) read-only</li>
+        <li>A private <code>/tmp</code></li>
+        <li>An empty environment: only PATH, HOME and LANG</li>
+        <li>No view of the owner's home, other runs, or the repository's <code>.git</code></li>
+      </ul>
+      <p class="small muted">The owner can add read-only roots with <code>sandbox.read</code> in the job file, for a toolchain outside <code>/usr</code>.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="who" data-lv="1">
+  <h2>Who may touch what</h2>
+  <table>
+    <thead><tr><th>Who</th><th>Writes</th><th>Reads (beyond the system)</th><th>Network</th></tr></thead>
+    <tbody>
+      <tr><td><b>Developer</b></td><td>its own clone of the repository</td><td>its CLI's binary and config</td><td>yes: it talks to the model</td></tr>
+      <tr><td><b>Checks</b></td><td>the fresh checkout</td><td>nothing more</td><td><b>no</b></td></tr>
+      <tr><td><b>Reviewers</b></td><td>nothing</td><td>the checkout, its CLI's binary and config</td><td>yes: it talks to the model</td></tr>
+      <tr><td><b>git upload-pack</b></td><td>nothing</td><td>the developer's clone</td><td>no</td></tr>
+    </tbody>
+  </table>
+  <p class="small muted">Runs keep their network and can read their own CLI's credentials. The owner accepted that when lifting the scratch-repositories-only limit (A-043).</p>
+</section>
+
+<section class="slide" id="builder" data-lv="2">
+  <h2>Try it: build a policy</h2>
+  <p>Each stage builds a <code>Policy</code> for what it spawns. The factory's <code>wrap</code> turns it into the bubblewrap command line. Pick who runs, then change anything: add a write root, turn the network on, switch the backend to <code>none</code>. The table on the right shows what the command can then see.</p>
+  <p class="small muted">Put a relative path, or one that does not exist, into sandbox.read: <code>checkSandbox</code> refuses at setup rather than failing every check later.</p>
+  <div class="demo real" data-demo="sb-policy"></div>
+</section>
+
+<section class="slide" id="rogues" data-lv="2">
+  <h2>The rogues' gallery</h2>
+  <p>Each of these was found by an adversarial reviewer trying to break the factory, then closed by a ticket. Together they are why the sandbox looks the way it does.</p>
+  <div class="rogues">
+    <div class="card red"><h3>A committed symlink</h3><p>A check followed a symlink in the commit and read the developer's worktree next door.</p><p><b>Now:</b> checks run in bwrap and see only the checkout.</p><a href="/docs/work/06-a-verification.md" target="_blank">06-a</a> · <a href="/docs/work/08-a-sandboxed-checks.md" target="_blank">08-a</a></div>
+    <div class="card red"><h3>Git that obeys the candidate</h3><p>A check wrote a <code>.git</code> pointer or set <code>core.hooksPath</code>, so the controller's own Git read state the candidate chose.</p><p><b>Now:</b> the checkout has no <code>.git</code>; Git uses the repository's git dir and a private index.</p><a href="/docs/work/07-b-end-to-end-loop.md" target="_blank">07-b</a> · <a href="/docs/work/08-a-sandboxed-checks.md" target="_blank">08-a</a></div>
+    <div class="card red"><h3>A formatter in disguise</h3><p>A check rewrote a tracked file, so the reviewers would read something other than the commit.</p><p><b>Now:</b> the controller's <code>tree</code> check FAILs with the changed paths as evidence.</p><a href="/docs/work/06-c-reviewer-prompt-bounds.md" target="_blank">06-c</a> · <a href="/docs/work/07-c-tree-check.md" target="_blank">07-c</a></div>
+    <div class="card red"><h3>Locked doors</h3><p>A check removed its own read permission on what it rewrote; Git skipped the file with a warning and exit 0.</p><p><b>Now:</b> owner access is restored before comparing, and Git's warnings count as dirt.</p><a href="/docs/work/08-b-tree-permissions.md" target="_blank">08-b</a></div>
+    <div class="card red"><h3>Gitlinks and dangling links</h3><p>A committed submodule entry and a symlink to nowhere survived the clean-up before review.</p><p><b>Now:</b> gitlinks are emptied and checked, dangling symlinks removed.</p><a href="/docs/work/08-d-reviewer-sandbox.md" target="_blank">08-d</a></div>
+    <div class="card red"><h3>A FIFO where a file should be</h3><p>A named pipe left where Git opens a file blocked the controller's Git forever, and with it every deadline.</p><p><b>Now:</b> every controller Git call over a tree a run wrote is killed at the stage deadline.</p><a href="/docs/work/08-e-reviewer-sandbox-tests.md" target="_blank">08-e</a> · <a href="/docs/work/08-f-controller-git-timeout.md" target="_blank">08-f</a></div>
+    <div class="card red"><h3>Typing into the owner's terminal</h3><p>A process sharing the controller's terminal can push keystrokes into it with the TIOCSTI ioctl.</p><p><b>Now:</b> <code>--new-session</code>.</p><a href="/docs/work/08-a-findings.md" target="_blank">08-a findings</a></div>
+    <div class="card red"><h3>Tokens in the environment</h3><p>The controller's environment may hold API tokens and the owner's settings.</p><p><b>Now:</b> <code>--clearenv</code>, then only PATH, HOME and LANG.</p><a href="/docs/work/08-a-sandboxed-checks.md" target="_blank">08-a</a></div>
+  </div>
+  <p class="small muted" style="margin-top:12px">What is still open is listed in <a href="/docs/work/parked.md" target="_blank">parked.md</a> and <a href="/docs/work/accepted-risks.md" target="_blank">accepted-risks.md</a>.</p>
+</section>
+
+<section class="slide" id="backends" data-lv="2">
+  <h2>bwrap or none</h2>
+  <p>The job file names the backend; the default is <code>bwrap</code>. <code>none</code> runs candidate code as the owner, unconfined, and must be written out. The seam is small on purpose: Docker, a VM or a cloud runner would be further cases of <code>wrap</code> and <code>checkSandbox</code>, and nothing else would change.</p>
+  <p>Before the paid developer run starts, the loop calls <code>checkSandbox</code>. It starts a trivial command in bubblewrap. If that fails (no bubblewrap, no unprivileged user namespaces), the run stops at setup instead of failing every check as if the candidate were wrong.</p>
+</section>
+
+<section class="slide" id="code-types" data-lv="3">
+  <h2>src/sandbox.ts: Sandbox and Policy</h2>
+  <pre data-code="src/sandbox.ts#Sandbox,Policy"></pre>
+</section>
+
+<section class="slide" id="code-wrap" data-lv="3">
+  <h2>src/sandbox.ts: wrap and binds</h2>
+  <pre data-code="src/sandbox.ts#wrap,binds"></pre>
+</section>
+
+<section class="slide" id="code-check" data-lv="3">
+  <h2>src/sandbox.ts: reachable and checkSandbox</h2>
+  <pre data-code="src/sandbox.ts#reachable,checkSandbox"></pre>
+</section>
+
+<section class="slide" id="takeaway" data-lv="1">
+  <h2>Takeaway</h2>
+  <p class="lead">Every process that runs candidate code gets a box built for its job: write only what it must, read only what it needs, no network for checks, no environment, no terminal. The box is one function, so it can change backend without touching the rest.</p>
+</section>
+
+</main>
+<script type="module" src="deck.js"></script>
+</body>
+</html>

@@ -28,6 +28,8 @@ Ticket 07-d (A-044), on `feat/07-d-accept-cancel` stacked on `feat/09-scoping`: 
 
 Experimental herdr TUI (A-046 to A-048), merged to main from `feat/proto-herdr-tui` and outside the ticket workflow: `proto/` is a herdr TUI. `proto/board.ts` lists jobs with stage, live agent and what needs the owner. `proto/run.ts` runs each stage as interactive claude in a herdr tab through `proto/herdr-adapter.ts`, inside the job's bwrap sandbox with three changes for interactive runs (A-047). See [proto/README.md](../proto/README.md). In live runs, two demo tickets reached AWAITING_ACCEPTANCE. A third, where the owner answered the developer in its tab, escalated: the reviewers cannot see what the owner says in a tab (O-010). The goal is a factory that runs in herdr (A-047); findings in [work/herdr-findings.md](work/herdr-findings.md).
 
+Experimental guide (A-050), outside the ticket workflow, on `feat/proto-learn` for the owner to merge: `learn/` is an interactive guide to the factory, modelled on the Cube Crawler learning guide. `npm run learn` serves it at http://127.0.0.1:8077/learn/. Twelve rooms with three detail levels, live code and docs read from the repository, and demos that run `src/` in the browser through an import map of stand-ins; the simulator runs the real `run`, `execute` and `apply` on a ticket the reader edits. `npm run test:learn` keeps it in step with `src/`, outside `npm test`. The owner walked through it on 2026-10-18; how to change it is in [learn/README.md](../learn/README.md).
+
 ## Checks run
 
 2026-10-15: `npm test` and `RUNTIME_SPIKE=1 npm test` on `d8a9d21`, owner-run — 51 tests, 36 pass offline (10 live tests skipped with reason), 46 pass live, 5 todo, 0 fail.
@@ -80,6 +82,7 @@ Experimental herdr TUI (A-046 to A-048), merged to main from `feat/proto-herdr-t
 2026-10-18: `npm test` on `feat/proto-herdr-tui` (src unchanged), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. Prototype exercised live in a separate herdr session (sonnet, 3 jobs; paid calls: 3 developer runs, 1 fix run, 6 reviewer runs).
 2026-10-18: `npm test` on `feat/proto-herdr-tui` (uncommitted: board line wrap, README, workflow.md), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. Board's wrapped key and status lines checked by eye in an isolated herdr session at 53 columns. Sandbox spike: interactive claude in the unchanged developer bwrap policy runs, but herdr does not detect it (1 paid call, sonnet); details in `proto/README.md`.
 2026-10-18: `npm test` on `feat/proto-herdr-tui` (uncommitted: sandboxed herdr adapter), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. Live in an isolated herdr session: `demo-clamp` READY to ACCEPTED from the board with all three stages in bwrap and detected by herdr (sonnet; paid calls: 1 developer, 2 reviewers, plus 1 spike prompt).
+2026-10-18: `npm test` on `feat/proto-learn` (stacked on `feat/research-list`), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. `npm run test:learn` — 6 tests, 6 pass.
 
 ## Next action
 
@@ -88,3 +91,4 @@ Experimental herdr TUI (A-046 to A-048), merged to main from `feat/proto-herdr-t
 3. Done: 07-d merged as `e61eb91`, with `feat/09-scoping`. `npm test` on `441a568` (code as `eaa5eb8`) was run by the implementer session at the owner's request: 230 tests, 206 pass, 0 fail.
 4. Next: break plan row 9 (GitHub sync, pools, release tracking, improvement loop) into tickets per [workflow.md](workflow.md), for the owner to read and approve.
 5. Owner: use the experimental herdr TUI (`proto/README.md`, A-048) while testing the factory. Findings and open questions for the real herdr frontend: [work/herdr-findings.md](work/herdr-findings.md).
+6. Owner: merge `feat/research-list` (open questions, A-049), then `feat/proto-learn` (the guide, A-050), which is stacked on it.

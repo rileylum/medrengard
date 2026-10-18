@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Runtimes: claude and pi · Software Factory guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="boot.js"></script>
+<link rel="stylesheet" href="learn.css">
+<style>
+  .argv code { margin: 1px 0; display: inline-block; }
+  .argv code.why { cursor: pointer; text-decoration: underline dotted var(--amber); text-underline-offset: 3px; }
+</style>
+</head>
+<body>
+<main class="deck">
+
+<section class="slide" id="three" data-lv="1">
+  <h2>Runtime, model and role are three different things</h2>
+  <div class="cols3">
+    <div class="card cyan"><h3>Runtime</h3><p>The program that runs the agent: <code>claude</code> (Claude Code) or <code>pi</code>. The factory starts it as a child process.</p></div>
+    <div class="card"><h3>Model</h3><p>The language model behind it. The runtime picks it; the core of the factory never names one.</p></div>
+    <div class="card amber"><h3>Role</h3><p>What the run is for: developer, standard reviewer or adversarial reviewer. It sets the prompt and the permissions.</p></div>
+  </div>
+  <p style="margin-top:14px">The job file picks a <a class="w" href="words.html#runtime">runtime</a> per role. You can have claude develop and pi review adversarially. Nothing in the lifecycle knows which one ran: it sees an <a class="w" href="words.html#adapter">adapter</a> and its outcome.</p>
+</section>
+
+<section class="slide" id="cli-spec" data-lv="1">
+  <h2>A CLI becomes an adapter</h2>
+  <p>One function, <code>cliAdapter(spec)</code>, makes an adapter from a <code>CliSpec</code>. The spec is small: the command, its flags, the files of yours it needs to read, and a <code>parse</code> function. Everything else is shared: the sandbox, the process, the byte cap, the cancel.</p>
+  <ol class="steps">
+    <li>The prompt goes to the CLI on stdin.</li>
+    <li>The CLI prints its answer on stdout: one JSON object (claude) or JSON Lines (pi).</li>
+    <li><code>parse</code> finds the model's reply in that, and the <a class="w" href="words.html#claim">claim</a> at its end.</li>
+  </ol>
+  <pre data-code="src/runtime/cli-adapter.ts#CliSpec"></pre>
+</section>
+
+<section class="slide" id="scan" data-lv="2">
+  <h2>Try it: finding the claim</h2>
+  <p>The claim is the <b>last</b> fenced <code>json</code> block in the reply, or the whole reply if it is a JSON object. The fields are not checked here; the store does that. Write a reply, or pick a preset, and see what the real parser returns.</p>
+  <div class="demo real" data-demo="rt-scan"></div>
+  <div class="note"><b>Why not a regex?</b> The first version used one. On an unclosed fence followed by blank lines it backtracked for seconds, on the controller's event loop, holding every cycle past its deadline (04-d adversarial). The scan is now two <code>indexOf</code> calls from the end: the reply length is the only cost.</div>
+</section>
+
+<section class="slide" id="errors" data-lv="2">
+  <h2>How each CLI says it failed</h2>
+  <p>The 03-a spike ran both CLIs and wrote down what they do. They fail differently, and the parsers follow that:</p>
+  <table class="small">
+    <thead><tr><th></th><th>claude</th><th>pi</th></tr></thead>
+    <tbody>
+      <tr><td>Success</td><td>Exit 0. One JSON object; the reply in <code>result</code>.</td><td>Exit 0. JSON Lines; the reply in the last <code>turn_end</code>, then <code>agent_end</code>.</td></tr>
+      <tr><td>Bad model, no login</td><td>Exit 1, still a JSON body. <code>subtype</code> still says <code>success</code>; <code>is_error</code> is the flag.</td><td>Exit 1. Plain text on stderr. A <code>session</code> line may come first and proves nothing.</td></tr>
+      <tr><td>Cancelled</td><td>Exit 143 within about a second, empty stdout.</td><td>Exit 143 in milliseconds, partial JSON Lines, no <code>agent_end</code>.</td></tr>
+      <tr><td>No answer at all</td><td colspan="2">Seen in 4 of 10 one-turn runs of claude. So every run has a <a class="w" href="words.html#deadline">deadline</a>.</td></tr>
+    </tbody>
+  </table>
+  <p class="small muted">Source: <a href="/docs/work/03-a-findings.md" target="_blank">docs/work/03-a-findings.md</a>.</p>
+</section>
+
+<section class="slide" id="flags" data-lv="2">
+  <h2>The flags, per runtime and role</h2>
+  <p>Read live from the specs in <code>src/runtime/cli-adapter.ts</code>. Developers get tools to edit and commit. Reviewers get read tools only. Each flag that closes a hole came from a review that found the hole.</p>
+  <div class="demo real" data-demo="rt-flags"></div>
+</section>
+
+<section class="slide" id="spawn" data-lv="2">
+  <h2>Starting and stopping the process</h2>
+  <div class="cols">
+    <div>
+      <p><code>spawnRuntime</code> starts the CLI in a systemd user <a class="w" href="words.html#scope">scope</a> named <code>sf-&lt;runId&gt;</code>. A scope is a cgroup: every process the run starts is in it, even one that left its process group with <code>setsid</code> (the 03-b finding).</p>
+      <p>To cancel, it sends SIGTERM, waits a grace period, then writes <code>cgroup.kill</code>: everything in the scope dies at once. It does the same after a normal exit, so nothing the agent started in the background survives the run.</p>
+    </div>
+    <div class="card">
+      <h3>Limits on every run</h3>
+      <ul class="small">
+        <li><b>8 MiB</b> per stream. Past that the tree is killed and the run is <code>overflow</code>: no result can grow near V8's string limit.</li>
+        <li>A <b>deadline</b> from the controller, which aborts the run.</li>
+        <li>Inside <a class="w" href="words.html#bwrap">bwrap</a> when the job names a sandbox. <a class="portal" href="sandbox.html">the sandbox</a></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="code-scan" data-lv="3">
+  <h2>lastFencedJson and claimFrom</h2>
+  <pre data-code="src/runtime/cli-adapter.ts#lastFencedJson,claimFrom"></pre>
+</section>
+
+<section class="slide" id="code-specs" data-lv="3">
+  <h2>The claude and pi specs</h2>
+  <pre data-code="src/runtime/cli-adapter.ts#claude,pi"></pre>
+</section>
+
+<section class="slide" id="code-adapter" data-lv="3">
+  <h2>cliAdapter</h2>
+  <pre data-code="src/runtime/cli-adapter.ts#cliAdapter"></pre>
+</section>
+
+<section class="slide" id="code-spawn" data-lv="3">
+  <h2>spawn.ts</h2>
+  <pre data-code="src/runtime/spawn.ts#header,SpawnOptions"></pre>
+</section>
+
+<section class="slide" id="takeaway" data-lv="1">
+  <h2>Takeaway</h2>
+  <p class="lead">A runtime is a command, some flags and a parser. The factory treats its reply as text that may end in a claim. Everything else (sandbox, scope, byte cap, deadline) is the same for every runtime.</p>
+</section>
+
+</main>
+<script type="module" src="deck.js"></script>
+</body>
+</html>
