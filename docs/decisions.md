@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-057 — 2026-10-19 — 09-a engine shape
+
+Owner, offered three approaches for the inside of `apply` (keep the switch on event type; a handler table by step kind; a compiled lookup table, with the first recommended) and three questions (Q1 replace `standard` and `adversarial` with `Cycle.budgets` and edit their read sites in callers, widening the ticket's constraint; Q2 `QUEUED` as a fourth engine stage, with the workflow naming its `start`; Q3 `apply(c, e, workflow = defaultWorkflow)` and an optional workflow on `EventStore`, recording nothing new on the open marker): “take all recommendations”. Then, given [design/2026-10-19-workflow-engine.md](design/2026-10-19-workflow-engine.md): “design is approved”. Then, offered three interface answers (the `EventStore` constructor runs `checkWorkflow` and `apply` trusts its caller; keep the three-argument `apply` and wrap each `reduce(apply, …)`; second workflows live in the tests only) and generic escalation reasons (`<STAGE> FAIL`, `<STAGE> FAIL at budget limit <n>`), which change two regexes in `tests/run.test.ts`: “take all”, then “Take all recommendations”.
+
+Effect: 09-a follows that design. Its constraint now also allows mechanical edits of `c.standard` and `c.adversarial` read sites in `src/main.ts` and the caller tests, and the two escalation regexes at `tests/run.test.ts:122` and `:132`. Agent stages carry `produces: 'commit' | 'verdict'` as part of the `agent` kind, not a fourth kind.
+
 ### A-056 — 2026-10-19 — Row 9 design answers
 
 Owner, offered four answers for the workflow engine (Q1 a TypeScript module that exports plain data, so the engine can check and hash it; Q2 today's event types kept with a `step` field, so existing stores replay; Q3 stage names defined by the workflow, with `ESCALATED`, `CANCELLED` and `ACCEPTED` fixed in the engine; Q4 the core owns a prompt's contract part and the workflow owns the role text) and three tickets (09-a engine and default workflow, 09-b generic driver, 09-c prompt split and version records): “accept all”.
