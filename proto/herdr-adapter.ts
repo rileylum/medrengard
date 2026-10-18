@@ -1,19 +1,23 @@
 // Prototype (A-046): an Adapter that runs claude interactively in a herdr tab, so the owner can
 // watch a stage and talk to it. The controller still decides state: the run ends only when the
 // agent writes its claim file, and the claim goes through the same execute/receive guards as a
-// headless run. Unlike cliAdapter there is no bwrap and no systemd scope: the agent runs as the
-// owner with the owner's user settings, so point this at scratch repositories only.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+// headless run. Under bwrap the agent gets cliAdapter's policy with three changes for an
+// interactive run (see sandboxed()); there is no systemd scope, so cancel closes the tab.
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Adapter, RunOutcome } from '../src/adapter.ts';
 import type { Role } from '../src/lifecycle.ts';
+import { executables, wrap, type Sandbox } from '../src/sandbox.ts';
 import { agents, herdr, newTab, readPane } from './herdr.ts';
 
 export interface HerdrOptions {
   workId: string;
   runsDir: string;
   model?: string;
+  /** The job's sandbox. `none` runs claude as the owner, unconfined. */
+  sandbox: Sandbox;
 }
 
 const SHORT: Record<Role, string> = { developer: 'dev', standard_reviewer: 'std', adversarial_reviewer: 'adv' };
@@ -53,10 +57,23 @@ export function herdrClaude(opts: HerdrOptions, worktree?: string): Adapter {
       // User settings only: a .claude/settings.json in the candidate would add hooks and allow rules.
       const args = ['--setting-sources', 'user', '--strict-mcp-config', '--add-dir', dir, ...(opts.model ? ['--model', opts.model] : []), '--allowedTools', ...allowed];
       const name = agentName(opts.workId, req.role, req.runId);
+      let command: string[];
+      try {
+        command = opts.sandbox.backend === 'none' ? ['claude', ...args] : sandboxed(opts.sandbox, req.role, req.cwd, dir, args);
+      } catch (err) {
+        return { status: 'failed', reason: err instanceof Error ? err.message : String(err) };
+      }
       const { tabId, paneId } = newTab(`${opts.workId} ${SHORT[req.role]}`, req.cwd);
       writeFileSync(join(dir, 'meta.json'), JSON.stringify({ workId: opts.workId, role: req.role, name, tabId, paneId, cwd: req.cwd }));
       try {
-        herdr('agent', 'start', name, '--kind', 'claude', '--pane', paneId, '--timeout', '60000', '--', ...args);
+        // Not `herdr agent start`: it runs the canonical `claude` itself, so nothing could wrap it.
+        // herdr detects claude in the pane on its own; the rename gives it the name the board looks for.
+        herdr('pane', 'run', paneId, command.map(shellQuote).join(' '));
+        if (!(await detected(paneId, signal))) {
+          if (signal.aborted) return cancel(tabId);
+          return { status: 'failed', reason: `herdr did not detect claude in ${tabId} within 60 s` };
+        }
+        herdr('agent', 'rename', paneId, name);
         // Claude asks whether to trust a new git clone before it reads input, and draws that
         // dialog after herdr already reports it ready; a prompt sent into the dialog is lost.
         // So: wait out the dialog, send, and send again if the agent's state never moves.
@@ -88,6 +105,61 @@ export function herdrClaude(opts: HerdrOptions, worktree?: string): Adapter {
 }
 
 const TRUST = /trust this folder/i;
+
+/**
+ * cliAdapter's policy for this role (src/runtime/cli-adapter.ts), changed in three ways for an
+ * interactive run, each found in the 2026-10-18 spike (README):
+ * - No `--new-session`: herdr detects an agent only in the pane's foreground process group. That
+ *   flag stops the agent pushing input into its terminal with TIOCSTI, which in a herdr pane would
+ *   run as the owner once claude exits; so the run is refused unless the kernel blocks TIOCSTI.
+ * - claude starts through a symlink named `claude`: herdr matches the process name, and the real
+ *   binary is named after its version.
+ * - The run directory is writable (prompt and claim), `~/.claude` is a throwaway overlay, and
+ *   `~/.claude.json` is a per-run copy: interactive claude writes both, and read-only it cannot
+ *   save the trust dialog or its transcript.
+ */
+function sandboxed(sandbox: Sandbox, role: Role, cwd: string, dir: string, args: string[]): string[] {
+  let tiocsti = '1';
+  try { tiocsti = readFileSync('/proc/sys/dev/tty/legacy_tiocsti', 'utf8').trim(); } catch { /* kernel before 6.2: TIOCSTI always on */ }
+  if (tiocsti !== '0') throw new Error('sandboxed interactive runs need dev.tty.legacy_tiocsti = 0 (sysctl), so the agent cannot type into its pane');
+  const found = executables('claude', cwd)[0];
+  if (!found) throw new Error('claude not found on PATH');
+  const bin = realpathSync(found);
+  const home = homedir();
+  const tmp = join(dir, 'tmp');
+  mkdirSync(tmp, { recursive: true });
+  const writes = role === 'developer';
+  const [cmd, wrapped] = wrap(sandbox, {
+    cwd, write: [...(writes ? [cwd] : []), dir], read: [dirname(bin), ...(writes ? [] : [cwd])],
+    overlay: [join(home, '.claude')].filter((p) => existsSync(p)), network: true, home, tmp,
+  }, bin, args);
+  const extra = ['--dir', '/run/sf', '--symlink', bin, '/run/sf/claude'];
+  const config = join(home, '.claude.json');
+  if (existsSync(config)) {
+    // A copy, so nothing a run writes there reaches the owner's own claude or the next run.
+    const copy = join(dir, 'claude.json');
+    copyFileSync(config, copy);
+    chmodSync(copy, 0o600);
+    extra.push('--bind', copy, config);
+  }
+  const out = wrapped.filter((a) => a !== '--new-session');
+  out.splice(out.indexOf('--remount-ro'), 0, ...extra);
+  out[out.indexOf('--') + 1] = '/run/sf/claude';
+  return [cmd, ...out];
+}
+
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Whether herdr sees an agent in the pane within 60 s. */
+async function detected(paneId: string, signal: AbortSignal): Promise<boolean> {
+  for (let i = 0; i < 60 && !signal.aborted; i++) {
+    if (agents().some((a) => a.pane_id === paneId)) return true;
+    await sleep(1000);
+  }
+  return false;
+}
 
 function seq(name: string): number {
   try { return herdr('agent', 'get', name).agent.state_change_seq as number; } catch { return -1; }

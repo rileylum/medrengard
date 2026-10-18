@@ -1,9 +1,9 @@
 #!/bin/sh
 # Prototype (A-046): makes a scratch repository and three job files for the board.
-# The herdr adapter runs claude unconfined, so the jobs point at this scratch repository only.
+# Set DEMO to build it somewhere else, for example to test without touching the owner's demo.
 # Re-running wipes the demo, its runs and their event store.
 set -eu
-DEMO=/var/tmp/software_factory/proto
+DEMO=${DEMO:-/var/tmp/software_factory/proto}
 HERE=$(cd "$(dirname "$0")" && pwd)
 NODE_DIR=$(dirname "$(dirname "$(readlink -f "$(command -v node)")")")
 rm -rf "$DEMO/repo" "$DEMO/jobs" "$DEMO/runs"

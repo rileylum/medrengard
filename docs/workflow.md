@@ -54,7 +54,7 @@ Budget per ticket: two standard reviews, one adversarial. Spent budget does not 
 
 ## Reviews
 
-Reviews run in a fresh session through `claude -p` with the prompt in a file. Do not use the `dispatch` skill; it depends on herdr, which is not part of this setup. The reviewer prompt contains the ticket, the diff against main, the SHA, the test output and AGENTS.md. It must not contain the implementer's reasoning or this conversation. The reviewer returns:
+Reviews run in a fresh session through `claude -p` with the prompt in a file. Do not use the `dispatch` skill: it runs the session in a herdr tab, where the owner can talk to the reviewer, and the review must rest only on the prompt. herdr is used only by the experimental TUI in `proto/` (A-046), never for ticket reviews. The reviewer prompt contains the ticket, the diff against main, the SHA, the test output and AGENTS.md. It must not contain the implementer's reasoning or this conversation. The reviewer returns:
 
 ```
 Verdict: PASS | FAIL

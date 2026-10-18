@@ -119,6 +119,23 @@ const inverse = (s: string) => `${ESC}7m${s}${ESC}0m`;
 const colour = (n: number, s: string) => `${ESC}${n}m${s}${ESC}0m`;
 const pad = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n));
 
+/**
+ * Greedy word wrap, one space of indent per line. Shorter than the pane by one column: a line that
+ * fills the last column makes some terminals wrap on their own and push the screen up a line.
+ */
+function wrapText(s: string, width: number, sep = ' '): string[] {
+  const max = Math.max(width - 2, 1);
+  const lines: string[] = [];
+  let line = '';
+  for (const word of s.split(sep)) {
+    const next = line ? line + sep + word : word;
+    if (next.length <= max || !line) line = next;
+    else { lines.push(line); line = word; }
+  }
+  lines.push(line);
+  return lines.flatMap((l) => l.match(new RegExp(`.{1,${max}}`, 'gu')) ?? ['']).map((l) => ' ' + l);
+}
+
 const STAGE_COLOUR: Record<string, number> = {
   AWAITING_ACCEPTANCE: 32, ACCEPTED: 32, ESCALATED: 31, CANCELLED: 90, DEVELOPING: 36, VERIFYING: 36, STANDARD_REVIEW: 35, ADVERSARIAL_REVIEW: 35,
 };
@@ -148,14 +165,18 @@ function draw(): void {
   if (rows.length === 0) out.push(dim(`   no *.json job files in ${dir}`));
   out.push('');
   out.push(dim('─'.repeat(width)));
-  const keys = ' ↑↓ select  ⏎ agent  c controller  r run  d diff  a accept  x cancel  w close finished tabs  q quit';
+  // Wrapped, not cut: main.ts's accept output leads with the cycle and stage, which a cut hides.
+  const keys = '↑↓ select  ⏎ agent  c controller  r run  d diff  a accept  x cancel  w close finished tabs  q quit';
+  const footer = [
+    dim('─'.repeat(width)),
+    ...wrapText(keys, width, '  '),
+    ...(message ? wrapText(message, width).map((l) => colour(33, l)) : ['']),
+  ];
   const detail = detailLines(rows[selected], width);
-  const room = height - out.length - 3;
+  const room = height - out.length - footer.length;
   out.push(...detail.slice(Math.max(0, detail.length - room)));
-  while (out.length < height - 3) out.push('');
-  out.push(dim('─'.repeat(width)));
-  out.push(pad(keys, width));
-  out.push(message ? colour(33, pad(' ' + message, width)) : '');
+  while (out.length < height - footer.length) out.push('');
+  out.push(...footer);
   process.stdout.write(`${ESC}H${ESC}2J` + out.slice(0, height).map((l) => l).join('\n'));
 }
 
@@ -187,7 +208,7 @@ function detailLines(r: Row | undefined, width: number): string[] {
 function current(): Row | undefined { return rows[selected]; }
 
 function mainTs(...args: string[]): string {
-  const r = spawnSync(process.execPath, [join(ROOT, 'src', 'main.ts'), ...args], { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, ['--no-warnings', join(ROOT, 'src', 'main.ts'), ...args], { encoding: 'utf8' });
   return `${r.stdout}${r.stderr}`.trim().split('\n').join(' · ');
 }
 

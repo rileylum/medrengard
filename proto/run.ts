@@ -16,7 +16,7 @@ async function main(file: string | undefined): Promise<number> {
   if (!inHerdr()) throw new Error('run this inside herdr: each stage opens a herdr tab');
   const { spec, job, runsDir, db, sandbox } = loadJob(file);
   if (!job.ticket) throw new Error('job needs ticket or ticketFile');
-  const opts = { workId: job.workId, runsDir, model: spec.model };
+  const opts = { workId: job.workId, runsDir, model: spec.model, sandbox };
   const adapters = {
     developer: (worktree: string) => herdrClaude(opts, worktree),
     standard: herdrClaude(opts),
