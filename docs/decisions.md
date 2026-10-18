@@ -28,12 +28,44 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | D-020 | DECIDED (A-042) | Malicious code stays in scope, but the defences need not be airtight. Each adversarial finding is weighed by risk, and the recommendation can be a merge with the risk accepted. An accepted risk is recorded in [work/accepted-risks.md](work/accepted-risks.md) |
 | D-021 | DECIDED (A-043) | The factory may run on any repository, not only scratch ones. Runs keep full network access and can read their own CLI's credentials |
 | D-022 | DECIDED (A-052) | Task tracking and source control are separate seams, `Tracker` and `CodeHost`, each chosen by adapter name in the job file. GitHub first; Linear, GitLab and others behind the same interfaces. Providers report; the controller decides |
+| D-023 | DECIDED (A-054) | Strong core, swappable modules with good defaults, user extensions. The core is the event log, the engine, the controller, run supervision, SHA binding, an observation stream and an extension host. Stages, steps, budgets, human acceptance and merging are a user-definable workflow; today's lifecycle is the default. Extensions run as separate processes speaking JSON over stdin and stdout, TypeScript first. Supersedes D-004 and spec principle 5 as fixed rules: both become default policy |
 
 ## Open
 
 Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
+
+### A-056 — 2026-10-19 — Row 9 design answers
+
+Owner, offered four answers for the workflow engine (Q1 a TypeScript module that exports plain data, so the engine can check and hash it; Q2 today's event types kept with a `step` field, so existing stores replay; Q3 stage names defined by the workflow, with `ESCALATED`, `CANCELLED` and `ACCEPTED` fixed in the engine; Q4 the core owns a prompt's contract part and the workflow owns the role text) and three tickets (09-a engine and default workflow, 09-b generic driver, 09-c prompt split and version records): “accept all”.
+
+Effect: tickets [09-a](work/09-a-workflow-engine.md), [09-b](work/09-b-generic-driver.md) and [09-c](work/09-c-prompt-versions.md) are drafted, stacked in that order. Each becomes READY when the owner has read it and said go. O-016 items 1 and 2 are answered; items 3 to 6 (extension protocol, grants, observation stream, configuration layers) remain for row 10.
+
+### A-055 — 2026-10-19 — Build the workflow engine now, before recovery
+
+Owner, after the core principles (A-054): “Okay I think this is the right path, and I'd want to implement this sooner rather than later so we don't build up too much debt as to what and how things run.” Then, offered the order (the engine before recovery; acceptance evidence as the first stage written in the workflow format): “Yes lets do this now. Part refactor part new features - we should also look forward in the plan so that we're considering the future features and work (like adding skills and initial prompts)”.
+
+Effect: two new plan rows before recovery. Row 9 is the workflow engine, a refactor of `src/lifecycle.ts` and `src/run.ts`. Row 10 is the extension host and the observation stream, new features. Recovery moves to row 11, tracker and code host sync to row 12, and the unsplit rest to row 13; A-052's order between recovery and sync stands. [plan.md](plan.md) gains a table of what each later row and open question needs from rows 9 and 10, so the engine is designed with them in view. The design questions for row 9 are in [open-questions.md](open-questions.md), O-016.
+
+### A-054 — 2026-10-19 — Strong core, user-definable workflow, extensions
+
+Owner, opening an architectural discussion: “Basically I want to publish a strong core application, this is probably the state machine. Then the rest of the application is sort of plug and play, adapatable and configurable [...] The other thing that I would want is that the factory itself is modifiable outside the core, not just in configuration but we should look for opportunities to allow something like lua or ts code to be written by a user that is personal and works with our core.”
+
+Offered: extensions sit on the agents' side of the trust line and return claims; three questions (does that rule fit; may users add stages; out-of-process JSON or in-process TypeScript). Reply: “1. Okay I think this is good, we can challenge it along the way though. 2. No I think users should be able to fully customise the stages and steps of the factory workflow. 3. Go with your recommendation with ts as the first-class option”.
+
+Offered: three tiers (engine guarantees, default policy, user extensions), with "humans accept" as the open point. Reply: “I think humans accept should be configurable, otherwise the principles are all good - you even caught a good principle that we need "observability" such that extension can actually see whats going on, and react.”
+
+Offered: keep "the factory never merges" as a guarantee. Reply: “I think the factory never merges should not be a guarantee, perhaps the controller never does - but why not a user extension? Our 'sane' default will be that it doesn't - but I can see a case for a bug that say something like sentry finds on your application, you might want that to auto merge and be deployed if its small right? Thats not my risk appetite but we shouldn't enforce that”.
+
+Effect (D-023):
+- The core: the event log (`src/store.ts`); an engine that applies events to a cycle under a workflow definition (today mixed with the default workflow in `src/lifecycle.ts`); the controller, the only writer (`src/controller.ts`); run supervision with deadlines, cancel and recovery; candidate and evidence binding to a Git SHA; an observation stream that observers read and react to through claims or commands; an extension host with the seam contracts, loader, contract test kits and version records.
+- Engine guarantees, which no workflow can switch off: only the controller changes state, and every change is a recorded event; evidence and verdicts bind to a SHA, and a new commit makes old evidence invalid; anything the controller cannot classify escalates; every agent loop has a finite budget; extensions return claims and never write state; every run records the versions of the workflow, prompts and extensions it used; the controller itself never merges or deploys.
+- Default policy, which a workflow may change: today's stages and order, two standard reviews and one adversarial review, controller-run checks, fresh-context reviewers, human acceptance, and no merge step.
+- User extensions: stages and steps built from step kinds (agent run, controller command, human decision, extension step), roles, prompts, adapters, observers, and merge or deploy steps.
+- Extensions run as separate processes over JSON on stdin and stdout, inside the sandbox; TypeScript is the first-class option.
+- The spec's principle 5 and D-004 stay true of the default workflow only. The spec is rewritten when the engine is built.
+- Open parts and the proposed plan order are in [open-questions.md](open-questions.md), O-016. Plan rows are not changed until the owner approves an order.
 
 ### A-053 — 2026-10-19 — Drop the parked 02-a schema cleanup
 
