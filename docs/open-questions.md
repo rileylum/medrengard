@@ -104,4 +104,4 @@ Raised 2026-10-19; principles agreed in A-054.
 4. Grants for outward effects. A merge or deploy extension needs code-host credentials, which A-052 keeps with the controller. Decide how a workflow grants a capability to an extension, and how a merge is bound to the accepted SHA.
 5. The observation stream: how observers get events (read the event log, or a push from the controller), and how a reaction comes back as a claim or command.
 6. Configuration layers: factory defaults, personal, repository, job.
-Plan order decided in A-055: the engine (row 9) and the extension host (row 10) before recovery (row 11).
+Items 1 and 2 answered in A-056. Plan order decided in A-055: the engine (row 9) and the extension host (row 10) before recovery (row 11).

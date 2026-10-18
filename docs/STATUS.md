@@ -102,4 +102,5 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 11. Owner: use the experimental herdr TUI (`proto/README.md`, A-048) while testing the factory. Findings and open questions for the real herdr frontend: [work/herdr-findings.md](work/herdr-findings.md).
 12. Done (on `feat/docs-core-principles`, not merged): the core principles are recorded as A-054 and D-023. The workflow becomes user-definable, with today's lifecycle as the default. Open parts are in O-016.
 13. Done: the owner approved the order (A-055). Plan rows 9 (workflow engine) and 10 (extension host and observation stream) come before recovery; the plan lists what later work needs from them.
-14. Next: the owner answers the O-016 design questions; then write the row 9 tickets per [workflow.md](workflow.md).
+14. Done: the row 9 design answers are recorded (A-056). Tickets 09-a, 09-b and 09-c are drafted under `docs/work/`.
+15. Owner: read the three tickets and say go. Then 09-a starts on `feat/09-a-workflow-engine`, test first.

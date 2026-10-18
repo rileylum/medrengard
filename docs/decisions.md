@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-056 — 2026-10-19 — Row 9 design answers
+
+Owner, offered four answers for the workflow engine (Q1 a TypeScript module that exports plain data, so the engine can check and hash it; Q2 today's event types kept with a `step` field, so existing stores replay; Q3 stage names defined by the workflow, with `ESCALATED`, `CANCELLED` and `ACCEPTED` fixed in the engine; Q4 the core owns a prompt's contract part and the workflow owns the role text) and three tickets (09-a engine and default workflow, 09-b generic driver, 09-c prompt split and version records): “accept all”.
+
+Effect: tickets [09-a](work/09-a-workflow-engine.md), [09-b](work/09-b-generic-driver.md) and [09-c](work/09-c-prompt-versions.md) are drafted, stacked in that order. Each becomes READY when the owner has read it and said go. O-016 items 1 and 2 are answered; items 3 to 6 (extension protocol, grants, observation stream, configuration layers) remain for row 10.
+
 ### A-055 — 2026-10-19 — Build the workflow engine now, before recovery
 
 Owner, after the core principles (A-054): “Okay I think this is the right path, and I'd want to implement this sooner rather than later so we don't build up too much debt as to what and how things run.” Then, offered the order (the engine before recovery; acceptance evidence as the first stage written in the workflow format): “Yes lets do this now. Part refactor part new features - we should also look forward in the plan so that we're considering the future features and work (like adding skills and initial prompts)”.
