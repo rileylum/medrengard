@@ -213,7 +213,8 @@ function advance(w: Workflow, c: Cycle, e: Event, def: StageDef, outcome: Outcom
   return enter(w, c, e, to, next, 'FAIL transition');
 }
 
-const takes = (def: StageDef | undefined, produces: 'commit' | 'verdict') => def?.kind === 'agent' && def.produces === produces;
+const takes = (def: StageDef | undefined, produces: 'commit' | 'verdict'): def is Extract<StageDef, { kind: 'agent' }> =>
+  def?.kind === 'agent' && def.produces === produces;
 
 /** Apply one event. Unknown or out-of-place input never advances the cycle. Trusts that `w` passed checkWorkflow. */
 export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle {
@@ -230,7 +231,7 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
       const to = c.stage === 'QUEUED' ? w.start : c.stage;
       if (c.stage !== 'QUEUED' && !takes(def, 'commit')) return escalate(c, e, 'claim outside QUEUED or a commit stage');
       const target = w.stages[to];
-      if (target?.kind !== 'agent' || target.produces !== 'commit') return escalate(c, e, `claim: start stage ${to} does not take a developer run`);
+      if (!takes(target, 'commit')) return escalate(c, e, `claim: start stage ${to} does not take a developer run`);
       // Only claims create runs, so every run here is a commit stage's.
       if (c.runs.some((r) => !c.consumed.includes(r.runId)))
         return record(c, e, c.stage, {}, 'ignored: developer run already active');
@@ -246,7 +247,7 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
       const consumed = [...c.consumed, e.runId];
       // A malformed claim, not a FAIL: there is no commit to send anywhere.
       if (!e.head || e.artifacts.length === 0) return escalate(c, e, 'invalid developer result: missing commit or artifact', { consumed });
-      return advance(w, c, e, def!, 'PASS', { consumed, candidate: { head: e.head, base: c.candidate!.base } });
+      return advance(w, c, e, def, 'PASS', { consumed, candidate: { head: e.head, base: c.candidate!.base } });
     }
 
     case 'verification': {
@@ -261,8 +262,8 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
       if (!takes(def, 'verdict')) return escalate(c, e, 'verdict outside a review stage');
       const consumed = [...c.consumed, e.runId];
       // Spec: a verdict for a SHA that is not the candidate is recorded and counted, never applied.
-      if (!sameCandidate(c.candidate, e.head)) return escalate(c, e, 'verdict for a stale SHA; counted, not applied', { consumed, budgets: counted(c, def!) });
-      return advance(w, c, e, def!, e.verdict, { consumed });
+      if (!sameCandidate(c.candidate, e.head)) return escalate(c, e, 'verdict for a stale SHA; counted, not applied', { consumed, budgets: counted(c, def) });
+      return advance(w, c, e, def, e.verdict, { consumed });
     }
 
     case 'head_changed': {
