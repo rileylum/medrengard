@@ -1,22 +1,44 @@
-// Core delivery lifecycle v1. Pure functions over an immutable Cycle value.
-// The controller applies events; every transition returns a new Cycle plus the
-// appended event. Nothing here touches a database or a process; see docs/specs/core-lifecycle-v1.md.
+// The engine: pure functions that apply events to an immutable Cycle under a Workflow (A-054 to
+// A-057). The workflow names the stages, transitions and budgets; the engine keeps the rules no
+// workflow can switch off. Every transition returns a new Cycle plus the appended event. Nothing
+// here touches a database or a process. The v1 lifecycle (docs/specs/core-lifecycle-v1.md) is
+// defaultWorkflow.
 
-export const STANDARD_LIMIT = 2;
-export const ADVERSARIAL_LIMIT = 1;
+export type Stage = string;
+export type Role = string;
+export type Outcome = 'PASS' | 'FAIL';
 
-export type Stage =
-  | 'QUEUED'
-  | 'DEVELOPING'
-  | 'VERIFYING'
-  | 'STANDARD_REVIEW'
-  | 'ADVERSARIAL_REVIEW'
-  | 'AWAITING_ACCEPTANCE'
-  | 'ACCEPTED'
-  | 'ESCALATED'
-  | 'CANCELLED';
+/** Stages the engine owns. A workflow may target the last three; it may define none of them. */
+export const ENGINE_STAGES = ['QUEUED', 'ESCALATED', 'CANCELLED', 'ACCEPTED'];
+const SETTLED_TARGETS = ENGINE_STAGES.slice(1);
 
-export type Role = 'developer' | 'standard_reviewer' | 'adversarial_reviewer';
+export interface Transitions {
+  PASS: Stage;
+  FAIL?: Stage;
+}
+
+export type StageDef =
+  | { kind: 'agent'; role: Role; produces: 'commit' | 'verdict'; transitions: Transitions; budget?: number }
+  | { kind: 'command'; transitions: Transitions; budget?: number }
+  | { kind: 'human'; transitions: Transitions; budget?: number };
+
+/** Plain data, so it can be checked and hashed before anything runs (A-056). */
+export interface Workflow {
+  start: Stage;
+  stages: Record<Stage, StageDef>;
+}
+
+/** Core lifecycle v1 as a workflow: docs/specs/core-lifecycle-v1.md, States. */
+export const defaultWorkflow: Workflow = {
+  start: 'DEVELOPING',
+  stages: {
+    DEVELOPING: { kind: 'agent', role: 'developer', produces: 'commit', transitions: { PASS: 'VERIFYING' } },
+    VERIFYING: { kind: 'command', transitions: { PASS: 'STANDARD_REVIEW' } },
+    STANDARD_REVIEW: { kind: 'agent', role: 'standard_reviewer', produces: 'verdict', budget: 2, transitions: { PASS: 'ADVERSARIAL_REVIEW', FAIL: 'DEVELOPING' } },
+    ADVERSARIAL_REVIEW: { kind: 'agent', role: 'adversarial_reviewer', produces: 'verdict', budget: 1, transitions: { PASS: 'AWAITING_ACCEPTANCE', FAIL: 'ESCALATED' } },
+    AWAITING_ACCEPTANCE: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
+  },
+};
 
 export interface Candidate {
   head: string;
@@ -32,7 +54,8 @@ export interface Run {
   input?: Candidate;
 }
 
-export type Event =
+/** `step` names the stage an event belongs to; without it the event belongs to the current stage. */
+export type Event = (
   | { type: 'claim'; runId: string; base: string; runtime: string }
   | { type: 'developer_result'; runId: string; head?: string; artifacts: string[] }
   | { type: 'verification'; head: string; checks: { name: string; result: 'PASS' | 'FAIL' | 'MISSING' }[] }
@@ -44,7 +67,8 @@ export type Event =
   | { type: 'cancel' }
   | { type: 'reject_dispatch'; reason: string }
   /** The run ended with no usable claim: timeout, crash, malformed output, cancelled by deadline. */
-  | { type: 'run_failed'; runId: string; reason: string };
+  | { type: 'run_failed'; runId: string; reason: string }
+) & { step?: string };
 
 const str = (v: unknown) => typeof v === 'string' && v.length > 0;
 const arr = (v: unknown, each: (x: unknown) => boolean) => Array.isArray(v) && v.every(each);
@@ -72,6 +96,8 @@ export function isEvent(v: unknown): v is Event {
   if (!obj(v)) return false;
   // hasOwn, not a plain lookup: {type:'toString'} would otherwise find Object.prototype.toString.
   if (typeof v.type !== 'string' || !Object.hasOwn(SHAPE, v.type)) return false;
+  // apply compares step with the stage name, so anything but a stage-shaped string is unclassifiable.
+  if (v.step !== undefined && !str(v.step)) return false;
   return SHAPE[v.type as Event['type']](v);
 }
 
@@ -80,8 +106,8 @@ export interface Cycle {
   workId: string;
   parentCycleId?: string;
   stage: Stage;
-  standard: number;
-  adversarial: number;
+  /** Outcomes recorded per budgeted stage. Spent budget never resets within a cycle. */
+  budgets: Record<Stage, number>;
   candidate?: Candidate;
   runs: Run[];
   /** Run IDs whose result or verdict has been consumed; used for duplicate detection. */
@@ -91,7 +117,62 @@ export interface Cycle {
 }
 
 export function newCycle(cycleId: string, workId: string, parentCycleId?: string): Cycle {
-  return { cycleId, workId, parentCycleId, stage: 'QUEUED', standard: 0, adversarial: 0, runs: [], consumed: [], history: [] };
+  return { cycleId, workId, parentCycleId, stage: 'QUEUED', budgets: {}, runs: [], consumed: [], history: [] };
+}
+
+/**
+ * Reasons the workflow is refused; empty when it passes. Run it wherever a workflow arrives as
+ * data: apply trusts its workflow and would misbehave on a malformed one rather than refuse it.
+ */
+export function checkWorkflow(w: Workflow): string[] {
+  if (!obj(w) || !obj(w.stages)) return ['workflow must be an object with stages'];
+  const reasons: string[] = [];
+  const entries = Object.entries(w.stages);
+  for (const [name, def] of entries) {
+    if (ENGINE_STAGES.includes(name)) reasons.push(`stage ${name} uses an engine stage name`);
+    if (!obj(def)) { reasons.push(`stage ${name} must be an object`); continue; }
+    if (!['agent', 'command', 'human'].includes(def.kind)) reasons.push(`stage ${name} has unknown kind ${String(def.kind)}`);
+    if (def.kind === 'agent' && !str(def.role)) reasons.push(`stage ${name} is an agent stage with no role`);
+    if (def.kind === 'agent' && def.produces !== 'commit' && def.produces !== 'verdict') reasons.push(`stage ${name} produces ${String(def.produces)}, not commit or verdict`);
+    if (def.budget !== undefined && !(Number.isSafeInteger(def.budget) && def.budget > 0)) reasons.push(`stage ${name} budget must be a positive integer`);
+    if (!obj(def.transitions) || !str(def.transitions.PASS)) reasons.push(`stage ${name} has no PASS transition`);
+  }
+  // The graph checks below dereference every stage's transitions.
+  if (reasons.length > 0) return reasons;
+
+  const known = (s: unknown) => typeof s === 'string' && Object.hasOwn(w.stages, s) && !ENGINE_STAGES.includes(s);
+  if (!known(w.start)) reasons.push(`start stage ${String(w.start)} is not a workflow stage`);
+  const targets = (name: Stage) => Object.values(w.stages[name]!.transitions);
+  for (const [name] of entries)
+    for (const [outcome, to] of Object.entries(w.stages[name]!.transitions))
+      if (!known(to) && !SETTLED_TARGETS.includes(to)) reasons.push(`stage ${name} ${outcome} names unknown stage ${String(to)}`);
+
+  // Every loop must spend a budget (A-054): with budgeted stages removed, the graph must be acyclic.
+  const unbudgeted = entries.filter(([, d]) => d.budget === undefined).map(([n]) => n);
+  const state = new Map<Stage, 'open' | 'done'>();
+  const visit = (name: Stage, path: Stage[]): void => {
+    state.set(name, 'open');
+    const here = [...path, name];
+    for (const to of targets(name)) {
+      if (!unbudgeted.includes(to)) continue;
+      if (state.get(to) === 'open') reasons.push(`loop ${[...here.slice(here.indexOf(to)), to].join(' -> ')} has no budgeted stage`);
+      else if (!state.has(to)) visit(to, here);
+    }
+    state.set(name, 'done');
+  };
+  for (const name of unbudgeted) if (!state.has(name)) visit(name, []);
+
+  const settles = new Set<Stage>();
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [name] of entries)
+      if (!settles.has(name) && targets(name).some((to) => SETTLED_TARGETS.includes(to) || settles.has(to))) {
+        settles.add(name);
+        grew = true;
+      }
+  }
+  for (const [name] of entries) if (!settles.has(name)) reasons.push(`stage ${name} has no path to ${SETTLED_TARGETS.join(', ')}`);
+  return reasons;
 }
 
 const TERMINAL: Stage[] = ['ACCEPTED', 'CANCELLED'];
@@ -108,61 +189,84 @@ function sameCandidate(a: Candidate | undefined, head: string, base?: string): b
   return !!a && a.head === head && (base === undefined || a.base === base);
 }
 
-/** Apply one event. Unknown or out-of-place input never advances the cycle. */
-export function apply(c: Cycle, e: Event): Cycle {
+/** The cycle's budgets with one more outcome recorded at its stage, if that stage is budgeted. */
+function counted(c: Cycle, def: StageDef): Record<Stage, number> {
+  return def.budget === undefined ? c.budgets : { ...c.budgets, [c.stage]: (c.budgets[c.stage] ?? 0) + 1 };
+}
+
+/** Move to `to`, unless `to` is a budgeted stage whose budget is already spent. */
+function enter(w: Workflow, c: Cycle, e: Event, to: Stage, patch: Partial<Cycle>, note?: string): Cycle {
+  const budgets = patch.budgets ?? c.budgets;
+  const limit = w.stages[to]?.budget;
+  if (limit !== undefined && (budgets[to] ?? 0) >= limit) return escalate(c, e, `${to} budget exhausted`, patch);
+  return record(c, e, to, patch, note);
+}
+
+/** Record one outcome at the current stage and follow the workflow's transition for it. */
+function advance(w: Workflow, c: Cycle, e: Event, def: StageDef, outcome: Outcome, patch: Partial<Cycle> = {}, detail?: string): Cycle {
+  const budgets = counted(c, def);
+  const next = { ...patch, budgets };
+  if (outcome === 'PASS') return enter(w, c, e, def.transitions.PASS, next);
+  const to = def.transitions.FAIL;
+  if (to === undefined || to === 'ESCALATED') return escalate(c, e, `${c.stage} FAIL${detail ? `: ${detail}` : ''}`, next);
+  if (def.budget !== undefined && budgets[c.stage]! >= def.budget) return escalate(c, e, `${c.stage} FAIL at budget limit ${def.budget}`, next);
+  return enter(w, c, e, to, next, 'FAIL transition');
+}
+
+const takes = (def: StageDef | undefined, produces: 'commit' | 'verdict') => def?.kind === 'agent' && def.produces === produces;
+
+/** Apply one event. Unknown or out-of-place input never advances the cycle. Trusts that `w` passed checkWorkflow. */
+export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle {
   if (TERMINAL.includes(c.stage)) {
     return record(c, e, c.stage, {}, 'ignored: terminal cycle');
   }
   if (e.type === 'cancel') return record(c, e, 'CANCELLED');
   if (c.stage === 'ESCALATED') return record(c, e, 'ESCALATED', {}, 'ignored: escalated; owner must open a child cycle or cancel');
+  if (e.step !== undefined && e.step !== c.stage) return escalate(c, e, `event for step ${e.step} while in ${c.stage}`);
+  const def = w.stages[c.stage];
 
   switch (e.type) {
     case 'claim': {
-      if (c.stage !== 'QUEUED' && c.stage !== 'DEVELOPING') return escalate(c, e, 'claim outside QUEUED');
-      if (c.runs.some((r) => r.role === 'developer' && !c.consumed.includes(r.runId)))
+      const to = c.stage === 'QUEUED' ? w.start : c.stage;
+      if (c.stage !== 'QUEUED' && !takes(def, 'commit')) return escalate(c, e, 'claim outside QUEUED or a commit stage');
+      const target = w.stages[to];
+      if (target?.kind !== 'agent' || target.produces !== 'commit') return escalate(c, e, `claim: start stage ${to} does not take a developer run`);
+      // Only claims create runs, so every run here is a commit stage's.
+      if (c.runs.some((r) => !c.consumed.includes(r.runId)))
         return record(c, e, c.stage, {}, 'ignored: developer run already active');
-      const run: Run = { runId: e.runId, role: 'developer', runtime: e.runtime, input: c.candidate };
-      return record(c, e, 'DEVELOPING', { runs: [...c.runs, run], candidate: c.candidate ?? { head: '', base: e.base } });
+      const run: Run = { runId: e.runId, role: target.role, runtime: e.runtime, input: c.candidate };
+      const patch = { runs: [...c.runs, run], candidate: c.candidate ?? { head: '', base: e.base } };
+      return to === c.stage ? record(c, e, to, patch) : enter(w, c, e, to, patch);
     }
 
     case 'developer_result': {
       if (c.consumed.includes(e.runId)) return record(c, e, c.stage, {}, 'ignored: duplicate result');
-      const run = c.runs.find((r) => r.runId === e.runId && r.role === 'developer');
-      if (!run) return escalate(c, e, 'result from unknown run');
-      if (c.stage !== 'DEVELOPING') return escalate(c, e, 'developer result outside DEVELOPING');
+      if (!c.runs.some((r) => r.runId === e.runId)) return escalate(c, e, 'result from unknown run');
+      if (!takes(def, 'commit')) return escalate(c, e, `developer result outside a commit stage (in ${c.stage})`);
       const consumed = [...c.consumed, e.runId];
+      // A malformed claim, not a FAIL: there is no commit to send anywhere.
       if (!e.head || e.artifacts.length === 0) return escalate(c, e, 'invalid developer result: missing commit or artifact', { consumed });
-      return record(c, e, 'VERIFYING', { consumed, candidate: { head: e.head, base: c.candidate!.base } });
+      return advance(w, c, e, def!, 'PASS', { consumed, candidate: { head: e.head, base: c.candidate!.base } });
     }
 
     case 'verification': {
-      if (c.stage !== 'VERIFYING') return escalate(c, e, 'verification outside VERIFYING');
+      if (def?.kind !== 'command') return escalate(c, e, `verification outside a command stage (in ${c.stage})`);
       if (!sameCandidate(c.candidate, e.head)) return escalate(c, e, 'verification for a non-candidate SHA');
-      if (e.checks.length === 0 || e.checks.some((k) => k.result !== 'PASS'))
-        return escalate(c, e, 'required check failed or missing');
-      if (c.standard >= STANDARD_LIMIT) return escalate(c, e, 'standard review budget exhausted');
-      return record(c, e, 'STANDARD_REVIEW');
+      if (e.checks.length === 0 || e.checks.some((k) => k.result !== 'PASS')) return advance(w, c, e, def, 'FAIL', {}, 'required check failed or missing');
+      return advance(w, c, e, def, 'PASS');
     }
 
     case 'verdict': {
       if (c.consumed.includes(e.runId)) return record(c, e, c.stage, {}, 'ignored: duplicate verdict');
-      const role: Role | undefined =
-        c.stage === 'STANDARD_REVIEW' ? 'standard_reviewer' : c.stage === 'ADVERSARIAL_REVIEW' ? 'adversarial_reviewer' : undefined;
-      if (!role) return escalate(c, e, 'verdict outside a review stage');
+      if (!takes(def, 'verdict')) return escalate(c, e, 'verdict outside a review stage');
       const consumed = [...c.consumed, e.runId];
-      const counted = role === 'standard_reviewer' ? { standard: c.standard + 1 } : { adversarial: c.adversarial + 1 };
-      if (!sameCandidate(c.candidate, e.head)) return escalate(c, e, 'verdict for a stale SHA; counted, not applied', { consumed, ...counted });
-      if (role === 'standard_reviewer') {
-        if (e.verdict === 'PASS') return record(c, e, 'ADVERSARIAL_REVIEW', { consumed, ...counted });
-        if (c.standard + 1 < STANDARD_LIMIT) return record(c, e, 'DEVELOPING', { consumed, ...counted }, 'fix run on findings');
-        return escalate(c, e, 'second standard FAIL', { consumed, ...counted });
-      }
-      if (e.verdict === 'PASS') return record(c, e, 'AWAITING_ACCEPTANCE', { consumed, ...counted });
-      return escalate(c, e, 'adversarial FAIL', { consumed, ...counted });
+      // Spec: a verdict for a SHA that is not the candidate is recorded and counted, never applied.
+      if (!sameCandidate(c.candidate, e.head)) return escalate(c, e, 'verdict for a stale SHA; counted, not applied', { consumed, budgets: counted(c, def!) });
+      return advance(w, c, e, def!, e.verdict, { consumed });
     }
 
     case 'head_changed': {
-      if (c.stage === 'DEVELOPING') return record(c, e, c.stage, {}, 'developer still writing');
+      if (takes(def, 'commit')) return record(c, e, c.stage, {}, 'developer still writing');
       if (sameCandidate(c.candidate, e.head)) return record(c, e, c.stage, {}, 'ignored: same head');
       return escalate(c, e, 'candidate head changed outside a fix run');
     }
@@ -173,13 +277,14 @@ export function apply(c: Cycle, e: Event): Cycle {
     }
 
     case 'accept': {
-      if (c.stage !== 'AWAITING_ACCEPTANCE') return escalate(c, e, 'accept outside AWAITING_ACCEPTANCE');
+      if (def?.kind !== 'human') return escalate(c, e, `accept outside a human stage (in ${c.stage})`);
       if (!sameCandidate(c.candidate, e.head)) return escalate(c, e, 'accept names a non-candidate SHA');
-      return record(c, e, 'ACCEPTED');
+      return advance(w, c, e, def, 'PASS');
     }
 
     case 'request_changes':
-      return escalate(c, e, 'owner requested changes');
+      if (def?.kind !== 'human') return escalate(c, e, `request_changes outside a human stage (in ${c.stage})`);
+      return advance(w, c, e, def, 'FAIL', {}, 'owner requested changes');
 
     case 'reject_dispatch':
       return escalate(c, e, `dispatch rejected: ${e.reason}`);

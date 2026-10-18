@@ -20,7 +20,7 @@ const fresh = () => {
   store.open('c1', 'w1');
   return store;
 };
-const stage = (c: Cycle) => [c.stage, c.standard, c.adversarial];
+const stage = (c: Cycle) => [c.stage, c.budgets.STANDARD_REVIEW ?? 0, c.budgets.ADVERSARIAL_REVIEW ?? 0];
 const req = { prompt: 'do the ticket', cwd: dir };
 const dev = (store: EventStore, step: Step, deadlineMs = 5000) =>
   execute(store, 'c1', fakeAdapter(step), { ...req, role: 'developer' }, { deadlineMs, base: 'B1' });

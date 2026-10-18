@@ -56,14 +56,14 @@ for (const spec of [claude, pi]) {
     const { store, runsDir, job, cycleId, head } = await reviewable();
     const first = await review(store, fake(spec, 'verdict', 'pass'), cycleId, job, opts(runsDir));
     assert.equal(first.stage, 'ADVERSARIAL_REVIEW', first.escalation);
-    assert.deepEqual([first.standard, first.adversarial], [1, 0]);
+    assert.deepEqual([first.budgets.STANDARD_REVIEW ?? 0, first.budgets.ADVERSARIAL_REVIEW ?? 0], [1, 0]);
     // Reviewer runs have no claim event, so the Run list stays the developer's; the verdict's run ID is consumed.
     const verdict = first.history.at(-1)!.event as { type: string; runId: string };
     assert.deepEqual(verdict, { type: 'verdict', runId: verdict.runId, head, verdict: 'PASS', findings: [] });
     assert.ok(first.consumed.includes(verdict.runId));
     const second = await review(store, fake(spec, 'verdict', 'pass'), cycleId, job, opts(runsDir));
     assert.equal(second.stage, 'AWAITING_ACCEPTANCE', second.escalation);
-    assert.deepEqual([second.standard, second.adversarial], [1, 1]);
+    assert.deepEqual([second.budgets.STANDARD_REVIEW ?? 0, second.budgets.ADVERSARIAL_REVIEW ?? 0], [1, 1]);
     assert.equal(second.consumed.length, 3);
     assert.deepEqual(store.load(cycleId), second);
     store.close();
@@ -75,7 +75,7 @@ test('verdict variants: fail returns to DEVELOPING with findings; stale is count
     const { store, runsDir, job, cycleId, head } = await reviewable();
     const c = await review(store, fake(claude, 'verdict', 'fail'), cycleId, job, opts(runsDir));
     assert.equal(c.stage, 'DEVELOPING', c.escalation);
-    assert.equal(c.standard, 1);
+    assert.equal(c.budgets.STANDARD_REVIEW ?? 0, 1);
     assert.deepEqual((c.history.at(-1)!.event as { findings?: string[] }).findings, ['[major] done.txt:1 — fixture finding']);
     assert.equal(c.candidate!.head, head);
     store.close();
@@ -84,7 +84,7 @@ test('verdict variants: fail returns to DEVELOPING with findings; stale is count
     const { store, runsDir, job, cycleId } = await reviewable();
     const c = await review(store, fake(pi, 'verdict', 'stale'), cycleId, job, opts(runsDir));
     assert.equal(c.stage, 'ESCALATED');
-    assert.equal(c.standard, 1);
+    assert.equal(c.budgets.STANDARD_REVIEW ?? 0, 1);
     assert.match(c.escalation ?? '', /stale SHA/);
     store.close();
   }
@@ -92,7 +92,7 @@ test('verdict variants: fail returns to DEVELOPING with findings; stale is count
     const { store, runsDir, job, cycleId } = await reviewable();
     const c = await review(store, fake(claude, 'verdict', 'noblock'), cycleId, job, opts(runsDir));
     assert.equal(c.stage, 'ESCALATED');
-    assert.equal(c.standard, 0);
+    assert.equal(c.budgets.STANDARD_REVIEW ?? 0, 0);
     assert.equal(c.history.at(-1)!.event.type, 'run_failed');
     assert.match(c.escalation ?? '', /no claim block/);
     store.close();
@@ -205,7 +205,7 @@ test('after a standard FAIL and a fix run, the prompt carries the verification f
   const adapter = fakeAdapter({ outcome: { status: 'completed', claim: { head: head2, verdict: 'PASS' } } });
   const c = await review(store, adapter, cycleId, job2, opts(runsDir));
   assert.equal(c.stage, 'ADVERSARIAL_REVIEW', c.escalation);
-  assert.equal(c.standard, 2);
+  assert.equal(c.budgets.STANDARD_REVIEW ?? 0, 2);
   const p = adapter.requests[0]!.prompt;
   assert.match(p, new RegExp(`^Candidate SHA: ${head2}$`, 'm'));
   assert.match(p, /second: PASS/);
@@ -338,7 +338,7 @@ for (const [name, spec] of [['claude', claudeReviewer], ['pi', piReviewer]] as c
     const e = c.history.at(-1)!.event as { type: string; head?: string };
     assert.equal(e.type, 'verdict');
     assert.equal(e.head, head);
-    assert.equal(c.standard, 1);
+    assert.equal(c.budgets.STANDARD_REVIEW ?? 0, 1);
     store.close();
   });
 }

@@ -137,7 +137,7 @@ async function main(argv: string[]): Promise<number> {
     console.log(`Base: ${cycle.candidate?.base ?? '(none)'}`);
     console.log(`Worktree: ${r.worktree}`);
     console.log(`Sandbox: ${sandbox.backend}`);
-    console.log(`Reviews: standard ${cycle.standard}, adversarial ${cycle.adversarial}`);
+    console.log(`Reviews: standard ${cycle.budgets.STANDARD_REVIEW ?? 0}, adversarial ${cycle.budgets.ADVERSARIAL_REVIEW ?? 0}`);
     for (const h of cycle.history) {
       const e = h.event;
       if (e.type === 'verification') console.log(`verification ${e.head.slice(0, 7)}: ${e.checks.map((c) => `${c.name} ${c.result}`).join(', ') || 'no checks'}`);

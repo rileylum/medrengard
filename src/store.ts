@@ -2,7 +2,7 @@
 // lifecycle.ts stays pure and is replayed on load. No leases. A second process (the owner's
 // cancel during a run, 07-d) waits for the write lock rather than failing.
 import { DatabaseSync } from 'node:sqlite';
-import { apply, isEvent, newCycle, type Cycle, type Event, type Stage } from './lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, type Cycle, type Event, type Stage, type Workflow } from './lifecycle.ts';
 
 // Row 0 of every cycle is the store's own "open" marker; it is not a lifecycle Event and never
 // reaches apply. Keeping it in the same table honours the one-table constraint.
@@ -27,8 +27,13 @@ export class UnclassifiableEvent extends Error {}
 
 export class EventStore {
   private db: DatabaseSync;
+  private workflow: Workflow;
 
-  constructor(path: string) {
+  /** Every load replays under `workflow`. Throws, before touching `path`, if checkWorkflow refuses it. */
+  constructor(path: string, workflow: Workflow = defaultWorkflow) {
+    const refused = checkWorkflow(workflow);
+    if (refused.length > 0) throw new Error(`workflow refused: ${refused.join('; ')}`);
+    this.workflow = workflow;
     this.db = new DatabaseSync(path);
     // Every write here is one short statement, so a second process waits at most for one append.
     // At 0 (SQLite's default) `main.ts cancel` during a run fails with `database is locked`.
@@ -112,7 +117,7 @@ export class EventStore {
     // workId and parent come from this row; any other type would replay as a cycle of no work.
     if (first.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(first.type)}, not the open marker`);
     const head = first;
-    return (rest as Event[]).reduce(apply, newCycle(cycleId, head.workId, head.parentCycleId));
+    return (rest as Event[]).reduce((c, e) => apply(c, e, this.workflow), newCycle(cycleId, head.workId, head.parentCycleId));
   }
 
   close(): void {

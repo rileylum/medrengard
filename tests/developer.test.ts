@@ -252,7 +252,7 @@ for (const spec of [claude, pi]) {
     const head2 = fixed.cycle.candidate!.head;
     assert.notEqual(head2, head);
     assert.equal(fixed.cycle.candidate!.base, base);
-    assert.equal(fixed.cycle.standard, 1);
+    assert.equal(fixed.cycle.budgets.STANDARD_REVIEW ?? 0, 1);
     assert.equal(fixed.cycle.runs.length, 2);
     assert.deepEqual(fixed.cycle.runs[1]!.input, { head, base });
     assert.equal(fixed.cycle.runs[1]!.runtime, spec.name);

@@ -71,7 +71,7 @@ test('happy path: develop, verify, standard PASS, adversarial PASS end in AWAITI
   const r = await run(store, adapters(dev, standard, adversarial), job(repo), opts(runsDir));
   assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation ?? r.error);
   assert.equal(r.error, undefined);
-  assert.deepEqual([r.cycle.standard, r.cycle.adversarial], [1, 1]);
+  assert.deepEqual([r.cycle.budgets.STANDARD_REVIEW ?? 0, r.cycle.budgets.ADVERSARIAL_REVIEW ?? 0], [1, 1]);
   assert.equal(r.cycle.runs.length, 1);
   assert.deepEqual(types(store, r.cycle.cycleId), ['claim', 'developer_result', 'verification', 'verdict', 'verdict']);
   assert.equal(r.branch, `sf/${r.cycle.cycleId}`);
@@ -95,7 +95,7 @@ test('a standard FAIL runs the fix, verifies the new head and reviews it again: 
   const adversarial = scripted('PASS');
   const r = await run(store, adapters(dev, standard, adversarial), job(repo), opts(runsDir));
   assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation ?? r.error);
-  assert.deepEqual([r.cycle.standard, r.cycle.adversarial], [2, 1]);
+  assert.deepEqual([r.cycle.budgets.STANDARD_REVIEW ?? 0, r.cycle.budgets.ADVERSARIAL_REVIEW ?? 0], [2, 1]);
   assert.equal(r.cycle.runs.length, 2);
   assert.deepEqual(types(store, r.cycle.cycleId), ['claim', 'developer_result', 'verification', 'verdict', 'claim', 'developer_result', 'verification', 'verdict', 'verdict']);
   const [first, second] = store.events(r.cycle.cycleId).filter((e) => e.type === 'verification') as { head: string }[];
@@ -118,8 +118,8 @@ test('an adversarial FAIL, a second standard FAIL and a failing check each stop 
     const r = await run(store, adapters(fake(claude), scripted('PASS'), scripted('FAIL')), job(repo), opts(runsDir));
     assert.equal(r.cycle.stage, 'ESCALATED');
     assert.equal(r.error, undefined);
-    assert.deepEqual([r.cycle.standard, r.cycle.adversarial], [1, 1]);
-    assert.match(r.cycle.escalation ?? '', /adversarial FAIL/);
+    assert.deepEqual([r.cycle.budgets.STANDARD_REVIEW ?? 0, r.cycle.budgets.ADVERSARIAL_REVIEW ?? 0], [1, 1]);
+    assert.match(r.cycle.escalation ?? '', /ADVERSARIAL_REVIEW FAIL/);
     assert.deepEqual((r.cycle.history.at(-1)!.event as { findings?: string[] }).findings, ['[major] done.txt:1 — adversarial_reviewer finding']);
     store.close();
   }
@@ -128,8 +128,8 @@ test('an adversarial FAIL, a second standard FAIL and a failing check each stop 
     const adversarial = scripted('PASS');
     const r = await run(store, adapters(fake(claude), scripted('FAIL', 'FAIL'), adversarial), job(repo), opts(runsDir));
     assert.equal(r.cycle.stage, 'ESCALATED');
-    assert.deepEqual([r.cycle.standard, r.cycle.adversarial], [2, 0]);
-    assert.match(r.cycle.escalation ?? '', /second standard FAIL/);
+    assert.deepEqual([r.cycle.budgets.STANDARD_REVIEW ?? 0, r.cycle.budgets.ADVERSARIAL_REVIEW ?? 0], [2, 0]);
+    assert.match(r.cycle.escalation ?? '', /STANDARD_REVIEW FAIL at budget limit/);
     assert.equal(r.cycle.runs.length, 2);
     assert.equal(adversarial.requests.length, 0);
     store.close();
