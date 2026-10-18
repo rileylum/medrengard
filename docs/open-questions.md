@@ -17,6 +17,7 @@ O-001 to O-010 moved here from `decisions.md` on 2026-10-18; the IDs are unchang
 | O-013 | The initial prompt for each role, the skills each role gets, and how a run records which versions it used ([below](#o-013-role-prompts-and-skills)) | Before the first real repository's tickets |
 | O-014 | Survey of skills libraries, harnesses and other factories: what to borrow, and whether our flow should change ([below](#o-014-survey-skills-libraries-harnesses-and-other-factories)) | Before O-011 and O-013 are decided |
 | O-015 | Acceptance evidence (A-051): which tickets need it, which artifact type comes first, and when it gets a plan row ([below](#o-015-acceptance-evidence)) | When the stage gets a plan row |
+| O-016 | The workflow definition and the extension host (A-054): the workflow format, how the engine enforces its guarantees on a user workflow, the extension protocol, grants for outward effects, and where this goes in the plan ([below](#o-016-workflow-definition-and-extension-host)) | Before the engine's first ticket |
 
 ## O-005 Independent verification of "done when"
 
@@ -87,3 +88,20 @@ Raised 2026-10-19; design agreed in A-051, building it parked.
 1. Whether every ticket needs acceptance evidence, or the ticket names it (source §04's `verification: [unit-tests, browser-demo]`; a backend-only fix need not produce screenshots).
 2. Which artifact type comes first: browser video and screenshots, or a recorded command or test run. Browsers in bwrap need a probe first.
 3. When it gets a plan row, and whether GitHub sync comes before it so the artifacts have a PR page to go on.
+
+## O-016 Workflow definition and extension host
+
+Raised 2026-10-19; principles agreed in A-054.
+
+**Why it matters.** A-054 makes the stages, steps, budgets, human acceptance and merging user-definable, with today's lifecycle as the default workflow. The core keeps its promises only if the engine can check a user's workflow against them before it runs.
+
+**Today.** The workflow is hard-coded. `src/lifecycle.ts` fixes the `Stage` list, the transitions and `STANDARD_LIMIT`; `src/run.ts` fixes the order develop, verify, review, review. Seams are TypeScript interfaces chosen by name in `src/main.ts` (`'claude' | 'pi'`, `'bwrap' | 'none'`). No extension can be loaded, and no observer can read the event stream.
+
+**Would settle it.**
+1. The workflow format: a TypeScript module that exports the definition, or data the engine reads. How the step kinds (agent run, controller command, human decision, extension step) and transitions keyed on outcomes are written.
+2. How the engine checks the guarantees at load time, for example a finite budget on every agent loop, and a verdict step that must name a SHA. SC-01 to SC-19 must pass unchanged against the default workflow.
+3. The extension protocol: JSON over stdin and stdout, run in the sandbox; the TypeScript helper; a contract test kit per seam; how a run records extension versions.
+4. Grants for outward effects. A merge or deploy extension needs code-host credentials, which A-052 keeps with the controller. Decide how a workflow grants a capability to an extension, and how a merge is bound to the accepted SHA.
+5. The observation stream: how observers get events (read the event log, or a push from the controller), and how a reaction comes back as a claim or command.
+6. Configuration layers: factory defaults, personal, repository, job.
+7. Plan order. Proposed: the engine before recovery (row 9), so recovery is built once; acceptance evidence (A-051) as the first stage added through the workflow format.

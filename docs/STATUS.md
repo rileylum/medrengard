@@ -100,3 +100,5 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 9. Done: the parked 02-a schema cleanup is dropped (A-053).
 10. Done: the scratch files for 02-a to 07-d under `/var/tmp/software_factory/` were deleted at the owner's request (2026-10-19). The 08-a to 08-f files are kept.
 11. Owner: use the experimental herdr TUI (`proto/README.md`, A-048) while testing the factory. Findings and open questions for the real herdr frontend: [work/herdr-findings.md](work/herdr-findings.md).
+12. Done (on `feat/docs-core-principles`, not merged): the core principles are recorded as A-054 and D-023. The workflow becomes user-definable, with today's lifecycle as the default. Open parts are in O-016.
+13. Owner: approve the plan order. Proposed: build the workflow engine before recovery, then add acceptance evidence as the first stage written in the workflow format.
