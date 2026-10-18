@@ -5,6 +5,8 @@
   "type": "module",
   "engines": { "node": ">=24" },
   "scripts": {
-    "test": "node --test 'tests/**/*.test.ts'"
+    "test": "node --test 'tests/**/*.test.ts'",
+    "learn": "node learn/serve.ts",
+    "test:learn": "node --test learn/learn.test.ts"
   }
 }

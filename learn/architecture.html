@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The map of the code · Software Factory guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="boot.js"></script>
+<link rel="stylesheet" href="learn.css">
+</head>
+<body>
+<main class="deck">
+
+<section class="slide" id="layers" data-lv="1">
+  <h2>Three layers</h2>
+  <div class="cols3">
+    <div class="card amber"><h3>The rules</h3><p class="small"><code>lifecycle.ts</code> is a pure function over plain values. No disk, no clock, no processes. Every rule of the spec lives here, and the scenarios in <code>tests/scenarios.ts</code> test it.</p></div>
+    <div class="card"><h3>The memory and the hands</h3><p class="small"><code>store.ts</code> keeps the events. <code>controller.ts</code> starts runs and records outcomes. <code>developer.ts</code>, <code>verify.ts</code> and <code>review.ts</code> each own one stage. <code>run.ts</code> calls them in turn.</p></div>
+    <div class="card cyan"><h3>The outside world</h3><p class="small"><code>runtime/</code> launches <code>claude</code> and <code>pi</code>. <code>sandbox.ts</code> wraps every untrusted command. <code>git.ts</code> runs the controller's own Git. <code>main.ts</code> is the owner's command line.</p></div>
+  </div>
+  <p style="margin-top:14px">Dependencies point one way: towards the rules. The state machine imports nothing; the stage modules never import each other's internals; only <code>main.ts</code> knows the real runtimes by name.</p>
+</section>
+
+<section class="slide" id="graph" data-lv="1">
+  <h2>Every module and who imports whom</h2>
+  <div class="demo" data-demo="arch-graph"></div>
+</section>
+
+<section class="slide" id="seams" data-lv="2">
+  <h2>Three seams</h2>
+  <p>A seam is a place where you can swap what is behind it without changing what is in front. The design turns on three.</p>
+  <div class="cols3">
+    <div class="card cyan"><h3>Adapter</h3><p class="small">Between the controller and a runtime. <code>start(request, signal)</code> settles with an outcome. Tests use a fake adapter; production uses <code>cliAdapter</code> for <code>claude</code> and <code>pi</code>. A new runtime is a new <code>CliSpec</code>.</p><a class="portal" href="controller.html">controller</a></div>
+    <div class="card amber"><h3>EventStore</h3><p class="small">Between the rules and the disk. <code>append</code> validates the serialised event, writes one row and returns the replayed cycle. Nothing else writes state.</p><a class="portal" href="store.html">event log</a></div>
+    <div class="card"><h3>Sandbox</h3><p class="small">Between a command and the machine. A stage builds a <code>Policy</code>; <code>wrap</code> turns the command into one that runs inside the chosen backend (<code>bwrap</code> or <code>none</code>). Docker or a VM would be another case of <code>wrap</code>.</p><a class="portal" href="sandbox.html">sandbox</a></div>
+  </div>
+</section>
+
+<section class="slide" id="types" data-lv="3">
+  <h2>The shapes everything passes around</h2>
+  <pre data-code="src/developer.ts#Job"></pre>
+  <pre data-code="src/lifecycle.ts#Cycle,Candidate,Run"></pre>
+  <pre data-code="src/adapter.ts#RunRequest,RunOutcome,Adapter"></pre>
+</section>
+
+<section class="slide" id="baseline" data-lv="2">
+  <h2>The architecture baseline</h2>
+  <p>The one-screen summary of the full design. The full document is <a href="/docs/architecture/source-v0.3.md" target="_blank">docs/architecture/source-v0.3.md</a>.</p>
+  <div data-md="docs/architecture/baseline.md"></div>
+</section>
+
+<section class="slide" id="takeaway" data-lv="1">
+  <h2>In one sentence</h2>
+  <p class="lead">A pure rulebook in the middle, one memory beside it, and every contact with the outside world behind a seam you can fake in a test.</p>
+</section>
+
+</main>
+<script type="module" src="deck.js"></script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Word book · Software Factory guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="boot.js"></script>
+<link rel="stylesheet" href="learn.css">
+<style>
+  dl.words { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  dl.words dt { font: 700 15px var(--mono); color: var(--title); margin-bottom: 4px; }
+  dl.words dd { margin: 0; font-size: 14.5px; }
+  dl.words .card:target { border-color: var(--amber); }
+</style>
+</head>
+<body>
+<div class="page" style="padding-top:30px">
+  <h1>Word book</h1>
+  <p class="lead">The factory's words, in plain language. Each links to the room that explains it.</p>
+  <input class="filter" placeholder="filter…" style="margin:0 0 16px;width:280px">
+  <dl class="words">
+  <div class="card" id="adapter"><dt>adapter</dt><dd>The plug between the controller and one agent runtime. It starts one run and settles with an outcome: completed with a claim, failed with a reason, or cancelled. It knows nothing about cycles or stages. <code>src/adapter.ts</code>. <a class="portal" href="controller.html">controller</a></dd></div>
+  <div class="card" id="apply"><dt>apply</dt><dd>The one pure function that decides what an event does to a cycle: <code>apply(cycle, event)</code> returns the next cycle. Every stage change in the factory goes through it. <code>src/lifecycle.ts</code>. <a class="portal" href="lifecycle.html">lifecycle</a></dd></div>
+  <div class="card" id="base"><dt>base</dt><dd>The commit a cycle starts from, resolved to a full SHA before the cycle opens. The candidate must descend from it; if the target branch moves on, the cycle escalates. <a class="portal" href="developer.html">developer</a></dd></div>
+  <div class="card" id="budget"><dt>budget</dt><dd>Per cycle: two standard reviews and one adversarial review. Counters only go up. A FAIL at the limit stops the cycle; spent budget never resets inside a cycle. <a class="portal" href="review.html">review</a></dd></div>
+  <div class="card" id="bwrap"><dt>bwrap (bubblewrap)</dt><dd>A small Linux tool that runs a command in its own namespaces with only the directories you bind visible. The factory's default sandbox backend. <a class="portal" href="sandbox.html">sandbox</a></dd></div>
+  <div class="card" id="candidate"><dt>candidate</dt><dd>The commit under test: its head SHA and its base SHA. Set when the controller accepts a developer's claim; replaced only by a fix run. <a class="portal" href="lifecycle.html">lifecycle</a></dd></div>
+  <div class="card" id="check"><dt>check</dt><dd>A command the repository declares in the job file, such as <code>npm test</code>. The controller runs it on the candidate, not the developer. Exit 0 is PASS, anything else FAIL, a command that cannot start MISSING. <a class="portal" href="verify.html">verify</a></dd></div>
+  <div class="card" id="checkout"><dt>checkout (verify)</dt><dd>A fresh copy of the candidate's files with no <code>.git</code>, made by the controller for the checks and then read by the reviewers. <a class="portal" href="verify.html">verify</a></dd></div>
+  <div class="card" id="child-cycle"><dt>child cycle</dt><dd>A new cycle for the same work, opened by the owner after an escalation. It names its parent and starts with fresh counters (0, 0). The parent stays ESCALATED. <a class="portal" href="lifecycle.html">lifecycle</a></dd></div>
+  <div class="card" id="claim"><dt>claim</dt><dd>What an agent says it did, as JSON at the end of its reply: a developer's <code>{head, artifacts}</code>, a reviewer's <code>{head, verdict, findings}</code>. A claim is checked before it counts. <a class="portal" href="controller.html">controller</a></dd></div>
+  <div class="card" id="controller"><dt>controller</dt><dd>The deterministic program that runs the factory: it opens cycles, starts runs, runs checks and records events. It is not an AI, and it is the only thing that changes state. <a class="portal" href="controller.html">controller</a></dd></div>
+  <div class="card" id="cycle"><dt>cycle</dt><dd>One attempt to deliver one piece of work: from QUEUED to ACCEPTED, ESCALATED or CANCELLED, with its own event log and review counters. <a class="portal" href="lifecycle.html">lifecycle</a></dd></div>
+  <div class="card" id="deadline"><dt>deadline</dt><dd>How long a stage may take (<code>deadlineMs</code> in the job file). At the deadline the controller stops waiting, kills the run and records <code>run_failed: timeout</code>. <a class="portal" href="controller.html">controller</a></dd></div>
+  <div class="card" id="escalation"><dt>escalation</dt><dd>The cycle stops in ESCALATED with a reason and waits for the owner, who opens a child cycle or cancels. Nothing retries by itself. <a class="portal" href="lifecycle.html">lifecycle</a></dd></div>
+  <div class="card" id="event"><dt>event</dt><dd>One fact appended to a cycle's log: a claim, a result, a verification, a verdict, an owner decision. The cycle's state is what you get by applying them in order. <a class="portal" href="store.html">store</a></dd></div>
+  <div class="card" id="evidence"><dt>evidence</dt><dd>Each check's stdout, stderr and exit code, written under <code>evidence/&lt;SHA&gt;/</code>. Reviewers read it. Missing evidence is never a PASS. <a class="portal" href="verify.html">verify</a></dd></div>
+  <div class="card" id="fix-run"><dt>fix run</dt><dd>After the first standard FAIL, the developer runs once more on the same branch, given the findings. It must produce a new commit with a new tree. <a class="portal" href="developer.html">developer</a></dd></div>
+  <div class="card" id="head"><dt>head</dt><dd>The SHA of the commit at the tip of the cycle's branch: the candidate under test. <a class="portal" href="developer.html">developer</a></dd></div>
+  <div class="card" id="job"><dt>job file</dt><dd>A small JSON file the owner writes: work ID, ticket, repository, checks, which runtime plays each role, sandbox and deadline. <a class="portal" href="start.html">start</a></dd></div>
+  <div class="card" id="nonce"><dt>nonce</dt><dd>A random string generated per review and put in every section header of the reviewer's prompt. A file in the commit cannot fake a header it has never seen. <a class="portal" href="review.html">review</a></dd></div>
+  <div class="card" id="owner"><dt>owner</dt><dd>You: the human who writes tickets, accepts the exact SHA, merges, and decides every escalation. <a class="portal" href="workflow.html">workflow</a></dd></div>
+  <div class="card" id="reject-dispatch"><dt>reject_dispatch</dt><dd>The event the loop records when a stage throws something it cannot classify. It escalates the cycle with the message and counts nothing. <a class="portal" href="sim.html">sim</a></dd></div>
+  <div class="card" id="replay"><dt>replay</dt><dd>Rebuilding a cycle by feeding its stored events through <code>apply</code> from the start. The store never saves state, only events. <a class="portal" href="store.html">store</a></dd></div>
+  <div class="card" id="run"><dt>run</dt><dd>One launch of one agent in one role (developer, standard reviewer, adversarial reviewer), with its own run ID. A run has at most one outcome. <a class="portal" href="controller.html">controller</a></dd></div>
+  <div class="card" id="run-failed"><dt>run_failed</dt><dd>The event for a run that ended with no usable claim: crash, timeout, malformed reply, or a claim the controller refused. It escalates the cycle and is not a review attempt. <a class="portal" href="controller.html">controller</a></dd></div>
+  <div class="card" id="runtime"><dt>runtime</dt><dd>The CLI that hosts an agent: <code>claude</code> or <code>pi</code>. Runtime, model and role are independent choices. <a class="portal" href="runtimes.html">runtimes</a></dd></div>
+  <div class="card" id="sandbox"><dt>sandbox</dt><dd>Where candidate code and agents run: only the directories their job needs, private <code>/tmp</code>, a cleared environment, and no network for checks. <code>src/sandbox.ts</code>. <a class="portal" href="sandbox.html">sandbox</a></dd></div>
+  <div class="card" id="scope"><dt>scope (systemd)</dt><dd>A transient systemd unit, <code>sf-&lt;runId&gt;</code>, that holds a run and everything it starts, so cancelling kills the whole tree. <a class="portal" href="runtimes.html">runtimes</a></dd></div>
+  <div class="card" id="sha"><dt>SHA</dt><dd>The 40-character hex name of a Git commit. The factory always uses the full SHA: a short one could name a different commit later. <a class="portal" href="developer.html">developer</a></dd></div>
+  <div class="card" id="ticket"><dt>ticket</dt><dd>The contract for one piece of work: goal, done-when checks, constraints and non-goals. The developer and both reviewers read the same text. <a class="portal" href="workflow.html">workflow</a></dd></div>
+  <div class="card" id="verdict"><dt>verdict</dt><dd>A reviewer's answer: PASS or FAIL, the SHA it reviewed, and findings that name a file and line. <a class="portal" href="review.html">review</a></dd></div>
+  <div class="card" id="work-item"><dt>work item</dt><dd>A stable work ID (<code>workId</code> in the job file). It has at most one open cycle at a time. <a class="portal" href="store.html">store</a></dd></div>
+  <div class="card" id="worktree"><dt>worktree (clone)</dt><dd>The developer's private clone on branch <code>sf/&lt;cycle&gt;</code>, the only place its sandbox may write. <a class="portal" href="developer.html">developer</a></dd></div>
+  </dl>
+</div>
+<script type="module" src="deck.js"></script>
+<script type="module">
+  document.querySelector('.filter').addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase();
+    for (const c of document.querySelectorAll('dl.words .card')) c.hidden = q && !c.textContent.toLowerCase().includes(q);
+  });
+</script>
+</body>
+</html>

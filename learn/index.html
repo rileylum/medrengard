@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How the Software Factory works · a guided tour</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="boot.js"></script>
+<link rel="stylesheet" href="learn.css">
+</head>
+<body>
+<div class="hero">
+  <div>
+    <p class="kicker">A GUIDED TOUR OF</p>
+    <h1>The Software Factory</h1>
+    <p class="lead">You write a ticket. A <a class="w" href="words.html#controller">controller</a> takes it to a pull request: an agent writes the code, the controller runs the checks itself, two kinds of reviewer read the result, and you decide.</p>
+    <p>This guide shows how that works, from the big ideas down to the real code. The code on these pages is read from the repository when you open them, and most demos run the factory's own modules in your browser.</p>
+    <p><a class="portal" href="start.html">Start with the big idea</a> <a class="portal" href="sim.html">Go straight to the simulator</a></p>
+  </div>
+  <div class="card amber">
+    <h3>The five rules</h3>
+    <ol class="steps small">
+      <li>Only the controller changes state. Agents return claims.</li>
+      <li>Every piece of evidence is bound to one commit SHA.</li>
+      <li>Two standard reviews and one adversarial review per cycle. Then it stops.</li>
+      <li>Anything the controller cannot classify goes to the owner.</li>
+      <li>Humans accept and merge. Nothing merges itself.</li>
+    </ol>
+  </div>
+</div>
+<div class="page">
+  <h2>How deep do you want to go?</h2>
+  <p>Every room has slides at three levels. Pick one at the top right of any room; it sticks.</p>
+  <div class="cols3">
+    <div class="card green"><h3>1 · Idea</h3><p class="small">What each part is for and why it exists. No code.</p></div>
+    <div class="card cyan"><h3>2 · How it works</h3><p class="small">The rules, the edge cases and the demos that let you poke at them.</p></div>
+    <div class="card amber"><h3>3 · Real code</h3><p class="small">The source, live from <code>src/</code>, with the comments that say why.</p></div>
+  </div>
+  <h2 style="margin-top:34px">The line</h2>
+  <p>Each station explains one part of the factory, in the order a ticket meets them. Stations you have visited are marked.</p>
+  <nav class="line" id="map"></nav>
+  <div class="card"><h3>The word book</h3><p class="small">Words with a dotted line, like <a class="w" href="words.html#cycle">cycle</a>, explain themselves when you point at them. All of them are in the <a href="words.html">word book</a>.</p></div>
+  <p class="small dim" style="margin-top:20px">Served by <code>node learn/serve.ts</code>. Read <code>learn/README.md</code> before changing the guide.</p>
+</div>
+<script type="module" src="deck.js"></script>
+</body>
+</html>

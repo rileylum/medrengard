@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The state machine · Software Factory guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="boot.js"></script>
+<link rel="stylesheet" href="learn.css">
+</head>
+<body>
+<main class="deck">
+
+<section class="slide" id="stages" data-lv="1">
+  <h2>Nine stages, one function</h2>
+  <p class="lead">Every piece of work moves through a <a class="w" href="words.html#cycle">cycle</a>. A cycle is always in exactly one of nine stages. Seven are the happy path, from QUEUED to ACCEPTED. Two are where a cycle stops: ESCALATED and CANCELLED.</p>
+  <p>Only one thing moves a cycle: the function <code>apply</code>. It takes the cycle and one <a class="w" href="words.html#event">event</a> and returns the next cycle. It reads no files, starts no processes and asks no model. So the same events always give the same cycle.</p>
+  <p>Click a stage to see the spec's rules for leaving it.</p>
+  <div class="demo" data-demo="lc-map"></div>
+  <p class="small muted">The table is the spec, <code>docs/specs/core-lifecycle-v1.md</code>. <a class="deeper" href="#drive">drive it yourself</a></p>
+</section>
+
+<section class="slide" id="drive" data-lv="1">
+  <h2>Drive it yourself</h2>
+  <p>This is the real <code>apply</code> from <code>src/lifecycle.ts</code>. Press <b>claim</b>, then <b>developer_result</b>, <b>verification</b> and two <b>verdict</b>s to walk the happy path. Then break it: send a verdict for the wrong head, the same run ID twice, or an <b>accept</b> for a SHA that is not the candidate.</p>
+  <div class="demo real" data-demo="lc-drive"></div>
+  <p class="small muted">An event that does not fit is never silently dropped. Either <code>apply</code> records it with a note and leaves the stage alone, or it <a class="w" href="words.html#escalation">escalates</a>.</p>
+</section>
+
+<section class="slide" id="guards" data-lv="2">
+  <h2>The guards, and why each one is there</h2>
+  <div class="cols">
+    <div class="card amber"><h3>A stale verdict counts, but cannot move the cycle</h3>
+      <p class="small">A <a class="w" href="words.html#verdict">verdict</a> must name the <a class="w" href="words.html#sha">SHA</a> it reviewed. If that SHA is not the current <a class="w" href="words.html#candidate">candidate</a>, the review was of other code. <code>apply</code> still adds one to the <a class="w" href="words.html#budget">budget</a>, because the review ran and was spent, and then escalates. Counting it stops a stale reviewer being retried for free.</p></div>
+    <div class="card cyan"><h3>One outcome per run</h3>
+      <p class="small">Every result and verdict carries the <a class="w" href="words.html#run">run</a> ID that made it. Once a run's outcome is consumed, a second one with the same ID is noted as a duplicate and changes nothing. A redelivered message must never count twice.</p></div>
+    <div class="card red"><h3>Escalated and terminal cycles ignore everything</h3>
+      <p class="small">After ACCEPTED or CANCELLED every event is ignored. After ESCALATED every event except a cancel is ignored. Only the <a class="w" href="words.html#owner">owner</a> moves on, by cancelling or by opening a <a class="w" href="words.html#child-cycle">child cycle</a>.</p></div>
+    <div class="card violet"><h3>Counters never reset</h3>
+      <p class="small">A <a class="w" href="words.html#fix-run">fix run</a> makes a new candidate and runs verification again, but <code>standard</code> and <code>adversarial</code> carry forward. Only a child cycle starts at (0, 0), and only the owner can open one.</p></div>
+  </div>
+  <p class="small" style="margin-top:12px">Two more: an infrastructure failure (<a class="w" href="words.html#run-failed">run_failed</a>) escalates without touching the counters, since it was not a review. And an event type <code>apply</code> does not know escalates as "unclassifiable", because types are stripped at runtime and events arrive as JSON.</p>
+</section>
+
+<section class="slide" id="scenarios" data-lv="2">
+  <h2>The scenarios the tests check</h2>
+  <p>The spec's acceptance tests keep their old names, SC-01 to SC-19, plus a few added later (RF for run failures, RT for runtimes). Each is a list of events and the stage and counters it must end at. This player reads <code>tests/scenarios.ts</code>, the same file the tests read, and steps through it with the real <code>apply</code>.</p>
+  <div class="demo real" data-demo="lc-scenarios"></div>
+</section>
+
+<section class="slide" id="code-event" data-lv="3">
+  <h2>The events, and how they are checked</h2>
+  <p>Eleven event types. <code>isEvent</code> checks only what <code>apply</code> reads. Extra fields are allowed, so an older controller can read a newer log.</p>
+  <pre data-code="src/lifecycle.ts#Event"></pre>
+  <pre data-code="src/lifecycle.ts#SHAPE,isEvent"></pre>
+</section>
+
+<section class="slide" id="code-cycle" data-lv="3">
+  <h2>The Cycle value</h2>
+  <pre data-code="src/lifecycle.ts#Cycle,newCycle"></pre>
+</section>
+
+<section class="slide" id="code-apply" data-lv="3">
+  <h2>apply</h2>
+  <p>Read it top to bottom: terminal first, then cancel, then escalated, then one case per event type. Each case returns early, so every path ends in exactly one <code>record</code> or <code>escalate</code>.</p>
+  <pre data-code="src/lifecycle.ts#record,escalate,apply"></pre>
+</section>
+
+<section class="slide" id="code-child" data-lv="3">
+  <h2>Opening a child cycle</h2>
+  <pre data-code="src/lifecycle.ts#openChild"></pre>
+  <p>And one of the tests, so you can see the shape:</p>
+  <pre data-code="tests/lifecycle.test.ts#L82-L92"></pre>
+</section>
+
+<section class="slide" id="takeaway" data-lv="1">
+  <h2>Takeaway</h2>
+  <p class="lead">The controller's rules fit in one pure function. Agents can say anything; only events that <code>apply</code> accepts move a cycle, and anything it cannot place stops the cycle for the owner.</p>
+  <p>Next, where those events are kept: <a class="portal" href="store.html">the event log</a></p>
+</section>
+
+</main>
+<script type="module" src="deck.js"></script>
+</body>
+</html>

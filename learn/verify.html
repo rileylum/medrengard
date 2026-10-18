@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Verification · Software Factory guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="boot.js"></script>
+<link rel="stylesheet" href="learn.css">
+</head>
+<body>
+<main class="deck">
+
+<section class="slide" id="idea" data-lv="1">
+  <h2>The controller runs the checks itself</h2>
+  <div class="cols">
+    <div>
+      <p class="lead">A developer agent may say "all tests pass". That is a <a class="w" href="words.html#claim">claim</a>. The factory does not take it on trust.</p>
+      <p>After the developer's commit is accepted, the <a class="w" href="words.html#controller">controller</a> makes a fresh <a class="w" href="words.html#checkout">checkout</a> of exactly that commit and runs the repository's <a class="w" href="words.html#check">checks</a> there. The developer never touches this checkout.</p>
+      <p>The owner declares the checks in the <a class="w" href="words.html#job">job</a> file, not in the repository. A file in the candidate commit belongs to the developer, who could edit it to declare no checks at all.</p>
+    </div>
+    <div class="card amber">
+      <h3>Three rules</h3>
+      <ol class="steps">
+        <li><b>Fresh checkout, no <code>.git</code>.</b> Only the commit's files. Nothing the developer left behind, and no Git state a check could rewrite.</li>
+        <li><b>Evidence is bound to the <a class="w" href="words.html#sha">SHA</a>.</b> Each check's stdout, stderr and exit go to <code>runs/evidence/&lt;head&gt;/</code>. A new commit needs new evidence.</li>
+        <li><b>Missing evidence is never PASS.</b> A check that cannot run is MISSING, and MISSING stops the <a class="w" href="words.html#cycle">cycle</a> like a FAIL.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="lab" data-lv="1">
+  <h2>Try it: the checks lab</h2>
+  <p>These four checks are declared for a candidate. The guide finds each command the way the factory does, on a made-up machine: <code>npm</code> is in <code>/usr/bin</code>, <code>ruff</code> is in the owner's <code>~/.local/bin</code>, <code>eslint</code> is not installed, and <code>scripts/smoke.sh</code> is committed in the candidate.</p>
+  <p class="small muted">Try: set <code>test</code> to "exits 1". Add <code>/home/owner/.local/bin</code> to sandbox.read and watch <code>fmt</code> come back. Tick "rewrites a tracked file". Delete every check.</p>
+  <div class="demo real" data-demo="ver-lab"></div>
+</section>
+
+<section class="slide" id="three-results" data-lv="2">
+  <h2>PASS, FAIL and MISSING</h2>
+  <table>
+    <thead><tr><th>Result</th><th>When</th><th>What the exit file says</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill PASS">PASS</span></td><td>The check ran and exited 0.</td><td><code>exit 0</code></td></tr>
+      <tr><td><span class="pill FAIL">FAIL</span></td><td>It exited non-zero, ran past the <a class="w" href="words.html#deadline">deadline</a>, or printed more than 8 MiB.</td><td><code>exit 1</code>, <code>timeout</code>, <code>overflow</code></td></tr>
+      <tr><td><span class="pill MISSING">MISSING</span></td><td>Its binary is not on PATH, or it resolves outside what the <a class="w" href="words.html#sandbox">sandbox</a> can see.</td><td><code>missing: eslint not found</code></td></tr>
+    </tbody>
+  </table>
+  <p>MISSING is evidence that does not exist; FAIL is evidence that says no. Both escalate, but the owner learns different things. MISSING tells them to install a tool or add its directory to <code>sandbox.read</code>. FAIL tells them the candidate is wrong.</p>
+  <p>The factory looks up the binary itself, before it starts anything. Under a systemd <a class="w" href="words.html#scope">scope</a>, <code>systemd-run</code> would do the lookup and exit 1 on a missing binary, which would read as FAIL.</p>
+  <p>All checks run, in order, even after one fails. The evidence is for the owner and the reviewers, who want the whole picture.</p>
+</section>
+
+<section class="slide" id="tree" data-lv="2">
+  <h2>The tree check: reviewers must read the commit</h2>
+  <div class="cols">
+    <div>
+      <p>The reviewers read the same checkout the checks ran in. But a check runs the candidate's code, and that code can write files. A formatter rewrites a source file. A hostile test replaces one.</p>
+      <p>So after the checks, the controller compares the checkout with the commit. If any tracked file differs, it adds its own check, named <code>tree</code>, as a FAIL, with the changed paths as evidence. The name is reserved: a job may not declare a check called <code>tree</code>.</p>
+      <p>Untracked files (build output, caches) are not dirt. They are deleted before review, so a reviewer cannot be shown a planted <code>.git</code> or a symlink to the owner's files.</p>
+    </div>
+    <div class="card red">
+      <h3>Why it is this careful</h3>
+      <p class="small">Each line here closed an adversarial review finding:</p>
+      <ul class="small">
+        <li><b>06-c</b>: a formatter left the checkout dirty, and review refused it on every call. Now the dirt is recorded as evidence and the cycle escalates.</li>
+        <li><b>07-b</b>: a check ran <code>git</code> in the checkout and hid a rewritten file from the comparison. Now the checkout has no <code>.git</code>; the controller's Git uses the repository's git dir and a private index outside it.</li>
+        <li><b>08-a</b>: a committed symlink let a check read the developer's worktree. Now checks run in bubblewrap, and leftovers are removed before review.</li>
+        <li><b>08-b</b>: a check locked a file so Git skipped it with only a warning. Now owner access is restored first, and Git's warnings count as dirt.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="policy" data-lv="2">
+  <h2>What a check may touch</h2>
+  <p>Every check runs inside <a class="w" href="words.html#bwrap">bubblewrap</a> with one policy: write the checkout, read the system directories and the owner's <code>sandbox.read</code> list, <b>no network</b>. It gets a private <code>/tmp</code> and a cleared environment. It cannot see the developer's clone, the repository's <code>.git</code>, or the owner's home.</p>
+  <a class="portal" href="sandbox.html#builder">build that policy yourself in the sandbox room</a>
+</section>
+
+<section class="slide" id="code-verify" data-lv="3">
+  <h2>src/verify.ts: verify</h2>
+  <p>Validate the names, make the fresh checkout, run every check, write the evidence, compare the tree, remove untracked entries, append one event. <code>apply</code> decides what the results mean.</p>
+  <pre data-code="src/verify.ts#Check,verify"></pre>
+</section>
+
+<section class="slide" id="code-run" data-lv="3">
+  <h2>src/verify.ts: runCheck and treeDiff</h2>
+  <pre data-code="src/verify.ts#runCheck,treeDiff"></pre>
+</section>
+
+<section class="slide" id="takeaway" data-lv="1">
+  <h2>Takeaway</h2>
+  <p class="lead">The developer's word counts for nothing. The controller runs the checks on the exact commit, keeps the output against its SHA, and stops when anything is missing or changed. Only then does a reviewer see it.</p>
+  <a class="portal" href="review.html">next: what the reviewer sees</a>
+</section>
+
+</main>
+<script type="module" src="deck.js"></script>
+</body>
+</html>

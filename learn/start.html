@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The big idea · Software Factory guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="boot.js"></script>
+<link rel="stylesheet" href="learn.css">
+</head>
+<body>
+<main class="deck">
+
+<section class="slide" id="why" data-lv="1">
+  <h2>Why a factory?</h2>
+  <div class="cols wide-left">
+    <div>
+      <p class="lead">Coding agents can write a change in a minute. The hard part is knowing the change is right, without reading every line of every attempt yourself.</p>
+      <p>The factory puts your attention where it counts. <b>Up front</b>, you write a clear ticket. <b>At the end</b>, you look at a change that has already passed the checks and two kinds of review, and you decide.</p>
+      <p>Everything in between is run by a <a class="w" href="words.html#controller">controller</a>: a plain program, not another AI. It moves the work along, runs the checks itself, and stops to ask you whenever something does not add up.</p>
+    </div>
+    <div class="card amber">
+      <h3>The first goal</h3>
+      <p class="small">One READY ticket reaches a pull request you can review, with no one pushing it from stage to stage, and with a safe way to fail.</p>
+      <p class="small muted">From the architecture baseline. Plan step 7 reached it on 2026-10-16.</p>
+    </div>
+  </div>
+</section>
+
+<section class="slide" id="journey" data-lv="1">
+  <h2>An idea's way to a pull request</h2>
+  <p>Three kinds of actor take part. Follow one ticket through. Press play, or click any box.</p>
+  <p class="small muted">The factory starts at a ready ticket. The design puts a Design Studio before it, where ideas become approved specs and tickets (<a href="/docs/architecture/source-v0.3.md">source §03</a>). It is not built and not on the plan, so the first box is greyed out.</p>
+  <div class="demo" data-demo="start-journey"></div>
+  <p class="small">Want to drive it yourself? <a class="portal" href="sim.html">The simulator</a> runs the factory's own controller on a ticket you can edit.</p>
+</section>
+
+<section class="slide" id="rules" data-lv="1">
+  <h2>Five rules it never breaks</h2>
+  <div class="cols">
+    <div class="card amber"><h3>1 · The controller decides; agents claim</h3><p class="small">An agent saying "done, here is commit abc123" is a <a class="w" href="words.html#claim">claim</a>. The controller checks the commit exists, sits at the branch tip and changes something before anything moves.</p></div>
+    <div class="card amber"><h3>2 · Evidence binds to one SHA</h3><p class="small">Check output and review <a class="w" href="words.html#verdict">verdicts</a> name the exact commit they are about. A new commit makes the old evidence worthless. A verdict for the wrong SHA is counted but cannot move the cycle.</p></div>
+    <div class="card amber"><h3>3 · A fixed review budget</h3><p class="small">Two standard reviews and one adversarial review per <a class="w" href="words.html#cycle">cycle</a>. A FAIL at the limit stops. No endless "try again until it passes".</p></div>
+    <div class="card amber"><h3>4 · Unclear means stop and ask</h3><p class="small">A crash, a timeout, a reply with no claim, a check that cannot run: the controller does not guess or retry. The cycle is <a class="w" href="words.html#escalation">escalated</a> to the owner.</p></div>
+    <div class="card violet"><h3>5 · Humans accept</h3><p class="small">The factory stops at AWAITING_ACCEPTANCE. You accept the exact SHA and you merge. Nothing merges or deploys itself.</p></div>
+    <div class="card cyan"><h3>And: agents are untrusted</h3><p class="small">The ticket, the code and every agent's output are treated as input from a stranger. Developer runs, checks and reviewers all run in a <a class="w" href="words.html#sandbox">sandbox</a>.</p></div>
+  </div>
+</section>
+
+<section class="slide" id="who" data-lv="1">
+  <h2>Who does what</h2>
+  <table>
+    <thead><tr><th>Actor</th><th>Does</th><th>Never does</th><th>Room</th></tr></thead>
+    <tbody>
+      <tr><td class="violet-t">Owner (you)</td><td>Writes tickets, accepts SHAs, merges, decides every escalation</td><td>Pushes a cycle between stages by hand</td><td><a href="workflow.html">workflow</a></td></tr>
+      <tr><td class="amber-t">Controller</td><td>Opens cycles, starts runs, runs checks, records events, counts the budget</td><td>Writes code or judges it</td><td><a href="controller.html">controller</a></td></tr>
+      <tr><td class="amber-t">State machine</td><td>Decides what every event means: one pure function, <code>apply</code></td><td>Touches a disk, a process or the network</td><td><a href="lifecycle.html">lifecycle</a></td></tr>
+      <tr><td class="cyan-t">Developer agent</td><td>Changes code in its own clone and commits</td><td>Runs the official checks, sees reviews other than its own findings</td><td><a href="developer.html">developer</a></td></tr>
+      <tr><td class="cyan-t">Reviewers</td><td>Read the diff and evidence; return PASS or FAIL with findings</td><td>Change files, run code, see the developer's conversation</td><td><a href="review.html">review</a></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="slide" id="use" data-lv="2">
+  <h2>What you type</h2>
+  <p>One command runs a job. Two more record your decision. The README says it best:</p>
+  <div data-md="README.md" data-md-section="Use"></div>
+  <p class="small">A job file is a few lines of JSON. The simulator shows a full one under <b>Job file</b>.</p>
+</section>
+
+<section class="slide" id="status" data-lv="2">
+  <h2>How far it has got</h2>
+  <p>The factory is built one plan row at a time. This is <code>docs/plan.md</code> as it is now.</p>
+  <div data-md="docs/plan.md"></div>
+  <a class="portal" href="workflow.html">How each row is built</a>
+</section>
+
+<section class="slide" id="main" data-lv="3">
+  <h2>src/main.ts</h2>
+  <p>The owner's one entry point. It reads the job file, builds the real <code>claude</code> and <code>pi</code> adapters for each role, runs the loop, and prints what you need to diff, accept and merge.</p>
+  <pre data-code="src/main.ts#header,main"></pre>
+</section>
+
+<section class="slide" id="takeaway" data-lv="1">
+  <h2>In one sentence</h2>
+  <p class="lead">Agents do the reasoning; a plain program decides what their output means; every decision rests on evidence tied to one commit; and a human has the last word.</p>
+</section>
+
+</main>
+<script type="module" src="deck.js"></script>
+</body>
+</html>
