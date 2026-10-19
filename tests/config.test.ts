@@ -132,3 +132,15 @@ test('a repository workflow path that is absolute or climbs out of the repositor
     await assert.rejects(loadConfig(jobFile, env), new RegExp(`\\.factory/config\\.json at [0-9a-f]{40}: workflow ${JSON.stringify(workflow).replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} must be a path inside the repository`));
   }
 });
+
+test('a layer that is not a JSON object is refused, naming the file', async () => {
+  for (const text of ['[]', 'null', '"x"', '{']) {
+    const { jobFile, personal, env } = scratch();
+    mkdirSync(dirname(personal), { recursive: true });
+    writeFileSync(personal, text);
+    await assert.rejects(loadConfig(jobFile, env), (err: Error) => err.message.startsWith(`${personal}: must be a JSON object`), text);
+  }
+  const { repo, jobFile, env } = scratch();
+  commitRepoLayer(repo, []);
+  await assert.rejects(loadConfig(jobFile, env), /\.factory\/config\.json at [0-9a-f]{40}: must be a JSON object/);
+});

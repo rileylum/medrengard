@@ -78,7 +78,7 @@ function rooted(layer: Record<string, unknown>, dir: string, runsDir: boolean): 
 /** A missing personal file is an empty layer; a missing job file is an error. */
 function readLayer(file: string, keys: string[], personal: boolean): Record<string, unknown> {
   if (personal && !existsSync(file)) return {};
-  return rooted(allow(JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>, keys, file), resolve(file, '..'), personal);
+  return rooted(allow(parse(readFileSync(file, 'utf8'), file), keys, file), resolve(file, '..'), personal);
 }
 
 const REPO_LAYER = '.factory/config.json';
@@ -98,6 +98,18 @@ const OWNER_ONLY: Record<string, string> = {
   sandbox: 'sandbox is set only by the personal or job layer',
 };
 
+/** A layer's text as an object, or an error naming `where`: an array or null would read as empty. */
+function parse(text: string, where: string): Record<string, unknown> {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`${where}: must be a JSON object (${(err as Error).message})`);
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${where}: must be a JSON object`);
+  return value as Record<string, unknown>;
+}
+
 function allow(layer: Record<string, unknown>, keys: string[], where: string, hints: Record<string, string> = {}): Record<string, unknown> {
   for (const key of Object.keys(layer)) {
     if (keys.includes(key)) continue;
@@ -110,7 +122,7 @@ function allow(layer: Record<string, unknown>, keys: string[], where: string, hi
 function readRepoLayer(repo: string, sha: string): Record<string, unknown> {
   if (git(repo, 'ls-tree', '--name-only', sha, '--', REPO_LAYER) === '') return {};
   const where = `${REPO_LAYER} at ${sha}`;
-  const layer = allow(JSON.parse(git(repo, 'show', `${sha}:${REPO_LAYER}`)) as Record<string, unknown>, REPO_KEYS, where, OWNER_ONLY);
+  const layer = allow(parse(git(repo, 'show', `${sha}:${REPO_LAYER}`), where), REPO_KEYS, where, OWNER_ONLY);
   // It is copied to runsDir under this path, so a `..` would write outside it.
   const w = layer.workflow;
   if (w !== undefined && (typeof w !== 'string' || w === '' || isAbsolute(w) || w.split(/[\\/]/).includes('..')))
