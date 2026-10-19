@@ -95,6 +95,7 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 2026-10-19: `RUNTIME_SPIKE=1 npm test` on `6ab20d6` (09-c), owner-run: every claude live test passed, including a real developer run, a real standard review and the end-to-end `main.ts` job. Every pi test that needed a reply failed: pi's OpenAI OAuth refresh returned `invalid_grant`. After the owner logged pi in again, `RUNTIME_SPIKE=1 node --test --test-name-pattern='pi'`, owner-run: 40 tests, 40 pass, 0 fail, including a real pi developer run and a real pi standard review. Seen live, not yet ticketed: the pi adapter records an error `turn_end` as "no claim block in reply" instead of pi's `errorMessage`; in the live `main.ts` job, the standard reviewer FAILed for a commit message it cannot see, and the fix run made no new commit.
 
 2026-10-19: `npm test` on `e7eb056` (06-d, `feat/06-d-reviewer-commit-messages`), implementer-run, not independent — 276 tests, 252 pass, 19 skipped, 5 todo, 0 fail. Mutation checks: 5 of 5 caught.
+2026-10-19: `npm test` on `8362c1e` (07-e, `feat/07-e-fix-without-tree-change`), implementer-run, not independent — 283 tests, 259 pass, 19 skipped, 5 todo, 0 fail. Mutation checks: 9 of 9 caught.
 
 ## Next action
 
@@ -130,3 +131,4 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 30. Done: 06-d READY (A-070) and implemented on `feat/06-d-reviewer-commit-messages` as `e7eb056`. Owner: run `npm test` on `e7eb056`, and run or waive the reviews. Then 07-e (Design), not READY.
 31. Done: 06-d test and reviews waived, merged into main (A-071). Next: the 07-e design note, for owner approval before code.
 32. Done: 07-e design note drafted on `feat/07-e-fix-without-tree-change` ([design](design/2026-10-19-fix-without-tree-change.md)). Owner: approve it or change it, and answer its three questions. No code before that.
+33. Done: 07-e design approved (A-072) and implemented on `feat/07-e-fix-without-tree-change`, head `8362c1e`. Owner: run `npm test` on `8362c1e`, run or waive the reviews, then merge or not. Not drafted: a ticket for the owner to overrule a disputed finding within the same cycle.
