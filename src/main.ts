@@ -6,53 +6,18 @@
 // an event apply would escalate on. Ticket 09-b: the job file may name a workflow module; every
 // command runs the job under it, and `runtime` names a CLI per role. Ticket 10-a: `runtime` names
 // any registered runtime, and `runtimes` adds extension modules to the registry.
+// Ticket 10-b: the job's settings come from four layers, read by src/config.ts.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { loadConfig, storeOf, type JobFile } from './config.ts';
 import { oneLine, type Job } from './developer.ts';
-import { checkWorkflow, defaultWorkflow, type Workflow } from './lifecycle.ts';
+import { defaultWorkflow, type Workflow } from './lifecycle.ts';
 import { ROLE_ALIASES, run, type Adapters } from './run.ts';
-import { runtimeFor, runtimes, type RuntimeEntry } from './runtime/registry.ts';
+import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
-import { EventStore, SETTLED } from './store.ts';
-
-interface JobFile extends Omit<Job, 'ticket'> {
-  ticket?: string;
-  /** Read instead of `ticket`, relative to the job file. */
-  ticketFile?: string;
-  /** A runtime name per role; `standard` and `adversarial` name the default reviewers (ROLE_ALIASES). */
-  runtime: Record<string, string>;
-  /** Extension runtimes by name, each a TypeScript module relative to the job file. */
-  runtimes?: Record<string, { module: string }>;
-  /** A TypeScript module with a named export `workflow`, relative to the job file. Default defaultWorkflow. */
-  workflow?: string;
-  runsDir?: string;
-  /** Per stage. Default 120000. */
-  deadlineMs?: number;
-  /** Where checks, the developer and the reviewers run. Default bwrap; `none` must be written out. `read` is relative to the job file. */
-  sandbox?: Sandbox;
-}
-
-const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
+import { EventStore, openings, SETTLED, workflowHash } from './store.ts';
 
 const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> | cancel <job.json>';
-
-async function readJob(file: string) {
-  const path = resolve(file);
-  const spec = JSON.parse(readFileSync(path, 'utf8')) as JobFile;
-  return { path, spec, repo: resolve(path, '..', spec.repo), runsDir: resolve(spec.runsDir ?? DEFAULT_RUNS_DIR), workflow: await loadWorkflow(path, spec) };
-}
-
-// Checked here, though the store checks it too: the adapters are built from it before the store opens.
-async function loadWorkflow(jobPath: string, spec: JobFile): Promise<Workflow> {
-  if (spec.workflow === undefined) return defaultWorkflow;
-  const file = resolve(jobPath, '..', spec.workflow);
-  const mod = (await import(pathToFileURL(file).href)) as { workflow?: Workflow };
-  if (mod.workflow === undefined) throw new Error(`${file} has no named export workflow`);
-  const refused = checkWorkflow(mod.workflow);
-  if (refused.length > 0) throw new Error(`workflow refused: ${refused.join('; ')}`);
-  return mod.workflow;
-}
 
 /** One adapter per agent role, from `runtime[role]` or the alias that names the role. */
 function adaptersFor(w: Workflow, registry: Record<string, RuntimeEntry>, runtime: JobFile['runtime'], sandbox: Sandbox): Adapters {
@@ -74,8 +39,26 @@ function existingStore(runsDir: string, workflow: Workflow): EventStore | undefi
 
 const humanStages = (w: Workflow) => Object.keys(w.stages).filter((s) => w.stages[s]!.kind === 'human');
 
+/**
+ * The job's configuration as its existing cycles were opened under. The base ref has usually
+ * moved since (the owner merges into it), and the layers at the new tip may not load them, or
+ * not load at all (A-078 Q4). The recorded bases come first; the job file's base is the last
+ * resort, and its error, or the store's refusal naming both workflows, is the one reported.
+ */
+async function decisionConfig(file: string) {
+  const { runsDir, workId } = storeOf(file);
+  const db = join(runsDir, 'events.sqlite');
+  const opened = existsSync(db) ? openings(db, workId) : [];
+  for (const base of new Set(opened.flatMap((o) => (o.base ? [o.base] : [])))) {
+    // A base whose layers no longer load cannot be the one the cycles were opened under.
+    const then = await loadConfig(file, process.env, { base }).catch(() => undefined);
+    if (then && opened.every((o) => o.hash === workflowHash(then.workflow))) return then;
+  }
+  return loadConfig(file);
+}
+
 async function accept(file: string, sha: string): Promise<number> {
-  const { path, spec, repo, runsDir, workflow } = await readJob(file);
+  const { path, spec, repo, runsDir, workflow } = await decisionConfig(file);
   const store = existingStore(runsDir, workflow);
   try {
     const open = store?.cycles(spec.workId).find((c) => !SETTLED.includes(c.stage));
@@ -99,7 +82,7 @@ async function accept(file: string, sha: string): Promise<number> {
 }
 
 async function cancel(file: string): Promise<number> {
-  const { spec, runsDir, workflow } = await readJob(file);
+  const { spec, runsDir, workflow } = await decisionConfig(file);
   const store = existingStore(runsDir, workflow);
   try {
     const all = store?.cycles(spec.workId) ?? [];
@@ -133,14 +116,11 @@ async function main(argv: string[]): Promise<number> {
   }
   // Extra words are refused, not ignored: `job.json cancel` would otherwise start a paid run.
   if (!first || rest.length !== 0) throw new Error(USAGE);
-  const { path, spec, repo, runsDir, workflow } = await readJob(first);
+  const { path, spec, repo, runsDir, workflow, registry, sandbox } = await loadConfig(first);
   const ticket = spec.ticket ?? (spec.ticketFile ? readFileSync(resolve(path, '..', spec.ticketFile), 'utf8') : undefined);
   if (!ticket) throw new Error('job needs ticket or ticketFile');
   const job: Job = { workId: spec.workId, ticket, repo, base: spec.base, parentCycleId: spec.parentCycleId, checks: spec.checks };
-  const sandbox: Sandbox = spec.sandbox
-    ? { ...spec.sandbox, read: spec.sandbox.read?.map((p) => (typeof p === 'string' ? resolve(path, '..', p) : p)) }
-    : { backend: 'bwrap' };
-  const adapters = adaptersFor(workflow, runtimes(spec.runtimes, resolve(path, '..')), spec.runtime, sandbox);
+  const adapters = adaptersFor(workflow, registry, spec.runtime, sandbox);
   // develop makes runsDir, but the store opens first.
   mkdirSync(runsDir, { recursive: true });
   const store = new EventStore(join(runsDir, 'events.sqlite'), workflow);

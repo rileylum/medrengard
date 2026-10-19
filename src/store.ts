@@ -13,6 +13,8 @@ interface OpenRow {
   parentCycleId?: string;
   /** Absent in stores written before 09-b, whose cycles were all opened under defaultWorkflow. */
   workflow?: { name: string; hash: string };
+  /** The resolved base SHA (10-b): accept and cancel read the configuration layers at it. Absent before 10-b. */
+  base?: string;
 }
 
 /**
@@ -23,6 +25,23 @@ export function workflowHash(w: Workflow): string {
   return createHash('sha256').update(JSON.stringify(w)).digest('hex');
 }
 const DEFAULT_RECORD = { name: defaultWorkflow.name!, hash: workflowHash(defaultWorkflow) };
+
+/**
+ * How each cycle of the work was opened: its base and workflow hash. Read without replay, so it
+ * needs no workflow: accept and cancel use it to pick the workflow to open the store with.
+ */
+export function openings(path: string, workId: string): { base?: string; hash: string }[] {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    return db
+      .prepare("SELECT body FROM events WHERE seq = 0 AND json_extract(body, '$.workId') = ?")
+      .all(workId)
+      .map((r) => JSON.parse(r.body as string) as OpenRow)
+      .map((o) => ({ base: o.base, hash: (o.workflow ?? DEFAULT_RECORD).hash }));
+  } finally {
+    db.close();
+  }
+}
 
 function requireId(v: unknown, what: string): asserts v is string {
   if (typeof v !== 'string' || v.length === 0) throw new Error(`${what} must be a non-empty string`);
@@ -67,7 +86,7 @@ export class EventStore {
   }
 
   /** Create a cycle. Returns the initial Cycle. Throws if the ID is already in use. */
-  open(cycleId: string, workId: string, parentCycleId?: string): Cycle {
+  open(cycleId: string, workId: string, parentCycleId?: string, base?: string): Cycle {
     requireId(cycleId, 'cycle ID');
     requireId(workId, 'work ID');
     if (this.exists(cycleId)) throw new Error(`cycle ${cycleId} already open`);
@@ -83,7 +102,7 @@ export class EventStore {
     if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
     // Spec: a new cycle for the same work names its parent; an escalated cycle is waiting for one.
     if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
-    const row: OpenRow = { type: 'open', workId, parentCycleId, workflow: this.record };
+    const row: OpenRow = { type: 'open', workId, parentCycleId, workflow: this.record, base };
     // Fixed seq 0, not MAX+1: a second open (racing the check above on another connection)
     // must collide on the primary key and be ignored, otherwise it would land mid-log and reach
     // apply, which has no 'open' case.

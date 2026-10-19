@@ -21,6 +21,8 @@ const LIVE = process.env.RUNTIME_SPIKE === '1';
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-run-');
 test.after(() => rmSync(dir, { recursive: true, force: true }));
+// Every child inherits it: the owner's personal config (10-b) must never reach a test.
+process.env.XDG_CONFIG_HOME = join(dir, 'xdg');
 
 const git = (cwd: string, ...a: string[]) =>
   execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.invalid', ...a], { cwd, encoding: 'utf8' }).trim();
