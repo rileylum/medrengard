@@ -6,6 +6,7 @@
 // an event apply would escalate on. Ticket 09-b: the job file may name a workflow module; every
 // command runs the job under it, and `runtime` names a CLI per role. Ticket 10-a: `runtime` names
 // any registered runtime, and `runtimes` adds extension modules to the registry.
+// Ticket 10-b: the job's settings come from four layers, read by src/config.ts.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { loadConfig, type JobFile } from './config.ts';

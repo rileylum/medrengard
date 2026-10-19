@@ -366,3 +366,19 @@ test('accept loads a cycle run under a repository workflow after the base branch
   assert.equal(cancelled.status, 2);
   assert.match(cancelled.stderr, /^nothing to cancel for work w /m);
 });
+
+test('a repository layer that gives grants stops main.ts with exit 2 before any run and before the store exists', () => {
+  const { root, repo, jobFile, db } = scratch();
+  mkdirSync(join(repo, '.factory'));
+  writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ grants: { github: { env: 'GITHUB_TOKEN' } } }));
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'grants');
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  const marker = spawnMarker(bin, root);
+  const r = sf([jobFile], { ...process.env, PATH: `${bin}:${process.env.PATH}` });
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /\.factory\/config\.json at [0-9a-f]{40}: grants come only from the personal or job layer/);
+  assert.ok(!existsSync(marker), 'no runtime CLI was spawned');
+  assert.ok(!existsSync(db), 'no store was created');
+});
