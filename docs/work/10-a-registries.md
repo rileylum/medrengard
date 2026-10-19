@@ -20,3 +20,4 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
 
 ## Log
 - 2026-10-19 — drafted on `feat/10-a-registries` (A-074). Not READY until the owner says go.
+- 2026-10-19 — owner: "go". READY.
