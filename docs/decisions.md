@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-061 — 2026-10-19 — 09-b plan deleted; no runs to keep
+
+Owner, asked whether to keep the 09-b plan and whether any runs directory holds 09-b cycles worth keeping: “delete the plan. I don't need any runs”.
+
+Effect: `plans/2026-10-19-generic-driver.md` is deleted unmerged, as the 09-a plan was (A-058). 09-c may change `defaultWorkflow` and so its hash; cycles opened by 09-b code under the default workflow will be refused, and that is accepted.
+
 ### A-060 — 2026-10-19 — 09-b reviews waived
 
 Owner, after an overview of 09-b on `61b550c`: “Okay lets waive the review again and prepare the handoff for a fresh session for 09-c”.
