@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-079 — 2026-10-19 — 10-b: standard 2 findings fixed without another standard review, then adversarial
+
+Owner, after 10-b's standard 2 FAIL on `2884bae` (one major, three minors) and the recommendation to fix all four on the branch and then run the adversarial review: “Next session we'll fix and run the adversarial before progressing”.
+
+Effect: the four findings are fixed on `feat/10-b-config-layers`, tests first, with no third standard review (the budget is spent). The adversarial review then runs on the fixed SHA. Merge waits for the owner.
+
 ### A-078 — 2026-10-19 — 10-b READY; configuration layers design approved
 
 Owner, after reading the 10-b ticket and [design/2026-10-19-config-layers.md](design/2026-10-19-config-layers.md) with its four questions: “take all recommendations and go”.
