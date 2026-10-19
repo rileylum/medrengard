@@ -51,8 +51,10 @@ function merge(layers: Record<string, unknown>[]): Record<string, unknown> {
   return out;
 }
 
-function personalFile(env: NodeJS.ProcessEnv): string {
-  return join(env.XDG_CONFIG_HOME || join(env.HOME ?? '', '.config'), 'software_factory', 'config.json');
+/** Undefined with neither variable set: joining an empty HOME would read `.config/` under the working directory, which a repository can supply. */
+function personalFile(env: NodeJS.ProcessEnv): string | undefined {
+  const dir = env.XDG_CONFIG_HOME || (env.HOME && join(env.HOME, '.config'));
+  return dir ? join(dir, 'software_factory', 'config.json') : undefined;
 }
 
 const under = (dir: string, p: unknown) => (typeof p === 'string' ? resolve(dir, p) : p);
@@ -76,8 +78,8 @@ function rooted(layer: Record<string, unknown>, dir: string, runsDir: boolean): 
 }
 
 /** A missing personal file is an empty layer; a missing job file is an error. */
-function readLayer(file: string, keys: string[], personal: boolean): Record<string, unknown> {
-  if (personal && !existsSync(file)) return {};
+function readLayer(file: string | undefined, keys: string[], personal: boolean): Record<string, unknown> {
+  if (file === undefined || (personal && !existsSync(file))) return {};
   return rooted(allow(parse(readFileSync(file, 'utf8'), file), keys, file), resolve(file, '..'), personal);
 }
 
@@ -90,8 +92,9 @@ const REPO_LAYER = '.factory/config.json';
  */
 const REPO_KEYS = ['checks', 'workflow', 'runtime'];
 const PERSONAL_KEYS = [...REPO_KEYS, 'runtimes', 'sandbox', 'deadlineMs', 'runsDir'];
-// Which work and where: one job's, never a default a later job would inherit.
-const JOB_KEYS = ['workId', 'ticket', 'ticketFile', 'repo', 'base', 'parentCycleId', ...PERSONAL_KEYS];
+// Which work and where: one job's, never a default a later job would inherit. `model` is read by
+// proto/job.ts and ignored here; refusing it would stop proto/board.ts accept and cancel on its own job files.
+const JOB_KEYS = ['workId', 'ticket', 'ticketFile', 'repo', 'base', 'parentCycleId', 'model', ...PERSONAL_KEYS];
 // Named apart from the rest so each repository refusal says where the key may go instead.
 const OWNER_ONLY: Record<string, string> = {
   grants: 'grants come only from the personal or job layer',

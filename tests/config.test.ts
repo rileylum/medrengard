@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { loadConfig } from '../src/config.ts';
+import { loadConfig, storeOf } from '../src/config.ts';
 import { ownerCheck } from './workflows.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
@@ -161,4 +161,46 @@ test('a runtime, runtimes or sandbox value that is not a JSON object is refused,
     const { jobFile, env } = scratch({ [key]: value });
     await assert.rejects(loadConfig(jobFile, env), (err: Error) => err.message === `${jobFile}: ${key} must be a JSON object`, `${key}: ${JSON.stringify(value)}`);
   }
+});
+
+test('a job-file workflow beats the repository layer\'s, and the repository workflow is not copied', async () => {
+  const { root, repo, jobFile, env } = scratch();
+  writeFileSync(join(root, 'mine.ts'), `export { ownerCheck as workflow } from ${JSON.stringify(join(import.meta.dirname, 'workflows.ts'))};\n`);
+  writeFileSync(join(repo, 'flow.ts'), `export { noHuman as workflow } from ${JSON.stringify(join(import.meta.dirname, 'workflows.ts'))};\n`);
+  commitRepoLayer(repo, { workflow: 'flow.ts' });
+  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', runsDir: join(root, 'runs'), workflow: 'mine.ts', runtime: { developer: 'claude' } });
+  const c = await loadConfig(jobFile, env);
+  assert.deepEqual(c.workflow, ownerCheck);
+  assert.equal(existsSync(join(root, 'runs', 'repo-config')), false);
+});
+
+test('a job file may carry model, which proto/README.md documents for the board', async () => {
+  const { jobFile, env } = scratch({ model: 'sonnet' });
+  const c = await loadConfig(jobFile, env);
+  assert.equal(c.spec.workId, 'w');
+});
+
+test('with neither XDG_CONFIG_HOME nor HOME, there is no personal layer, not one under the working directory', async () => {
+  const { root, jobFile } = scratch();
+  writeJson(join(root, '.config', 'software_factory', 'config.json'), { sandbox: { backend: 'none' } });
+  const cwd = process.cwd();
+  process.chdir(root);
+  try {
+    const c = await loadConfig(jobFile, {});
+    assert.deepEqual(c.sandbox, { backend: 'bwrap' });
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test('a personal runsDir and workflow resolve against the personal file\'s folder, and storeOf finds the same store', async () => {
+  const { jobFile, personal, env } = scratch();
+  const home = dirname(personal);
+  writeJson(personal, { runsDir: 'runs', workflow: 'flow.ts' });
+  // Beside the personal file and named plainly: a path with enough `..` resolves the same from any folder.
+  writeFileSync(join(home, 'flow.ts'), `export { ownerCheck as workflow } from ${JSON.stringify(join(import.meta.dirname, 'workflows.ts'))};\n`);
+  const c = await loadConfig(jobFile, env);
+  assert.equal(c.runsDir, join(home, 'runs'));
+  assert.deepEqual(c.workflow, ownerCheck);
+  assert.deepEqual(storeOf(jobFile, env), { runsDir: join(home, 'runs'), workId: 'w' });
 });
