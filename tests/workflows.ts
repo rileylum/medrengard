@@ -13,3 +13,15 @@ export const noHuman: Workflow = {
     REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', budget: 1, transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
   },
 };
+
+/** 09-b's second workflow: one review, then a human stage that is not AWAITING_ACCEPTANCE. No default role names. */
+export const ownerCheck: Workflow = {
+  name: 'owner-check',
+  start: 'DEV',
+  stages: {
+    DEV: { kind: 'agent', role: 'writer', produces: 'commit', transitions: { PASS: 'CHECK' } },
+    CHECK: { kind: 'command', transitions: { PASS: 'REVIEW' } },
+    REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', budget: 1, transitions: { PASS: 'OWNER', FAIL: 'ESCALATED' } },
+    OWNER: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
+  },
+};

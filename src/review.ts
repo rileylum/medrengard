@@ -30,7 +30,6 @@ const EVIDENCE_KEEP = 16 * 1024;
 // Head and tail each, so the whole diff is sent up to twice this.
 const DIFF_MAX = 128 * 1024;
 
-const ROLE_FOR_STAGE: Partial<Record<Cycle['stage'], Role>> = { STANDARD_REVIEW: 'standard_reviewer', ADVERSARIAL_REVIEW: 'adversarial_reviewer' };
 type Verification = Extract<Event, { type: 'verification' }>;
 const EVIDENCE_EXTS = ['exit', 'stdout', 'stderr'] as const;
 
@@ -39,8 +38,9 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
   checkDeadline(opts.deadlineMs);
   const cycle = store.load(cycleId);
   if (!cycle) throw new Error(`cycle ${cycleId} not open`);
-  const role = ROLE_FOR_STAGE[cycle.stage];
-  if (!role || !cycle.candidate) throw new Error(`review on a cycle in ${cycle.stage}, expected STANDARD_REVIEW or ADVERSARIAL_REVIEW`);
+  const def = store.workflow.stages[cycle.stage];
+  if (def?.kind !== 'agent' || def.produces !== 'verdict' || !cycle.candidate) throw new Error(`review on a cycle in ${cycle.stage}, expected a review stage`);
+  const { role } = def;
   const { head, base } = cycle.candidate;
 
   // Everything the reviewer sees was produced by verify for this head; anything else is refused

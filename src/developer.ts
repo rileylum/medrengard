@@ -60,7 +60,7 @@ export interface Developed {
   branch: string;
 }
 
-const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
+export const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
 
 /** Open a cycle for the job, run the developer once, return the replayed Cycle and where its branch lives. */
 export async function develop(store: EventStore, adapter: DeveloperAdapter, job: Job, opts: DevelopOptions): Promise<Developed> {
@@ -76,6 +76,9 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
   checkDeadline(opts.deadlineMs);
   const sandbox = opts.sandbox ?? { backend: 'bwrap' };
   checkSandbox(sandbox);
+  // apply would escalate the first claim anyway; refusing here leaves no cycle behind.
+  const start = store.workflow.stages[store.workflow.start];
+  if (start?.kind !== 'agent' || start.produces !== 'commit') throw new Error(`start stage ${store.workflow.start} is not a commit stage; develop cannot open the cycle`);
   const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
   store.open(cycleId, job.workId, job.parentCycleId);
   try {
@@ -85,7 +88,7 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
       store,
       cycleId,
       developer,
-      { role: 'developer', prompt: prompt(job.ticket), cwd: worktree },
+      { role: start.role, prompt: prompt(job.ticket), cwd: worktree },
       { deadlineMs: opts.deadlineMs, base, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, undefined, sandbox, opts.deadlineMs, claim) },
     );
     return { cycle, worktree, branch };
@@ -118,10 +121,12 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
   checkDeadline(opts.deadlineMs);
   const cycle = store.load(cycleId);
   if (!cycle) throw new Error(`cycle ${cycleId} not open`);
-  // DEVELOPING with a head is only ever the stage after a standard FAIL; DEVELOPING without one
-  // is the first run, which develop owns.
-  if (cycle.stage !== 'DEVELOPING' || !cycle.candidate?.head) throw new Error(`fix on a cycle in ${cycle.stage}${cycle.candidate?.head ? '' : ' with no candidate'}, expected DEVELOPING after a standard FAIL`);
-  if (cycle.runs.some((r) => r.role === 'developer' && !cycle.consumed.includes(r.runId))) throw new Error(`cycle ${cycleId} has a developer run still active`);
+  // A commit stage with a head is a stage re-entered after a FAIL; without one it is the first
+  // run, which develop owns.
+  const def = store.workflow.stages[cycle.stage];
+  if (def?.kind !== 'agent' || def.produces !== 'commit' || !cycle.candidate?.head) throw new Error(`fix on a cycle in ${cycle.stage}${cycle.candidate?.head ? '' : ' with no candidate'}, expected a commit stage after a FAIL`);
+  // Only claims create runs, so any run without an outcome is a commit stage's.
+  if (cycle.runs.some((r) => !cycle.consumed.includes(r.runId))) throw new Error(`cycle ${cycleId} has a developer run still active`);
   const { head, base } = cycle.candidate;
   const verdict = cycle.history.map((h) => h.event).filter((e): e is Verdict => e.type === 'verdict').at(-1);
   if (!verdict || verdict.verdict !== 'FAIL' || verdict.head !== head) throw new Error(`cycle ${cycleId}: last verdict is not a FAIL for the candidate ${head}`);
@@ -146,7 +151,7 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
     store,
     cycleId,
     developer,
-    { role: 'developer', prompt: prompt(job.ticket, { head, findings: verdict.findings }), cwd: worktree },
+    { role: def.role, prompt: prompt(job.ticket, { head, findings: verdict.findings }), cwd: worktree },
     { deadlineMs: opts.deadlineMs, base, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, head, sandbox, opts.deadlineMs, claim) },
   );
   return { cycle: cycleAfter, worktree, branch };

@@ -5,11 +5,12 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Cycle } from '../src/lifecycle.ts';
+import { defaultWorkflow, type Cycle } from '../src/lifecycle.ts';
 import { EventStore } from '../src/store.ts';
 import { execute, receive } from '../src/controller.ts';
 import { fakeAdapter, type Step } from './fake-adapter.ts';
 import { PASS_CHECKS, toStandardReview } from './scenarios.ts';
+import { ownerCheck } from './workflows.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'sf-controller-'));
 test.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -144,7 +145,7 @@ test('errors other than an unclassifiable claim propagate from receive; no run_f
   // A store that fails for its own reasons (disk, closed handle). The controller must not read
   // that as a malformed claim and try to write run_failed on top of it.
   let appends = 0;
-  const broken = { append() { appends++; throw new Error('disk full'); } } as unknown as EventStore;
+  const broken = { workflow: defaultWorkflow, append() { appends++; throw new Error('disk full'); } } as unknown as EventStore;
   assert.throws(() => receive(broken, 'c1', 'dev1', 'developer', { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } }), /disk full/);
   assert.equal(appends, 1);
   // And execute: a claim that cannot be written stops before any launch.
@@ -343,4 +344,24 @@ test('accept sees plain data and is not consulted for failed or cancelled runs; 
   c = await execute(fresh(), 'c1', fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } }), { ...req, role: 'developer' }, { deadlineMs: 5000, base: 'B1', accept: (() => 42) as unknown as () => string });
   assert.equal(c.stage, 'ESCALATED');
   assert.match(c.escalation ?? '', /accept refused the claim: 42/);
+});
+
+// Ticket 09-b: the run's role, looked up in the store's workflow, decides whether its outcome is a
+// claim or a verdict and which stage it may run in; no default role name is special.
+test('under another workflow, its commit role claims and its review role records a verdict in its own stage', async () => {
+  const store = new EventStore(join(dir, `${n++}.sqlite`), ownerCheck);
+  store.open('c1', 'w1');
+  const writer = fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } });
+  const written = await execute(store, 'c1', writer, { ...req, role: 'writer' }, { deadlineMs: 5000, base: 'B1' });
+  assert.equal(written.stage, 'CHECK', written.escalation);
+  const early = fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', verdict: 'PASS' } } });
+  await assert.rejects(execute(store, 'c1', early, { ...req, role: 'reviewer' }, { deadlineMs: 1000 }), /reviewer run on a cycle in CHECK, expected REVIEW/);
+  assert.equal(early.requests.length, 0);
+  const checked = store.append('c1', { type: 'verification', head: 'H1', checks: PASS_CHECKS });
+  assert.equal(checked.stage, 'REVIEW');
+  await assert.rejects(execute(store, 'c1', early, { ...req, role: 'standard_reviewer' }, { deadlineMs: 1000 }), /standard_reviewer run on a cycle in REVIEW, expected a stage for role standard_reviewer/);
+  const reviewer = fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', verdict: 'PASS', findings: [] } } });
+  const reviewed = await execute(store, 'c1', reviewer, { ...req, role: 'reviewer' }, { deadlineMs: 5000 });
+  assert.equal(reviewed.stage, 'OWNER', reviewed.escalation);
+  store.close();
 });

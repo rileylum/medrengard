@@ -24,12 +24,15 @@ export type StageDef =
 
 /** Plain data, so it can be checked and hashed before anything runs (A-056). */
 export interface Workflow {
+  /** Recorded with each cycle it opens, for the owner to read; the hash is what binds. */
+  name?: string;
   start: Stage;
   stages: Record<Stage, StageDef>;
 }
 
 /** Core lifecycle v1 as a workflow: docs/specs/core-lifecycle-v1.md, States. */
 export const defaultWorkflow: Workflow = {
+  name: 'default',
   start: 'DEVELOPING',
   stages: {
     DEVELOPING: { kind: 'agent', role: 'developer', produces: 'commit', transitions: { PASS: 'VERIFYING' } },
@@ -127,6 +130,7 @@ export function newCycle(cycleId: string, workId: string, parentCycleId?: string
 export function checkWorkflow(w: Workflow): string[] {
   if (!obj(w) || !obj(w.stages)) return ['workflow must be an object with stages'];
   const reasons: string[] = [];
+  if (w.name !== undefined && !str(w.name)) reasons.push('workflow name must be a non-empty string');
   const entries = Object.entries(w.stages);
   for (const [name, def] of entries) {
     if (ENGINE_STAGES.includes(name)) reasons.push(`stage ${name} uses an engine stage name`);
@@ -139,6 +143,15 @@ export function checkWorkflow(w: Workflow): string[] {
   }
   // The graph checks below dereference every stage's transitions.
   if (reasons.length > 0) return reasons;
+
+  // The controller tells a claim from a verdict by the run's role alone.
+  const produces = new Map<Role, string>();
+  for (const [name, def] of entries) {
+    if (def.kind !== 'agent') continue;
+    const other = produces.get(def.role);
+    if (other !== undefined && other !== def.produces) reasons.push(`role ${def.role} produces both commit and verdict (stage ${name})`);
+    produces.set(def.role, def.produces);
+  }
 
   const known = (s: unknown) => typeof s === 'string' && Object.hasOwn(w.stages, s) && !ENGINE_STAGES.includes(s);
   if (!known(w.start)) reasons.push(`start stage ${String(w.start)} is not a workflow stage`);
@@ -173,6 +186,12 @@ export function checkWorkflow(w: Workflow): string[] {
   }
   for (const [name] of entries) if (!settles.has(name)) reasons.push(`stage ${name} has no path to ${SETTLED_TARGETS.join(', ')}`);
   return reasons;
+}
+
+/** What `role`'s runs produce under `w`; undefined when no agent stage names it. Unique once checkWorkflow passes. */
+export function producedBy(w: Workflow, role: Role): 'commit' | 'verdict' | undefined {
+  for (const def of Object.values(w.stages)) if (def.kind === 'agent' && def.role === role) return def.produces;
+  return undefined;
 }
 
 const TERMINAL: Stage[] = ['ACCEPTED', 'CANCELLED'];

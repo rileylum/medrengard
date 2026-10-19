@@ -5,10 +5,11 @@ import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { apply, newCycle, type Cycle, type Event } from '../src/lifecycle.ts';
-import { EventStore, UnclassifiableEvent } from '../src/store.ts';
+import { DatabaseSync } from 'node:sqlite';
+import { apply, defaultWorkflow, newCycle, type Cycle, type Event } from '../src/lifecycle.ts';
+import { EventStore, UnclassifiableEvent, workflowHash } from '../src/store.ts';
 import { PASS_CHECKS, scenarios, toStandardReview } from './scenarios.ts';
-import { counters, noHuman } from './workflows.ts';
+import { counters, noHuman, ownerCheck } from './workflows.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'sf-store-'));
 test.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -298,4 +299,45 @@ test('a store given another workflow replays its cycles under it', () => {
   const reopened = new EventStore(path, noHuman);
   assert.equal(reopened.load('c1')!.stage, 'ACCEPTED');
   reopened.close();
+});
+
+// Ticket 09-b: a cycle replays only under the workflow it was opened with (A-059).
+const openRow = (path: string, cycleId: string) => {
+  const db = new DatabaseSync(path);
+  try { return JSON.parse((db.prepare('SELECT body FROM events WHERE cycle_id = ? AND seq = 0').get(cycleId) as { body: string }).body); } finally { db.close(); }
+};
+
+test('open records the workflow name and hash, and the cycle reloads under the same workflow', () => {
+  const path = dbPath('record');
+  const store = new EventStore(path, ownerCheck);
+  store.open('c1', 'w1');
+  store.close();
+  assert.deepEqual(openRow(path, 'c1').workflow, { name: 'owner-check', hash: workflowHash(ownerCheck) });
+  assert.match(workflowHash(ownerCheck), /^[0-9a-f]{64}$/);
+  assert.notEqual(workflowHash(ownerCheck), workflowHash(defaultWorkflow));
+  const reopened = new EventStore(path, ownerCheck);
+  assert.equal(reopened.load('c1')!.stage, 'QUEUED');
+  reopened.close();
+});
+
+test('a cycle opened under one workflow is refused by a store running another, naming both', () => {
+  const path = dbPath('mismatch');
+  const store = new EventStore(path);
+  store.open('c1', 'w1');
+  store.close();
+  const other = new EventStore(path, ownerCheck);
+  assert.throws(() => other.load('c1'), /c1 was opened under workflow default \([0-9a-f]{12}\).*owner-check \([0-9a-f]{12}\)/);
+  // open's one-open-cycle guard loads the work's cycles, so it refuses too rather than miscount.
+  assert.throws(() => other.open('c2', 'w1'), /opened under workflow default/);
+  other.close();
+});
+
+test('a store written before 09-b loads under the default workflow only', () => {
+  const path = dbPath('v1-other');
+  copyFileSync(join(import.meta.dirname, 'fixtures', 'v1-store.sqlite'), path);
+  const [first] = scenarios;
+  assert.equal(openRow(path, first!.name).workflow, undefined);
+  const store = new EventStore(path, ownerCheck);
+  assert.throws(() => store.load(first!.name), /opened under workflow default/);
+  store.close();
 });

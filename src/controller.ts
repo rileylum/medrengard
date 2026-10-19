@@ -2,7 +2,7 @@
 // bounds it with a deadline, and turns the outcome into exactly one lifecycle event.
 import { randomUUID } from 'node:crypto';
 import type { Adapter, RunOutcome, RunRequest } from './adapter.ts';
-import type { Cycle, Event, Role, Stage } from './lifecycle.ts';
+import { producedBy, type Cycle, type Event, type Role, type Stage } from './lifecycle.ts';
 import { UnclassifiableEvent, type EventStore } from './store.ts';
 
 export interface ExecuteOptions {
@@ -28,8 +28,6 @@ export function checkDeadline(deadlineMs: number): void {
     throw new Error(`deadlineMs must be a positive integer at or below ${MAX_TIMEOUT_MS}, got ${String(deadlineMs)}`);
 }
 
-const REVIEW_STAGE: Partial<Record<Role, Stage>> = { standard_reviewer: 'STANDARD_REVIEW', adversarial_reviewer: 'ADVERSARIAL_REVIEW' };
-
 /** Mint a run ID, claim the cycle for a developer, start the adapter, and record the outcome. */
 export async function execute(
   store: EventStore,
@@ -41,7 +39,7 @@ export async function execute(
   const { deadlineMs } = opts;
   checkDeadline(deadlineMs);
   const runId = randomUUID();
-  if (req.role === 'developer') {
+  if (producedBy(store.workflow, req.role) === 'commit') {
     if (!opts.base) throw new Error('developer run needs a base SHA');
     const claimed = store.append(cycleId, { type: 'claim', runId, base: opts.base, runtime: adapter.name });
     // apply may have ignored the claim (another developer active) or escalated it. Either way
@@ -60,7 +58,8 @@ export async function execute(
  * returned; only for the controller's own misuse (wrong stage, unopened cycle) or a store failure.
  */
 export function receive(store: EventStore, cycleId: string, runId: string, role: Role, outcome: RunOutcome, accept?: ExecuteOptions['accept']): Cycle {
-  if (role !== 'developer') requireStage(store, cycleId, role, runId);
+  const commit = producedBy(store.workflow, role) === 'commit';
+  if (!commit) requireStage(store, cycleId, role, runId);
   const o = normalise(plain(outcome));
   if (o.status !== 'completed') {
     return store.append(cycleId, { type: 'run_failed', runId, reason: o.status === 'failed' ? o.reason : 'cancelled' });
@@ -68,7 +67,7 @@ export function receive(store: EventStore, cycleId: string, runId: string, role:
   const refused = accept ? refusal(accept, o.claim) : undefined;
   if (refused !== undefined) return store.append(cycleId, { type: 'run_failed', runId, reason: refused });
   try {
-    return store.append(cycleId, toEvent(runId, role, o.claim));
+    return store.append(cycleId, toEvent(runId, commit, o.claim));
   } catch (err) {
     // Only the store's own classification failure is a malformed claim. Anything else (a closed
     // database, a cycle that is not open) is the controller's problem and must surface.
@@ -101,8 +100,10 @@ function requireStage(store: EventStore, cycleId: string, role: Role, runId?: st
   const cycle = store.load(cycleId);
   if (!cycle) throw new Error(`cycle ${cycleId} not open`);
   if (runId !== undefined && (cycle.consumed.includes(runId) || SETTLED.includes(cycle.stage))) return;
-  const expected = REVIEW_STAGE[role];
-  if (expected && cycle.stage !== expected) throw new Error(`${role} run on a cycle in ${cycle.stage}, expected ${expected}`);
+  const def = store.workflow.stages[cycle.stage];
+  if (def?.kind === 'agent' && def.role === role) return;
+  const expected = Object.entries(store.workflow.stages).find(([, d]) => d.kind === 'agent' && d.role === role)?.[0];
+  throw new Error(`${role} run on a cycle in ${cycle.stage}, expected ${expected ?? `a stage for role ${role}`}`);
 }
 
 // The adapter contract is plain data, and "plain" means what the store can persist: a JSON round
@@ -137,9 +138,9 @@ function describe(v: unknown): string {
 // Builds the event shape from whatever the runtime sent and lets the store's isEvent decide.
 // Picking named fields means a claim that is not an object becomes an event with missing fields,
 // which is rejected the same way as one with wrong fields.
-function toEvent(runId: string, role: Role, claim: unknown): Event {
+function toEvent(runId: string, commit: boolean, claim: unknown): Event {
   const c = (typeof claim === 'object' && claim !== null ? claim : {}) as Record<string, unknown>;
-  if (role === 'developer') return { type: 'developer_result', runId, head: c.head, artifacts: c.artifacts } as Event;
+  if (commit) return { type: 'developer_result', runId, head: c.head, artifacts: c.artifacts } as Event;
   return { type: 'verdict', runId, head: c.head, verdict: c.verdict, findings: c.findings } as Event;
 }
 

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, openChild, type Cycle, type Event, type Workflow } from '../src/lifecycle.ts';
 import { PASS_CHECKS, sc, scenarios, toStandardReview as TO_STANDARD_REVIEW } from './scenarios.ts';
-import { counters, noHuman } from './workflows.ts';
+import { counters, noHuman, ownerCheck } from './workflows.ts';
 
 const runWith = (w: Workflow, c: Cycle, ...events: Event[]) => events.reduce((acc, e) => apply(acc, e, w), c);
 const run = (c: Cycle, ...events: Event[]) => runWith(defaultWorkflow, c, ...events);
@@ -334,4 +334,12 @@ test('an event with a step for the current stage advances; one for another stage
   assert.equal(isEvent({ type: 'cancel', step: '' }), false);
   assert.equal(isEvent({ type: 'cancel', step: 1 }), false);
   assert.equal(isEvent({ type: 'cancel', step: 'DEVELOPING' }), true);
+});
+
+// Ticket 09-b: the controller tells a claim from a verdict by the run's role, so a role must
+// produce one kind of output.
+test('checkWorkflow refuses a role that produces both a commit and a verdict, and an empty name', () => {
+  refused({ ...noHuman, stages: { ...noHuman.stages, REVIEW: { ...noHuman.stages.REVIEW!, role: 'developer' } as Workflow['stages'][string] } }, /role developer.*commit.*verdict/);
+  refused({ ...noHuman, name: '' }, /name/);
+  assert.deepEqual(checkWorkflow(ownerCheck), []);
 });

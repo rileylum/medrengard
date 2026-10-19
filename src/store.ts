@@ -1,6 +1,7 @@
 // SQLite event store for cycles (ticket 02-a). One append-only table; the state machine in
 // lifecycle.ts stays pure and is replayed on load. No leases. A second process (the owner's
 // cancel during a run, 07-d) waits for the write lock rather than failing.
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, type Cycle, type Event, type Stage, type Workflow } from './lifecycle.ts';
 
@@ -10,7 +11,18 @@ interface OpenRow {
   type: 'open';
   workId: string;
   parentCycleId?: string;
+  /** Absent in stores written before 09-b, whose cycles were all opened under defaultWorkflow. */
+  workflow?: { name: string; hash: string };
 }
+
+/**
+ * SHA-256 of the workflow's JSON. Key order counts: reordering a workflow file makes it a new
+ * workflow, which is safe (its old cycles are refused) and avoids a canonical serialiser.
+ */
+export function workflowHash(w: Workflow): string {
+  return createHash('sha256').update(JSON.stringify(w)).digest('hex');
+}
+const DEFAULT_RECORD = { name: defaultWorkflow.name!, hash: workflowHash(defaultWorkflow) };
 
 function requireId(v: unknown, what: string): asserts v is string {
   if (typeof v !== 'string' || v.length === 0) throw new Error(`${what} must be a non-empty string`);
@@ -27,13 +39,15 @@ export class UnclassifiableEvent extends Error {}
 
 export class EventStore {
   private db: DatabaseSync;
-  private workflow: Workflow;
+  readonly workflow: Workflow;
+  private record: { name: string; hash: string };
 
   /** Every load replays under `workflow`. Throws, before touching `path`, if checkWorkflow refuses it. */
   constructor(path: string, workflow: Workflow = defaultWorkflow) {
     const refused = checkWorkflow(workflow);
     if (refused.length > 0) throw new Error(`workflow refused: ${refused.join('; ')}`);
     this.workflow = workflow;
+    this.record = { name: workflow.name ?? 'unnamed', hash: workflowHash(workflow) };
     this.db = new DatabaseSync(path);
     // Every write here is one short statement, so a second process waits at most for one append.
     // At 0 (SQLite's default) `main.ts cancel` during a run fails with `database is locked`.
@@ -69,7 +83,7 @@ export class EventStore {
     if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
     // Spec: a new cycle for the same work names its parent; an escalated cycle is waiting for one.
     if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
-    const row: OpenRow = { type: 'open', workId, parentCycleId };
+    const row: OpenRow = { type: 'open', workId, parentCycleId, workflow: this.record };
     // Fixed seq 0, not MAX+1: a second open (racing the check above on another connection)
     // must collide on the primary key and be ignored, otherwise it would land mid-log and reach
     // apply, which has no 'open' case.
@@ -117,6 +131,11 @@ export class EventStore {
     // workId and parent come from this row; any other type would replay as a cycle of no work.
     if (first.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(first.type)}, not the open marker`);
     const head = first;
+    // A cycle replayed under another workflow than it was opened with can reach a stage it never
+    // had, so a resume would act on a stage the log does not support. Refuse instead (A-059).
+    const opened = head.workflow ?? DEFAULT_RECORD;
+    if (opened.hash !== this.record.hash)
+      throw new Error(`cycle ${cycleId} was opened under workflow ${opened.name} (${opened.hash.slice(0, 12)}), this store runs ${this.record.name} (${this.record.hash.slice(0, 12)})`);
     return (rest as Event[]).reduce((c, e) => apply(c, e, this.workflow), newCycle(cycleId, head.workId, head.parentCycleId));
   }
 
