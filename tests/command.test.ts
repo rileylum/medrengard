@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { EventStore } from '../src/store.ts';
 import { claude, cliAdapter } from '../src/runtime/cli-adapter.ts';
@@ -118,3 +118,26 @@ for (const backend of ['bwrap', 'none']) {
     store.close();
   });
 }
+
+test('a command can write outputDir and the checkout, and not its own evidence, another stage evidence or anything else', async () => {
+  const root = join(dir, `writes${n}`);
+  mkdirSync(root);
+  const outside = join(root, 'forged');
+  // Paths from the request: the head is not known until the developer has run.
+  const writes = node('writes', `const path = require('node:path'); const own = path.dirname(r.outputDir); const targets = {
+    output: path.join(r.outputDir, 'x'), checkout: 'new-file.txt', request: process.env.SF_REQUEST, own: path.join(own, 'forged'),
+    other: path.join(own, '..', 'LINT', 'lint.stdout'), outside: ${JSON.stringify(outside)} };
+    for (const [k, p] of Object.entries(targets)) { try { fs.writeFileSync(p, 'forged\\n'); console.log(k); } catch {} }`);
+  const { store, runsDir, job, cycleId, head } = await atCommand(twoStages({ run: [sh('lint', 'echo lint')] }, { run: [writes] }));
+  await verify(store, cycleId, job, opts(runsDir));
+  const r = await verify(store, cycleId, job, opts(runsDir));
+  assert.equal(r.cycle.stage, 'REVIEW', r.cycle.escalation);
+  const own = join(runsDir, 'evidence', head, 'BUILD');
+  assert.equal(readFileSync(join(own, 'writes.stdout'), 'utf8'), 'output\ncheckout\n', readFileSync(join(own, 'writes.stderr'), 'utf8'));
+  assert.equal(readFileSync(join(own, 'output', 'x'), 'utf8'), 'forged\n');
+  assert.equal(readFileSync(join(runsDir, 'evidence', head, 'LINT', 'lint.stdout'), 'utf8'), 'lint\n');
+  assert.equal(JSON.parse(readFileSync(join(own, 'request.json'), 'utf8')).stage, 'BUILD');
+  assert.ok(!existsSync(join(own, 'forged')));
+  assert.ok(!existsSync(outside));
+  store.close();
+});
