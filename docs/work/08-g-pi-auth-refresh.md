@@ -25,3 +25,4 @@ Evidence (2026-10-19, 09-c live run): every pi test that needed a reply failed w
 
 ## Log
 - 2026-10-19 — drafted on `feat/09-d-spec-rewrite` at the owner's request. Not READY until the owner says go.
+- 2026-10-19 — READY (A-067), on `feat/08-g-pi-auth-refresh`, stacked on 04-f. Investigation done: [08-g-findings.md](08-g-findings.md). All three answers are yes for pi 0.73.1, the latest on npm. The installed build's error wording differs, so the owner should check `pi --version`. Findings for the fix: `wrap` mounts binds before overlays, so it needs a bind mounted after them; binding reviewers only does not fix the loss. No code yet. Next: the owner chooses an option from the findings.

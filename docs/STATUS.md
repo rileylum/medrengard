@@ -116,6 +116,7 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 20. Done: 09-c implemented on `feat/09-c-prompt-versions`, stacked on `feat/09-b-generic-driver` (A-061, A-062; plan `plans/2026-10-19-prompt-versions.md`, uncommitted), code head `c368009`.
 21. Done: 09-c reviews and owner-run tests waived by the owner (A-063).
 22. Done: three tickets drafted from the 09-c live run, to be taken after row 9 (A-064): 04-f, 06-d, 07-e.
-23. Next: 09-d, the spec rewrite (A-058). Drafted as [work/09-d-spec-rewrite.md](work/09-d-spec-rewrite.md) on `feat/09-d-spec-rewrite`, stacked on `feat/09-c-prompt-versions`. READY (A-066). The spec is rewritten, uncommitted; `npm test` 245 pass, 0 fail, implementer-run. Owner: read `docs/specs/core-lifecycle-v1.md` against the ticket's done-when list.
+23. Done: 09-d, the spec rewrite (A-058, A-066), committed as `5a1c93e` on `feat/09-d-spec-rewrite`. Row 9 is finished; the stack 09-a to 09-d is not merged.
 24. Drafted at the owner's request: [work/08-g-pi-auth-refresh.md](work/08-g-pi-auth-refresh.md). It first checks whether the `.pi` overlay drops pi's refreshed OpenAI login, then binds `auth.json` writable (A-038). READY (A-067), stacked on 04-f.
 25. Done: 04-f implemented on `feat/04-f-pi-error-reason` as `e36d85e`; `npm test` implementer-run, 246 pass, 0 fail. Owner: run `npm test` on `e36d85e`, and run or waive the reviews.
+26. 08-g investigation done ([work/08-g-findings.md](work/08-g-findings.md)): the overlay loses pi's refreshed login. Owner: choose an option from the findings and run `pi --version`. No code yet.
