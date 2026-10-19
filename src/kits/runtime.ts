@@ -7,6 +7,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Adapter, RunOutcome } from '../adapter.ts';
+import { defaultWorkflow, type StageDef } from '../lifecycle.ts';
+import { reviewPrompt } from '../prompt.ts';
 
 /** How long an aborted run may take to settle: cliAdapter's default grace before SIGKILL, and some. */
 const SETTLE_MS = 10_000;
@@ -34,13 +36,26 @@ export function runtimeKit(name: string, makeAdapter: () => Adapter | Promise<Ad
     assert.ok(a.name.length > 0);
   });
 
-  for (const role of ['developer', 'reviewer']) {
+  // The reviewer gets the role and prompt the controller sends, so a runtime that tells roles
+  // apart takes its reviewer path here.
+  const reviewer = defaultWorkflow.stages.STANDARD_REVIEW as Extract<StageDef, { kind: 'agent' }>;
+  const cases: Record<string, (head: string) => string> = {
+    developer: () => 'You are the developer for the runtime kit.',
+    [reviewer.role]: (head) => reviewPrompt(reviewer.roleText, {
+      head, base: head, ticket: 'Review the runtime kit commit.', instructions: [], checks: [], paths: '', commits: '', diff: '', evidence: [],
+    }).text,
+  };
+  for (const [role, prompt] of Object.entries(cases)) {
     test(`${name}: a ${role} request settles, without rejecting, to a plain RunOutcome`, async (t) => {
       const a = await makeAdapter();
-      const o = await a.start({ runId: `kit-${role}`, role, prompt: `You are the ${role} for the runtime kit.`, cwd: cwd() }, new AbortController().signal);
+      const work = cwd();
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: work, encoding: 'utf8' }).trim();
+      const o = await a.start({ runId: `kit-${role}`, role, prompt: prompt(head), cwd: work }, new AbortController().signal);
       assertOutcome(o);
       // Any status keeps the contract; the diagnostic tells the user which path their runtime took.
-      t.diagnostic(`outcome ${(o as RunOutcome).status}`);
+      // Keys, not the claim: a real runtime's claim can run to pages.
+      const claim = o.status === 'completed' && o.claim !== null && typeof o.claim === 'object' ? `, claim keys ${Object.keys(o.claim).join(', ')}` : '';
+      t.diagnostic(`outcome ${o.status}${claim}`);
     });
   }
 
