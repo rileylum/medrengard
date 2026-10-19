@@ -31,6 +31,11 @@ export interface CliAdapterOptions {
   /** SIGTERM to kill, default 5000. */
   graceMs?: number;
   /**
+   * Whether the sandbox lets the run write its cwd. Default: only for role `developer`. A workflow
+   * names its own roles (09-b), so main.ts sets this from what the role produces: a commit writes.
+   */
+  writes?: boolean;
+  /**
    * Run the CLI inside this sandbox (08-c): a developer writes the request's cwd, a reviewer only
    * reads it (08-d); either writes its own /tmp, reads its binary's directory and `spec.config`,
    * and has the network. Without one it runs as the owner, unconfined; main.ts always passes the
@@ -66,7 +71,7 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
         tmp = join(dirname(req.cwd), `${req.runId}-tmp`);
         mkdirSync(tmp);
         // A reviewer's cwd is the verify checkout: what it reads must stay the commit (08-d).
-        const writes = req.role === 'developer';
+        const writes = opts.writes ?? req.role === 'developer';
         [command, args] = wrap(sandbox, {
           cwd: req.cwd, write: writes ? [req.cwd] : [], read: [dirname(bin), ...(writes ? [] : [req.cwd]), ...inHome(spec.config.read)],
           overlay: inHome(spec.config.overlay), network: true, home, tmp,
