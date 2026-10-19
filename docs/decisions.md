@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-060 — 2026-10-19 — 09-b reviews waived
+
+Owner, after an overview of 09-b on `61b550c`: “Okay lets waive the review again and prepare the handoff for a fresh session for 09-c”.
+
+Effect: 09-b carries no reviews, as 09-a (A-058). The stacked branch carrying 09-a and 09-b merges with 09-c on the owner's word, with both waivers on record. 09-c is next.
+
 ### A-059 — 2026-10-19 — 09-b driver approach
 
 Owner, offered three registry approaches (one implementation per role; one per step kind with adapters by role, recommended; one function per workflow) and three questions (Q1 test the second workflow as `DEV → CHECK → REVIEW → OWNER`, because the engine can't start on a review stage and `review` needs `verify`; Q2 move 09-c's workflow record into 09-b, with the store refusing a cycle whose hash doesn't match; Q3 the job file names a workflow module, and `runtime` is keyed by role with `standard` and `adversarial` as aliases): “take all”.

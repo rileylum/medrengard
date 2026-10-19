@@ -110,4 +110,5 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 16. Done: 09-a implemented on `feat/09-a-workflow-engine` (A-057; design `docs/design/2026-10-19-workflow-engine.md`, plan `plans/2026-10-19-workflow-engine.md`), head `4bd3605`.
 17. Done: 09-a reviews waived by the owner (A-058). The spec rewrite becomes ticket 09-d, after 09-c.
 18. Done: 09-b implemented on `feat/09-b-generic-driver` (A-059; design `docs/design/2026-10-19-generic-driver.md`, plan `plans/2026-10-19-generic-driver.md`, uncommitted), code head `61b550c`.
-19. Next: 09-b standard review 1 on `61b550c`, then adversarial review, per `docs/workflow.md`. Owner: run `npm test` on the reviewed SHA.
+19. Done: 09-b reviews waived by the owner (A-060).
+20. Next: 09-c on `feat/09-c-prompt-versions`, stacked on `feat/09-b-generic-driver`. Fast route: plan, implement. Then 09-d, the spec rewrite (A-058).
