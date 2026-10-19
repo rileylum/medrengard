@@ -89,6 +89,7 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 2026-10-19: `npm test` on `4bd3605` (09-a, `feat/09-a-workflow-engine`), implementer-run, not independent — 246 tests, 222 pass, 19 skipped, 5 todo, 0 fail. Mutation checks on `4d45a54`: each of 11 mutants (entry guard, step check, isEvent step, loop, settled path, engine name, start, stale-verdict count, default budget, store refusal, store replay workflow) fails at least one test.
 
 2026-10-19: `npm test` on `61b550c` (09-b, `feat/09-b-generic-driver`), implementer-run, not independent — 264 tests, 240 pass, 19 skipped, 5 todo, 0 fail. Mutation checks: 13 of 13 mutants caught.
+2026-10-19: `npm test` on `c368009` (09-c, `feat/09-c-prompt-versions`), implementer-run, not independent — 269 tests, 245 pass, 19 skipped, 5 todo, 0 fail. Mutation checks: 5 of 5 mutants caught. `npm run test:learn`: 3 of 6 fail (2 already failed on 09-b; 09-c adds stale references to `prompt`, `oneLine` and `buildPrompt`).
 
 ## Next action
 
@@ -111,4 +112,5 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 17. Done: 09-a reviews waived by the owner (A-058). The spec rewrite becomes ticket 09-d, after 09-c.
 18. Done: 09-b implemented on `feat/09-b-generic-driver` (A-059; design `docs/design/2026-10-19-generic-driver.md`, plan `plans/2026-10-19-generic-driver.md`, uncommitted), code head `61b550c`.
 19. Done: 09-b reviews waived by the owner (A-060).
-20. Next: 09-c on `feat/09-c-prompt-versions`, stacked on `feat/09-b-generic-driver`. Fast route: plan, implement. Then 09-d, the spec rewrite (A-058).
+20. Done: 09-c implemented on `feat/09-c-prompt-versions`, stacked on `feat/09-b-generic-driver` (A-061, A-062; plan `plans/2026-10-19-prompt-versions.md`, uncommitted), code head `c368009`.
+21. Next: the owner decides on 09-c's reviews and runs `npm test` on `c368009`. Then 09-d, the spec rewrite (A-058).
