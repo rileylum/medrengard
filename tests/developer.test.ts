@@ -369,7 +369,7 @@ test('a dispute reason over 2 KiB is cut and marked (07-e)', async () => {
   const { cycle } = await fix(store, adapter, cycleId, j, { deadlineMs: 5000, runsDir });
   const reason = (cycle.history.at(-1)!.event as { reason: string }).reason;
   assert.ok(reason.startsWith('r'.repeat(2048)), 'the head is kept');
-  assert.ok(!reason.includes('s'), 'the rest is cut');
+  assert.ok(!reason.includes('ss'), 'the rest is cut');
   assert.match(reason, /\[\.\.\. 963 characters cut\]$/);
   assert.ok(!/[\r\n]/.test(reason));
   store.close();

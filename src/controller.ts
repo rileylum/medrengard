@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Adapter, RunOutcome, RunRequest } from './adapter.ts';
 import { producedBy, type Cycle, type Event, type PromptVersions, type Role, type Stage } from './lifecycle.ts';
+import { oneLine } from './prompt.ts';
 import { UnclassifiableEvent, type EventStore } from './store.ts';
 
 export interface ExecuteOptions {
@@ -142,8 +143,18 @@ function describe(v: unknown): string {
 // which is rejected the same way as one with wrong fields.
 function toEvent(runId: string, commit: boolean, claim: unknown): Event {
   const c = (typeof claim === 'object' && claim !== null ? claim : {}) as Record<string, unknown>;
+  // A non-string or empty dispute fails the event's shape check and becomes "malformed result".
+  if (commit && c.dispute !== undefined) return { type: 'dispute', runId, head: c.head, reason: typeof c.dispute === 'string' ? disputeReason(c.dispute) : c.dispute } as Event;
   if (commit) return { type: 'developer_result', runId, head: c.head, artifacts: c.artifacts } as Event;
   return { type: 'verdict', runId, head: c.head, verdict: c.verdict, findings: c.findings } as Event;
+}
+
+// The reason reaches the owner's terminal through the escalation: one line (07-c), and bounded so
+// a developer cannot bury the head of it. The owner approved 2 KiB (A-072).
+const DISPUTE_MAX = 2048;
+function disputeReason(text: string): string {
+  const r = oneLine(text);
+  return r.length <= DISPUTE_MAX ? r : `${r.slice(0, DISPUTE_MAX)} [... ${r.length - DISPUTE_MAX} characters cut]`;
 }
 
 // The deadline resolves the race, then aborts the adapter; whatever the adapter does afterwards

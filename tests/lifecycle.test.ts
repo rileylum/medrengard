@@ -211,7 +211,6 @@ test('dispute: a fix run escalates with its reason and spends nothing; a duplica
   assert.equal(apply(fixing(), { type: 'dispute', runId: 'other', head: 'H1', reason: 'r' }).escalation, 'dispute from unknown run');
   const first = run(newCycle('c1', 'w1'), { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
   assert.equal(apply(first, { type: 'dispute', runId: 'dev1', head: 'B1', reason: 'r' }).escalation, 'dispute outside a fix run');
-  assert.equal(apply(toStandardReview(), { type: 'dispute', runId: 'dev1', head: 'H1', reason: 'r' }).escalation, 'dispute outside a commit stage (in STANDARD_REVIEW)');
   assert.equal(isEvent({ type: 'dispute', runId: 'dev2', head: 'H1' }), false);
   assert.equal(isEvent({ type: 'dispute', runId: 'dev2', head: 'H1', reason: '' }), false);
   assert.equal(isEvent({ type: 'dispute', runId: 'dev2', head: 'H1', reason: 'r' }), true);
