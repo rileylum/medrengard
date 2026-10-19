@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Event } from '../src/lifecycle.ts';
 import { EventStore } from '../src/store.ts';
@@ -300,9 +300,11 @@ test('main.ts refuses a job with no runtime for one of the workflow\'s roles, be
 // Ticket 10-a: a runtime the job file adds, as a module relative to the job file.
 test('a job naming an extension runtime runs from open to AWAITING_ACCEPTANCE, and every outcome event records it and its module hash', () => {
   const { root, jobFile, db } = scratch();
-  const ext = join(import.meta.dirname, 'fixtures', 'ext-runtime.ts');
+  // Beside the job file and named plainly: a path climbing past / resolves the same from any folder (10-b standard 1).
+  const ext = join(root, 'ext-runtime.ts');
+  copyFileSync(join(import.meta.dirname, 'fixtures', 'ext-runtime.ts'), ext);
   const job = JSON.parse(readFileSync(jobFile, 'utf8'));
-  writeFileSync(jobFile, JSON.stringify({ ...job, runtimes: { ext: { module: relative(root, ext) } }, runtime: { developer: 'ext', standard: 'ext', adversarial: 'ext' } }));
+  writeFileSync(jobFile, JSON.stringify({ ...job, runtimes: { ext: { module: 'ext-runtime.ts' } }, runtime: { developer: 'ext', standard: 'ext', adversarial: 'ext' } }));
   const r = sf([jobFile]);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
@@ -367,20 +369,25 @@ test('accept loads a cycle run under a repository workflow after the base branch
   assert.match(cancelled.stderr, /^nothing to cancel for work w /m);
 });
 
-test('a repository layer that gives grants stops main.ts with exit 2 before any run and before the store exists', () => {
-  const { root, repo, jobFile, db } = scratch();
-  mkdirSync(join(repo, '.factory'));
-  writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ grants: { github: { env: 'GITHUB_TOKEN' } } }));
-  git(repo, 'add', '.');
-  git(repo, 'commit', '-q', '-m', 'grants');
-  const bin = join(root, 'bin');
-  mkdirSync(bin);
-  const marker = spawnMarker(bin, root);
-  const r = sf([jobFile], { ...process.env, PATH: `${bin}:${process.env.PATH}` });
-  assert.equal(r.status, 2, r.stdout + r.stderr);
-  assert.match(r.stderr, /\.factory\/config\.json at [0-9a-f]{40}: grants come only from the personal or job layer/);
-  assert.ok(!existsSync(marker), 'no runtime CLI was spawned');
-  assert.ok(!existsSync(db), 'no store was created');
+test('a repository layer that gives grants or turns the sandbox off stops main.ts with exit 2 before any run and before the store exists', () => {
+  for (const [layer, message] of [
+    [{ grants: { github: { env: 'GITHUB_TOKEN' } } }, /\.factory\/config\.json at [0-9a-f]{40}: grants come only from the personal or job layer/],
+    [{ sandbox: { backend: 'none' } }, /\.factory\/config\.json at [0-9a-f]{40}: sandbox is set only by the personal or job layer/],
+  ] as const) {
+    const { root, repo, jobFile, db } = scratch();
+    mkdirSync(join(repo, '.factory'));
+    writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify(layer));
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'refused layer');
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    const marker = spawnMarker(bin, root);
+    const r = sf([jobFile], { ...process.env, PATH: `${bin}:${process.env.PATH}` });
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, message);
+    assert.ok(!existsSync(marker), 'no runtime CLI was spawned');
+    assert.ok(!existsSync(db), 'no store was created');
+  }
 });
 
 test('cancel works at the cycle\'s own base when the configuration at the branch tip is refused or broken (10-b standard 1)', () => {
@@ -407,5 +414,36 @@ test('cancel works at the cycle\'s own base when the configuration at the branch
     const cancelled = sf(['cancel', jobFile], env);
     assert.equal(cancelled.status, 0, cancelled.stdout + cancelled.stderr);
     assert.match(cancelled.stdout, /^Stage: CANCELLED$/m);
+  }
+});
+
+test('the developer starts from the SHA the layers were read at, though the base ref moves after the read (10-b standard 1)', () => {
+  const { root, repo, jobFile, db } = scratch();
+  mkdirSync(join(repo, '.factory'));
+  writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ workflow: 'flow.ts' }));
+  // Imported by loadConfig after it has read the layers: a commit here moves main before develop runs.
+  writeFileSync(join(repo, 'flow.ts'), [
+    `import { execFileSync } from 'node:child_process';`,
+    `execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'moved'], { cwd: ${JSON.stringify(repo)} });`,
+    `export { ownerCheck as workflow } from ${JSON.stringify(WORKFLOWS)};`,
+  ].join('\n'));
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'factory workflow');
+  const read = git(repo, 'rev-parse', 'HEAD');
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...job, runtime: { writer: 'claude', reviewer: 'claude' } }));
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+  const r = sf([jobFile], { ...process.env, PATH: `${bin}:${process.env.PATH}` });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.notEqual(git(repo, 'rev-parse', 'HEAD'), read, 'the hook moved main');
+  assert.match(r.stdout, new RegExp(`^Base: ${read}$`, 'm'));
+  const store = new EventStore(db);
+  try {
+    const cycleId = /^Cycle: (\S+)$/m.exec(r.stdout)![1]!;
+    assert.equal((store.events(cycleId).find((e) => e.type === 'claim') as { base: string }).base, read);
+  } finally {
+    store.close();
   }
 });
