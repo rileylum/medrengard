@@ -3,9 +3,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { loadConfig } from '../src/config.ts';
+import { ownerCheck } from './workflows.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-config-');
@@ -111,4 +112,23 @@ test('the base is resolved to a SHA once, so a ref that moves after loading does
   commitRepoLayer(repo, { runtime: { standard: 'claude' } });
   assert.equal(c.spec.base, read);
   assert.equal(c.spec.runtime.standard, 'pi');
+});
+
+test('a repository workflow is the file at the base SHA, copied under runsDir and loaded from there', async () => {
+  const { root, repo, jobFile, env } = scratch();
+  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: join(root, 'repo'), runsDir: join(root, 'runs'), runtime: { developer: 'claude' } });
+  writeFileSync(join(repo, 'flow.ts'), `export { ownerCheck as workflow } from ${JSON.stringify(join(import.meta.dirname, 'workflows.ts'))};\n`);
+  const base = commitRepoLayer(repo, { workflow: 'flow.ts' });
+  writeFileSync(join(repo, 'flow.ts'), 'export const workflow = 1;\n');
+  const c = await loadConfig(jobFile, env);
+  assert.deepEqual(c.workflow, ownerCheck);
+  assert.ok(existsSync(join(root, 'runs', 'repo-config', base, 'flow.ts')));
+});
+
+test('a repository workflow path that is absolute or climbs out of the repository is refused', async () => {
+  for (const workflow of ['../flow.ts', '/etc/flow.ts', 'a/../../flow.ts']) {
+    const { repo, jobFile, env } = scratch();
+    commitRepoLayer(repo, { workflow });
+    await assert.rejects(loadConfig(jobFile, env), new RegExp(`\\.factory/config\\.json at [0-9a-f]{40}: workflow ${JSON.stringify(workflow).replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} must be a path inside the repository`));
+  }
 });

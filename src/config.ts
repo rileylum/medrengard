@@ -1,7 +1,7 @@
 // Ticket 10-b: a job's settings, from four layers (A-074, A-078). Every command in main.ts reads
 // its job through loadConfig, so the limits on each layer are enforced here and nowhere else.
-import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Job } from './developer.ts';
 import { git } from './git.ts';
@@ -109,7 +109,25 @@ function allow(layer: Record<string, unknown>, keys: string[], where: string, hi
 /** `.factory/config.json` as committed at `sha`: never the working tree, which the developer's runs share. */
 function readRepoLayer(repo: string, sha: string): Record<string, unknown> {
   if (git(repo, 'ls-tree', '--name-only', sha, '--', REPO_LAYER) === '') return {};
-  return allow(JSON.parse(git(repo, 'show', `${sha}:${REPO_LAYER}`)) as Record<string, unknown>, REPO_KEYS, `${REPO_LAYER} at ${sha}`, OWNER_ONLY);
+  const where = `${REPO_LAYER} at ${sha}`;
+  const layer = allow(JSON.parse(git(repo, 'show', `${sha}:${REPO_LAYER}`)) as Record<string, unknown>, REPO_KEYS, where, OWNER_ONLY);
+  // It is copied to runsDir under this path, so a `..` would write outside it.
+  const w = layer.workflow;
+  if (w !== undefined && (typeof w !== 'string' || w === '' || isAbsolute(w) || w.split(/[\\/]/).includes('..')))
+    throw new Error(`${where}: workflow ${JSON.stringify(w)} must be a path inside the repository`);
+  return layer;
+}
+
+/**
+ * The repository's workflow as committed at `sha`, copied to a file and imported from there. It
+ * runs unsandboxed in the controller (accepted risk, A-078 Q2). One file only, so it must not
+ * import a sibling: the copy has none beside it.
+ */
+function extractWorkflow(repo: string, sha: string, path: string, runsDir: string): string {
+  const file = join(runsDir, 'repo-config', sha, path);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, git(repo, 'show', `${sha}:${path}`));
+  return file;
 }
 
 /**
@@ -122,12 +140,16 @@ export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = proce
   const job = readLayer(path, JOB_KEYS, false) as unknown as JobFile;
   const repo = resolve(path, '..', job.repo);
   const base = git(repo, 'rev-parse', '--verify', '--end-of-options', `${job.base ?? 'HEAD'}^{commit}`);
-  const spec = { ...merge([DEFAULTS, readLayer(personalFile(env), PERSONAL_KEYS, true), readRepoLayer(repo, base), job]), base } as unknown as JobFile;
+  const repoLayer = readRepoLayer(repo, base);
+  const spec = { ...merge([DEFAULTS, readLayer(personalFile(env), PERSONAL_KEYS, true), repoLayer, job]), base } as unknown as JobFile;
+  const runsDir = resolve(spec.runsDir!);
+  // The repository's path is relative to the repository; the job file's, already absolute, beats it.
+  if (repoLayer.workflow !== undefined && job.workflow === undefined) spec.workflow = extractWorkflow(repo, base, repoLayer.workflow as string, runsDir);
   return {
     path,
     spec,
     repo,
-    runsDir: resolve(spec.runsDir!),
+    runsDir,
     workflow: await loadWorkflow(spec.workflow),
     // Every module path is absolute by now, so relativeTo is never used.
     registry: runtimes(spec.runtimes, '/'),
