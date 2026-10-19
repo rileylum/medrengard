@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-066 — 2026-10-19 — 09-d READY; 08-g drafted
+
+Owner, after the 09-d draft and a request to file the pi login issue (“seems like we could easily investigate”): “go on 09-d”.
+
+Effect: [09-d](work/09-d-spec-rewrite.md) is READY; the spec rewrite starts on `feat/09-d-spec-rewrite`, stacked on `feat/09-c-prompt-versions`. [08-g](work/08-g-pi-auth-refresh.md) is drafted and not READY: it first checks whether the `.pi` overlay drops pi's refreshed login, then binds `auth.json` writable (A-038).
+
 ### A-065 — 2026-10-19 — 09-c plan deleted
 
 Owner, asked whether to delete or commit the untracked 09-c plan: “delete the plan file”.
