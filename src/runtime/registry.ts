@@ -20,6 +20,8 @@ export const BUILT_IN: Record<string, RuntimeEntry> = {
 export function runtimes(extra: Record<string, { module: string }> | undefined, relativeTo: string): Record<string, RuntimeEntry> {
   const all = { ...BUILT_IN };
   for (const [name, entry] of Object.entries(extra ?? {})) {
+    // The store refuses an empty runtime on an outcome event: the run would finish unrecorded.
+    if (name === '') throw new Error('runtime name "" is empty; name it in runtimes');
     // A built-in name meaning someone's module would hide which runtime ran.
     if (Object.hasOwn(BUILT_IN, name)) throw new Error(`runtimes.${name} reuses a built-in runtime name; pick another`);
     if (typeof entry?.module !== 'string') throw new Error(`runtimes.${name}.module must be a path to a TypeScript file`);

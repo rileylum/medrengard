@@ -3,8 +3,8 @@
 // Import it by path: the factory is not a package.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Adapter, RunOutcome } from '../adapter.ts';
 
@@ -13,11 +13,20 @@ const SETTLE_MS = 10_000;
 
 /** Registers node:test cases for the adapter `makeAdapter` builds. Call it once per runtime. */
 export function runtimeKit(name: string, makeAdapter: () => Adapter | Promise<Adapter>): void {
-  const dir = mkdtempSync(join(tmpdir(), 'sf-runtime-kit-'));
+  // /var/tmp, not os.tmpdir(): /tmp is often a RAM tmpfs, and a sandboxed run's /tmp goes beside its cwd.
+  mkdirSync('/var/tmp/software_factory', { recursive: true });
+  const dir = mkdtempSync('/var/tmp/software_factory/sf-runtime-kit-');
   test.after(() => rmSync(dir, { recursive: true, force: true }));
   let n = 0;
   // A cwd of its own per run, inside the kit's directory: cliAdapter puts a sandboxed run's /tmp beside it.
-  const cwd = () => { const d = join(dir, `run${n++}`, 'work'); mkdirSync(d, { recursive: true }); return d; };
+  // A git repository with one commit, as the controller gives a developer and a reviewer.
+  const cwd = () => {
+    const d = join(dir, `run${n++}`, 'work');
+    mkdirSync(d, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: d });
+    execFileSync('git', ['-c', 'user.name=kit', '-c', 'user.email=kit@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'kit'], { cwd: d });
+    return d;
+  };
 
   test(`${name}: the adapter has a non-empty name`, async () => {
     const a = await makeAdapter();
@@ -26,10 +35,12 @@ export function runtimeKit(name: string, makeAdapter: () => Adapter | Promise<Ad
   });
 
   for (const role of ['developer', 'reviewer']) {
-    test(`${name}: a ${role} request settles, without rejecting, to a plain RunOutcome`, async () => {
+    test(`${name}: a ${role} request settles, without rejecting, to a plain RunOutcome`, async (t) => {
       const a = await makeAdapter();
       const o = await a.start({ runId: `kit-${role}`, role, prompt: `You are the ${role} for the runtime kit.`, cwd: cwd() }, new AbortController().signal);
       assertOutcome(o);
+      // Any status keeps the contract; the diagnostic tells the user which path their runtime took.
+      t.diagnostic(`outcome ${(o as RunOutcome).status}`);
     });
   }
 

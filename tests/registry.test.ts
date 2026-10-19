@@ -11,7 +11,7 @@ import type { RunOutcome } from '../src/adapter.ts';
 import { execute, receive } from '../src/controller.ts';
 import { cliAdapter, extensionSpec } from '../src/runtime/cli-adapter.ts';
 import { runtimeFor, runtimes } from '../src/runtime/registry.ts';
-import { checkSandbox, reachable, wrap, type Sandbox } from '../src/sandbox.ts';
+import { checkSandbox, confines, reachable, wrap, type Sandbox } from '../src/sandbox.ts';
 import { EventStore } from '../src/store.ts';
 import { fakeAdapter } from './fake-adapter.ts';
 import { PASS_CHECKS } from './scenarios.ts';
@@ -57,6 +57,8 @@ test('a job-file runtime may not reuse a built-in name, and one whose module is 
   assert.throws(() => runtimes({ claude: { module: EXT } }, dir), /runtimes\.claude.*built-in/);
   assert.throws(() => runtimes({ ext: { module: 'no-such-module.ts' } }, dir), /no-such-module\.ts/);
   assert.throws(() => runtimes({ ext: {} as { module: string } }, dir), /runtimes\.ext\.module/);
+  // The store refuses an empty runtime on an outcome event, so the run's outcome could not be recorded.
+  assert.throws(() => runtimes({ '': { module: EXT } }, dir), /runtime name "" is empty/);
 });
 
 test('an unknown sandbox backend is refused by check, wrap and reachable, and the reason lists the backends', () => {
@@ -64,6 +66,9 @@ test('an unknown sandbox backend is refused by check, wrap and reachable, and th
   for (const call of [() => checkSandbox(DOCKER), () => wrap(DOCKER, policy, 'true', []), () => reachable(DOCKER, policy, '/usr/bin/true')]) {
     assert.throws(call, /sandbox backend "docker" is not one of bwrap, none/);
   }
+  assert.equal(confines({ backend: 'bwrap' }), true);
+  assert.equal(confines({ backend: 'none' }), false);
+  assert.throws(() => confines(DOCKER), /not one of bwrap, none/);
   // Before any run: the adapter is refused at construction.
   assert.throws(() => cliAdapter(extensionSpec('ext', EXT), { ...offline, sandbox: DOCKER }), /not one of bwrap, none/);
 });

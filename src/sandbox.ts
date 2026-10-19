@@ -39,6 +39,8 @@ const SYSTEM = ['/usr', '/etc', '/opt', '/bin', '/sbin', '/lib', '/lib64'];
 const RESOLVE = '/run/systemd/resolve';
 
 interface Backend {
+  /** False for a backend that runs the command as the owner, unconfined. */
+  confines: boolean;
   check(sandbox: Sandbox): void;
   wrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]];
   reachable(sandbox: Sandbox, policy: Policy, path: string): boolean;
@@ -46,14 +48,19 @@ interface Backend {
 
 // Built in only: a user-added backend would decide what confines candidate code (A-074).
 const BACKENDS: Record<string, Backend> = {
-  bwrap: { check: checkBwrap, wrap: wrapBwrap, reachable: reachableBwrap },
-  none: { check: () => {}, wrap: (_s, _p, command, args) => [command, args], reachable: () => true },
+  bwrap: { confines: true, check: checkBwrap, wrap: wrapBwrap, reachable: reachableBwrap },
+  none: { confines: false, check: () => {}, wrap: (_s, _p, command, args) => [command, args], reachable: () => true },
 };
 
 function backend(sandbox: Sandbox): Backend {
   const name = sandbox?.backend;
   if (typeof name === 'string' && Object.hasOwn(BACKENDS, name)) return BACKENDS[name]!;
   throw new Error(`sandbox backend ${JSON.stringify(name)} is not one of ${Object.keys(BACKENDS).join(', ')}`);
+}
+
+/** Whether the backend confines what it runs. Throws for an unknown backend. */
+export function confines(sandbox: Sandbox): boolean {
+  return backend(sandbox).confines;
 }
 
 export function wrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]] {

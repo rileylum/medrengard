@@ -14,6 +14,8 @@ test('runtimeKit passes against the fixture extension runtime', () => {
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /# pass [1-9]/);
   assert.match(r.stdout, /# fail 0/);
+  // The developer and reviewer cases reach the completed path, not only a failed outcome.
+  assert.equal(r.stdout.match(/^\s*# outcome completed$/gm)?.length, 2, r.stdout);
 });
 
 test('runtimeKit fails against an extension that prints JSON outside the RunOutcome union', () => {

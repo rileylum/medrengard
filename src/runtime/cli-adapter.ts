@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Adapter, RunOutcome, RunRequest } from '../adapter.ts';
-import { checkSandbox, executables, wrap, type Sandbox } from '../sandbox.ts';
+import { checkSandbox, confines, executables, wrap, type Sandbox } from '../sandbox.ts';
 import { scopePath, spawnRuntime, type RunResult } from './spawn.ts';
 
 export interface CliSpec {
@@ -55,7 +55,7 @@ export interface CliAdapterOptions {
 export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter {
   const isolation = opts.isolation ?? 'cgroup';
   if (isolation === 'cgroup') checkScopes();
-  const sandbox = opts.sandbox?.backend === 'none' ? undefined : opts.sandbox;
+  const sandbox = opts.sandbox && confines(opts.sandbox) ? opts.sandbox : undefined;
   if (sandbox) checkSandbox(sandbox);
   return {
     name: spec.name,
