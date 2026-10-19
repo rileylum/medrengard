@@ -54,8 +54,9 @@ function personalFile(env: NodeJS.ProcessEnv): string {
   return join(env.XDG_CONFIG_HOME || join(env.HOME ?? '', '.config'), 'software_factory', 'config.json');
 }
 
-function readLayer(file: string): Record<string, unknown> {
-  return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>) : {};
+/** A missing optional file is an empty layer; the job file is never optional. */
+function readLayer(file: string, keys: string[], optional = false): Record<string, unknown> {
+  return optional && !existsSync(file) ? {} : allow(JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>, keys, file);
 }
 
 const REPO_LAYER = '.factory/config.json';
@@ -66,16 +67,19 @@ const REPO_LAYER = '.factory/config.json';
  * show the sandbox `~/.ssh`.
  */
 const REPO_KEYS = ['checks', 'workflow', 'runtime'];
-// Named apart from the rest so each refusal says where the key may go instead.
+const PERSONAL_KEYS = [...REPO_KEYS, 'runtimes', 'sandbox', 'deadlineMs', 'runsDir'];
+// Which work and where: one job's, never a default a later job would inherit.
+const JOB_KEYS = ['workId', 'ticket', 'ticketFile', 'repo', 'base', 'parentCycleId', ...PERSONAL_KEYS];
+// Named apart from the rest so each repository refusal says where the key may go instead.
 const OWNER_ONLY: Record<string, string> = {
   grants: 'grants come only from the personal or job layer',
   sandbox: 'sandbox is set only by the personal or job layer',
 };
 
-function allow(layer: Record<string, unknown>, keys: string[], where: string): Record<string, unknown> {
+function allow(layer: Record<string, unknown>, keys: string[], where: string, hints: Record<string, string> = {}): Record<string, unknown> {
   for (const key of Object.keys(layer)) {
     if (keys.includes(key)) continue;
-    throw new Error(`${where}: ${OWNER_ONLY[key] ?? `${key} may not be set here; allowed: ${keys.join(', ')}`}`);
+    throw new Error(`${where}: ${Object.hasOwn(hints, key) ? hints[key] : `${key} may not be set here; allowed: ${keys.join(', ')}`}`);
   }
   return layer;
 }
@@ -83,7 +87,7 @@ function allow(layer: Record<string, unknown>, keys: string[], where: string): R
 /** `.factory/config.json` as committed at `sha`: never the working tree, which the developer's runs share. */
 function readRepoLayer(repo: string, sha: string): Record<string, unknown> {
   if (git(repo, 'ls-tree', '--name-only', sha, '--', REPO_LAYER) === '') return {};
-  return allow(JSON.parse(git(repo, 'show', `${sha}:${REPO_LAYER}`)) as Record<string, unknown>, REPO_KEYS, `${REPO_LAYER} at ${sha}`);
+  return allow(JSON.parse(git(repo, 'show', `${sha}:${REPO_LAYER}`)) as Record<string, unknown>, REPO_KEYS, `${REPO_LAYER} at ${sha}`, OWNER_ONLY);
 }
 
 /**
@@ -93,10 +97,10 @@ function readRepoLayer(repo: string, sha: string): Record<string, unknown> {
  */
 export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = process.env): Promise<Config> {
   const path = resolve(jobFile);
-  const job = readLayer(path) as unknown as JobFile;
+  const job = readLayer(path, JOB_KEYS) as unknown as JobFile;
   const repo = resolve(path, '..', job.repo);
   const base = git(repo, 'rev-parse', '--verify', '--end-of-options', `${job.base ?? 'HEAD'}^{commit}`);
-  const spec = { ...merge([readLayer(personalFile(env)), readRepoLayer(repo, base), job]), base } as unknown as JobFile;
+  const spec = { ...merge([readLayer(personalFile(env), PERSONAL_KEYS, true), readRepoLayer(repo, base), job]), base } as unknown as JobFile;
   const sandbox: Sandbox = spec.sandbox
     ? { ...spec.sandbox, read: spec.sandbox.read?.map((p) => (typeof p === 'string' ? resolve(path, '..', p) : p)) }
     : { backend: 'bwrap' };

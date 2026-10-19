@@ -80,3 +80,18 @@ test('a repository layer that sets sandbox.backend none is refused, naming the k
   commitRepoLayer(repo, { sandbox: { backend: 'none' } });
   await assert.rejects(loadConfig(jobFile, env), /\.factory\/config\.json at [0-9a-f]{40}: sandbox is set only by the personal or job layer/);
 });
+
+test('a key a layer may not set is refused, naming the file: identity keys outside the job file, anything else in the repository', async () => {
+  const a = scratch();
+  writeJson(a.personal, { repo: '/elsewhere' });
+  await assert.rejects(loadConfig(a.jobFile, a.env), (err: Error) => err.message.startsWith(`${a.personal}: repo may not be set here`));
+  const b = scratch();
+  commitRepoLayer(b.repo, { deadlineMs: 1 });
+  await assert.rejects(loadConfig(b.jobFile, b.env), /^Error: \.factory\/config\.json at [0-9a-f]{40}: deadlineMs may not be set here; allowed: checks, workflow, runtime$/);
+  // A key that names an Object.prototype member gets the plain refusal, not the member's text.
+  const c = scratch();
+  commitRepoLayer(c.repo, { constructor: 1 });
+  await assert.rejects(loadConfig(c.jobFile, c.env), /: constructor may not be set here; allowed:/);
+  const d = scratch({ colour: 'blue' });
+  await assert.rejects(loadConfig(d.jobFile, d.env), (err: Error) => err.message.startsWith(`${d.jobFile}: colour may not be set here`));
+});
