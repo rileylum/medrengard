@@ -89,10 +89,11 @@ function assertOutcome(o: unknown): void {
 }
 
 // A property set to undefined reads as a missing one, so the round trip dropping it loses nothing;
-// claude's parse returns `sessionId: undefined`. Only plain objects are copied: a Date or a class
+// claude's parse returns `sessionId: undefined`. Only plain objects, with a null prototype or Object's,
+// are copied, as ordinary objects, which is what the round trip makes of them. A Date or a class
 // instance stays as is and still fails the comparison, as does undefined inside an array (it becomes null).
 function defined(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(defined);
-  if (v === null || typeof v !== 'object' || Object.getPrototypeOf(v) !== Object.prototype) return v;
+  if (v === null || typeof v !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(v))) return v;
   return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => [k, defined(x)]));
 }
