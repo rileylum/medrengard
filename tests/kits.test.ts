@@ -44,6 +44,7 @@ test('runtimeKit fails an adapter that does not settle after an abort', () => {
   const r = kit('deaf.kit.ts');
   assert.notEqual(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /not ok \d+ - deaf: an aborted run settles within/);
+  assert.match(r.stdout, /start did not settle within 10000 ms of the abort/);
   assert.match(r.stdout, /# fail 1$/m);
 });
 
