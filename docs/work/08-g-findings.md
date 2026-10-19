@@ -5,14 +5,20 @@ Date: 2026-10-19. Source read: the npm packages `@mariozechner/pi-ai` and `@mari
 ## Answers
 
 1. **pi writes refreshed tokens to `auth.json`: yes.** `AuthStorage.refreshOAuthTokenWithLock` in `pi-coding-agent/dist/core/auth-storage.js` refreshes only when the stored token has expired. It merges the new credentials and passes them to `withLockAsync`, which writes the file in place with `writeFileSync` and sets mode 0600. It holds a `proper-lockfile` lock (an `auth.json.lock` directory beside the file) while it does so.
-2. **The refresh replaces the refresh token: yes.** `refreshAccessToken` in `pi-ai/dist/utils/oauth/openai-codex.js` refuses a token response that has no `refresh_token`, and stores the new one as `refresh`. pi's source does not show whether OpenAI then revokes the old refresh token. An `invalid_grant` on the next use of the old token fits that pattern.
+2. **The refresh replaces the refresh token: yes.** `refreshAccessToken` in `pi-ai/dist/utils/oauth/openai-codex.js` refuses a token response that has no `refresh_token`, and stores the new one as `refresh`. pi 1.1.0 states that OpenAI rotates refresh tokens (below).
 3. **A write under the overlay vanishes after the run: yes.** `tests/sandbox.test.ts` ("bwrap: an overlay directory takes writes inside and leaves the host directory unchanged") and `tests/cli-adapter.test.ts` ("sandboxed adapter: … overlay config is dropped") already show it.
 
 Together: a sandboxed pi run that finds an expired token spends the stored refresh token, writes its replacement into the overlay, and loses it at exit. The next run presents the spent token and gets `invalid_grant`.
 
-## Caveat: version
+## The installed version: 1.1.0
 
-The live error read `OAuth refresh failed for openai: OpenAI OAuth token request failed (400)`. Neither phrase is in 0.73.1, whose message is `OpenAI Codex token refresh failed (400)`. The installed pi (`~/.pi/agent/bin/pi`) is another build. The owner can check with `pi --version`, which makes no model call. If that build writes `auth.json` by rename rather than in place, a file bind fails (a bind-mounted file cannot be renamed over). The owner's live check in the ticket would catch that.
+The owner ran `pi --version`: `1.1.0`. pi moved from `badlogic/pi-mono` to `earendil-works/pi`, and npm stops at 0.73.1. The tag `v1.1.0` in `earendil-works/pi` has the live wording, so the answers were checked again there:
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: `refreshAccessToken` posts the stored refresh token. `credentialFromTokenResponse` refuses a response with no `refresh_token`, and stores the new one. The error "OpenAI OAuth token request failed (400)" comes from this file.
+- `packages/ai/src/auth/resolve.ts`: `refreshStoredOAuthCredential` refreshes and saves under the store's lock, and wraps a failure as "OAuth refresh failed for <provider>". Its comment states the rotation outright: "the provider may already have rotated the refresh token … Otherwise a cancelled caller could discard the only valid refresh token."
+- `packages/coding-agent/src/core/auth-storage.ts`: writes `auth.json` in place with `writeFileSync` (mode 0600), under a `proper-lockfile` lock, with no rename. A file bind therefore keeps the write.
+
+The cause holds for 1.1.0. One more case follows from that comment: a run killed at the stage deadline in the middle of a refresh can also lose the new token. The fix does not cover that case.
 
 ## What the fix must handle
 
