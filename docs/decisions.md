@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-062 — 2026-10-19 — 09-c prompt split shape
+
+Owner, offered three plan answers (Q1 `roleText` on every agent stage plus an optional `fixRoleText` on commit stages, with today's four first lines on `defaultWorkflow`; Q2 `checkWorkflow` refuses an agent stage with no role text; Q3 role text must be one line) and three interface answers (Q1 a new pure `src/prompt.ts` with `developerPrompt` and `reviewPrompt` returning the text and both hashes; Q2 an optional `versions` on `ExecuteOptions` that `receive` spreads onto every `developer_result`, `verdict` and `run_failed`; Q3 tests at `develop`, `fix` and `review`, at `src/prompt.ts` and at `checkWorkflow`): “take all”, then “take all”.
+
+Effect: 09-c follows `plans/2026-10-19-prompt-versions.md`. The contract hash is the hash of each kind's contract built from fixed placeholders, because the per-run nonce makes a hash of the sent text unique. Prompts with several paragraphs wait for O-013.
+
 ### A-061 — 2026-10-19 — 09-b plan deleted; no runs to keep
 
 Owner, asked whether to keep the 09-b plan and whether any runs directory holds 09-b cycles worth keeping: “delete the plan. I don't need any runs”.
