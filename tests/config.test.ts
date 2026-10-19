@@ -103,3 +103,12 @@ test('a later layer\'s checks replace the earlier list whole, never add to it', 
   const c = await loadConfig(jobFile, env);
   assert.deepEqual(c.spec.checks, [{ name: 'test', command: ['npm', 'test'] }]);
 });
+
+test('the base is resolved to a SHA once, so a ref that moves after loading does not change the commit the job starts from', async () => {
+  const { repo, jobFile, env } = scratch({ base: 'main' });
+  const read = commitRepoLayer(repo, { runtime: { standard: 'pi' } });
+  const c = await loadConfig(jobFile, env);
+  commitRepoLayer(repo, { runtime: { standard: 'claude' } });
+  assert.equal(c.spec.base, read);
+  assert.equal(c.spec.runtime.standard, 'pi');
+});
