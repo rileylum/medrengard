@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-065 — 2026-10-19 — 09-c plan deleted
+
+Owner, asked whether to delete or commit the untracked 09-c plan: “delete the plan file”.
+
+Effect: `plans/2026-10-19-prompt-versions.md` is deleted uncommitted, as the 09-a and 09-b plans were (A-058, A-061). A-062, the 09-c ticket log and the handoff keep what it decided.
+
 ### A-064 — 2026-10-19 — Three tickets from the 09-c live run, after row 9
 
 Owner, asked whether the three issues seen in the 09-c live run become tickets or are parked under O-013: “Yes all three should be tickets, we'll deal with them and any others after we finish this 09 work.”
