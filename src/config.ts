@@ -71,7 +71,7 @@ function rooted(layer: Record<string, unknown>, dir: string, runsDir: boolean): 
   if (runtimes && typeof runtimes === 'object')
     out.runtimes = Object.fromEntries(Object.entries(runtimes).map(([name, e]) => [name, e && typeof e === 'object' ? { ...e, module: under(dir, e.module) } : e]));
   const sandbox = out.sandbox as Sandbox | undefined;
-  if (sandbox && typeof sandbox === 'object' && Array.isArray(sandbox.read)) out.sandbox = { ...sandbox, read: sandbox.read.map((p) => under(dir, p)) };
+  if (Array.isArray(sandbox?.read)) out.sandbox = { ...sandbox, read: sandbox!.read!.map((p) => under(dir, p)) };
   return out;
 }
 
