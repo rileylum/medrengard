@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-071 — 2026-10-19 — 06-d test and reviews waived; merge; start 07-e
+
+Owner, asked to run `npm test` on `e7eb056`, run or waive the reviews, and decide the merge: “waive test and reviews. Merge then lets start on 07-e”.
+
+Effect: 06-d carries no reviews and no owner-run `npm test`; the implementer's run on `e7eb056` (276 tests, 252 pass, 0 fail) stands as the record. `feat/06-d-reviewer-commit-messages` merges into main locally with `--no-ff`. 07-e starts with its design note; no code until the owner approves the note.
+
 ### A-070 — 2026-10-19 — 06-d READY
 
 Owner, after the handoff named 06-d then 07-e as next and neither READY: “go on 06-d”.

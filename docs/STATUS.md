@@ -128,3 +128,4 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 28. Done: reviews for 04-f and 08-g waived, and the stack merged into main (A-069).
 29. Next: 06-d (Fast), then 07-e (Design), in a new session. Neither is READY.
 30. Done: 06-d READY (A-070) and implemented on `feat/06-d-reviewer-commit-messages` as `e7eb056`. Owner: run `npm test` on `e7eb056`, and run or waive the reviews. Then 07-e (Design), not READY.
+31. Done: 06-d test and reviews waived, merged into main (A-071). Next: the 07-e design note, for owner approval before code.
