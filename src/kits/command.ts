@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import type { Adapter } from '../adapter.ts';
 import { develop } from '../developer.ts';
 import type { StageDef, Workflow } from '../lifecycle.ts';
@@ -130,6 +130,13 @@ export function commandKit(name: string, o: CommandKitOptions): void {
     for (const c of r.checks)
       for (const [file, hash] of Object.entries(c.files ?? {}))
         assert.equal(createHash('sha256').update(readFileSync(join(r.evidenceDir, 'files', file))).digest('hex'), hash, `files/${file} was rewritten`);
+    // Everything in the stage folder outside output/ is the controller's: no file more.
+    const wrote = new Set(['request.json', 'diff.patch', 'output', ...r.checks.flatMap((c) => ['exit', 'stdout', 'stderr'].map((x) => `${c.name}.${x}`))]);
+    const files = new Set(r.checks.flatMap((c) => Object.keys(c.files ?? {}).map((f) => join('files', f))));
+    const extra = readdirSync(r.evidenceDir, { recursive: true }).map(String)
+      .filter((p) => !wrote.has(p) && !p.startsWith(`output${sep}`) && !files.has(p) && ![...files].some((f) => f.startsWith(`${p}${sep}`)));
+    assert.deepEqual(extra, [], 'files appeared in the stage folder outside output/');
+    assert.deepEqual(readdirSync(dirname(r.evidenceDir)), [STAGE], 'files appeared beside the stage folder');
     assert.deepEqual(readdirSync(r.outside), ['sentinel'], 'a file appeared outside the stage');
     assert.equal(readFileSync(join(r.outside, 'sentinel'), 'utf8'), 'kit\n', 'a file outside the stage changed');
     assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: r.repo, encoding: 'utf8' }), '', 'the repository changed');

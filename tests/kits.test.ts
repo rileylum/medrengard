@@ -79,6 +79,7 @@ for (const [file, kase] of [
   ['command-lenient.kit.ts', 'lenient: the failing change gives FAIL'],
   ['command-strict.kit.ts', 'strict: the passing change gives PASS'],
   ['command-forge.kit.ts', 'forge: the command writes nothing outside outputDir and the checkout'],
+  ['command-forge-stage.kit.ts', 'forge-stage: the command writes nothing outside outputDir and the checkout'],
   ['command-net.kit.ts', 'net: with network unset, a connection from the stage fails'],
 ]) {
   test(`commandKit fails ${file.slice(8, -7)}: ${kase.slice(kase.indexOf(':') + 2)}`, () => {
