@@ -51,9 +51,14 @@ function merge(layers: Record<string, unknown>[]): Record<string, unknown> {
   return out;
 }
 
-/** Undefined with neither variable set: joining an empty HOME would read `.config/` under the working directory, which a repository can supply. */
+/**
+ * Undefined with no absolute XDG_CONFIG_HOME or HOME: a relative or empty one would read under
+ * the working directory, which a repository can supply. The XDG spec ignores a relative value too.
+ */
 function personalFile(env: NodeJS.ProcessEnv): string | undefined {
-  const dir = env.XDG_CONFIG_HOME || (env.HOME && join(env.HOME, '.config'));
+  const abs = (p: string | undefined) => (p && isAbsolute(p) ? p : undefined);
+  const home = abs(env.HOME);
+  const dir = abs(env.XDG_CONFIG_HOME) ?? (home && join(home, '.config'));
   return dir ? join(dir, 'software_factory', 'config.json') : undefined;
 }
 

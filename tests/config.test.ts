@@ -204,3 +204,47 @@ test('a personal runsDir and workflow resolve against the personal file\'s folde
   assert.deepEqual(c.workflow, ownerCheck);
   assert.deepEqual(storeOf(jobFile, env), { runsDir: join(home, 'runs'), workId: 'w' });
 });
+
+test('whether the repository layer exists is decided at the base: one deleted later still applies, and one added later is not read', async () => {
+  const a = scratch();
+  const base = commitRepoLayer(a.repo, { runtime: { standard: 'pi' } });
+  git(a.repo, 'rm', '-q', '-r', '.factory');
+  git(a.repo, 'commit', '-q', '-m', 'drop factory config');
+  writeJson(a.jobFile, { workId: 'w', ticket: 'x', repo: 'repo', base, runtime: { developer: 'claude' } });
+  assert.deepEqual((await loadConfig(a.jobFile, a.env)).spec.runtime, { developer: 'claude', standard: 'pi' });
+  const b = scratch();
+  const bare = git(b.repo, 'rev-parse', 'HEAD');
+  commitRepoLayer(b.repo, { runtime: { standard: 'pi' } });
+  writeJson(b.jobFile, { workId: 'w', ticket: 'x', repo: 'repo', base: bare, runtime: { developer: 'claude' } });
+  assert.deepEqual((await loadConfig(b.jobFile, b.env)).spec.runtime, { developer: 'claude' });
+});
+
+test('a relative XDG_CONFIG_HOME or HOME is ignored, so the working directory never supplies the personal layer', async () => {
+  const { root, jobFile } = scratch();
+  writeJson(join(root, 'cfg', 'software_factory', 'config.json'), { sandbox: { backend: 'none' } });
+  writeJson(join(root, '.config', 'software_factory', 'config.json'), { sandbox: { backend: 'none' } });
+  const home = join(root, 'home');
+  writeJson(join(home, '.config', 'software_factory', 'config.json'), { runtime: { standard: 'pi' } });
+  const cwd = process.cwd();
+  process.chdir(root);
+  try {
+    assert.deepEqual((await loadConfig(jobFile, { HOME: '.' })).sandbox, { backend: 'bwrap' });
+    // The XDG spec says a relative XDG_CONFIG_HOME is ignored; HOME still applies.
+    const c = await loadConfig(jobFile, { XDG_CONFIG_HOME: 'cfg', HOME: home });
+    assert.deepEqual([c.sandbox, c.spec.runtime], [{ backend: 'bwrap' }, { developer: 'claude', standard: 'pi' }]);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test('the job file\'s runsDir resolves against the working directory, as before 10-b, not against the job file', async () => {
+  const { root, jobFile, env } = scratch({ runsDir: 'runs' });
+  const cwd = process.cwd();
+  process.chdir(join(root, 'repo'));
+  try {
+    assert.equal((await loadConfig(jobFile, env)).runsDir, join(root, 'repo', 'runs'));
+    assert.equal(storeOf(jobFile, env).runsDir, join(root, 'repo', 'runs'));
+  } finally {
+    process.chdir(cwd);
+  }
+});
