@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-073 — 2026-10-19 — 07-e test and reviews waived; merge
+
+Owner, asked to run `npm test` on `8362c1e`, run or waive the reviews, and decide the merge: “waive test and review. Merge”.
+
+Effect: 07-e carries no reviews and no owner-run `npm test`; the implementer's run on `8362c1e` (283 tests, 259 pass, 0 fail) stands as the record. `feat/07-e-fix-without-tree-change` merges into main locally with `--no-ff`.
+
 ### A-072 — 2026-10-19 — 07-e design approved
 
 Owner, after the 07-e design note and its three questions (approve cases 1 to 5 and the interface; should a dispute stop the cycle, with overruling as a separate ticket; is 2 KiB the right cut for the reason): “All looks good to me.”
