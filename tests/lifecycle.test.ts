@@ -391,3 +391,10 @@ test('checkWorkflow refuses a malformed run, network or file argument on a comma
   // Its name is a directory under evidence/<head>/.
   refused({ ...noHuman, stages: { ...noHuman.stages, DEV: { ...noHuman.stages.DEV!, transitions: { PASS: '../x' } }, '../x': noHuman.stages.BUILD! } }, /\.\.\/x.*command stage name/);
 });
+
+test('a verification check may record files, path to SHA-256, and nothing else in that field (10-c)', () => {
+  const v = (files: unknown) => ({ type: 'verification', head: 'H1', checks: [{ name: 'lint', result: 'PASS', files }] });
+  assert.ok(isEvent(v(undefined)));
+  assert.ok(isEvent(v({ 'lint.ts': 'a'.repeat(64) })));
+  for (const bad of ['abc', ['lint.ts'], null, { 'lint.ts': 7 }, { 'lint.ts': '' }]) assert.ok(!isEvent(v(bad)), JSON.stringify(bad));
+});

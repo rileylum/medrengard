@@ -7,14 +7,14 @@
 // and what a check leaves untracked is removed before review. Ticket 08-d: gitlinks are emptied
 // and checked, dangling symlinks removed, and a removal that cannot finish is dirt.
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
 import { bounded, git, stopped } from './git.ts';
 import type { CommandRequest } from './kits/request.ts';
-import { FILE_STEM, TREE_CHECK, type Cycle, type Event } from './lifecycle.ts';
+import { FILE_STEM, TREE_CHECK, type Command, type Cycle, type Event } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
 import { checkSandbox, executables, reachable, restoreAccess, wrap, type Policy, type Sandbox } from './sandbox.ts';
@@ -40,6 +40,8 @@ export interface VerifyOptions {
   graceMs?: number;
   /** Where checks run. Default bwrap; `none` runs them as the owner, unconfined (scratch repositories only). */
   sandbox?: Sandbox;
+  /** The workflow file's directory. A command's `{ file }` argument names a file there (10-c). */
+  workflowDir?: string;
 }
 
 export interface Verified {
@@ -65,13 +67,19 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   if (!cycle) throw new Error(`cycle ${cycleId} not open`);
   const def = store.workflow.stages[cycle.stage];
   if (def?.kind !== 'command' || !cycle.candidate) throw new Error(`verify on a cycle in ${cycle.stage}, expected a command stage`);
-  const checks = def.run ?? job.checks ?? [];
+  const checks: Command[] = def.run ?? job.checks ?? [];
   const seen = new Set<string>();
   for (const c of checks) {
     if (typeof c.name !== 'string' || !FILE_STEM.test(c.name)) throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
     if (c.name === TREE) throw new Error(`check name ${TREE} is reserved for the controller's own tracked-tree check`);
     if (seen.has(c.name)) throw new Error(`check name ${c.name} is declared twice`);
     seen.add(c.name);
+  }
+  // Before anything is written: a missing file is the owner's setup, not a FAIL of the candidate.
+  const files = [...new Set(checks.flatMap((c) => c.command.flatMap((a) => (typeof a === 'string' ? [] : [a.file]))))];
+  for (const f of files) {
+    if (opts.workflowDir === undefined) throw new Error(`stage ${cycle.stage} names file ${f}, but its workflow has no file of its own to find it beside`);
+    if (!existsSync(join(opts.workflowDir, f))) throw new Error(`stage ${cycle.stage} names file ${f}, which is not in ${opts.workflowDir}`);
   }
   checkDeadline(opts.deadlineMs);
   const isolation = opts.isolation ?? 'cgroup';
@@ -110,17 +118,27 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   writeFileSync(requestFile, `${JSON.stringify(request, null, 2)}\n`);
   // The stage directory is read-only inside, so a command cannot rewrite the evidence the reviewer
   // reads; output/ is bound writable over it. Another stage's directory is not bound at all.
+  // The command runs the copy: the bytes hashed are the bytes run, whatever happens to the original.
+  const hashes = new Map<string, string>();
+  for (const f of files) {
+    const copy = join(evidenceDir, 'files', f);
+    mkdirSync(dirname(copy), { recursive: true });
+    copyFileSync(join(opts.workflowDir!, f), copy);
+    hashes.set(f, createHash('sha256').update(readFileSync(copy)).digest('hex'));
+  }
   const policy: Policy = { cwd: worktree, write: [worktree, outputDir], read: [evidenceDir], network: def.network ?? false, env: { SF_REQUEST: requestFile } };
 
   const results: CheckResult[] = [];
   // In order, all of them: the evidence is for the owner and the reviewers, who want the whole
   // picture, not the first failure.
   for (const check of checks) {
-    const r = await runCheck(check, policy, isolation, sandbox, opts);
+    const argv = check.command.map((a) => (typeof a === 'string' ? a : join(evidenceDir, 'files', a.file)));
+    const r = await runCheck({ name: check.name, command: argv }, policy, isolation, sandbox, opts);
     writeFileSync(join(evidenceDir, `${check.name}.stdout`), r.stdout);
     writeFileSync(join(evidenceDir, `${check.name}.stderr`), r.stderr);
     writeFileSync(join(evidenceDir, `${check.name}.exit`), `${r.exit}\n`);
-    results.push({ name: check.name, result: r.result });
+    const named = check.command.flatMap((a) => (typeof a === 'string' ? [] : [a.file]));
+    results.push({ name: check.name, result: r.result, ...(named.length ? { files: Object.fromEntries(named.map((f) => [f, hashes.get(f)!])) } : {}) });
   }
   let dirty = treeDiff(job.repo, worktree, head, opts.deadlineMs);
   // The reviewer reads this directory: a planted .git with its own config, or a symlink to the

@@ -4,7 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { EventStore } from '../src/store.ts';
@@ -159,3 +160,39 @@ for (const network of [true, undefined]) {
     }
   });
 }
+
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
+test('a file argument runs a copy of the bytes beside the workflow, and the event records their SHA-256', async () => {
+  const workflowDir = join(dir, `wf${n}`);
+  mkdirSync(join(workflowDir, 'bin'), { recursive: true });
+  const V1 = 'echo v1\n';
+  writeFileSync(join(workflowDir, 'lint.sh'), V1);
+  writeFileSync(join(workflowDir, 'bin', 'check.sh'), '#!/bin/sh\necho checked\n');
+  chmodSync(join(workflowDir, 'bin', 'check.sh'), 0o755);
+  // Under none the first command can reach the original, as a change made during the run would.
+  const run = [sh('swap', `echo 'echo v2' > '${join(workflowDir, 'lint.sh')}'`), { name: 'lint', command: ['sh', { file: 'lint.sh' }] }, { name: 'check', command: [{ file: 'bin/check.sh' }] }];
+  const { store, runsDir, job, cycleId } = await atCommand(twoStages({ run }));
+  const r = await verify(store, cycleId, job, opts(runsDir, { sandbox: { backend: 'none' }, workflowDir }));
+  assert.equal(r.cycle.stage, 'BUILD', r.cycle.escalation);
+  assert.equal(readFileSync(join(r.evidenceDir, 'lint.stdout'), 'utf8'), 'v1\n');
+  assert.equal(readFileSync(join(r.evidenceDir, 'check.stdout'), 'utf8'), 'checked\n');
+  assert.deepEqual(checksOf(r.cycle), [
+    { name: 'swap', result: 'PASS' },
+    { name: 'lint', result: 'PASS', files: { 'lint.sh': sha256(V1) } },
+    { name: 'check', result: 'PASS', files: { 'bin/check.sh': sha256('#!/bin/sh\necho checked\n') } },
+  ]);
+  assert.equal(readFileSync(join(r.evidenceDir, 'files', 'lint.sh'), 'utf8'), V1);
+  assert.equal(statSync(join(r.evidenceDir, 'files', 'bin', 'check.sh')).mode & 0o777, 0o755);
+  store.close();
+});
+
+test('a file argument with no workflow directory, or not in it, throws before anything is written', async () => {
+  const { store, runsDir, job, cycleId, head } = await atCommand(twoStages({ run: [{ name: 'lint', command: ['sh', { file: 'lint.sh' }] }] }));
+  const before = store.events(cycleId).length;
+  await assert.rejects(verify(store, cycleId, job, opts(runsDir)), /LINT names file lint\.sh, but its workflow has no file of its own/);
+  await assert.rejects(verify(store, cycleId, job, opts(runsDir, { workflowDir: dir })), new RegExp(`LINT names file lint\\.sh, which is not in ${dir}`));
+  assert.equal(store.events(cycleId).length, before);
+  assert.ok(!existsSync(join(runsDir, 'evidence', head)));
+  store.close();
+});

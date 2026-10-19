@@ -115,7 +115,8 @@ export interface Run {
 export type Event = (
   | { type: 'claim'; runId: string; base: string; runtime: string }
   | ({ type: 'developer_result'; runId: string; head?: string; artifacts: string[] } & Partial<RunVersions>)
-  | { type: 'verification'; head: string; checks: { name: string; result: 'PASS' | 'FAIL' | 'MISSING' }[] }
+  /** `files`: each file argument a command ran, by its path beside the workflow, to the SHA-256 of what ran (10-c). */
+  | { type: 'verification'; head: string; checks: { name: string; result: 'PASS' | 'FAIL' | 'MISSING'; files?: Record<string, string> }[] }
   | ({ type: 'verdict'; runId: string; head: string; verdict: 'PASS' | 'FAIL'; findings?: string[] } & Partial<RunVersions>)
   | { type: 'head_changed'; head: string }
   | { type: 'base_changed'; base: string }
@@ -134,7 +135,7 @@ const arr = (v: unknown, each: (x: unknown) => boolean) => Array.isArray(v) && v
 const obj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 // Not read by apply, but a value of the wrong type would be a false record of what ran.
 const versions = (e: Record<string, unknown>) => (e.runtime === undefined || str(e.runtime)) && (e.moduleHash === undefined || str(e.moduleHash));
-const isCheck = (v: unknown) => obj(v) && str(v.name) && ['PASS', 'FAIL', 'MISSING'].includes(v.result as string);
+const isCheck = (v: unknown) => obj(v) && str(v.name) && ['PASS', 'FAIL', 'MISSING'].includes(v.result as string) && (v.files === undefined || (obj(v.files) && Object.values(v.files).every(str)));
 
 // Shape checks, one per Event type. Everything apply dereferences must be present; anything else
 // is the sender's business. Extra fields are tolerated so an older controller can read newer logs.
