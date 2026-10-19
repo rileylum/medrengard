@@ -14,7 +14,7 @@ import { defaultWorkflow, type Workflow } from './lifecycle.ts';
 import { ROLE_ALIASES, run, type Adapters } from './run.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
-import { EventStore, SETTLED } from './store.ts';
+import { EventStore, openings, SETTLED, workflowHash } from './store.ts';
 
 const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> | cancel <job.json>';
 
@@ -38,8 +38,28 @@ function existingStore(runsDir: string, workflow: Workflow): EventStore | undefi
 
 const humanStages = (w: Workflow) => Object.keys(w.stages).filter((s) => w.stages[s]!.kind === 'human');
 
+/**
+ * The job's configuration as its existing cycles were opened under. The base ref has usually
+ * moved since (the owner merges into it), and a repository workflow read at the new tip would
+ * not load them (A-078 Q4). With no match, the job file's base: the store's refusal then names
+ * both workflows.
+ */
+async function decisionConfig(file: string) {
+  const now = await loadConfig(file);
+  const db = join(now.runsDir, 'events.sqlite');
+  if (!existsSync(db)) return now;
+  const opened = openings(db, now.spec.workId);
+  const fits = (w: Workflow) => opened.every((o) => o.hash === workflowHash(w));
+  if (fits(now.workflow)) return now;
+  for (const base of new Set(opened.flatMap((o) => (o.base ? [o.base] : [])))) {
+    const then = await loadConfig(file, process.env, { base });
+    if (fits(then.workflow)) return then;
+  }
+  return now;
+}
+
 async function accept(file: string, sha: string): Promise<number> {
-  const { path, spec, repo, runsDir, workflow } = await loadConfig(file);
+  const { path, spec, repo, runsDir, workflow } = await decisionConfig(file);
   const store = existingStore(runsDir, workflow);
   try {
     const open = store?.cycles(spec.workId).find((c) => !SETTLED.includes(c.stage));
@@ -63,7 +83,7 @@ async function accept(file: string, sha: string): Promise<number> {
 }
 
 async function cancel(file: string): Promise<number> {
-  const { spec, runsDir, workflow } = await loadConfig(file);
+  const { spec, runsDir, workflow } = await decisionConfig(file);
   const store = existingStore(runsDir, workflow);
   try {
     const all = store?.cycles(spec.workId) ?? [];

@@ -336,3 +336,33 @@ test('a personal-layer extension runtime, relative to the personal file, runs a 
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
 });
+
+// Ticket 10-b (A-078 Q4): accept reads the layers at the base the cycle opened at, not where the ref is now.
+test('accept loads a cycle run under a repository workflow after the base branch has moved and changed that workflow', () => {
+  const { root, repo, jobFile } = scratch();
+  const flow = (name: string) => `import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};\nexport const workflow = { ...ownerCheck, name: ${JSON.stringify(name)} };\n`;
+  mkdirSync(join(repo, '.factory'));
+  writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ workflow: 'flow.ts' }));
+  writeFileSync(join(repo, 'flow.ts'), flow('v1'));
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'factory workflow');
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...job, runtime: { writer: 'claude', reviewer: 'claude' } }));
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  const first = sf([jobFile], env);
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  assert.match(first.stdout, /^Stage: OWNER$/m);
+  const head = /^Head: ([0-9a-f]{40})$/m.exec(first.stdout)![1]!;
+  writeFileSync(join(repo, 'flow.ts'), flow('v2'));
+  git(repo, 'commit', '-q', '-am', 'workflow v2');
+  const accepted = sf(['accept', jobFile, head], env);
+  assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+  assert.match(accepted.stdout, /^Stage: ACCEPTED$/m);
+  // cancel loads the same way: it gets as far as finding nothing open, not a workflow refusal.
+  const cancelled = sf(['cancel', jobFile], env);
+  assert.equal(cancelled.status, 2);
+  assert.match(cancelled.stderr, /^nothing to cancel for work w /m);
+});

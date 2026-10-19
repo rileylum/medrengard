@@ -84,7 +84,7 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
   const start = store.workflow.stages[store.workflow.start];
   if (start?.kind !== 'agent' || start.produces !== 'commit') throw new Error(`start stage ${store.workflow.start} is not a commit stage; develop cannot open the cycle`);
   const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
-  store.open(cycleId, job.workId, job.parentCycleId);
+  store.open(cycleId, job.workId, job.parentCycleId, base);
   try {
     mkdirSync(runsDir, { recursive: true });
     clone(job.repo, worktree, branch, base);

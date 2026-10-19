@@ -147,11 +147,11 @@ function extractWorkflow(repo: string, sha: string, path: string, runsDir: strin
  * is resolved to a SHA once, here, and `spec.base` carries it, so develop starts from the commit
  * the repository layer was read at even if the ref moves.
  */
-export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = process.env): Promise<Config> {
+export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = process.env, opts: { base?: string } = {}): Promise<Config> {
   const path = resolve(jobFile);
   const job = readLayer(path, JOB_KEYS, false) as unknown as JobFile;
   const repo = resolve(path, '..', job.repo);
-  const base = git(repo, 'rev-parse', '--verify', '--end-of-options', `${job.base ?? 'HEAD'}^{commit}`);
+  const base = git(repo, 'rev-parse', '--verify', '--end-of-options', `${opts.base ?? job.base ?? 'HEAD'}^{commit}`);
   const repoLayer = readRepoLayer(repo, base);
   const spec = { ...merge([DEFAULTS, readLayer(personalFile(env), PERSONAL_KEYS, true), repoLayer, job]), base } as unknown as JobFile;
   const runsDir = resolve(spec.runsDir!);
