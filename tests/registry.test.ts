@@ -12,6 +12,7 @@ import { execute, receive } from '../src/controller.ts';
 import { cliAdapter, extensionSpec } from '../src/runtime/cli-adapter.ts';
 import { runtimeFor, runtimes } from '../src/runtime/registry.ts';
 import { checkSandbox, confines, reachable, wrap, type Sandbox } from '../src/sandbox.ts';
+import { isEvent } from '../src/lifecycle.ts';
 import { EventStore } from '../src/store.ts';
 import { fakeAdapter } from './fake-adapter.ts';
 import { PASS_CHECKS } from './scenarios.ts';
@@ -159,5 +160,20 @@ test('an outcome event whose runtime or moduleHash is not a string is refused by
   store.append('c1', { type: 'claim', runId: 'r1', base: 'B1', runtime: 'ext' });
   for (const extra of [{ runtime: 7 }, { runtime: '' }, { moduleHash: ['x'] }]) {
     assert.throws(() => store.append('c1', { type: 'run_failed', runId: 'r1', reason: 'x', ...extra } as never), undefined, JSON.stringify(extra));
+  }
+});
+
+test('every outcome event type refuses a runtime or moduleHash that is not a string, and accepts string ones', () => {
+  const outcomes = [
+    { type: 'developer_result', runId: 'r1', head: 'H1', artifacts: [] },
+    { type: 'verdict', runId: 'r1', head: 'H1', verdict: 'PASS', findings: [] },
+    { type: 'dispute', runId: 'r1', head: 'H1', reason: 'x' },
+    { type: 'run_failed', runId: 'r1', reason: 'x' },
+  ];
+  for (const e of outcomes) {
+    assert.ok(isEvent({ ...e, runtime: 'ext', moduleHash: EXT_HASH }), e.type);
+    for (const extra of [{ runtime: 7 }, { runtime: '' }, { moduleHash: ['x'] }]) {
+      assert.equal(isEvent({ ...e, ...extra }), false, `${e.type} ${JSON.stringify(extra)}`);
+    }
   }
 });
