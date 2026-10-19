@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-080 — 2026-10-20 — 10-b: fix the adversarial findings, then merge
+
+Owner, after 10-b's adversarial FAIL on `38d38a6` (one major: no test that the repository layer's presence is checked at the base, not `HEAD`; three minors: a relative `XDG_CONFIG_HOME` or `HOME` resolves against the working directory, `accept` and `cancel` on a pre-10-b store fail closed when the tip adds a repository workflow, the job file's `runsDir` rule untested) and the recommendation to fix the major and the two cheap minors on the branch, park the pre-10-b store minor, then merge: “fix then merge”.
+
+Effect: the major, the relative-path minor and the `runsDir` minor are fixed on `feat/10-b-config-layers`, tests first, with no further review (the budget is spent). The pre-10-b store minor goes to parked.md. The branch is then merged into main with `git merge --no-ff`, with standard 1, standard 2 and adversarial FAIL on record and their fixes unreviewed.
+
 ### A-079 — 2026-10-19 — 10-b: standard 2 findings fixed without another standard review, then adversarial
 
 Owner, after 10-b's standard 2 FAIL on `2884bae` (one major, three minors) and the recommendation to fix all four on the branch and then run the adversarial review: “Next session we'll fix and run the adversarial before progressing”.
