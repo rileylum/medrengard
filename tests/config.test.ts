@@ -144,3 +144,21 @@ test('a layer that is not a JSON object is refused, naming the file', async () =
   commitRepoLayer(repo, []);
   await assert.rejects(loadConfig(jobFile, env), /\.factory\/config\.json at [0-9a-f]{40}: must be a JSON object/);
 });
+
+test('runtimes merge per name and sandbox per field, so a later layer adds to them instead of replacing them', async () => {
+  const { root, jobFile, personal, env } = scratch({ runtimes: { b: { module: 'b.ts' } }, sandbox: { backend: 'none' } });
+  writeJson(personal, { runtimes: { a: { module: 'a.ts' } }, sandbox: { read: ['/opt/tool'] } });
+  // The registry hashes each module when it is built, so both must exist.
+  writeFileSync(join(dirname(personal), 'a.ts'), '');
+  writeFileSync(join(root, 'b.ts'), '');
+  const c = await loadConfig(jobFile, env);
+  assert.deepEqual(c.spec.runtimes, { a: { module: join(dirname(personal), 'a.ts') }, b: { module: join(root, 'b.ts') } });
+  assert.deepEqual(c.sandbox, { backend: 'none', read: ['/opt/tool'] });
+});
+
+test('a runtime, runtimes or sandbox value that is not a JSON object is refused, naming the file and the key', async () => {
+  for (const [key, value] of [['sandbox', 'none'], ['sandbox', ['none']], ['runtime', null], ['runtimes', 'ext']] as const) {
+    const { jobFile, env } = scratch({ [key]: value });
+    await assert.rejects(loadConfig(jobFile, env), (err: Error) => err.message === `${jobFile}: ${key} must be a JSON object`, `${key}: ${JSON.stringify(value)}`);
+  }
+});

@@ -98,6 +98,8 @@ const OWNER_ONLY: Record<string, string> = {
   sandbox: 'sandbox is set only by the personal or job layer',
 };
 
+const isObject = (v: unknown) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
 /** A layer's text as an object, or an error naming `where`: an array or null would read as empty. */
 function parse(text: string, where: string): Record<string, unknown> {
   let value: unknown;
@@ -106,12 +108,14 @@ function parse(text: string, where: string): Record<string, unknown> {
   } catch (err) {
     throw new Error(`${where}: must be a JSON object (${(err as Error).message})`);
   }
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${where}: must be a JSON object`);
+  if (!isObject(value)) throw new Error(`${where}: must be a JSON object`);
   return value as Record<string, unknown>;
 }
 
 function allow(layer: Record<string, unknown>, keys: string[], where: string, hints: Record<string, string> = {}): Record<string, unknown> {
-  for (const key of Object.keys(layer)) {
+  for (const [key, value] of Object.entries(layer)) {
+    // merge would spread a string or an array into the earlier object and drop the typo silently.
+    if (keys.includes(key) && NESTED.includes(key) && !isObject(value)) throw new Error(`${where}: ${key} must be a JSON object`);
     if (keys.includes(key)) continue;
     throw new Error(`${where}: ${Object.hasOwn(hints, key) ? hints[key] : `${key} may not be set here; allowed: ${keys.join(', ')}`}`);
   }
