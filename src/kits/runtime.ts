@@ -80,8 +80,11 @@ export function runtimeKit(name: string, makeAdapter: () => Adapter | Promise<Ad
 // union into a failed run; an adapter that relies on that has a bug the kit should name.
 function assertOutcome(o: unknown): void {
   // Stringify first: it throws on a cycle, which `defined` would walk forever.
-  assert.deepEqual(JSON.parse(JSON.stringify(o)), defined(o), 'the outcome is not plain data');
-  const v = o as Record<string, unknown>;
+  const read = JSON.parse(JSON.stringify(o));
+  assert.deepEqual(read, defined(o), 'the outcome is not plain data');
+  // The union is checked on what the controller reads: `claim: undefined` passes `'claim' in` on
+  // the adapter's object, but the round trip drops it, and the controller sees no claim.
+  const v = read as Record<string, unknown>;
   const ok = v?.status === 'completed' ? 'claim' in v && (v.sessionId === undefined || typeof v.sessionId === 'string')
     : v?.status === 'failed' ? typeof v.reason === 'string' && v.reason.length > 0
     : v?.status === 'cancelled';

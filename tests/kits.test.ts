@@ -33,6 +33,12 @@ test('runtimeKit passes a claim with a null prototype, which the controller acce
   assert.match(r.stdout, /# fail 0/);
 });
 
+test('runtimeKit fails a completed outcome whose claim is undefined, which the controller reads as no claim', () => {
+  const r = kit('no-claim.kit.ts');
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /not a RunOutcome/);
+});
+
 test('runtimeKit fails an adapter that rejects for the reviewer role the controller sends', () => {
   const r = kit('reviewer-role.kit.ts');
   assert.notEqual(r.status, 0, r.stdout + r.stderr);
