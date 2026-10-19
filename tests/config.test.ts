@@ -68,3 +68,15 @@ test('the repository layer sits between personal and job, and is read at the bas
   const c = await loadConfig(jobFile, env);
   assert.deepEqual(c.spec.runtime, { developer: 'claude', standard: 'claude', adversarial: 'pi' });
 });
+
+test('a repository layer that gives grants is refused, naming the key and the file', async () => {
+  const { repo, jobFile, env } = scratch();
+  commitRepoLayer(repo, { grants: { github: { env: 'GITHUB_TOKEN' } } });
+  await assert.rejects(loadConfig(jobFile, env), /\.factory\/config\.json at [0-9a-f]{40}: grants come only from the personal or job layer/);
+});
+
+test('a repository layer that sets sandbox.backend none is refused, naming the key and the file', async () => {
+  const { repo, jobFile, env } = scratch();
+  commitRepoLayer(repo, { sandbox: { backend: 'none' } });
+  await assert.rejects(loadConfig(jobFile, env), /\.factory\/config\.json at [0-9a-f]{40}: sandbox is set only by the personal or job layer/);
+});

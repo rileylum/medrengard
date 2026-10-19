@@ -60,10 +60,30 @@ function readLayer(file: string): Record<string, unknown> {
 
 const REPO_LAYER = '.factory/config.json';
 
+/**
+ * What a repository may set (A-074, A-078 Q1): an allow list, not a deny list, because any key
+ * added later is then closed to repositories until someone opens it. `sandbox.read` alone could
+ * show the sandbox `~/.ssh`.
+ */
+const REPO_KEYS = ['checks', 'workflow', 'runtime'];
+// Named apart from the rest so each refusal says where the key may go instead.
+const OWNER_ONLY: Record<string, string> = {
+  grants: 'grants come only from the personal or job layer',
+  sandbox: 'sandbox is set only by the personal or job layer',
+};
+
+function allow(layer: Record<string, unknown>, keys: string[], where: string): Record<string, unknown> {
+  for (const key of Object.keys(layer)) {
+    if (keys.includes(key)) continue;
+    throw new Error(`${where}: ${OWNER_ONLY[key] ?? `${key} may not be set here; allowed: ${keys.join(', ')}`}`);
+  }
+  return layer;
+}
+
 /** `.factory/config.json` as committed at `sha`: never the working tree, which the developer's runs share. */
 function readRepoLayer(repo: string, sha: string): Record<string, unknown> {
   if (git(repo, 'ls-tree', '--name-only', sha, '--', REPO_LAYER) === '') return {};
-  return JSON.parse(git(repo, 'show', `${sha}:${REPO_LAYER}`)) as Record<string, unknown>;
+  return allow(JSON.parse(git(repo, 'show', `${sha}:${REPO_LAYER}`)) as Record<string, unknown>, REPO_KEYS, `${REPO_LAYER} at ${sha}`);
 }
 
 /**
