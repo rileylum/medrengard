@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-077 — 2026-10-19 — 10-f: review minors fixed unreviewed, then merged
+
+Owner, after 10-f's standard and adversarial PASS on `4775ac3` with two kit minors and a `claim: undefined` note, and the recommendation to fix all three on the branch without another review: “yes fix and merge”. Earlier, on the reviews: “review please, if you've already run the tests then I don't need to rerun”.
+
+Effect: `6f86f0a` fixes the three, tests first: `runtimeKit` treats a null-prototype object as plain data, a test pins that it drops a nested undefined claim field, and it checks the union on the round-tripped outcome, so `claim: undefined` fails. No review covers `6f86f0a`. The owner did not run `npm test`; the implementer's run on `6f86f0a` (302 tests, 278 pass, 0 fail) is the record. The `adversarial_reviewer` kit case (standard 1 note) is not added: the ticket names only `standard_reviewer`. `feat/10-f-registries-fixes` merges into main locally with `--no-ff`.
+
 ### A-076 — 2026-10-19 — 10-a merged; its adversarial minors become 10-f
 
 Owner, after 10-a's adversarial PASS on `bb40612` with four minors and the recommendation of a fix ticket before 10-b: “okay, file the fix ticket and merge”.

@@ -12,6 +12,7 @@ import { execute, receive } from '../src/controller.ts';
 import { cliAdapter, extensionSpec } from '../src/runtime/cli-adapter.ts';
 import { runtimeFor, runtimes } from '../src/runtime/registry.ts';
 import { checkSandbox, confines, reachable, wrap, type Sandbox } from '../src/sandbox.ts';
+import { isEvent } from '../src/lifecycle.ts';
 import { EventStore } from '../src/store.ts';
 import { fakeAdapter } from './fake-adapter.ts';
 import { PASS_CHECKS } from './scenarios.ts';
@@ -59,6 +60,9 @@ test('a job-file runtime may not reuse a built-in name, and one whose module is 
   assert.throws(() => runtimes({ ext: {} as { module: string } }, dir), /runtimes\.ext\.module/);
   // The store refuses an empty runtime on an outcome event, so the run's outcome could not be recorded.
   assert.throws(() => runtimes({ '': { module: EXT } }, dir), /runtime name "" is empty/);
+  // JSON.parse makes `__proto__` an own key; assigning it to the registry would swap the prototype.
+  // A missing module: the name is refused before the module is read.
+  assert.throws(() => runtimes(JSON.parse('{"__proto__":{"module":"no-such-module.ts"}}'), dir), /runtimes\.__proto__ /);
 });
 
 test('an unknown sandbox backend is refused by check, wrap and reachable, and the reason lists the backends', () => {
@@ -88,7 +92,7 @@ test('extension: the adapter carries the module name and the SHA-256 of the modu
   assert.equal(cliAdapter(extensionSpec('ext', EXT), offline).moduleHash, EXT_HASH);
 });
 
-test('extension: malformed JSON, a non-zero exit, a deadline overrun and a cancel each end as one run_failed', async () => {
+test('extension: malformed JSON, a non-zero exit, a deadline overrun, a cancel and its own failed outcome each end as one run_failed', async () => {
   const { cwd } = repo();
   const adapter = cliAdapter(extensionSpec('ext', EXT), { ...offline, graceMs: 500 });
   const failures = async (prompt: string, deadlineMs: number) => {
@@ -102,6 +106,9 @@ test('extension: malformed JSON, a non-zero exit, a deadline overrun and a cance
   assert.match(await failures('EXT:bad-json', 10_000), /ext stdout is not JSON/);
   assert.match(await failures('EXT:exit', 10_000), /ext exited 1: ext failed on purpose/);
   assert.equal(await failures('EXT:sleep', 1000), 'timeout');
+  // The module's own reason is bounded as a CLI's is: trimmed, cut to 1 KB, well-formed.
+  assert.equal(await failures('EXT:fail-big', 10_000), 'x'.repeat(1024));
+  assert.equal(await failures('EXT:fail-surrogate', 10_000), 'bad \uFFFD end');
 
   const ac = new AbortController();
   const run = start('EXT:sleep', cwd, ac.signal);
@@ -153,5 +160,20 @@ test('an outcome event whose runtime or moduleHash is not a string is refused by
   store.append('c1', { type: 'claim', runId: 'r1', base: 'B1', runtime: 'ext' });
   for (const extra of [{ runtime: 7 }, { runtime: '' }, { moduleHash: ['x'] }]) {
     assert.throws(() => store.append('c1', { type: 'run_failed', runId: 'r1', reason: 'x', ...extra } as never), undefined, JSON.stringify(extra));
+  }
+});
+
+test('every outcome event type refuses a runtime or moduleHash that is not a string, and accepts string ones', () => {
+  const outcomes = [
+    { type: 'developer_result', runId: 'r1', head: 'H1', artifacts: [] },
+    { type: 'verdict', runId: 'r1', head: 'H1', verdict: 'PASS', findings: [] },
+    { type: 'dispute', runId: 'r1', head: 'H1', reason: 'x' },
+    { type: 'run_failed', runId: 'r1', reason: 'x' },
+  ];
+  for (const e of outcomes) {
+    assert.ok(isEvent({ ...e, runtime: 'ext', moduleHash: EXT_HASH }), e.type);
+    for (const extra of [{ runtime: 7 }, { runtime: '' }, { moduleHash: ['x'] }]) {
+      assert.equal(isEvent({ ...e, ...extra }), false, `${e.type} ${JSON.stringify(extra)}`);
+    }
   }
 });

@@ -260,7 +260,9 @@ export function extensionSpec(name: string, module: string): CliSpec {
     parse(stdout, stderr, exitCode) {
       if (exitCode !== 0) return failed(`${name} exited ${exitCode}: ${firstLine(stderr) || firstLine(stdout) || 'no output'}`);
       try {
-        return JSON.parse(stdout) as RunOutcome;
+        const o = JSON.parse(stdout) as RunOutcome;
+        // The module's own reason is bounded as a CLI's is; any other shape is left to normalise.
+        return o?.status === 'failed' && typeof o.reason === 'string' ? failed(o.reason) : o;
       } catch (err) {
         return failed(`${name} stdout is not JSON: ${String(err)}`);
       }

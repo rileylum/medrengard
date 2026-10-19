@@ -17,6 +17,9 @@ process.stdin.on('end', () => {
     return;
   }
   if (p.includes('EXT:sleep')) return void setTimeout(() => {}, 600_000);
+  // The module's own failed outcome, with a reason a CLI's would never be stored as.
+  if (p.includes('EXT:fail-big')) return void process.stdout.write(JSON.stringify({ status: 'failed', reason: `  ${'x'.repeat(5_000_000)}` }));
+  if (p.includes('EXT:fail-surrogate')) return void process.stdout.write(JSON.stringify({ status: 'failed', reason: 'bad \uD800 end' }));
   const reply = (claim: unknown) => process.stdout.write(JSON.stringify({ status: 'completed', claim }));
   if (p.includes('reviewer for the change below')) {
     return reply({ head: /^Candidate SHA: (\S+)$/m.exec(p)?.[1], verdict: 'PASS', findings: [] });
