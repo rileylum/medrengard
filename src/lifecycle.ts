@@ -270,7 +270,10 @@ function roleTextReasons(name: Stage, def: Extract<StageDef, { kind: 'agent' }>)
 
 /** A file stem, nothing that could leave the evidence directory or hide a sibling's file. Check and command names, and command stage names. */
 export const FILE_STEM = /^(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/;
-/** verify's own tracked-tree check, recorded under this name when a check dirtied the checkout. */
+// verify's own check, recorded only when it fails: a check that rewrote a tracked file
+// (formatter, codegen) left a checkout that is not the commit, so what the reviewers would read
+// is not what was verified. Recording it escalates the cycle with evidence instead of leaving it
+// in the review stage with review refusing the dirty checkout on every call (06-c adversarial).
 export const TREE_CHECK = 'tree';
 
 // verify's rules for job.checks names, at load time for `run` (10-c), plus what a file argument may name.

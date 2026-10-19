@@ -55,11 +55,6 @@ export interface Verified {
 type CheckResult = Extract<Event, { type: 'verification' }>['checks'][number];
 
 const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
-// The controller's own check, recorded only when it fails: a check that rewrote a tracked file
-// (formatter, codegen) left a checkout that is not the commit, so what the reviewers would read
-// is not what was verified. Recording it escalates the cycle with evidence instead of leaving it
-// in the review stage with review refusing the dirty checkout on every call (06-c adversarial).
-const TREE = TREE_CHECK;
 
 /** A workflow passed as an object, not loaded from a file, has nowhere to find a file argument. */
 export const noWorkflowDir = (stage: string, file: string) => `stage ${stage} names file ${file}, but its workflow has no file of its own to find it beside`;
@@ -74,7 +69,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   const seen = new Set<string>();
   for (const c of checks) {
     if (typeof c.name !== 'string' || !FILE_STEM.test(c.name)) throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
-    if (c.name === TREE) throw new Error(`check name ${TREE} is reserved for the controller's own tracked-tree check`);
+    if (c.name === TREE_CHECK) throw new Error(`check name ${TREE_CHECK} is reserved for the controller's own tracked-tree check`);
     if (seen.has(c.name)) throw new Error(`check name ${c.name} is declared twice`);
     seen.add(c.name);
   }
@@ -119,8 +114,6 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   const request: CommandRequest = { cycleId, workId: cycle.workId, stage: cycle.stage, head, base, ticket: job.ticket, diffFile, outputDir };
   const requestFile = join(evidenceDir, 'request.json');
   writeFileSync(requestFile, `${JSON.stringify(request, null, 2)}\n`);
-  // The stage directory is read-only inside, so a command cannot rewrite the evidence the reviewer
-  // reads; output/ is bound writable over it. Another stage's directory is not bound at all.
   // The command runs the copy: the bytes hashed are the bytes run, whatever happens to the original.
   const hashes = new Map<string, string>();
   for (const f of files) {
@@ -129,6 +122,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     copyFileSync(join(opts.workflowDir!, f), copy);
     hashes.set(f, createHash('sha256').update(readFileSync(copy)).digest('hex'));
   }
+  // The stage directory is read-only inside, so a command cannot rewrite the evidence the reviewer
+  // reads; output/ is bound writable over it. Another stage's directory is not bound at all.
   const policy: Policy = { cwd: worktree, write: [worktree, outputDir], read: [evidenceDir], network: def.network ?? false, env: { SF_REQUEST: requestFile } };
 
   const results: CheckResult[] = [];
@@ -136,7 +131,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // picture, not the first failure.
   for (const check of checks) {
     const argv = check.command.map((a) => (typeof a === 'string' ? a : join(evidenceDir, 'files', a.file)));
-    const r = await runCheck({ name: check.name, command: argv }, policy, isolation, sandbox, opts);
+    const r = await runCheck(argv, policy, isolation, sandbox, opts);
     writeFileSync(join(evidenceDir, `${check.name}.stdout`), r.stdout);
     writeFileSync(join(evidenceDir, `${check.name}.stderr`), r.stderr);
     writeFileSync(join(evidenceDir, `${check.name}.exit`), `${r.exit}\n`);
@@ -155,10 +150,10 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // the reviewer would read; that is dirt with its reason, not a throw (08-b adversarial).
   try { dirty += removeUntracked(worktree, entries); } catch (err) { dirty += `cannot remove untracked entries: ${(err as Error).message}\n`; }
   if (dirty) {
-    writeFileSync(join(evidenceDir, `${TREE}.stdout`), dirty);
-    writeFileSync(join(evidenceDir, `${TREE}.stderr`), '');
-    writeFileSync(join(evidenceDir, `${TREE}.exit`), 'dirty\n');
-    results.push({ name: TREE, result: 'FAIL' });
+    writeFileSync(join(evidenceDir, `${TREE_CHECK}.stdout`), dirty);
+    writeFileSync(join(evidenceDir, `${TREE_CHECK}.stderr`), '');
+    writeFileSync(join(evidenceDir, `${TREE_CHECK}.exit`), 'dirty\n');
+    results.push({ name: TREE_CHECK, result: 'FAIL' });
   }
   return { cycle: store.append(cycleId, { type: 'verification', head, checks: results }), worktree, evidenceDir };
 }
@@ -258,9 +253,9 @@ interface Outcome { result: CheckResult['result']; exit: string; stdout: string;
 
 // `failed` is spawnRuntime's "never started": no binary, no cwd. That is the spec's MISSING,
 // evidence that does not exist, as against FAIL, evidence that says no.
-async function runCheck(check: Check, policy: Policy, isolation: 'cgroup' | 'process-group', sandbox: Sandbox, opts: VerifyOptions): Promise<Outcome> {
+async function runCheck(argv: string[], policy: Policy, isolation: 'cgroup' | 'process-group', sandbox: Sandbox, opts: VerifyOptions): Promise<Outcome> {
   const { cwd } = policy;
-  const [command = '', ...args] = check.command;
+  const [command = '', ...args] = argv;
   // Resolved here, not by the spawn: under a scope systemd-run does the lookup and exits 1 on a
   // missing binary, which would read as FAIL. MISSING must mean the same under both isolations.
   const found = executables(command, cwd);
