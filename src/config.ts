@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Job } from './developer.ts';
+import { git } from './git.ts';
 import { checkWorkflow, defaultWorkflow, type Workflow } from './lifecycle.ts';
 import { runtimes, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
@@ -57,17 +58,32 @@ function readLayer(file: string): Record<string, unknown> {
   return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>) : {};
 }
 
-/** The job file's settings over the personal file's. `env` gives XDG_CONFIG_HOME and HOME. */
+const REPO_LAYER = '.factory/config.json';
+
+/** `.factory/config.json` as committed at `sha`: never the working tree, which the developer's runs share. */
+function readRepoLayer(repo: string, sha: string): Record<string, unknown> {
+  if (git(repo, 'ls-tree', '--name-only', sha, '--', REPO_LAYER) === '') return {};
+  return JSON.parse(git(repo, 'show', `${sha}:${REPO_LAYER}`)) as Record<string, unknown>;
+}
+
+/**
+ * Personal, then repository, then the job file. `env` gives XDG_CONFIG_HOME and HOME. The base
+ * is resolved to a SHA once, here, and `spec.base` carries it, so develop starts from the commit
+ * the repository layer was read at even if the ref moves.
+ */
 export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = process.env): Promise<Config> {
   const path = resolve(jobFile);
-  const spec = merge([readLayer(personalFile(env)), readLayer(path)]) as unknown as JobFile;
+  const job = readLayer(path) as unknown as JobFile;
+  const repo = resolve(path, '..', job.repo);
+  const base = git(repo, 'rev-parse', '--verify', '--end-of-options', `${job.base ?? 'HEAD'}^{commit}`);
+  const spec = { ...merge([readLayer(personalFile(env)), readRepoLayer(repo, base), job]), base } as unknown as JobFile;
   const sandbox: Sandbox = spec.sandbox
     ? { ...spec.sandbox, read: spec.sandbox.read?.map((p) => (typeof p === 'string' ? resolve(path, '..', p) : p)) }
     : { backend: 'bwrap' };
   return {
     path,
     spec,
-    repo: resolve(path, '..', spec.repo),
+    repo,
     runsDir: resolve(spec.runsDir ?? DEFAULT_RUNS_DIR),
     workflow: await loadWorkflow(path, spec),
     registry: runtimes(spec.runtimes, resolve(path, '..')),

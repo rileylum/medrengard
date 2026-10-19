@@ -49,3 +49,22 @@ test('with no XDG_CONFIG_HOME, the personal file is ~/.config/software_factory/c
   const c = await loadConfig(jobFile, { HOME: home });
   assert.deepEqual(c.spec.runtime, { developer: 'claude', standard: 'pi' });
 });
+
+/** Commits `.factory/config.json` in `repo` and returns the commit's SHA. */
+function commitRepoLayer(repo: string, value: unknown): string {
+  writeJson(join(repo, '.factory', 'config.json'), value);
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'factory config');
+  return git(repo, 'rev-parse', 'HEAD');
+}
+
+test('the repository layer sits between personal and job, and is read at the base SHA, not the working tree or a later commit', async () => {
+  const { repo, jobFile, personal, env } = scratch();
+  writeJson(personal, { runtime: { standard: 'pi', adversarial: 'pi' } });
+  const base = commitRepoLayer(repo, { runtime: { developer: 'pi', standard: 'claude' } });
+  commitRepoLayer(repo, { runtime: { adversarial: 'claude' } });
+  writeJson(join(repo, '.factory', 'config.json'), { runtime: { adversarial: 'claude' } });
+  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', base, runtime: { developer: 'claude' } });
+  const c = await loadConfig(jobFile, env);
+  assert.deepEqual(c.spec.runtime, { developer: 'claude', standard: 'claude', adversarial: 'pi' });
+});
