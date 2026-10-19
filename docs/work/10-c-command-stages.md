@@ -24,3 +24,11 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
 ## Log
 - 2026-10-20 — drafted on `feat/10-c-command-stages` (A-074). Not READY until the owner says go; no code before the design note is approved.
 - 2026-10-20 — owner: “Approved all recommendations” (A-081). READY; design note approved with Q1 to Q4 as recommended.
+- 2026-10-20 — built on `feat/10-c-command-stages`, tests first, code head `b97105f`. Implementer's `npm test` (not independent): 351 tests, 327 pass, 0 fail, 24 skipped or todo (unchanged). `lazy-review` run; its two shrinks applied, `commandKit`'s `deadlineMs` kept. Each done-when line has a test; mutants checked for the per-stage reviewer list, the bwrap `SF_REQUEST`, the `output/` bind, `network` both ways, running the copy of a file argument, the `files` shape check, the untrimmed repository file and the `main.ts` wiring. Decisions the note left to the build, for the reviewers:
+  - `SF_REQUEST` reaches the command through `Policy.env`: bwrap sets it after `--clearenv`; verify also adds it to the spawn environment, which is what `none` runs in.
+  - `checkWorkflow` also refuses a command stage whose name is not a file stem, because the name is now a directory under `evidence/<head>/`. Not in the note.
+  - `run` refuses a file argument with no `workflowDir` before the developer starts, so a paid run is not wasted. `verify` refuses it too, and refuses a file missing from `workflowDir`, before writing anything.
+  - A repository workflow's file arguments are read with `git cat-file blob`, not the `git` helper, which trims and would change the hashed bytes.
+  - `commandKit` has five cases. A fixture breaks four of them. The request case has no breaking fixture: the controller writes the request, not the command; `readRequest` has its own test.
+  - The default reviewer prompt now names checks `VERIFYING/<name>`; the golden prompts in `tests/fixtures/prompts/` are updated (A-081 Q4). The default workflow's hash is unchanged and pinned.
+  - Known limit: a cycle opened before 10-c and resumed in a review stage finds no evidence under `evidence/<head>/<stage>/` and escalates. No command calls `resume` yet (row 11).
