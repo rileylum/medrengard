@@ -1,7 +1,8 @@
 // Ticket 09-c: the default prompts, captured from the code before the prompt split, stay
 // byte for byte the same. Only what differs per run is normalised: the nonce and Git SHAs.
 // 06-d changed the review contract on purpose: standard.txt and adversarial.txt gained the
-// COMMITS section and nothing else. Any other difference in a golden file is a contract change.
+// COMMITS section and nothing else. 07-e changed the fix contract on purpose: fix.txt gained the
+// rules for a same-tree fix and for a dispute. Any other difference in a golden file is a contract change.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';

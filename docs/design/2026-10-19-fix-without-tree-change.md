@@ -2,7 +2,7 @@ Branch: feat/07-e-fix-without-tree-change
 
 # A fix run whose findings need no tree change (ticket 07-e)
 
-Status: proposal. No code until the owner approves it.
+Status: approved by the owner (A-072).
 
 ## Problem
 

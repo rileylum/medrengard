@@ -280,19 +280,19 @@ test('the fix prompt carries the ticket, the failed head and each finding; cwd i
   store.close();
 });
 
-test('a fix claim is refused when it names the previous head, an empty commit on it, the base, a non-tip, an orphan, a revert to the base or an unknown SHA (07-a)', async () => {
+test('a fix claim is refused when it names the previous head, the base, a non-tip, an orphan, a revert to the base or an unknown SHA (07-a)', async () => {
   // The fixture's "base" is the worktree HEAD when it starts, which in a fix run is the previous
-  // candidate: nocommit claims it without committing, base after committing. empty commits
-  // --allow-empty on top of it: a new SHA with the tree that already failed review.
-  for (const variant of ['nocommit', 'base', 'empty', 'first', 'bogus', 'short', 'orphan']) {
+  // candidate: nocommit claims it without committing, base after committing. 07-e took `empty`
+  // (a new commit on top with the same tree) out of this list: it is now accepted.
+  for (const variant of ['nocommit', 'base', 'first', 'bogus', 'short', 'orphan']) {
     const { store, runsDir, base, job: j, cycleId, head, worktree } = await failed();
     const { cycle } = await fix(store, fake(claude, variant), cycleId, j, { deadlineMs: 20_000, runsDir });
     assert.equal(cycle.stage, 'ESCALATED', variant);
     assert.equal(cycle.history.at(-1)!.event.type, 'run_failed', variant);
     const claimed = variant === 'bogus' ? 'a'.repeat(40) : variant === 'short' ? git(worktree, 'rev-parse', 'HEAD').slice(0, 7) : variant === 'nocommit' || variant === 'base' ? head : variant === 'first' ? git(worktree, 'rev-parse', 'HEAD~1') : git(worktree, 'rev-parse', 'HEAD');
     assert.match(cycle.escalation ?? '', new RegExp(`run failed: commit ${claimed}`), variant);
-    if (variant === 'nocommit' || variant === 'base') assert.match(cycle.escalation ?? '', /previous candidate, not a new commit/);
-    if (variant === 'empty') { assert.notEqual(claimed, head); assert.match(cycle.escalation ?? '', new RegExp(`no changes against the previous candidate ${head}`)); }
+    // 07-e case 3: the refusal names what happened, so it does not read as a malformed claim.
+    if (variant === 'nocommit' || variant === 'base') assert.match(cycle.escalation ?? '', /is the previous candidate: the fix run made no new commit and gave no dispute/);
     if (variant === 'orphan') assert.match(cycle.escalation ?? '', /not descended from the base/);
     assert.notEqual(claimed, base);
     store.close();
@@ -321,6 +321,77 @@ test('a fix claim is refused when it names the previous head, an empty commit on
     assert.match(cycle.escalation ?? '', new RegExp(`no changes against the base ${base}`));
     store.close();
   }
+});
+
+test('a fix that adds a commit with the previous tree, such as a new message, is a new candidate (07-e case 1)', async () => {
+  const { repo, store, runsDir, job: j, cycleId, head, branch } = await failed();
+  const { cycle } = await fix(store, fake(claude, 'empty'), cycleId, j, { deadlineMs: 20_000, runsDir });
+  assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
+  const head2 = cycle.candidate!.head;
+  assert.notEqual(head2, head);
+  assert.equal(git(repo, 'rev-parse', `${head2}^`), head, 'on top of the previous candidate');
+  assert.equal(git(repo, 'rev-parse', `${head2}^{tree}`), git(repo, 'rev-parse', `${head}^{tree}`), 'same tree');
+  assert.equal(git(repo, 'rev-parse', `refs/heads/${branch}`), head2);
+  store.close();
+});
+
+test('a fix with the previous tree that rewrites the earlier commit is refused, naming the rewrite (07-e case 1b)', async () => {
+  const { repo, store, runsDir, job: j, cycleId, head, branch } = await failed();
+  const { cycle } = await fix(store, fake(claude, 'reword'), cycleId, j, { deadlineMs: 20_000, runsDir });
+  assert.equal(cycle.stage, 'ESCALATED');
+  assert.equal(cycle.history.at(-1)!.event.type, 'run_failed');
+  assert.match(cycle.escalation ?? '', new RegExp(`has the previous candidate's tree but does not descend from ${head}; rewriting commits is not allowed`));
+  assert.equal(git(repo, 'rev-parse', `refs/heads/${branch}`), head, 'the branch stays at the previous candidate');
+  store.close();
+});
+
+test('a fix that disputes the findings escalates with the reason on one line, spends no budget and moves no branch (07-e case 2)', async () => {
+  const { repo, store, runsDir, job: j, cycleId, head, branch } = await failed();
+  const { cycle } = await fix(store, fake(claude, 'dispute'), cycleId, j, { deadlineMs: 20_000, runsDir });
+  assert.equal(cycle.stage, 'ESCALATED');
+  const e = cycle.history.at(-1)!.event as { type: string; runId: string; head: string; reason: string; contractHash?: string; roleTextHash?: string };
+  assert.equal(e.type, 'dispute');
+  assert.equal(e.head, head);
+  assert.equal(e.reason, 'the finding is wrong: README.md already says so');
+  assert.match(e.contractHash ?? '', /^[0-9a-f]{64}$/);
+  assert.match(e.roleTextHash ?? '', /^[0-9a-f]{64}$/);
+  assert.equal(cycle.escalation, `developer disputes the findings on ${head}: the finding is wrong: README.md already says so`);
+  assert.equal(cycle.budgets.STANDARD_REVIEW ?? 0, 1);
+  assert.ok(cycle.consumed.includes(e.runId));
+  assert.equal(git(repo, 'rev-parse', `refs/heads/${branch}`), head);
+  assert.deepEqual(store.load(cycleId), cycle);
+  store.close();
+});
+
+test('a dispute reason over 2 KiB is cut and marked (07-e)', async () => {
+  const { store, runsDir, job: j, cycleId, head } = await failed();
+  const adapter = fakeAdapter({ outcome: { status: 'completed', claim: { head, artifacts: [], dispute: `${'r'.repeat(3000)}\n${'s'.repeat(10)}` } } });
+  const { cycle } = await fix(store, adapter, cycleId, j, { deadlineMs: 5000, runsDir });
+  const reason = (cycle.history.at(-1)!.event as { reason: string }).reason;
+  assert.ok(reason.startsWith('r'.repeat(2048)), 'the head is kept');
+  assert.ok(!reason.includes('s'), 'the rest is cut');
+  assert.match(reason, /\[\.\.\. 963 characters cut\]$/);
+  assert.ok(!/[\r\n]/.test(reason));
+  store.close();
+});
+
+test('a dispute that names a new commit is refused (07-e case 4)', async () => {
+  const { repo, store, runsDir, job: j, cycleId, head, branch } = await failed();
+  const { cycle } = await fix(store, fake(claude, 'dispute-new'), cycleId, j, { deadlineMs: 20_000, runsDir });
+  assert.equal(cycle.stage, 'ESCALATED');
+  assert.equal(cycle.history.at(-1)!.event.type, 'run_failed');
+  assert.match(cycle.escalation ?? '', new RegExp(`run failed: a dispute must name the previous candidate ${head}`));
+  assert.equal(git(repo, 'rev-parse', `refs/heads/${branch}`), head);
+  store.close();
+});
+
+test('a dispute from a first developer run escalates as outside a fix run (07-e case 5)', async () => {
+  const { repo, store, runsDir } = scratch();
+  const { cycle } = await develop(store, fake(claude, 'dispute'), job(repo), { deadlineMs: 20_000, runsDir });
+  assert.equal(cycle.stage, 'ESCALATED');
+  assert.equal(cycle.history.at(-1)!.event.type, 'dispute');
+  assert.equal(cycle.escalation, 'dispute outside a fix run');
+  store.close();
 });
 
 test('fix throws and appends nothing outside a post-FAIL DEVELOPING, with a developer run active, or without the worktree at the head (07-a)', async () => {
