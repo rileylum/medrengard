@@ -95,3 +95,11 @@ test('a key a layer may not set is refused, naming the file: identity keys outsi
   const d = scratch({ colour: 'blue' });
   await assert.rejects(loadConfig(d.jobFile, d.env), (err: Error) => err.message.startsWith(`${d.jobFile}: colour may not be set here`));
 });
+
+test('a later layer\'s checks replace the earlier list whole, never add to it', async () => {
+  const { repo, jobFile, personal, env } = scratch();
+  writeJson(personal, { checks: [{ name: 'lint', command: ['true'] }] });
+  commitRepoLayer(repo, { checks: [{ name: 'test', command: ['npm', 'test'] }] });
+  const c = await loadConfig(jobFile, env);
+  assert.deepEqual(c.spec.checks, [{ name: 'test', command: ['npm', 'test'] }]);
+});
