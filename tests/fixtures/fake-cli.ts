@@ -142,6 +142,15 @@ function pi() {
       err('No API key found for the selected model.\n');
       process.exitCode = 1;
       break;
+    case 'error-turn':
+    case 'error-turn-bare': {
+      // 04-f: the last turn of the owner-run `pi -p --mode json` after its OAuth refresh failed (2026-10-19), exit 0.
+      const message = 'OAuth refresh failed for openai: OpenAI OAuth token request failed (400): {\n  "error": "invalid_grant"\n}';
+      line(session); line({ type: 'agent_start' }); line({ type: 'turn_start' });
+      line({ type: 'turn_end', message: { role: 'assistant', content: [], stopReason: 'error', ...(kase === 'error-turn' ? { errorMessage: message } : {}) } });
+      line({ type: 'agent_end' });
+      break;
+    }
     case 'partial':
       // What a SIGTERM leaves behind: the session line and deltas, no agent_end, exit 143.
       line(session); line({ type: 'agent_start' });

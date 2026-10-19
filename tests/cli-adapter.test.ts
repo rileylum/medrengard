@@ -98,6 +98,11 @@ test('pi: a stream cut off before agent_end is failed, with the session id in th
   assert.match((o as any).reason, /agent_end/);
 });
 
+test('pi: an error turn fails with pi\'s errorMessage, not as a missing claim block (04-f)', async () => {
+  assert.deepEqual(await start(pi, 'error-turn'), { status: 'failed', reason: 'pi: OAuth refresh failed for openai: OpenAI OAuth token request failed (400): {' });
+  assert.deepEqual(await start(pi, 'error-turn-bare'), { status: 'failed', reason: 'pi: run ended with stopReason error' });
+});
+
 test('output past maxOutputBytes is failed with the cap in the reason, and never reaches the controller as a claim', async () => {
   const adapter = cliAdapter({ ...claude, command: process.execPath, args: [join(import.meta.dirname, 'fixtures', 'flood.ts')] }, { ...offline, maxOutputBytes: 65536, graceMs: 300 });
   const store = fresh();

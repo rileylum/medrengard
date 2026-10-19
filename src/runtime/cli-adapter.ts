@@ -218,6 +218,11 @@ export const pi: CliSpec = {
       return failed(`pi: ${firstLine(stderr) || `run ended without agent_end (exit ${exitCode})`}`);
     }
     const turn = events.filter((e) => e.type === 'turn_end').at(-1);
+    // An error turn (a failed login refresh, say) still ends with agent_end and exit 0 (04-f).
+    if (turn?.message?.stopReason === 'error') {
+      const why = typeof turn.message.errorMessage === 'string' ? firstLine(turn.message.errorMessage) : '';
+      return failed(`pi: ${why || 'run ended with stopReason error'}`);
+    }
     const content: any[] = Array.isArray(turn?.message?.content) ? turn.message.content : [];
     const text = content.filter((c) => c?.type === 'text').map((c) => String(c.text ?? '')).join('');
     return claimFrom(text, sessionId);

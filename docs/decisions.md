@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-067 — 2026-10-19 — 04-f and 08-g READY, stacked on 09-d
+
+Owner, after 09-d was committed and offered the order 04-f, 08-g, 06-d, 07-e, and asked whether to open a PR for the row 9 stack: “Okay lets start tackling 04-f into 08-g now”.
+
+Effect: 04-f and 08-g are READY. No PR is opened, so main still lacks row 9. As with 09-a to 09-c, `feat/04-f-pi-error-reason` is stacked on `feat/09-d-spec-rewrite`, and `feat/08-g-pi-auth-refresh` on 04-f. 08-g's fix waits on the owner's answer to the risk its ticket names (a developer run could overwrite the pi login).
+
 ### A-066 — 2026-10-19 — 09-d READY; 08-g drafted
 
 Owner, after the 09-d draft and a request to file the pi login issue (“seems like we could easily investigate”): “go on 09-d”.
