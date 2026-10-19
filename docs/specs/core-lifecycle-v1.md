@@ -102,7 +102,7 @@ Every `developer_result`, `verdict` and `run_failed` records `contractHash` and 
 
 - A developer result must name a commit that is the branch tip, descends from the base and changes something [developer: a claim whose head is not the branch tip]. A fix must also bring a new SHA and a new tree [developer: a fix claim is refused].
 - The controller runs the repository's declared checks in a sandbox, on a fresh checkout of the candidate with no `.git`, and stores output and exit code against the SHA [verify: passing checks run in a fresh checkout].
-- A reviewer gets the ticket, the diff, the SHAs, the repository instructions and the verification evidence, never the developer's transcript [review: the prompt carries the role].
+- A reviewer gets the ticket, the diff, the SHAs, the repository instructions and the verification evidence, never the developer's transcript [review: the prompt carries the role]. It also gets each commit in `base..head`, oldest first, with full SHA, author and message, because its checkout has no `.git` [review: the COMMITS section lists every commit].
 - A verdict with the wrong SHA is recorded but cannot advance the cycle [lifecycle: SC-17b].
 - Missing evidence is never PASS [verify: no declared checks; review: review throws and appends nothing].
 
