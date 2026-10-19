@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Job } from './developer.ts';
 import { git } from './git.ts';
-import { checkWorkflow, defaultWorkflow, type Workflow } from './lifecycle.ts';
+import { checkWorkflow, defaultWorkflow, fileArgs, type Workflow } from './lifecycle.ts';
 import { runtimes, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
 
@@ -160,7 +160,7 @@ function extractWorkflow(repo: string, sha: string, path: string, runsDir: strin
 /** Each `{ file }` a command names, copied from `sha` beside the extracted workflow. checkWorkflow has refused a path that climbs out. */
 function extractFiles(repo: string, sha: string, workflowPath: string, w: Workflow, runsDir: string): void {
   const files = Object.values(w.stages).flatMap((d) => (d.kind === 'command' ? (d.run ?? []) : []))
-    .flatMap((c) => c.command.flatMap((a) => (typeof a === 'string' ? [] : [a.file])));
+    .flatMap(fileArgs);
   for (const file of new Set(files)) {
     // posix join: a Git path, not a host one; './x' and 'x' name the same blob.
     const path = posix.join(posix.dirname(workflowPath), file);

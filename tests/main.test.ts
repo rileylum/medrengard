@@ -269,6 +269,19 @@ test('main.ts runs the workflow the job file names to its human stage, and accep
   assert.match(accepted.stdout, /^Stage: ACCEPTED$/m);
 });
 
+// Ticket 10-c: the job's workflow folder reaches verify, so a file argument beside flow.ts runs.
+test('main.ts runs a command stage file argument from beside the job file\'s workflow', () => {
+  const { root, bin, env, jobFile, runsDir } = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};
+export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: { ...ownerCheck.stages.CHECK, run: [{ name: 'lint', command: ['sh', { file: 'lint.sh' }] }] } } };\n`, { writer: 'claude', reviewer: 'claude' });
+  writeFileSync(join(root, 'lint.sh'), 'echo linted\n');
+  reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+  const r = sf([jobFile], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: OWNER$/m);
+  const head = /^Head: ([0-9a-f]{40})$/m.exec(r.stdout)![1]!;
+  assert.equal(readFileSync(join(runsDir, 'evidence', head, 'CHECK', 'lint.stdout'), 'utf8'), 'linted\n');
+});
+
 test('main.ts refuses a workflow checkWorkflow refuses, before any run and before the store exists', () => {
   const { root, bin, env, jobFile, db } = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};\nexport const workflow = { ...ownerCheck, start: 'NOWHERE' };\n`, { writer: 'claude', reviewer: 'claude' });
   const marker = spawnMarker(bin, root);

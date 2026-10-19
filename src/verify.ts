@@ -14,7 +14,7 @@ import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
 import { bounded, git, stopped } from './git.ts';
 import type { CommandRequest } from './kits/request.ts';
-import { FILE_STEM, TREE_CHECK, type Command, type Cycle, type Event } from './lifecycle.ts';
+import { FILE_STEM, TREE_CHECK, fileArgs, type Command, type Cycle, type Event } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
 import { checkSandbox, executables, reachable, restoreAccess, wrap, type Policy, type Sandbox } from './sandbox.ts';
@@ -61,6 +61,9 @@ const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
 // in the review stage with review refusing the dirty checkout on every call (06-c adversarial).
 const TREE = TREE_CHECK;
 
+/** A workflow passed as an object, not loaded from a file, has nowhere to find a file argument. */
+export const noWorkflowDir = (stage: string, file: string) => `stage ${stage} names file ${file}, but its workflow has no file of its own to find it beside`;
+
 /** Run every declared check on the cycle's candidate and record one verification event. */
 export async function verify(store: EventStore, cycleId: string, job: Job, opts: VerifyOptions): Promise<Verified> {
   const cycle = store.load(cycleId);
@@ -76,9 +79,9 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     seen.add(c.name);
   }
   // Before anything is written: a missing file is the owner's setup, not a FAIL of the candidate.
-  const files = [...new Set(checks.flatMap((c) => c.command.flatMap((a) => (typeof a === 'string' ? [] : [a.file]))))];
+  const files = [...new Set(checks.flatMap(fileArgs))];
   for (const f of files) {
-    if (opts.workflowDir === undefined) throw new Error(`stage ${cycle.stage} names file ${f}, but its workflow has no file of its own to find it beside`);
+    if (opts.workflowDir === undefined) throw new Error(noWorkflowDir(cycle.stage, f));
     if (!existsSync(join(opts.workflowDir, f))) throw new Error(`stage ${cycle.stage} names file ${f}, which is not in ${opts.workflowDir}`);
   }
   checkDeadline(opts.deadlineMs);
@@ -137,7 +140,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     writeFileSync(join(evidenceDir, `${check.name}.stdout`), r.stdout);
     writeFileSync(join(evidenceDir, `${check.name}.stderr`), r.stderr);
     writeFileSync(join(evidenceDir, `${check.name}.exit`), `${r.exit}\n`);
-    const named = check.command.flatMap((a) => (typeof a === 'string' ? [] : [a.file]));
+    const named = fileArgs(check);
     results.push({ name: check.name, result: r.result, ...(named.length ? { files: Object.fromEntries(named.map((f) => [f, hashes.get(f)!])) } : {}) });
   }
   let dirty = treeDiff(job.repo, worktree, head, opts.deadlineMs);

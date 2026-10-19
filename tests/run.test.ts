@@ -398,3 +398,30 @@ test('the step cap comes from the budgets: five fix loops run past the old cap o
   assert.equal(n, 6);
   store.close();
 });
+
+// Ticket 10-c: run hands verify the workflow's folder, and refuses before a paid run without one.
+test('a workflow whose command names a file runs it from workflowDir, and without one run throws before the developer starts', async () => {
+  const { root, repo, runsDir } = scratch();
+  const workflow = {
+    name: 'with-file',
+    start: 'DEV',
+    stages: {
+      DEV: { kind: 'agent', role: 'developer', produces: 'commit', roleText: 'You are the developer for the ticket below.', transitions: { PASS: 'LINT' } },
+      LINT: { kind: 'command', run: [{ name: 'lint', command: ['sh', { file: 'lint.sh' }] }], transitions: { PASS: 'REVIEW' } },
+      REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', budget: 1, transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
+    },
+  } as Workflow;
+  const store = new EventStore(join(root, 'with-file.sqlite'), workflow);
+  const developer = recording(fake(claude));
+  const roles = { developer, reviewer: scripted('PASS') };
+  await assert.rejects(run(store, roles, job(repo), opts(runsDir)), /LINT names file lint\.sh, but its workflow has no file of its own/);
+  assert.equal(developer.requests.length, 0);
+  const workflowDir = join(root, 'flow');
+  mkdirSync(workflowDir);
+  writeFileSync(join(workflowDir, 'lint.sh'), 'test -f done.txt\n');
+  const r = await run(store, roles, job(repo), opts(runsDir, { workflowDir }));
+  assert.equal(r.cycle.stage, 'ACCEPTED', r.cycle.escalation);
+  const verification = store.events(r.cycle.cycleId).find((e) => e.type === 'verification');
+  assert.deepEqual(verification?.type === 'verification' && verification.checks, [{ name: 'lint', result: 'PASS', files: { 'lint.sh': '2519cce2e2d7067d7dcc0dedd9b84ff22cb16549fa711c659336e20c880795c7' } }]);
+  store.close();
+});

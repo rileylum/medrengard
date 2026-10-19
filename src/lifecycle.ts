@@ -46,6 +46,9 @@ export interface Command {
   command: (string | { file: string })[];
 }
 
+/** The `{ file }` arguments of one command, in order. */
+export const fileArgs = (c: Command): string[] => c.command.flatMap((a) => (typeof a === 'string' ? [] : [a.file]));
+
 /** Plain data, so it can be checked and hashed before anything runs (A-056). */
 export interface Workflow {
   /** Recorded with each cycle it opens, for the owner to read; the hash is what binds. */
