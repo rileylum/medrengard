@@ -66,3 +66,25 @@ test('runtimeKit fails against an extension that prints JSON outside the RunOutc
   assert.match(r.stdout, /# fail [1-9]/);
   assert.match(r.stdout, /RunOutcome/);
 });
+
+// Ticket 10-c: the command-stage kit.
+test('commandKit passes against the fixture check, with every case run', () => {
+  const r = kit('command-good.kit.ts');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /# pass 5$/m);
+  assert.match(r.stdout, /# fail 0$/m);
+});
+
+for (const [file, kase] of [
+  ['command-lenient.kit.ts', 'lenient: the failing change gives FAIL'],
+  ['command-strict.kit.ts', 'strict: the passing change gives PASS'],
+  ['command-forge.kit.ts', 'forge: the command writes nothing outside outputDir and the checkout'],
+  ['command-net.kit.ts', 'net: with network unset, a connection from the stage fails'],
+]) {
+  test(`commandKit fails ${file.slice(8, -7)}: ${kase.slice(kase.indexOf(':') + 2)}`, () => {
+    const r = kit(file);
+    assert.notEqual(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, new RegExp(`^not ok \\d+ - ${kase}$`, 'm'), r.stdout);
+    assert.match(r.stdout, /# fail 1$/m, r.stdout);
+  });
+}
