@@ -59,6 +59,9 @@ test('a job-file runtime may not reuse a built-in name, and one whose module is 
   assert.throws(() => runtimes({ ext: {} as { module: string } }, dir), /runtimes\.ext\.module/);
   // The store refuses an empty runtime on an outcome event, so the run's outcome could not be recorded.
   assert.throws(() => runtimes({ '': { module: EXT } }, dir), /runtime name "" is empty/);
+  // JSON.parse makes `__proto__` an own key; assigning it to the registry would swap the prototype.
+  // A missing module: the name is refused before the module is read.
+  assert.throws(() => runtimes(JSON.parse('{"__proto__":{"module":"no-such-module.ts"}}'), dir), /runtimes\.__proto__ /);
 });
 
 test('an unknown sandbox backend is refused by check, wrap and reachable, and the reason lists the backends', () => {

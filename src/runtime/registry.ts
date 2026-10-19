@@ -24,6 +24,8 @@ export function runtimes(extra: Record<string, { module: string }> | undefined, 
     if (name === '') throw new Error('runtime name "" is empty; name it in runtimes');
     // A built-in name meaning someone's module would hide which runtime ran.
     if (Object.hasOwn(BUILT_IN, name)) throw new Error(`runtimes.${name} reuses a built-in runtime name; pick another`);
+    // `all[name] =` would set the registry's prototype, not add an entry (10-a adversarial).
+    if (name === '__proto__') throw new Error('runtimes.__proto__ is not a usable runtime name; pick another');
     if (typeof entry?.module !== 'string') throw new Error(`runtimes.${name}.module must be a path to a TypeScript file`);
     const spec = extensionSpec(name, resolve(relativeTo, entry.module));
     all[name] = { adapter: ({ sandbox, writes }) => cliAdapter(spec, { sandbox, writes }) };
