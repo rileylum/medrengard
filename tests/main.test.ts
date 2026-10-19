@@ -14,6 +14,8 @@ import { reviewerStub } from './stub-cli.ts';
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-main-');
 test.after(() => rmSync(dir, { recursive: true, force: true }));
+// Every child inherits it: the owner's personal config (10-b) must never reach a test.
+process.env.XDG_CONFIG_HOME = join(dir, 'xdg');
 
 const MAIN = join(import.meta.dirname, '..', 'src', 'main.ts');
 const H = 'a'.repeat(40);
