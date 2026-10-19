@@ -268,16 +268,17 @@ test('workflowDir is the job workflow file\'s folder, and undefined for the defa
 });
 
 test('a repository workflow\'s file argument is read at the base SHA, not the working tree or a later commit', async () => {
-  const { root, repo, jobFile, env } = scratch({ base: 'main' });
-  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', base: 'main', runsDir: join(root, 'runs'), runtime: { developer: 'claude' } });
+  const { root, repo, jobFile, env } = scratch();
   mkdirSync(join(repo, 'ci', 'bin'), { recursive: true });
   writeFileSync(join(repo, 'ci', 'flow.ts'), fileFlow('bin/lint.sh'));
   writeFileSync(join(repo, 'ci', 'bin', 'lint.sh'), 'echo base\n');
   const base = commitRepoLayer(repo, { workflow: 'ci/flow.ts' });
-  writeFileSync(join(repo, 'ci', 'bin', 'lint.sh'), 'echo working-tree\n');
-  // Committed after loadConfig has resolved the base: the moved ref must not be read.
-  const c = await loadConfig(jobFile, env);
+  // A later commit, made before loadConfig: HEAD and the base now differ.
+  writeFileSync(join(repo, 'ci', 'bin', 'lint.sh'), 'echo later\n');
   git(repo, 'commit', '-q', '-am', 'later');
+  writeFileSync(join(repo, 'ci', 'bin', 'lint.sh'), 'echo working-tree\n');
+  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', base, runsDir: join(root, 'runs'), runtime: { developer: 'claude' } });
+  const c = await loadConfig(jobFile, env);
   assert.equal(c.workflowDir, join(root, 'runs', 'repo-config', base, 'ci'));
   assert.equal(readFileSync(join(c.workflowDir!, 'bin', 'lint.sh'), 'utf8'), 'echo base\n');
 });
