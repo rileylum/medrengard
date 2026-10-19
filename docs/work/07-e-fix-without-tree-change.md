@@ -24,3 +24,4 @@ Evidence (2026-10-19, owner-run `RUNTIME_SPIKE=1 npm test`, live `main.ts` job):
 
 ## Log
 - 2026-10-19 — drafted after the 09-c live run (A-064). Not READY until the owner says go.
+- 2026-10-19 — started on the owner's word (A-071), on `feat/07-e-fix-without-tree-change` off main at `2b3a6bc`. Design note `docs/design/2026-10-19-fix-without-tree-change.md` drafted: alternative 1 without the "message differs" test, plus a `dispute` event. Waiting for owner approval; no code.
