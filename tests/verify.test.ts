@@ -96,7 +96,7 @@ test('passing checks run in a fresh checkout of the head with no .git and move t
   assert.equal(git(repo, 'status', '--porcelain'), '');
   // Evidence keyed by SHA.
   assert.equal(r.evidenceDir, join(runsDir, 'evidence', head, 'VERIFYING'));
-  assert.deepEqual(readdirSync(r.evidenceDir).sort(), ['file.exit', 'file.stderr', 'file.stdout', 'nogit.exit', 'nogit.stderr', 'nogit.stdout', 'out.exit', 'out.stderr', 'out.stdout']);
+  assert.deepEqual(readdirSync(r.evidenceDir).sort(), ['diff.patch', 'file.exit', 'file.stderr', 'file.stdout', 'nogit.exit', 'nogit.stderr', 'nogit.stdout', 'out.exit', 'out.stderr', 'out.stdout', 'output', 'request.json']);
   assert.deepEqual(evidence(r.evidenceDir, 'out'), { stdout: 'checked\n', stderr: 'warn\n', exit: 'exit 0\n' });
   store.close();
 });
@@ -162,7 +162,7 @@ test('no declared checks: the event is appended with no checks and the cycle esc
   assert.equal(r.cycle.stage, 'ESCALATED');
   assert.deepEqual(results(r.cycle).checks, []);
   assert.ok(existsSync(r.worktree));
-  assert.deepEqual(readdirSync(r.evidenceDir), []);
+  assert.deepEqual(readdirSync(r.evidenceDir).sort(), ['diff.patch', 'output', 'request.json']);
   store.close();
 });
 
@@ -180,7 +180,7 @@ test('a stale -verify worktree from before 08-a and stale evidence for the head 
   assert.ok(existsSync(join(stale, 'done.txt')));
   assert.ok(!existsSync(join(stale, 'leftover.txt')));
   assert.doesNotMatch(git(repo, 'worktree', 'list', '--porcelain'), new RegExp(`${cycle.cycleId}-verify`), 'the old registration is pruned');
-  assert.deepEqual(readdirSync(r.evidenceDir).sort(), ['file.exit', 'file.stderr', 'file.stdout']);
+  assert.deepEqual(readdirSync(r.evidenceDir).sort(), ['diff.patch', 'file.exit', 'file.stderr', 'file.stdout', 'output', 'request.json']);
   // Deleted by hand but still registered with git: the next verification must still get a checkout.
   rmSync(stale, { recursive: true });
   const again = await verifying([sh('file', 'test -f done.txt')]);

@@ -98,3 +98,23 @@ test('the reviewer prompt lists every command stage verified on the head, as <st
   assert.match(prompt, /EVIDENCE BUILD\/same\.stdout ====\nfrom-build$/m);
   store.close();
 });
+
+// Reads the request the way a user's command would, from inside the sandbox.
+const NODE_READ = `const fs = require('node:fs'); const r = JSON.parse(fs.readFileSync(process.env.SF_REQUEST, 'utf8'));`;
+const node = (name: string, script: string): Check => ({ name, command: [process.execPath, '-e', `${NODE_READ} ${script}`] });
+
+for (const backend of ['bwrap', 'none']) {
+  test(`under ${backend}, SF_REQUEST names request.json with every field, and diffFile holds the base-to-head diff`, async () => {
+    const { repo, store, runsDir, job, cycleId, head, base } = await atCommand(twoStages({ run: [node('request', 'process.stdout.write(JSON.stringify(r))'), node('diff', 'process.stdout.write(fs.readFileSync(r.diffFile))')] }));
+    const r = await verify(store, cycleId, job, opts(runsDir, { sandbox: { backend, read: [NODE_PREFIX] } }));
+    assert.equal(r.cycle.stage, 'BUILD', r.cycle.escalation);
+    const stageDir = join(runsDir, 'evidence', head, 'LINT');
+    const request = { cycleId, workId: 'w1', stage: 'LINT', head, base, ticket: 'Create done.txt and commit it.', diffFile: join(stageDir, 'diff.patch'), outputDir: join(stageDir, 'output') };
+    assert.deepEqual(JSON.parse(readFileSync(join(r.evidenceDir, 'request.stdout'), 'utf8')), request);
+    assert.deepEqual(JSON.parse(readFileSync(join(stageDir, 'request.json'), 'utf8')), request);
+    const diff = readFileSync(join(r.evidenceDir, 'diff.stdout'), 'utf8');
+    assert.match(diff, /^\+\+\+ b\/done\.txt$/m);
+    assert.equal(diff, `${git(repo, 'diff', '--text', base, head)}\n`);
+    store.close();
+  });
+}

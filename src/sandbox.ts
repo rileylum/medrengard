@@ -30,6 +30,8 @@ export interface Policy {
   home?: string;
   /** Host directory bound at /tmp. Default a tmpfs, which is RAM on this machine until the command exits. */
   tmp?: string;
+  /** Set inside after --clearenv. The caller also adds it to the spawn environment, which is what `none` runs in. */
+  env?: Record<string, string>;
 }
 
 // The system directories every command needs: binaries, libraries, the dynamic loader and /etc.
@@ -78,6 +80,7 @@ function wrapBwrap(sandbox: Sandbox, policy: Policy, command: string, args: stri
     '--new-session',
     // The controller's environment may hold tokens; the command gets a path, a home and a locale.
     '--clearenv', '--setenv', 'PATH', process.env.PATH ?? '/usr/bin', '--setenv', 'HOME', policy.home ?? '/tmp', ...(lang ? ['--setenv', 'LANG', lang] : []),
+    ...Object.entries(policy.env ?? {}).flatMap(([k, v]) => ['--setenv', k, v]),
     '--proc', '/proc', '--dev', '/dev', ...(policy.tmp ? ['--bind', policy.tmp, '/tmp'] : ['--tmpfs', '/tmp']),
     ...SYSTEM.flatMap(systemBind),
     // /etc/resolv.conf is a symlink into /run/systemd/resolve under systemd-resolved: no DNS without it.

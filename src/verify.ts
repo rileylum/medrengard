@@ -13,6 +13,7 @@ import { join, resolve } from 'node:path';
 import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
 import { bounded, git, stopped } from './git.ts';
+import type { CommandRequest } from './kits/request.ts';
 import type { Cycle, Event } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
@@ -79,7 +80,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   if (isolation === 'cgroup') checkScopes();
   const sandbox = opts.sandbox ?? { backend: 'bwrap' };
   checkSandbox(sandbox);
-  const head = cycle.candidate.head;
+  const { head, base } = cycle.candidate;
 
   const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
   const worktree = join(runsDir, `${cycleId}-verify`);
@@ -101,13 +102,23 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // Evidence for this SHA is this run's alone: a reader listing the directory must not find a
   // file from an earlier verification with a different check list (standard review 1 minor).
   rmSync(evidenceDir, { recursive: true, force: true });
-  mkdirSync(evidenceDir, { recursive: true });
+  const outputDir = join(evidenceDir, 'output');
+  mkdirSync(outputDir, { recursive: true });
+  // The checkout has no .git, so a command cannot work the diff out itself. Uncut: review cuts what it quotes, a command reads it whole.
+  const diffFile = join(evidenceDir, 'diff.patch');
+  git(job.repo, 'diff', '--text', `--output=${diffFile}`, base, head);
+  const request: CommandRequest = { cycleId, workId: cycle.workId, stage: cycle.stage, head, base, ticket: job.ticket, diffFile, outputDir };
+  const requestFile = join(evidenceDir, 'request.json');
+  writeFileSync(requestFile, `${JSON.stringify(request, null, 2)}\n`);
+  // The stage directory is read-only inside, so a command cannot rewrite the evidence the reviewer
+  // reads; output/ is bound writable over it. Another stage's directory is not bound at all.
+  const policy: Policy = { cwd: worktree, write: [worktree, outputDir], read: [evidenceDir], network: def.network ?? false, env: { SF_REQUEST: requestFile } };
 
   const results: CheckResult[] = [];
   // In order, all of them: the evidence is for the owner and the reviewers, who want the whole
   // picture, not the first failure.
   for (const check of checks) {
-    const r = await runCheck(check, worktree, isolation, sandbox, opts);
+    const r = await runCheck(check, policy, isolation, sandbox, opts);
     writeFileSync(join(evidenceDir, `${check.name}.stdout`), r.stdout);
     writeFileSync(join(evidenceDir, `${check.name}.stderr`), r.stderr);
     writeFileSync(join(evidenceDir, `${check.name}.exit`), `${r.exit}\n`);
@@ -228,14 +239,13 @@ interface Outcome { result: CheckResult['result']; exit: string; stdout: string;
 
 // `failed` is spawnRuntime's "never started": no binary, no cwd. That is the spec's MISSING,
 // evidence that does not exist, as against FAIL, evidence that says no.
-async function runCheck(check: Check, cwd: string, isolation: 'cgroup' | 'process-group', sandbox: Sandbox, opts: VerifyOptions): Promise<Outcome> {
+async function runCheck(check: Check, policy: Policy, isolation: 'cgroup' | 'process-group', sandbox: Sandbox, opts: VerifyOptions): Promise<Outcome> {
+  const { cwd } = policy;
   const [command = '', ...args] = check.command;
   // Resolved here, not by the spawn: under a scope systemd-run does the lookup and exits 1 on a
   // missing binary, which would read as FAIL. MISSING must mean the same under both isolations.
   const found = executables(command, cwd);
   if (!found.length) return { stdout: '', stderr: '', result: 'MISSING', exit: `missing: ${command || '(empty command)'} not found` };
-  // Writes the checkout only; reads the system directories and the owner's list; no network.
-  const policy: Policy = { cwd, write: [cwd], read: [], network: false };
   // Inside, PATH lookup skips directories that are not bound, so any reachable match will run.
   if (!found.some((p) => reachable(sandbox, policy, p))) {
     return { stdout: '', stderr: '', result: 'MISSING', exit: `missing: ${command} resolves to ${found[0]}, outside the sandbox; add its directory to sandbox.read` };
@@ -243,6 +253,8 @@ async function runCheck(check: Check, cwd: string, isolation: 'cgroup' | 'proces
   const [wrapped, wrappedArgs] = wrap(sandbox, policy, command, args);
   const run = spawnRuntime({
     command: wrapped, args: wrappedArgs, prompt: '', cwd,
+    // bwrap clears this and sets policy.env again inside; `none` runs in it as is.
+    env: { ...process.env, ...policy.env },
     graceMs: opts.graceMs,
     maxOutputBytes: opts.maxOutputBytes,
     scope: isolation === 'cgroup' ? `sf-verify-${randomUUID()}` : undefined,
