@@ -3,8 +3,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Event } from '../src/lifecycle.ts';
 import { EventStore } from '../src/store.ts';
@@ -292,4 +293,28 @@ test('main.ts refuses a job with no runtime for one of the workflow\'s roles, be
   assert.equal(r.status, 2, r.stdout + r.stderr);
   assert.match(r.stderr, /runtime\.reviewer/);
   assert.ok(!existsSync(marker));
+});
+
+// Ticket 10-a: a runtime the job file adds, as a module relative to the job file.
+test('a job naming an extension runtime runs from open to AWAITING_ACCEPTANCE, and every outcome event records it and its module hash', () => {
+  const { root, jobFile, db } = scratch();
+  const ext = join(import.meta.dirname, 'fixtures', 'ext-runtime.ts');
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...job, runtimes: { ext: { module: relative(root, ext) } }, runtime: { developer: 'ext', standard: 'ext', adversarial: 'ext' } }));
+  const r = sf([jobFile]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+  const cycleId = /^Cycle: (\S+)$/m.exec(r.stdout)![1]!;
+  const store = new EventStore(db);
+  try {
+    const hash = createHash('sha256').update(readFileSync(ext)).digest('hex');
+    const outcomes = store.events(cycleId).filter((e) => ['developer_result', 'verdict', 'dispute', 'run_failed'].includes(e.type)) as Record<string, unknown>[];
+    assert.deepEqual(outcomes.map((e) => [e.type, e.runtime, e.moduleHash]), [
+      ['developer_result', 'ext', hash],
+      ['verdict', 'ext', hash],
+      ['verdict', 'ext', hash],
+    ]);
+  } finally {
+    store.close();
+  }
 });

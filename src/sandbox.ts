@@ -1,14 +1,15 @@
 // Ticket 08-a: the sandbox seam (A-035). A stage builds a Policy for what it spawns; `wrap` turns
 // the command into the argv that runs it inside the owner's chosen backend. spawnRuntime is not
-// involved: the wrapped argv goes into the systemd scope like any other command. Docker, a VM or
-// a cloud runner would be further cases of `wrap` and `checkSandbox`.
+// involved: the wrapped argv goes into the systemd scope like any other command. Ticket 10-a: each
+// backend is an entry in BACKENDS; Docker, a VM or a cloud runner would be further entries.
 import { spawnSync } from 'node:child_process';
 import { accessSync, chmodSync, constants, existsSync, lstatSync, readdirSync, readlinkSync, realpathSync } from 'node:fs';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 
 /** Owner-supplied with the job. `none` runs candidate code as the owner, unconfined: scratch repositories only (A-029). */
 export interface Sandbox {
-  backend: 'bwrap' | 'none';
+  /** A key of BACKENDS: `bwrap` or `none`. */
+  backend: string;
   /** Absolute paths bound read-only for everything this job spawns, e.g. a toolchain outside /usr. */
   read?: string[];
 }
@@ -35,12 +36,38 @@ export interface Policy {
 // Not $HOME, /var, /run or /srv: those hold the owner's files and sockets. On merged-/usr distros
 // /bin, /sbin, /lib and /lib64 are symlinks and are recreated as symlinks.
 const SYSTEM = ['/usr', '/etc', '/opt', '/bin', '/sbin', '/lib', '/lib64'];
-const BACKENDS = ['bwrap', 'none'];
 const RESOLVE = '/run/systemd/resolve';
 
+interface Backend {
+  /** False for a backend that runs the command as the owner, unconfined. */
+  confines: boolean;
+  check(sandbox: Sandbox): void;
+  wrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]];
+  reachable(sandbox: Sandbox, policy: Policy, path: string): boolean;
+}
+
+// Built in only: a user-added backend would decide what confines candidate code (A-074).
+const BACKENDS: Record<string, Backend> = {
+  bwrap: { confines: true, check: checkBwrap, wrap: wrapBwrap, reachable: reachableBwrap },
+  none: { confines: false, check: () => {}, wrap: (_s, _p, command, args) => [command, args], reachable: () => true },
+};
+
+function backend(sandbox: Sandbox): Backend {
+  const name = sandbox?.backend;
+  if (typeof name === 'string' && Object.hasOwn(BACKENDS, name)) return BACKENDS[name]!;
+  throw new Error(`sandbox backend ${JSON.stringify(name)} is not one of ${Object.keys(BACKENDS).join(', ')}`);
+}
+
+/** Whether the backend confines what it runs. Throws for an unknown backend. */
+export function confines(sandbox: Sandbox): boolean {
+  return backend(sandbox).confines;
+}
+
 export function wrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]] {
-  if (sandbox.backend === 'none') return [command, args];
-  if (sandbox.backend !== 'bwrap') throw new Error(`sandbox backend ${JSON.stringify(sandbox.backend)} is not bwrap or none`);
+  return backend(sandbox).wrap(sandbox, policy, command, args);
+}
+
+function wrapBwrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]] {
   const lang = process.env.LANG;
   return ['bwrap', [
     // --die-with-parent: the scope's cgroup.kill already ends everything, but in process-group
@@ -88,7 +115,10 @@ function systemBind(path: string): string[] {
  * FAIL from bwrap's "execvp: No such file", and the owner learns which directory to declare.
  */
 export function reachable(sandbox: Sandbox, policy: Policy, path: string): boolean {
-  if (sandbox.backend === 'none') return true;
+  return backend(sandbox).reachable(sandbox, policy, path);
+}
+
+function reachableBwrap(sandbox: Sandbox, policy: Policy, path: string): boolean {
   const roots = [...SYSTEM, ...(sandbox.read ?? []), ...policy.read, ...policy.write].flatMap((r) => {
     try { return [r, realpathSync(r)]; } catch { return [r]; }
   });
@@ -104,8 +134,10 @@ export function reachable(sandbox: Sandbox, policy: Policy, path: string): boole
  * fail every check with bwrap's own error as if the candidate had failed it.
  */
 export function checkSandbox(sandbox: Sandbox): void {
-  if (!BACKENDS.includes(sandbox?.backend)) throw new Error(`sandbox backend ${JSON.stringify(sandbox?.backend)} is not bwrap or none`);
-  if (sandbox.backend === 'none') return;
+  backend(sandbox).check(sandbox);
+}
+
+function checkBwrap(sandbox: Sandbox): void {
   for (const p of sandbox.read ?? []) {
     if (typeof p !== 'string' || !isAbsolute(p)) throw new Error(`sandbox read path ${JSON.stringify(p)} is not absolute`);
     if (!existsSync(p)) throw new Error(`sandbox read path ${p} does not exist`);

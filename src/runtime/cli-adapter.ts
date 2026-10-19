@@ -1,18 +1,26 @@
 // Ticket 04-d: the claude and pi adapters. One module builds an Adapter from a CliSpec; the spec
 // is the command, its flags and a parser, and everything else (spawn, scope, byte cap, abort,
 // outcome mapping) is shared. Shapes and exit codes are from docs/work/03-a-findings.md.
+// Ticket 10-a: an extension runtime is one more CliSpec, `node <module>` speaking JSON.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { Adapter, RunOutcome } from '../adapter.ts';
-import { checkSandbox, executables, wrap, type Sandbox } from '../sandbox.ts';
+import type { Adapter, RunOutcome, RunRequest } from '../adapter.ts';
+import { checkSandbox, confines, executables, wrap, type Sandbox } from '../sandbox.ts';
 import { scopePath, spawnRuntime, type RunResult } from './spawn.ts';
 
 export interface CliSpec {
-  name: 'claude' | 'pi';
+  name: string;
   command: string;
   args: string[];
+  /** What goes to stdin. Default the prompt alone. */
+  input?(req: RunRequest): string;
+  /** Absolute paths bound read-only inside a sandbox, beside `config`. */
+  bind?: string[];
+  /** Copied onto the adapter, so every outcome event records it. */
+  moduleHash?: string;
   /** Turn a finished child into an outcome. Called only for status `exited`. A throw is a failed run, via the controller. */
   parse(stdout: string, stderr: string, exitCode: number | null): RunOutcome;
   /**
@@ -47,10 +55,11 @@ export interface CliAdapterOptions {
 export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter {
   const isolation = opts.isolation ?? 'cgroup';
   if (isolation === 'cgroup') checkScopes();
-  const sandbox = opts.sandbox?.backend === 'none' ? undefined : opts.sandbox;
+  const sandbox = opts.sandbox && confines(opts.sandbox) ? opts.sandbox : undefined;
   if (sandbox) checkSandbox(sandbox);
   return {
     name: spec.name,
+    ...(spec.moduleHash === undefined ? {} : { moduleHash: spec.moduleHash }),
     async start(req, signal) {
       // systemd mangles characters outside this set (a space becomes \x20), so the scope would be
       // created under a different name than scopePath() computes and cgroup.kill would go nowhere.
@@ -73,7 +82,7 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
         // A reviewer's cwd is the verify checkout: what it reads must stay the commit (08-d).
         const writes = opts.writes ?? req.role === 'developer';
         [command, args] = wrap(sandbox, {
-          cwd: req.cwd, write: writes ? [req.cwd] : [], read: [dirname(bin), ...(writes ? [] : [req.cwd]), ...inHome(spec.config.read)],
+          cwd: req.cwd, write: writes ? [req.cwd] : [], read: [dirname(bin), ...(spec.bind ?? []), ...(writes ? [] : [req.cwd]), ...inHome(spec.config.read)],
           overlay: inHome(spec.config.overlay), writeOver: inHome(spec.config.write ?? []), network: true, home, tmp,
         }, bin, spec.args);
       }
@@ -81,7 +90,7 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
         const run = spawnRuntime({
           command,
           args,
-          prompt: req.prompt,
+          prompt: spec.input ? spec.input(req) : req.prompt,
           cwd: req.cwd,
           graceMs: opts.graceMs,
           maxOutputBytes: opts.maxOutputBytes,
@@ -230,6 +239,34 @@ export const pi: CliSpec = {
     return claimFrom(text, sessionId);
   },
 };
+
+/**
+ * A runtime the owner adds as one TypeScript file (A-074, Q7): the whole RunRequest as JSON on
+ * stdin, one RunOutcome as JSON on stdout, under the controller's own node. The controller's
+ * normalise turns any other shape into a failed run. Only the module's directory is bound, so a
+ * module that imports from above it fails inside bwrap: it must be bundled into one file. Reads
+ * the module now, so a missing file is refused before any run.
+ */
+export function extensionSpec(name: string, module: string): CliSpec {
+  const moduleHash = createHash('sha256').update(readFileSync(module)).digest('hex');
+  return {
+    name,
+    command: process.execPath,
+    args: [module],
+    input: (req) => JSON.stringify(req),
+    bind: [dirname(module)],
+    moduleHash,
+    config: { read: [], overlay: [] },
+    parse(stdout, stderr, exitCode) {
+      if (exitCode !== 0) return failed(`${name} exited ${exitCode}: ${firstLine(stderr) || firstLine(stdout) || 'no output'}`);
+      try {
+        return JSON.parse(stdout) as RunOutcome;
+      } catch (err) {
+        return failed(`${name} stdout is not JSON: ${String(err)}`);
+      }
+    },
+  };
+}
 
 /**
  * Developer runs need tools on (05-a). Claude's allow list is scoped to the worktree: Edit and

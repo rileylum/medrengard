@@ -4,15 +4,15 @@
 // Ticket 07-d: `accept <job.json> <sha>` and `cancel <job.json>` record the owner's decision on
 // the job's cycle, so the work ID can run again. Both refuse, writing nothing, rather than send
 // an event apply would escalate on. Ticket 09-b: the job file may name a workflow module; every
-// command runs the job under it, and `runtime` names a CLI per role.
+// command runs the job under it, and `runtime` names a CLI per role. Ticket 10-a: `runtime` names
+// any registered runtime, and `runtimes` adds extension modules to the registry.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { Adapter } from './adapter.ts';
-import { oneLine, type DeveloperAdapter, type Job } from './developer.ts';
+import { oneLine, type Job } from './developer.ts';
 import { checkWorkflow, defaultWorkflow, type Workflow } from './lifecycle.ts';
 import { ROLE_ALIASES, run, type Adapters } from './run.ts';
-import { claudeDeveloper, claudeReviewer, cliAdapter, piDeveloper, piReviewer } from './runtime/cli-adapter.ts';
+import { runtimeFor, runtimes, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
 import { EventStore, SETTLED } from './store.ts';
 
@@ -20,8 +20,10 @@ interface JobFile extends Omit<Job, 'ticket'> {
   ticket?: string;
   /** Read instead of `ticket`, relative to the job file. */
   ticketFile?: string;
-  /** A CLI per role; `standard` and `adversarial` name the default reviewers (ROLE_ALIASES). */
-  runtime: Record<string, 'claude' | 'pi'>;
+  /** A runtime name per role; `standard` and `adversarial` name the default reviewers (ROLE_ALIASES). */
+  runtime: Record<string, string>;
+  /** Extension runtimes by name, each a TypeScript module relative to the job file. */
+  runtimes?: Record<string, { module: string }>;
   /** A TypeScript module with a named export `workflow`, relative to the job file. Default defaultWorkflow. */
   workflow?: string;
   runsDir?: string;
@@ -32,17 +34,6 @@ interface JobFile extends Omit<Job, 'ticket'> {
 }
 
 const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
-
-function developer(name: string | undefined, role: string, sandbox: Sandbox): DeveloperAdapter {
-  if (name === 'claude') return (worktree) => cliAdapter(claudeDeveloper(worktree), { sandbox, writes: true });
-  if (name === 'pi') return cliAdapter(piDeveloper, { sandbox, writes: true });
-  throw new Error(`runtime.${role} must be claude or pi, got ${JSON.stringify(name)}`);
-}
-function reviewer(name: string | undefined, role: string, sandbox: Sandbox): Adapter {
-  if (name === 'claude') return cliAdapter(claudeReviewer, { sandbox, writes: false });
-  if (name === 'pi') return cliAdapter(piReviewer, { sandbox, writes: false });
-  throw new Error(`runtime.${role} must be claude or pi, got ${JSON.stringify(name)}`);
-}
 
 const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> | cancel <job.json>';
 
@@ -64,13 +55,13 @@ async function loadWorkflow(jobPath: string, spec: JobFile): Promise<Workflow> {
 }
 
 /** One adapter per agent role, from `runtime[role]` or the alias that names the role. */
-function adaptersFor(w: Workflow, runtime: JobFile['runtime'], sandbox: Sandbox): Adapters {
+function adaptersFor(w: Workflow, registry: Record<string, RuntimeEntry>, runtime: JobFile['runtime'], sandbox: Sandbox): Adapters {
   const adapters: Adapters = {};
   for (const def of Object.values(w.stages)) {
     if (def.kind !== 'agent') continue;
     const key = Object.hasOwn(runtime ?? {}, def.role) ? def.role : (Object.entries(ROLE_ALIASES).find(([, r]) => r === def.role)?.[0] ?? def.role);
     const name = runtime?.[key];
-    adapters[def.role] = def.produces === 'commit' ? developer(name, key, sandbox) : reviewer(name, key, sandbox);
+    adapters[def.role] = runtimeFor(registry, name, key).adapter({ sandbox, writes: def.produces === 'commit' });
   }
   return adapters;
 }
@@ -149,7 +140,7 @@ async function main(argv: string[]): Promise<number> {
   const sandbox: Sandbox = spec.sandbox
     ? { ...spec.sandbox, read: spec.sandbox.read?.map((p) => (typeof p === 'string' ? resolve(path, '..', p) : p)) }
     : { backend: 'bwrap' };
-  const adapters = adaptersFor(workflow, spec.runtime, sandbox);
+  const adapters = adaptersFor(workflow, runtimes(spec.runtimes, resolve(path, '..')), spec.runtime, sandbox);
   // develop makes runsDir, but the store opens first.
   mkdirSync(runsDir, { recursive: true });
   const store = new EventStore(join(runsDir, 'events.sqlite'), workflow);
