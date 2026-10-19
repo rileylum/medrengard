@@ -113,8 +113,9 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   const outputDir = join(evidenceDir, 'output');
   mkdirSync(outputDir, { recursive: true });
   // The checkout has no .git, so a command cannot work the diff out itself. Uncut: review cuts what it quotes, a command reads it whole.
+  // The flags: the owner's diff.external, textconv or color.diff would otherwise replace the patch.
   const diffFile = join(evidenceDir, 'diff.patch');
-  git(job.repo, 'diff', '--text', `--output=${diffFile}`, base, head);
+  git(job.repo, 'diff', '--text', '--no-ext-diff', '--no-textconv', '--no-color', `--output=${diffFile}`, base, head);
   const request: CommandRequest = { cycleId, workId: cycle.workId, stage: cycle.stage, head, base, ticket: job.ticket, diffFile, outputDir };
   const requestFile = join(evidenceDir, 'request.json');
   writeFileSync(requestFile, `${JSON.stringify(request, null, 2)}\n`);

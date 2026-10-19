@@ -241,3 +241,20 @@ test('evidence a command locked in output/ on an earlier run of the stage is cle
   assert.ok(!existsSync(locked));
   store.close();
 });
+
+test('diffFile is the plain patch whatever the repository\'s diff settings: no external diff, textconv or colour', async () => {
+  const { repo, store, runsDir, job, cycleId, head } = await atCommand(twoStages({ run: [sh('lint', 'true')] }));
+  const external = join(dir, `external${n}.sh`);
+  writeFileSync(external, '#!/bin/sh\necho EXTERNAL\n');
+  chmodSync(external, 0o755);
+  git(repo, 'config', 'diff.external', external);
+  git(repo, 'config', 'color.diff', 'always');
+  writeFileSync(join(repo, '.git', 'info', 'attributes'), '*.txt diff=shout\n');
+  git(repo, 'config', 'diff.shout.textconv', 'tr a-z A-Z <');
+  await verify(store, cycleId, job, opts(runsDir));
+  const patch = readFileSync(join(runsDir, 'evidence', head, 'LINT', 'diff.patch'), 'utf8');
+  assert.match(patch, /^\+\+\+ b\/done\.txt$/m);
+  assert.doesNotMatch(patch, /EXTERNAL|\x1b/);
+  assert.equal(patch.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).join('\n'), readFileSync(join(runsDir, `${cycleId}-verify`, 'done.txt'), 'utf8').trimEnd().split('\n').map((l) => `+${l}`).join('\n'));
+  store.close();
+});
