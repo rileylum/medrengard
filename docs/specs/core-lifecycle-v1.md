@@ -41,6 +41,7 @@ Each stage has a `PASS` transition and may have a `FAIL` one. A stage with a `bu
 | Run | run ID, role (any string the workflow names), runtime, input candidate |
 | Result | run ID, head SHA, artifacts, `contractHash`, `roleTextHash` |
 | Verdict | run ID, reviewed SHA, `PASS` / `FAIL`, findings, `contractHash`, `roleTextHash` |
+| Dispute | run ID, the previous candidate's SHA, reason, `contractHash`, `roleTextHash` |
 | Decision | `accept` with the exact SHA, `request_changes`, `cancel`; a child cycle names its parent |
 
 One work item has at most one open cycle, and a new cycle for the same work must name an `ESCALATED` parent [store: open enforces one open cycle]. **Proposal:** a contract version on Work, and the model on Run.
@@ -75,6 +76,7 @@ These hold under every workflow [lifecycle: evidence for a non-candidate SHA esc
 | any non-terminal | event the stage's kind does not take | ESCALATED. **Proposal** for a test: only a late claim is tested [store: store dedup matches apply] |
 | any non-terminal | entering a budgeted stage whose budget is spent | ESCALATED [lifecycle: entering a budgeted stage] |
 | any non-terminal | run failed (timeout, crash, no claim) | ESCALATED, no budget spent [lifecycle: run_failed escalates] |
+| commit stage, fix run | developer disputes the findings | ESCALATED with the reason, no budget spent [lifecycle: dispute: a fix run escalates] |
 | any non-terminal | event the engine cannot classify | ESCALATED [lifecycle: an event of unknown type] |
 | ESCALATED | owner authorises a new cycle | child cycle with empty counters; this cycle stays ESCALATED [lifecycle: SC-05] |
 | ACCEPTED, CANCELLED | anything | ignored [lifecycle: SC-19] |
@@ -96,11 +98,12 @@ One driver, `run` in `src/run.ts`, runs any workflow that passes the check. It o
 
 An agent prompt is the stage's one line of role text, then the contract part, which the core builds in `src/prompt.ts`: the ticket, the SHAs, the claim or verdict format, the rules and the delimiters. Role text cannot forge a contract line [prompts: role text holding a fake delimiter]. `tests/fixtures/prompts/` holds the default prompts byte for byte, so a wording change must change those files on purpose [prompts: the default developer, fix].
 
-Every `developer_result`, `verdict` and `run_failed` records `contractHash` and `roleTextHash` [prompts: every outcome event records; a run that fails]. The contract hash covers the wording for that kind of run (developer, fix or review), built from placeholders. It is never a hash of the text that was sent: each review prompt carries a fresh nonce.
+Every `developer_result`, `verdict`, `dispute` and `run_failed` records `contractHash` and `roleTextHash` [prompts: every outcome event records; a run that fails; developer: a fix that disputes the findings]. The contract hash covers the wording for that kind of run (developer, fix or review), built from placeholders. It is never a hash of the text that was sent: each review prompt carries a fresh nonce.
 
 ## Evidence rules
 
-- A developer result must name a commit that is the branch tip, descends from the base and changes something [developer: a claim whose head is not the branch tip]. A fix must also bring a new SHA and a new tree [developer: a fix claim is refused].
+- A developer result must name a commit that is the branch tip, descends from the base and changes something [developer: a claim whose head is not the branch tip]. A fix must also bring a new SHA [developer: a fix claim is refused]. It may keep the previous tree only by adding commits on top of the previous candidate, for example to fix a commit message [developer: a fix that adds a commit with the previous tree]; a same-tree fix that rewrites earlier commits is refused [developer: a fix with the previous tree that rewrites].
+- A fix run may dispute the findings instead: it claims the previous candidate with a `dispute` reason. The cycle escalates with the reason, cut to one line and 2 KiB, and spends no budget [developer: a fix that disputes the findings; a dispute reason over 2 KiB]. A dispute naming any other commit is refused [developer: a dispute that names a new commit], and a dispute from a first run escalates [lifecycle: dispute: a fix run escalates].
 - The controller runs the repository's declared checks in a sandbox, on a fresh checkout of the candidate with no `.git`, and stores output and exit code against the SHA [verify: passing checks run in a fresh checkout].
 - A reviewer gets the ticket, the diff, the SHAs, the repository instructions and the verification evidence, never the developer's transcript [review: the prompt carries the role]. It also gets each commit in `base..head`, oldest first, with full SHA, author and message, because its checkout has no `.git` [review: the COMMITS section lists every commit].
 - A verdict with the wrong SHA is recorded but cannot advance the cycle [lifecycle: SC-17b].

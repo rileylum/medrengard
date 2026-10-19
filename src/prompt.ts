@@ -42,6 +42,13 @@ function developerContract(ticket: string, fixing?: Fixing): string {
     '```json',
     '{"head": "<full commit sha>", "artifacts": ["<paths>"]}',
     '```',
+    ...(fixing ? [
+      '- To fix a commit message or author, add a new commit on top. Do not amend or rewrite the earlier commits.',
+      '- If you believe a finding is wrong, or it needs a change you must not make, do not commit. Claim your earlier commit and give your reason instead; the owner decides:',
+      '```json',
+      `{"head": "${fixing.head}", "artifacts": [], "dispute": "<reason>"}`,
+      '```',
+    ] : []),
   ].join('\n');
 }
 

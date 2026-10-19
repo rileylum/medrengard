@@ -101,6 +101,8 @@ export type Event = (
   | { type: 'request_changes' }
   | { type: 'cancel' }
   | { type: 'reject_dispatch'; reason: string }
+  /** A fix run's claim that it will not change the candidate, with the developer's reason (07-e). */
+  | ({ type: 'dispute'; runId: string; head: string; reason: string } & Partial<PromptVersions>)
   /** The run ended with no usable claim: timeout, crash, malformed output, cancelled by deadline. */
   | ({ type: 'run_failed'; runId: string; reason: string } & Partial<PromptVersions>)
 ) & { step?: string };
@@ -124,6 +126,7 @@ const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
   cancel: () => true,
   reject_dispatch: (e) => str(e.reason),
   run_failed: (e) => str(e.runId) && str(e.reason),
+  dispute: (e) => str(e.runId) && str(e.head) && str(e.reason),
 };
 
 /** True when apply can classify the value. Use at every boundary where events arrive as data. */
@@ -315,6 +318,20 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
       // A malformed claim, not a FAIL: there is no commit to send anywhere.
       if (!e.head || e.artifacts.length === 0) return escalate(c, e, 'invalid developer result: missing commit or artifact', { consumed });
       return advance(w, c, e, def, 'PASS', { consumed, candidate: { head: e.head, base: c.candidate!.base } });
+    }
+
+    // 07-e: the developer answers a FAIL by keeping the candidate and saying why. Only the owner
+    // can weigh that against the verdict, so it escalates; no budget moves, as for run_failed.
+    case 'dispute': {
+      if (c.consumed.includes(e.runId)) return record(c, e, c.stage, {}, 'ignored: duplicate dispute');
+      const disputing = c.runs.find((r) => r.runId === e.runId);
+      if (!disputing) return escalate(c, e, 'dispute from unknown run');
+      if (!takes(def, 'commit')) return escalate(c, e, `dispute outside a commit stage (in ${c.stage})`);
+      const consumed = [...c.consumed, e.runId];
+      // A first run has no findings to dispute; its input is the candidate it was asked to fix.
+      if (!disputing.input) return escalate(c, e, 'dispute outside a fix run', { consumed });
+      if (e.head !== disputing.input.head) return escalate(c, e, `dispute names ${e.head}, not the previous candidate ${disputing.input.head}`, { consumed });
+      return escalate(c, e, `developer disputes the findings on ${e.head}: ${e.reason}`, { consumed });
     }
 
     case 'verification': {

@@ -15,6 +15,11 @@ function commit(prompt: string): string {
   const base = git('rev-parse', 'HEAD');
   if (variant === 'nocommit') return claim(base);
   if (variant === 'empty') { git('commit', '-q', '--allow-empty', '-m', 'fake developer: nothing'); return claim(git('rev-parse', 'HEAD')); }
+  // 07-e: a new SHA with the earlier commit's tree that does not descend from it.
+  if (variant === 'reword') { git('commit', '-q', '--amend', '-m', 'fake developer: reworded'); return claim(git('rev-parse', 'HEAD')); }
+  // 07-e: no commit; claims the commit it started on and disputes the findings. The newline is
+  // there to be folded: the reason ends up on the owner's terminal.
+  if (variant === 'dispute') return claim(base, { dispute: 'the finding is wrong:\nREADME.md already says so' });
   if (variant === 'orphan') {
     // An unrestricted developer rewrites the branch to a root commit: the tip, but not descended from the base.
     const branch = git('symbolic-ref', '--short', 'HEAD');
@@ -57,10 +62,11 @@ function commit(prompt: string): string {
   }
   const first = git('rev-parse', 'HEAD');
   if (variant === 'first') { writeFileSync('more.txt', 'more\n'); git('add', 'more.txt'); git('commit', '-q', '-m', 'fake developer: more'); }
+  if (variant === 'dispute-new') return claim(first, { dispute: 'fixed part of it' });
   const head = variant === 'base' ? base : variant === 'bogus' ? 'a'.repeat(40) : variant === 'short' ? first.slice(0, 7) : first;
   return claim(head);
 }
-const claim = (head: string) => `Committed.\n\n\`\`\`json\n${JSON.stringify({ head, artifacts: ['done.txt'] })}\n\`\`\`\n`;
+const claim = (head: string, extra: Record<string, string> = {}) => `Committed.\n\n\`\`\`json\n${JSON.stringify({ head, artifacts: ['done.txt'], ...extra })}\n\`\`\`\n`;
 
 // 06-b: stand in for a reviewer. The candidate SHA is read from the prompt line review() writes;
 // variants give a verdict for it, a FAIL with findings, a verdict for some other SHA, or no block.

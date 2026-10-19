@@ -198,6 +198,24 @@ test('run_failed escalates with its reason; a duplicate run_failed is ignored (0
   assert.equal(isEvent({ type: 'run_failed', runId: 'dev1', reason: 'x' }), true);
 });
 
+test('dispute: a fix run escalates with its reason and spends nothing; a duplicate is ignored; a first run, a stranger or a non-candidate head escalates (07-e)', () => {
+  const fixing = () => run(toStandardReview(), { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'FAIL' }, { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' });
+  let c = apply(fixing(), { type: 'dispute', runId: 'dev2', head: 'H1', reason: 'wrong' });
+  assert.equal(c.stage, 'ESCALATED');
+  assert.equal(c.escalation, 'developer disputes the findings on H1: wrong');
+  assert.deepEqual(c.budgets, fixing().budgets);
+  assert.ok(c.consumed.includes('dev2'));
+  c = apply(c, { type: 'dispute', runId: 'dev2', head: 'H1', reason: 'wrong' });
+  assert.match(c.history.at(-1)!.note ?? '', /ignored/);
+  assert.equal(apply(fixing(), { type: 'dispute', runId: 'dev2', head: 'H2', reason: 'r' }).escalation, 'dispute names H2, not the previous candidate H1');
+  assert.equal(apply(fixing(), { type: 'dispute', runId: 'other', head: 'H1', reason: 'r' }).escalation, 'dispute from unknown run');
+  const first = run(newCycle('c1', 'w1'), { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
+  assert.equal(apply(first, { type: 'dispute', runId: 'dev1', head: 'B1', reason: 'r' }).escalation, 'dispute outside a fix run');
+  assert.equal(isEvent({ type: 'dispute', runId: 'dev2', head: 'H1' }), false);
+  assert.equal(isEvent({ type: 'dispute', runId: 'dev2', head: 'H1', reason: '' }), false);
+  assert.equal(isEvent({ type: 'dispute', runId: 'dev2', head: 'H1', reason: 'r' }), true);
+});
+
 test('run_failed for a run whose verdict or result is already consumed is ignored (04-b)', () => {
   const reviewed = run(toStandardReview(), { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' });
   const after = apply(reviewed, { type: 'run_failed', runId: 'sr1', reason: 'crash' });

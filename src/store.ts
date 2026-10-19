@@ -30,7 +30,7 @@ function requireId(v: unknown, what: string): asserts v is string {
   if (!v.isWellFormed()) throw new Error(`${what} must be a well-formed string`);
 }
 
-const DEDUP: Event['type'][] = ['developer_result', 'verdict', 'run_failed'];
+const DEDUP: Event['type'][] = ['developer_result', 'verdict', 'run_failed', 'dispute'];
 /** Stages that hold no open cycle: escalated cycles wait for the owner and never move again. */
 export const SETTLED: Stage[] = ['ESCALATED', 'ACCEPTED', 'CANCELLED'];
 

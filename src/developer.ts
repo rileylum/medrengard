@@ -160,14 +160,15 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
  * SHA at the tip of the cycle's branch: the tip, not any reachable commit, so
  * what is verified and reviewed is what the developer left behind, nothing on top of it. It
  * must descend from the base and differ from it, or `base..head` means nothing to step 6. A fix
- * run must also produce a new SHA with a new tree: the previous candidate is the one that failed
- * review, and a commit with its exact tree (an empty commit on top of it) fixed nothing and would
- * spend the second verification and standard review on the diff that already failed.
+ * run must also produce a new SHA. It may keep the previous tree only by adding commits on top of
+ * the previous candidate (07-e): reviewers read the commit messages (06-d), so a new message can
+ * be the whole fix, but rewriting the commits that failed review is not a fix the reviewer can
+ * compare against. The budget bounds a same-tree fix that changes nothing that matters.
  */
 function refuse(repo: string, incoming: string, branch: string, base: string, previous: string | undefined, head: string): string | undefined {
   const tip = git(repo, 'rev-parse', '--verify', '--quiet', incoming);
   if (head === base) return `commit ${head} is the base, not a new commit`;
-  if (head === previous) return `commit ${head} is the previous candidate, not a new commit`;
+  if (head === previous) return `commit ${head} is the previous candidate: the fix run made no new commit and gave no dispute`;
   if (head !== tip) {
     return isCommit(repo, head) ? `commit ${head} is not the tip of ${branch} (${tip})` : `commit ${head} is not the full SHA of a commit on ${branch} (tip ${tip})`;
   }
@@ -178,8 +179,10 @@ function refuse(repo: string, incoming: string, branch: string, base: string, pr
   if (diff !== 1) return `commit ${head}: git diff ${base} ${head} failed with exit ${diff}`;
   if (previous !== undefined) {
     const same = gitStatus(repo, 'diff', '--quiet', previous, head);
-    if (same === 0) return `commit ${head} has no changes against the previous candidate ${previous}`;
-    if (same !== 1) return `commit ${head}: git diff ${previous} ${head} failed with exit ${same}`;
+    if (same === 0 && gitStatus(repo, 'merge-base', '--is-ancestor', previous, head) !== 0) {
+      return `commit ${head} has the previous candidate's tree but does not descend from ${previous}; rewriting commits is not allowed`;
+    }
+    if (same !== 0 && same !== 1) return `commit ${head}: git diff ${previous} ${head} failed with exit ${same}`;
   }
   return undefined;
 }
@@ -208,6 +211,11 @@ function clone(repo: string, dest: string, branch: string, base: string): void {
 function land(repo: string, clone: string, branch: string, cycleId: string, base: string, previous: string | undefined, sandbox: Sandbox, timeoutMs: number, claim: unknown): string | undefined {
   const head = (claim as { head?: unknown } | null)?.head;
   if (typeof head !== 'string' || !head) return undefined; // not ours to judge; the store rejects it
+  // 07-e: a dispute keeps the candidate, so nothing is fetched and no branch moves. On a first run
+  // there is no candidate; apply escalates that case as outside a fix run.
+  if ((claim as { dispute?: unknown }).dispute !== undefined) {
+    return previous === undefined || head === previous ? undefined : `a dispute must name the previous candidate ${previous}, not ${head}`;
+  }
   const incoming = `refs/sf/incoming/${cycleId}`;
   try {
     // git runs this through sh with the clone's path appended; under `none` it is plain `git upload-pack`.
