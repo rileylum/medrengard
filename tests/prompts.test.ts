@@ -1,5 +1,7 @@
 // Ticket 09-c: the default prompts, captured from the code before the prompt split, stay
 // byte for byte the same. Only what differs per run is normalised: the nonce and Git SHAs.
+// 06-d changed the review contract on purpose: standard.txt and adversarial.txt gained the
+// COMMITS section and nothing else. Any other difference in a golden file is a contract change.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -76,7 +78,7 @@ const developerStage = defaultWorkflow.stages.DEVELOPING as Extract<StageDef, { 
 const PARTS: ReviewParts = {
   head: 'a'.repeat(40), base: 'b'.repeat(40), ticket: 'T',
   instructions: [{ path: 'AGENTS.md', text: '# rules' }], checks: [{ name: 'file', result: 'PASS' }],
-  paths: 'A\tdone.txt', diff: '+done', evidence: [{ name: 'file.exit', text: 'exit 0\n' }],
+  paths: 'A\tdone.txt', commits: 'commit c', diff: '+done', evidence: [{ name: 'file.exit', text: 'exit 0\n' }],
 };
 const afterLine1 = (text: string) => text.slice(text.indexOf('\n'));
 const nonceOf = (text: string) => /delimited by lines beginning with `==== ([0-9a-f]{8}):`/.exec(text)![1]!;
@@ -125,6 +127,16 @@ test('every outcome event records the hash of its contract wording and of its ro
   assert.deepEqual([dev, fixed, standard, standard2, adversarial].map((e) => e!.roleTextHash),
     [ROLE_TEXT.developer, ROLE_TEXT.fix, ROLE_TEXT.standard, ROLE_TEXT.standard, ROLE_TEXT.adversarial].map(sha256));
   store.close();
+});
+
+test('the review contract with the COMMITS section is a new version: its hash is not the 09-c one (06-d)', () => {
+  // The 09-c review contract's hash, taken on main at 7a3ca4e. Verdicts recorded before 06-d carry
+  // it; a verdict under the new wording must be told apart from them.
+  const before = '68217bf612b8aa36d4819c92760c08f6ddbaa19b97bb348c5269b0de4a13735e';
+  const { contractHash, text } = reviewPrompt('r', PARTS);
+  assert.match(contractHash, /^[0-9a-f]{64}$/);
+  assert.notEqual(contractHash, before);
+  assert.match(text, new RegExp(`^==== ${nonceOf(text)}: COMMITS ${PARTS.base}\\.\\.${PARTS.head} ====\ncommit c$`, 'm'));
 });
 
 test('a run that fails or whose claim is refused records run_failed with both hashes', async () => {

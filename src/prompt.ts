@@ -55,6 +55,8 @@ export interface ReviewParts {
   checks: { name: string; result: string }[];
   /** `git diff --name-status` output, never cut. */
   paths: string;
+  /** Each commit in base..head, oldest first: full SHA, author, message. Already cut by the caller. */
+  commits: string;
   /** Already cut by the caller. */
   diff: string;
   /** One entry per check and extension, `name` like `file.exit`, `text` already cut. */
@@ -85,6 +87,8 @@ function reviewContract(nonce: string, p: ReviewParts): string {
   parts.push(...(p.checks.length ? p.checks.map((c) => `${c.name}: ${c.result}`) : ['no checks declared']));
   // The path list is never cut: when the diff's middle goes, the reviewer still knows every file that changed.
   parts.push('', section(`CHANGED PATHS ${p.base}..${p.head}`), p.paths);
+  // 06-d: the checkout has no .git, so a ticket rule about commit messages is checkable only here.
+  parts.push('', section(`COMMITS ${p.base}..${p.head}`), p.commits);
   parts.push('', section(`DIFF ${p.base}..${p.head}`), p.diff);
   for (const e of p.evidence) parts.push('', section(`EVIDENCE ${e.name}`), e.text);
   return parts.join('\n');
@@ -97,7 +101,7 @@ const CONTRACT = {
   fix: sha256(developerContract('<ticket>', { head: '<head>', findings: ['<finding>'] })),
   review: sha256(reviewContract('<nonce>', {
     head: '<head>', base: '<base>', ticket: '<ticket>', instructions: [{ path: '<path>', text: '<instructions>' }],
-    checks: [{ name: '<check>', result: '<result>' }], paths: '<paths>', diff: '<diff>', evidence: [{ name: '<evidence>', text: '<text>' }],
+    checks: [{ name: '<check>', result: '<result>' }], paths: '<paths>', commits: '<commits>', diff: '<diff>', evidence: [{ name: '<evidence>', text: '<text>' }],
   })),
 };
 

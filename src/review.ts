@@ -29,6 +29,11 @@ const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
 const EVIDENCE_KEEP = 16 * 1024;
 // Head and tail each, so the whole diff is sent up to twice this.
 const DIFF_MAX = 128 * 1024;
+// Head and tail each. Messages are prose a reviewer reads in full; past this they are a payload.
+const COMMITS_KEEP = 16 * 1024;
+// Author and message are the developer's text. The message is indented, as `git log` shows it, so
+// no line of it starts where a section delimiter does; the nonce is what makes a delimiter real.
+const COMMIT_FORMAT = '--format=commit %H%nAuthor: %an <%ae>%n%n%w(0,4,4)%B';
 
 type Verification = Extract<Event, { type: 'verification' }>;
 const EVIDENCE_EXTS = ['exit', 'stdout', 'stderr'] as const;
@@ -85,6 +90,7 @@ function gather(ticket: string, head: string, base: string, repo: string, instru
     instructions: instructions.map((path) => ({ path, text: git(repo, 'ls-tree', head, '--', path) ? quoteGit(repo, 'show', `${head}:${path}`) : `${path}: not present in the candidate commit` })),
     checks: verification.checks,
     paths: quoteGit(repo, 'diff', '--name-status', base, head),
+    commits: cut(quoteGit(repo, 'log', '--reverse', COMMIT_FORMAT, `${base}..${head}`), COMMITS_KEEP),
     diff: cut(diff, DIFF_MAX),
     evidence: verification.checks.flatMap((c) => EVIDENCE_EXTS.map((ext) => ({ name: `${c.name}.${ext}`, text: cut(readFileSync(join(evidenceDir, `${c.name}.${ext}`), 'utf8'), EVIDENCE_KEEP) }))),
   };
