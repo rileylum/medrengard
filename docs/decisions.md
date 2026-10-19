@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-078 — 2026-10-19 — 10-b READY; configuration layers design approved
+
+Owner, after reading the 10-b ticket and [design/2026-10-19-config-layers.md](design/2026-10-19-config-layers.md) with its four questions: “take all recommendations and go”.
+
+Effect: 10-b is READY and follows that note. Q1: the repository layer has an allow list (`checks`, `workflow`, `runtime`); every other key is refused there. Q2: a repository workflow is allowed, though it runs unsandboxed in the controller; the risk goes to [work/accepted-risks.md](work/accepted-risks.md). Q3: arrays replace the earlier layer's value whole. Q4: the store's open row records the resolved base SHA, and `accept` and `cancel` read the layers at it.
+
 ### A-077 — 2026-10-19 — 10-f: review minors fixed unreviewed, then merged
 
 Owner, after 10-f's standard and adversarial PASS on `4775ac3` with two kit minors and a `claim: undefined` note, and the recommendation to fix all three on the branch without another review: “yes fix and merge”. Earlier, on the reviews: “review please, if you've already run the tests then I don't need to rerun”.
