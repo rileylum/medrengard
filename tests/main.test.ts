@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Event } from '../src/lifecycle.ts';
@@ -319,4 +319,20 @@ test('a job naming an extension runtime runs from open to AWAITING_ACCEPTANCE, a
   } finally {
     store.close();
   }
+});
+
+// Ticket 10-b: a runtime the personal file adds resolves against the personal file, not the job file.
+test('a personal-layer extension runtime, relative to the personal file, runs a job to AWAITING_ACCEPTANCE', () => {
+  const { root, jobFile } = scratch();
+  const xdg = join(root, 'xdg');
+  const own = join(xdg, 'software_factory');
+  mkdirSync(own, { recursive: true });
+  // Beside the personal file only: a path climbing past / would resolve the same from anywhere.
+  copyFileSync(join(import.meta.dirname, 'fixtures', 'ext-runtime.ts'), join(own, 'ext.ts'));
+  writeFileSync(join(own, 'config.json'), JSON.stringify({ runtimes: { ext: { module: 'ext.ts' } } }));
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...job, runtime: { developer: 'ext', standard: 'ext', adversarial: 'ext' } }));
+  const r = sf([jobFile], { ...process.env, XDG_CONFIG_HOME: xdg });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
 });

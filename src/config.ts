@@ -15,14 +15,14 @@ export interface JobFile extends Omit<Job, 'ticket'> {
   ticketFile?: string;
   /** A runtime name per role; `standard` and `adversarial` name the default reviewers (ROLE_ALIASES). */
   runtime: Record<string, string>;
-  /** Extension runtimes by name, each a TypeScript module relative to the job file. */
+  /** Extension runtimes by name, each a TypeScript module relative to the file that names it. */
   runtimes?: Record<string, { module: string }>;
-  /** A TypeScript module with a named export `workflow`, relative to the job file. Default defaultWorkflow. */
+  /** A TypeScript module with a named export `workflow`, relative to the file that names it. Default defaultWorkflow. */
   workflow?: string;
   runsDir?: string;
   /** Per stage. Default 120000. */
   deadlineMs?: number;
-  /** Where checks, the developer and the reviewers run. Default bwrap; `none` must be written out. `read` is relative to the job file. */
+  /** Where checks, the developer and the reviewers run. Default bwrap; `none` must be written out. `read` is relative to the file that sets it. */
   sandbox?: Sandbox;
 }
 
@@ -37,7 +37,8 @@ export interface Config {
   sandbox: Sandbox;
 }
 
-const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
+// The factory-defaults layer. `none` must be written out by the owner (08-a).
+const DEFAULTS = { runsDir: '/var/tmp/software_factory/runs', sandbox: { backend: 'bwrap' } };
 
 /** Merged one level down; every other key is replaced whole, arrays included (A-078 Q3). */
 const NESTED = ['runtime', 'runtimes', 'sandbox'];
@@ -54,9 +55,30 @@ function personalFile(env: NodeJS.ProcessEnv): string {
   return join(env.XDG_CONFIG_HOME || join(env.HOME ?? '', '.config'), 'software_factory', 'config.json');
 }
 
-/** A missing optional file is an empty layer; the job file is never optional. */
-function readLayer(file: string, keys: string[], optional = false): Record<string, unknown> {
-  return optional && !existsSync(file) ? {} : allow(JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>, keys, file);
+const under = (dir: string, p: unknown) => (typeof p === 'string' ? resolve(dir, p) : p);
+
+/**
+ * The layer's relative paths made absolute against `dir`, before the merge: once merged, a value
+ * no longer knows which file set it. Non-strings pass through for the registry and the sandbox to
+ * refuse with their own messages.
+ */
+function rooted(layer: Record<string, unknown>, dir: string, runsDir: boolean): Record<string, unknown> {
+  const out = { ...layer };
+  // The job file's runsDir resolves against the working directory, as before 10-b, so existing job files keep their meaning.
+  if (runsDir && out.runsDir !== undefined) out.runsDir = under(dir, out.runsDir);
+  if (out.workflow !== undefined) out.workflow = under(dir, out.workflow);
+  const runtimes = out.runtimes as Record<string, { module?: unknown }> | undefined;
+  if (runtimes && typeof runtimes === 'object')
+    out.runtimes = Object.fromEntries(Object.entries(runtimes).map(([name, e]) => [name, e && typeof e === 'object' ? { ...e, module: under(dir, e.module) } : e]));
+  const sandbox = out.sandbox as Sandbox | undefined;
+  if (sandbox && typeof sandbox === 'object' && Array.isArray(sandbox.read)) out.sandbox = { ...sandbox, read: sandbox.read.map((p) => under(dir, p)) };
+  return out;
+}
+
+/** A missing personal file is an empty layer; a missing job file is an error. */
+function readLayer(file: string, keys: string[], personal: boolean): Record<string, unknown> {
+  if (personal && !existsSync(file)) return {};
+  return rooted(allow(JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>, keys, file), resolve(file, '..'), personal);
 }
 
 const REPO_LAYER = '.factory/config.json';
@@ -97,28 +119,25 @@ function readRepoLayer(repo: string, sha: string): Record<string, unknown> {
  */
 export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = process.env): Promise<Config> {
   const path = resolve(jobFile);
-  const job = readLayer(path, JOB_KEYS) as unknown as JobFile;
+  const job = readLayer(path, JOB_KEYS, false) as unknown as JobFile;
   const repo = resolve(path, '..', job.repo);
   const base = git(repo, 'rev-parse', '--verify', '--end-of-options', `${job.base ?? 'HEAD'}^{commit}`);
-  const spec = { ...merge([readLayer(personalFile(env), PERSONAL_KEYS, true), readRepoLayer(repo, base), job]), base } as unknown as JobFile;
-  const sandbox: Sandbox = spec.sandbox
-    ? { ...spec.sandbox, read: spec.sandbox.read?.map((p) => (typeof p === 'string' ? resolve(path, '..', p) : p)) }
-    : { backend: 'bwrap' };
+  const spec = { ...merge([DEFAULTS, readLayer(personalFile(env), PERSONAL_KEYS, true), readRepoLayer(repo, base), job]), base } as unknown as JobFile;
   return {
     path,
     spec,
     repo,
-    runsDir: resolve(spec.runsDir ?? DEFAULT_RUNS_DIR),
-    workflow: await loadWorkflow(path, spec),
-    registry: runtimes(spec.runtimes, resolve(path, '..')),
-    sandbox,
+    runsDir: resolve(spec.runsDir!),
+    workflow: await loadWorkflow(spec.workflow),
+    // Every module path is absolute by now, so relativeTo is never used.
+    registry: runtimes(spec.runtimes, '/'),
+    sandbox: spec.sandbox!,
   };
 }
 
 // Checked here, though the store checks it too: the adapters are built from it before the store opens.
-async function loadWorkflow(jobPath: string, spec: JobFile): Promise<Workflow> {
-  if (spec.workflow === undefined) return defaultWorkflow;
-  const file = resolve(jobPath, '..', spec.workflow);
+async function loadWorkflow(file: string | undefined): Promise<Workflow> {
+  if (file === undefined) return defaultWorkflow;
   const mod = (await import(pathToFileURL(file).href)) as { workflow?: Workflow };
   if (mod.workflow === undefined) throw new Error(`${file} has no named export workflow`);
   const refused = checkWorkflow(mod.workflow);
