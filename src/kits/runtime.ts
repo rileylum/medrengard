@@ -64,10 +64,20 @@ export function runtimeKit(name: string, makeAdapter: () => Adapter | Promise<Ad
 // The controller reads an outcome only after a JSON round trip and turns anything outside the
 // union into a failed run; an adapter that relies on that has a bug the kit should name.
 function assertOutcome(o: unknown): void {
-  assert.deepEqual(JSON.parse(JSON.stringify(o)), o, 'the outcome is not plain data');
+  // Stringify first: it throws on a cycle, which `defined` would walk forever.
+  assert.deepEqual(JSON.parse(JSON.stringify(o)), defined(o), 'the outcome is not plain data');
   const v = o as Record<string, unknown>;
   const ok = v?.status === 'completed' ? 'claim' in v && (v.sessionId === undefined || typeof v.sessionId === 'string')
     : v?.status === 'failed' ? typeof v.reason === 'string' && v.reason.length > 0
     : v?.status === 'cancelled';
   assert.ok(ok, `not a RunOutcome: ${JSON.stringify(o)}`);
+}
+
+// A property set to undefined reads as a missing one, so the round trip dropping it loses nothing;
+// claude's parse returns `sessionId: undefined`. Only plain objects are copied: a Date or a class
+// instance stays as is and still fails the comparison, as does undefined inside an array (it becomes null).
+function defined(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(defined);
+  if (v === null || typeof v !== 'object' || Object.getPrototypeOf(v) !== Object.prototype) return v;
+  return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).map(([k, x]) => [k, defined(x)]));
 }
