@@ -8,9 +8,9 @@ export const counters = (c: Cycle) => [c.budgets.STANDARD_REVIEW ?? 0, c.budgets
 export const noHuman: Workflow = {
   start: 'DEV',
   stages: {
-    DEV: { kind: 'agent', role: 'developer', produces: 'commit', transitions: { PASS: 'BUILD' } },
+    DEV: { kind: 'agent', role: 'developer', produces: 'commit', roleText: 'You are the developer for the ticket below.', transitions: { PASS: 'BUILD' } },
     BUILD: { kind: 'command', transitions: { PASS: 'REVIEW' } },
-    REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', budget: 1, transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
+    REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', budget: 1, transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
   },
 };
 
@@ -19,9 +19,9 @@ export const ownerCheck: Workflow = {
   name: 'owner-check',
   start: 'DEV',
   stages: {
-    DEV: { kind: 'agent', role: 'writer', produces: 'commit', transitions: { PASS: 'CHECK' } },
+    DEV: { kind: 'agent', role: 'writer', produces: 'commit', roleText: 'You are the writer for the ticket below.', transitions: { PASS: 'CHECK' } },
     CHECK: { kind: 'command', transitions: { PASS: 'REVIEW' } },
-    REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', budget: 1, transitions: { PASS: 'OWNER', FAIL: 'ESCALATED' } },
+    REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', budget: 1, transitions: { PASS: 'OWNER', FAIL: 'ESCALATED' } },
     OWNER: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
   },
 };

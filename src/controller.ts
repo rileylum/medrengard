@@ -2,7 +2,7 @@
 // bounds it with a deadline, and turns the outcome into exactly one lifecycle event.
 import { randomUUID } from 'node:crypto';
 import type { Adapter, RunOutcome, RunRequest } from './adapter.ts';
-import { producedBy, type Cycle, type Event, type Role, type Stage } from './lifecycle.ts';
+import { producedBy, type Cycle, type Event, type PromptVersions, type Role, type Stage } from './lifecycle.ts';
 import { UnclassifiableEvent, type EventStore } from './store.ts';
 
 export interface ExecuteOptions {
@@ -17,6 +17,8 @@ export interface ExecuteOptions {
    * classify it. A throw is a refusal too. Not called for failed or cancelled runs.
    */
   accept?: (claim: unknown) => string | undefined;
+  /** Recorded on the run's outcome event. develop, fix and review always pass it; optional for tests that drive execute directly. */
+  versions?: PromptVersions;
 }
 
 // setTimeout silently clamps anything outside this range to 1 ms, which would time every run out.
@@ -49,7 +51,7 @@ export async function execute(
     requireStage(store, cycleId, req.role);
   }
   const outcome = await bounded(adapter, { ...req, runId }, deadlineMs);
-  return receive(store, cycleId, runId, req.role, outcome, opts.accept);
+  return receive(store, cycleId, runId, req.role, outcome, opts.accept, opts.versions);
 }
 
 /**
@@ -57,22 +59,22 @@ export async function execute(
  * per run, so a redelivery returns the current Cycle unchanged. Never throws for what the adapter
  * returned; only for the controller's own misuse (wrong stage, unopened cycle) or a store failure.
  */
-export function receive(store: EventStore, cycleId: string, runId: string, role: Role, outcome: RunOutcome, accept?: ExecuteOptions['accept']): Cycle {
+export function receive(store: EventStore, cycleId: string, runId: string, role: Role, outcome: RunOutcome, accept?: ExecuteOptions['accept'], versions?: PromptVersions): Cycle {
   const commit = producedBy(store.workflow, role) === 'commit';
   if (!commit) requireStage(store, cycleId, role, runId);
   const o = normalise(plain(outcome));
   if (o.status !== 'completed') {
-    return store.append(cycleId, { type: 'run_failed', runId, reason: o.status === 'failed' ? o.reason : 'cancelled' });
+    return store.append(cycleId, { type: 'run_failed', runId, reason: o.status === 'failed' ? o.reason : 'cancelled', ...versions });
   }
   const refused = accept ? refusal(accept, o.claim) : undefined;
-  if (refused !== undefined) return store.append(cycleId, { type: 'run_failed', runId, reason: refused });
+  if (refused !== undefined) return store.append(cycleId, { type: 'run_failed', runId, reason: refused, ...versions });
   try {
-    return store.append(cycleId, toEvent(runId, commit, o.claim));
+    return store.append(cycleId, { ...toEvent(runId, commit, o.claim), ...versions });
   } catch (err) {
     // Only the store's own classification failure is a malformed claim. Anything else (a closed
     // database, a cycle that is not open) is the controller's problem and must surface.
     if (!(err instanceof UnclassifiableEvent)) throw err;
-    return store.append(cycleId, { type: 'run_failed', runId, reason: 'malformed result' });
+    return store.append(cycleId, { type: 'run_failed', runId, reason: 'malformed result', ...versions });
   }
 }
 

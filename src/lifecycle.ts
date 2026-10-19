@@ -18,7 +18,17 @@ export interface Transitions {
 }
 
 export type StageDef =
-  | { kind: 'agent'; role: Role; produces: 'commit' | 'verdict'; transitions: Transitions; budget?: number }
+  | {
+      kind: 'agent';
+      role: Role;
+      produces: 'commit' | 'verdict';
+      /** What the run is asked to do; the first line of its prompt, before the core's contract (A-056). One line. */
+      roleText: string;
+      /** A commit stage's role text when it is re-entered after a FAIL. Default roleText. */
+      fixRoleText?: string;
+      transitions: Transitions;
+      budget?: number;
+    }
   | { kind: 'command'; transitions: Transitions; budget?: number }
   | { kind: 'human'; transitions: Transitions; budget?: number };
 
@@ -35,13 +45,35 @@ export const defaultWorkflow: Workflow = {
   name: 'default',
   start: 'DEVELOPING',
   stages: {
-    DEVELOPING: { kind: 'agent', role: 'developer', produces: 'commit', transitions: { PASS: 'VERIFYING' } },
+    DEVELOPING: {
+      kind: 'agent', role: 'developer', produces: 'commit',
+      roleText: 'You are the developer for the ticket below. The current directory is a Git clone on the branch for this work.',
+      // Its first line must differ from roleText's: tests/fixtures/fake-cli.ts commits that line, and a fix that commits the same tree is refused.
+      fixRoleText: 'You are the developer fixing review findings on the ticket below. The current directory is a Git clone on the branch for this work, at your earlier commit.',
+      transitions: { PASS: 'VERIFYING' },
+    },
     VERIFYING: { kind: 'command', transitions: { PASS: 'STANDARD_REVIEW' } },
-    STANDARD_REVIEW: { kind: 'agent', role: 'standard_reviewer', produces: 'verdict', budget: 2, transitions: { PASS: 'ADVERSARIAL_REVIEW', FAIL: 'DEVELOPING' } },
-    ADVERSARIAL_REVIEW: { kind: 'agent', role: 'adversarial_reviewer', produces: 'verdict', budget: 1, transitions: { PASS: 'AWAITING_ACCEPTANCE', FAIL: 'ESCALATED' } },
+    STANDARD_REVIEW: {
+      kind: 'agent', role: 'standard_reviewer', produces: 'verdict', budget: 2,
+      roleText: 'You are the standard reviewer for the change below. Judge the diff against the ticket, the repository instructions and the verification evidence. The current directory is a read-only checkout of the candidate commit.',
+      transitions: { PASS: 'ADVERSARIAL_REVIEW', FAIL: 'DEVELOPING' },
+    },
+    ADVERSARIAL_REVIEW: {
+      kind: 'agent', role: 'adversarial_reviewer', produces: 'verdict', budget: 1,
+      roleText: 'You are the adversarial reviewer for the change below. Your job is to break it: find inputs, sequences or states under which it does not do what the ticket says, and report what you can show. The current directory is a read-only checkout of the candidate commit.',
+      transitions: { PASS: 'AWAITING_ACCEPTANCE', FAIL: 'ESCALATED' },
+    },
     AWAITING_ACCEPTANCE: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
   },
 };
+
+/** Which prompt wording a run was given (09-c); see src/prompt.ts. */
+export interface PromptVersions {
+  /** SHA-256 of the contract's wording, built from fixed placeholders. The same for every run of one kind. */
+  contractHash: string;
+  /** SHA-256 of the role text the run was given. */
+  roleTextHash: string;
+}
 
 export interface Candidate {
   head: string;
@@ -60,9 +92,9 @@ export interface Run {
 /** `step` names the stage an event belongs to; without it the event belongs to the current stage. */
 export type Event = (
   | { type: 'claim'; runId: string; base: string; runtime: string }
-  | { type: 'developer_result'; runId: string; head?: string; artifacts: string[] }
+  | ({ type: 'developer_result'; runId: string; head?: string; artifacts: string[] } & Partial<PromptVersions>)
   | { type: 'verification'; head: string; checks: { name: string; result: 'PASS' | 'FAIL' | 'MISSING' }[] }
-  | { type: 'verdict'; runId: string; head: string; verdict: 'PASS' | 'FAIL'; findings?: string[] }
+  | ({ type: 'verdict'; runId: string; head: string; verdict: 'PASS' | 'FAIL'; findings?: string[] } & Partial<PromptVersions>)
   | { type: 'head_changed'; head: string }
   | { type: 'base_changed'; base: string }
   | { type: 'accept'; head: string }
@@ -70,7 +102,7 @@ export type Event = (
   | { type: 'cancel' }
   | { type: 'reject_dispatch'; reason: string }
   /** The run ended with no usable claim: timeout, crash, malformed output, cancelled by deadline. */
-  | { type: 'run_failed'; runId: string; reason: string }
+  | ({ type: 'run_failed'; runId: string; reason: string } & Partial<PromptVersions>)
 ) & { step?: string };
 
 const str = (v: unknown) => typeof v === 'string' && v.length > 0;
@@ -138,6 +170,7 @@ export function checkWorkflow(w: Workflow): string[] {
     if (!['agent', 'command', 'human'].includes(def.kind)) reasons.push(`stage ${name} has unknown kind ${String(def.kind)}`);
     if (def.kind === 'agent' && !str(def.role)) reasons.push(`stage ${name} is an agent stage with no role`);
     if (def.kind === 'agent' && def.produces !== 'commit' && def.produces !== 'verdict') reasons.push(`stage ${name} produces ${String(def.produces)}, not commit or verdict`);
+    if (def.kind === 'agent') reasons.push(...roleTextReasons(name, def));
     if (def.budget !== undefined && !(Number.isSafeInteger(def.budget) && def.budget > 0)) reasons.push(`stage ${name} budget must be a positive integer`);
     if (!obj(def.transitions) || !str(def.transitions.PASS)) reasons.push(`stage ${name} has no PASS transition`);
   }
@@ -185,6 +218,21 @@ export function checkWorkflow(w: Workflow): string[] {
       }
   }
   for (const [name] of entries) if (!settles.has(name)) reasons.push(`stage ${name} has no path to ${SETTLED_TARGETS.join(', ')}`);
+  return reasons;
+}
+
+// The terminators oneLine (src/prompt.ts) folds. The contract's Rules: line and delimiters are
+// structure only at the start of a line, so role text that cannot break a line cannot forge them.
+const LINE_BREAK = /[\r\n\u2028\u2029\u0085]/;
+
+function roleTextReasons(name: Stage, def: Extract<StageDef, { kind: 'agent' }>): string[] {
+  const reasons: string[] = [];
+  if (!str(def.roleText)) reasons.push(`stage ${name} is an agent stage with no role text`);
+  else if (LINE_BREAK.test(def.roleText)) reasons.push(`stage ${name} role text must be one line`);
+  if (def.fixRoleText === undefined) return reasons;
+  if (def.produces !== 'commit') reasons.push(`stage ${name} has fix role text but produces ${String(def.produces)}, not commit`);
+  else if (!str(def.fixRoleText)) reasons.push(`stage ${name} fix role text must be a non-empty string`);
+  else if (LINE_BREAK.test(def.fixRoleText)) reasons.push(`stage ${name} fix role text must be one line`);
   return reasons;
 }
 

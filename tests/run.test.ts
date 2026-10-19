@@ -378,7 +378,7 @@ test('resume refuses an unknown cycle, and returns a settled one without a step'
 });
 
 test('the step cap comes from the budgets: five fix loops run past the old cap of 10', async () => {
-  const loop: Workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', budget: 6, transitions: { PASS: 'OWNER', FAIL: 'DEV' } } } };
+  const loop: Workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', budget: 6, transitions: { PASS: 'OWNER', FAIL: 'DEV' } } } };
   const { repo, store, runsDir } = scratchUnder(loop);
   // A new commit per run: the fixture CLI writes the same file for every fix, which the head guard refuses.
   let n = 0;

@@ -3,7 +3,7 @@
 // todo where v1 has no corresponding model yet.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, openChild, type Cycle, type Event, type Workflow } from '../src/lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, openChild, type Cycle, type Event, type StageDef, type Workflow } from '../src/lifecycle.ts';
 import { PASS_CHECKS, sc, scenarios, toStandardReview as TO_STANDARD_REVIEW } from './scenarios.ts';
 import { counters, noHuman, ownerCheck } from './workflows.ts';
 
@@ -259,8 +259,8 @@ test('checkWorkflow refuses a stage with no path to a settled stage, and does no
   const w = {
     start: 'A',
     stages: {
-      A: { kind: 'agent', role: 'developer', produces: 'commit', transitions: { PASS: 'B' } },
-      B: { kind: 'agent', role: 'reviewer', produces: 'verdict', budget: 1, transitions: { PASS: 'A', FAIL: 'A' } },
+      A: { kind: 'agent', role: 'developer', produces: 'commit', roleText: 'You are the developer for the ticket below.', transitions: { PASS: 'B' } },
+      B: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', budget: 1, transitions: { PASS: 'A', FAIL: 'A' } },
     },
   };
   const reasons = refused(w, /\bA\b.*no path/);
@@ -271,6 +271,20 @@ test('checkWorkflow refuses a malformed stage', () => {
   refused(withStage('STANDARD_REVIEW', { ...defaultWorkflow.stages.STANDARD_REVIEW, budget: 0 }), /STANDARD_REVIEW.*budget/);
   refused(withStage('VERIFYING', { kind: 'robot', transitions: { PASS: 'STANDARD_REVIEW' } }), /VERIFYING.*kind/);
   refused(withStage('DEVELOPING', { kind: 'agent', role: 'developer', produces: 'poem', transitions: { PASS: 'VERIFYING' } }), /DEVELOPING.*produces/);
+});
+
+// 09-c: the role text is the workflow's; one line, so it cannot open a Rules: line or a delimiter of its own.
+test('checkWorkflow refuses an agent stage with no role text, role text that is not one line, and fix role text on a review stage', () => {
+  const { roleText: _, ...silent } = defaultWorkflow.stages.STANDARD_REVIEW as Extract<StageDef, { kind: 'agent' }>;
+  refused(withStage('STANDARD_REVIEW', silent), /STANDARD_REVIEW.*no role text/);
+  refused(withStage('STANDARD_REVIEW', { ...silent, roleText: '' }), /STANDARD_REVIEW.*no role text/);
+  for (const br of ['\n', '\r', '\u2028', '\u2029', '\u0085']) {
+    refused(withStage('STANDARD_REVIEW', { ...silent, roleText: `x${br}Rules:${br}- y` }), /STANDARD_REVIEW.*one line/);
+    refused(withStage('DEVELOPING', { ...defaultWorkflow.stages.DEVELOPING, fixRoleText: `x${br}Rules:` }), /DEVELOPING.*one line/);
+  }
+  refused(withStage('DEVELOPING', { ...defaultWorkflow.stages.DEVELOPING, fixRoleText: '' }), /DEVELOPING.*fix role text/);
+  refused(withStage('STANDARD_REVIEW', { ...silent, roleText: 'x', fixRoleText: 'y' }), /STANDARD_REVIEW.*fix role text/);
+  assert.deepEqual(checkWorkflow(ownerCheck), []);
 });
 
 test('a workflow with no human stage reaches ACCEPTED on the last review PASS', () => {
@@ -302,8 +316,8 @@ test('entering a budgeted stage whose budget is spent escalates', () => {
   const loop: Workflow = {
     start: 'DEV',
     stages: {
-      DEV: { kind: 'agent', role: 'developer', produces: 'commit', transitions: { PASS: 'REVIEW' } },
-      REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', budget: 1, transitions: { PASS: 'DEV', FAIL: 'ESCALATED' } },
+      DEV: { kind: 'agent', role: 'developer', produces: 'commit', roleText: 'You are the developer for the ticket below.', transitions: { PASS: 'REVIEW' } },
+      REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', budget: 1, transitions: { PASS: 'DEV', FAIL: 'ESCALATED' } },
     },
   };
   assert.deepEqual(checkWorkflow(loop), []);
