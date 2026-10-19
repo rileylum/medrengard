@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-076 — 2026-10-19 — 10-a merged; its adversarial minors become 10-f
+
+Owner, after 10-a's adversarial PASS on `bb40612` with four minors and the recommendation of a fix ticket before 10-b: “okay, file the fix ticket and merge”.
+
+Effect: [10-f](work/10-f-registries-fixes.md) is drafted for the four minors and the `SHAPE` note; it is not READY until the owner says go. `feat/10-a-registries` merges into main locally with `--no-ff`. The owner did not run `npm test` on `bb40612`; the implementer's run (295 tests, 271 pass, 0 fail) and the two reviewers' matching runs are the record. 10-a carries standard 1 PASS on `22ae421` and adversarial PASS on `bb40612`.
+
 ### A-075 — 2026-10-19 — 10-a READY; registries design approved
 
 Owner, after reading the 10-a ticket: “go”. Then, given [design/2026-10-19-registries.md](design/2026-10-19-registries.md) (a runtime registry in `src/runtime/registry.ts`; an extension runs as `node <module>` through `cliAdapter` with `CliSpec` gaining `input`, `bind` and `moduleHash`; `runtime` and `moduleHash` on every outcome event; a `BACKENDS` table in `src/sandbox.ts`; `runtimeKit` in `src/kits/runtime.ts`, imported by path): “approve”.
