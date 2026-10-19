@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-081 — 2026-10-20 — 10-c READY; command stages design approved
+
+Owner, after reading the 10-c ticket and [design/2026-10-20-command-stages.md](design/2026-10-20-command-stages.md) with its four questions: “Approved all recommendations”.
+
+Effect: 10-c is READY, and the design note is approved with Q1 to Q4 as recommended. Q1: `run` entries are `{ name, command }`, not bare argv. Q2: a command stage's evidence, request, diff and file copies go in `evidence/<head>/<stage>/`, and `outputDir` is its `output/` subdirectory; the default workflow's evidence moves to `evidence/<head>/VERIFYING/`. Q3: a file argument is written `{ file: 'x.ts' }`, copied, hashed and bound read-only; a repository workflow's file is read at the base SHA. Q4: the reviewer sees every command stage's evidence for the head, not `output/`. These refine A-074's wording for `run` and `outputDir`.
+
 ### A-080 — 2026-10-20 — 10-b: fix the adversarial findings, then merge
 
 Owner, after 10-b's adversarial FAIL on `38d38a6` (one major: no test that the repository layer's presence is checked at the base, not `HEAD`; three minors: a relative `XDG_CONFIG_HOME` or `HOME` resolves against the working directory, `accept` and `cancel` on a pre-10-b store fail closed when the tip adds a repository workflow, the job file's `runsDir` rule untested) and the recommendation to fix the major and the two cheap minors on the branch, park the pre-10-b store minor, then merge: “fix then merge”.

@@ -23,3 +23,4 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
 
 ## Log
 - 2026-10-20 — drafted on `feat/10-c-command-stages` (A-074). Not READY until the owner says go; no code before the design note is approved.
+- 2026-10-20 — owner: “Approved all recommendations” (A-081). READY; design note approved with Q1 to Q4 as recommended.
