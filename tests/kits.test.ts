@@ -33,6 +33,20 @@ test('runtimeKit fails an adapter that rejects for the reviewer role the control
   assert.match(r.stdout, /not ok \d+ - reviewer-role: a standard_reviewer request/);
 });
 
+test('runtimeKit fails an adapter whose name is empty', () => {
+  const r = kit('nameless.kit.ts');
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /not ok \d+ - nameless: the adapter has a non-empty name/);
+  assert.match(r.stdout, /# fail 1$/m);
+});
+
+test('runtimeKit fails an adapter that does not settle after an abort', () => {
+  const r = kit('deaf.kit.ts');
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /not ok \d+ - deaf: an aborted run settles within/);
+  assert.match(r.stdout, /# fail 1$/m);
+});
+
 test('runtimeKit fails against an extension that prints JSON outside the RunOutcome union', () => {
   const r = kit('weird.kit.ts');
   assert.notEqual(r.status, 0, r.stdout + r.stderr);
