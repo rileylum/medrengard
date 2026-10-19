@@ -29,8 +29,22 @@ export type StageDef =
       transitions: Transitions;
       budget?: number;
     }
-  | { kind: 'command'; transitions: Transitions; budget?: number }
+  | {
+      kind: 'command';
+      transitions: Transitions;
+      budget?: number;
+      /** The stage's own commands, run in order like job.checks. Absent: job.checks (10-c). */
+      run?: Command[];
+      /** Default false. */
+      network?: boolean;
+    }
   | { kind: 'human'; transitions: Transitions; budget?: number };
+
+/** As verify's Check, but an argument may name a file next to the workflow (10-c). */
+export interface Command {
+  name: string;
+  command: (string | { file: string })[];
+}
 
 /** Plain data, so it can be checked and hashed before anything runs (A-056). */
 export interface Workflow {

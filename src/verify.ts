@@ -62,7 +62,11 @@ const TREE = 'tree';
 
 /** Run every declared check on the cycle's candidate and record one verification event. */
 export async function verify(store: EventStore, cycleId: string, job: Job, opts: VerifyOptions): Promise<Verified> {
-  const checks = job.checks ?? [];
+  const cycle = store.load(cycleId);
+  if (!cycle) throw new Error(`cycle ${cycleId} not open`);
+  const def = store.workflow.stages[cycle.stage];
+  if (def?.kind !== 'command' || !cycle.candidate) throw new Error(`verify on a cycle in ${cycle.stage}, expected a command stage`);
+  const checks = def.run ?? job.checks ?? [];
   const seen = new Set<string>();
   for (const c of checks) {
     if (typeof c.name !== 'string' || !NAME.test(c.name)) throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
@@ -75,9 +79,6 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   if (isolation === 'cgroup') checkScopes();
   const sandbox = opts.sandbox ?? { backend: 'bwrap' };
   checkSandbox(sandbox);
-  const cycle = store.load(cycleId);
-  if (!cycle) throw new Error(`cycle ${cycleId} not open`);
-  if (store.workflow.stages[cycle.stage]?.kind !== 'command' || !cycle.candidate) throw new Error(`verify on a cycle in ${cycle.stage}, expected a command stage`);
   const head = cycle.candidate.head;
 
   const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
