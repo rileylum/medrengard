@@ -191,7 +191,11 @@ test('a file argument with no workflow directory, or not in it, throws before an
   const { store, runsDir, job, cycleId, head } = await atCommand(twoStages({ run: [{ name: 'lint', command: ['sh', { file: 'lint.sh' }] }] }));
   const before = store.events(cycleId).length;
   await assert.rejects(verify(store, cycleId, job, opts(runsDir)), /LINT names file lint\.sh, but its workflow has no file of its own/);
-  await assert.rejects(verify(store, cycleId, job, opts(runsDir, { workflowDir: dir })), new RegExp(`LINT names file lint\\.sh, which is not in ${dir}`));
+  await assert.rejects(verify(store, cycleId, job, opts(runsDir, { workflowDir: dir })), new RegExp(`LINT names file lint\\.sh, which is not a file in ${dir}`));
+  // A directory passes checkWorkflow's path rule; it is not a file to copy and hash.
+  mkdirSync(join(dir, 'lint.sh'));
+  await assert.rejects(verify(store, cycleId, job, opts(runsDir, { workflowDir: dir })), new RegExp(`LINT names file lint\\.sh, which is not a file in ${dir}`));
+  rmSync(join(dir, 'lint.sh'), { recursive: true });
   assert.equal(store.events(cycleId).length, before);
   assert.ok(!existsSync(join(runsDir, 'evidence', head)));
   store.close();
@@ -215,4 +219,25 @@ test('readRequest reads the file SF_REQUEST names, and refuses one missing a fie
     if (saved === undefined) delete process.env.SF_REQUEST;
     else process.env.SF_REQUEST = saved;
   }
+});
+
+test('job.checks takes string arguments only: a { file } there is refused before anything is written', async () => {
+  // checks may come from the repository layer; file arguments are the workflow's, in run.
+  const { store, runsDir, job, cycleId, head } = await atCommand(twoStages(), [{ name: 'c', command: ['sh', { file: 'x.sh' }] } as unknown as Check]);
+  await assert.rejects(verify(store, cycleId, job, opts(runsDir, { workflowDir: dir })), /check c: every argument must be a string/);
+  assert.ok(!existsSync(join(runsDir, 'evidence', head)));
+  store.close();
+});
+
+test('evidence a command locked in output/ on an earlier run of the stage is cleared, not left to fail every later run', async () => {
+  const { store, runsDir, job, cycleId, head } = await atCommand(twoStages({ run: [sh('lint', 'true')] }));
+  // As a run killed before the controller could restore access would leave it.
+  const locked = join(runsDir, 'evidence', head, 'LINT', 'output', 'locked');
+  mkdirSync(locked, { recursive: true });
+  writeFileSync(join(locked, 'f'), 'x');
+  chmodSync(locked, 0);
+  const r = await verify(store, cycleId, job, opts(runsDir));
+  assert.equal(r.cycle.stage, 'BUILD', r.cycle.escalation);
+  assert.ok(!existsSync(locked));
+  store.close();
 });

@@ -8,7 +8,7 @@
 // and checked, dangling symlinks removed, and a removal that cannot finish is dirt.
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
@@ -71,13 +71,15 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     if (typeof c.name !== 'string' || !FILE_STEM.test(c.name)) throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
     if (c.name === TREE_CHECK) throw new Error(`check name ${TREE_CHECK} is reserved for the controller's own tracked-tree check`);
     if (seen.has(c.name)) throw new Error(`check name ${c.name} is declared twice`);
+    // The repository layer may set checks; a file argument is the workflow's, and only in run.
+    if (!def.run && !(Array.isArray(c.command) && c.command.every((a) => typeof a === 'string'))) throw new Error(`check ${c.name}: every argument must be a string`);
     seen.add(c.name);
   }
   // Before anything is written: a missing file is the owner's setup, not a FAIL of the candidate.
   const files = [...new Set(checks.flatMap(fileArgs))];
   for (const f of files) {
     if (opts.workflowDir === undefined) throw new Error(noWorkflowDir(cycle.stage, f));
-    if (!existsSync(join(opts.workflowDir, f))) throw new Error(`stage ${cycle.stage} names file ${f}, which is not in ${opts.workflowDir}`);
+    if (!statSync(join(opts.workflowDir, f), { throwIfNoEntry: false })?.isFile()) throw new Error(`stage ${cycle.stage} names file ${f}, which is not a file in ${opts.workflowDir}`);
   }
   checkDeadline(opts.deadlineMs);
   const isolation = opts.isolation ?? 'cgroup';
@@ -105,6 +107,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   tree('checkout-index', '--all', '--force');
   // Evidence for this SHA is this run's alone: a reader listing the directory must not find a
   // file from an earlier verification with a different check list (standard review 1 minor).
+  // A command may have locked what it wrote in output/, as a check may in the checkout.
+  if (existsSync(evidenceDir)) restoreAccess(evidenceDir);
   rmSync(evidenceDir, { recursive: true, force: true });
   const outputDir = join(evidenceDir, 'output');
   mkdirSync(outputDir, { recursive: true });

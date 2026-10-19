@@ -1,7 +1,7 @@
 // Ticket 10-b: a job's settings, from four layers (A-074, A-078). Every command in main.ts reads
 // its job through loadConfig, so the limits on each layer are enforced here and nowhere else.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Job } from './developer.ts';
@@ -164,11 +164,14 @@ function extractFiles(repo: string, sha: string, workflowPath: string, w: Workfl
   for (const file of new Set(files)) {
     // posix join: a Git path, not a host one; './x' and 'x' name the same blob.
     const path = posix.join(posix.dirname(workflowPath), file);
-    if (git(repo, 'ls-tree', '--name-only', sha, '--', path) === '') throw new Error(`workflow ${workflowPath} names file ${file}, which is not in the repository at ${sha}`);
+    const entry = git(repo, 'ls-tree', sha, '--', path);
+    if (entry === '') throw new Error(`workflow ${workflowPath} names file ${file}, which is not in the repository at ${sha}`);
     const out = join(runsDir, 'repo-config', sha, path);
     mkdirSync(dirname(out), { recursive: true });
     // Not the git helper: it trims and decodes, and these bytes are hashed and run as they are.
     writeFileSync(out, execFileSync('git', ['cat-file', 'blob', `${sha}:${path}`], { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+    // Git's mode, so a committed script can be the command itself; verify's copy keeps it.
+    chmodSync(out, entry.startsWith('100755 ') ? 0o755 : 0o644);
   }
 }
 

@@ -33,6 +33,7 @@ export interface CommandKitOptions {
 }
 
 const STAGE = 'CHECK';
+const TICKET = 'The command kit change.';
 
 /** Registers node:test cases for one command stage. Call it once per stage. */
 export function commandKit(name: string, o: CommandKitOptions): void {
@@ -77,7 +78,7 @@ export function commandKit(name: string, o: CommandKitOptions): void {
     const store = new EventStore(join(root, 'events.sqlite'), workflow);
     try {
       const runsDir = join(root, 'runs');
-      const job = { workId: 'kit', ticket: 'The command kit change.', repo };
+      const job = { workId: 'kit', ticket: TICKET, repo };
       const deadlineMs = o.deadlineMs ?? 60_000;
       const dev = await develop(store, developer, job, { deadlineMs, runsDir });
       assert.equal(dev.cycle.stage, STAGE, `the kit's developer did not reach the stage: ${dev.cycle.escalation}`);
@@ -105,10 +106,15 @@ export function commandKit(name: string, o: CommandKitOptions): void {
     assert.ok(r.checks.some((c) => c.result === 'FAIL'), 'every command passed the failing change');
   });
 
-  test(`${name}: the request names every field, and diffFile holds the change`, async () => {
+  // A check on the controller and readRequest, not on the command: the controller writes the
+  // request, so no command can break it. It shows the user what their command is given.
+  test(`${name}: the request the command is given names every field, and diffFile holds the change`, async () => {
     const r = await runStage(o.passing);
     const req = readRequest(join(r.evidenceDir, 'request.json'));
-    assert.deepEqual({ cycleId: req.cycleId, workId: req.workId, stage: req.stage, head: req.head, base: req.base }, { cycleId: r.cycleId, workId: 'kit', stage: STAGE, head: r.head, base: r.base });
+    assert.deepEqual(req, {
+      cycleId: r.cycleId, workId: 'kit', stage: STAGE, head: r.head, base: r.base, ticket: TICKET,
+      diffFile: join(r.evidenceDir, 'diff.patch'), outputDir: join(r.evidenceDir, 'output'),
+    });
     const diff = execFileSync('git', ['diff', '--text', r.base, r.head], { cwd: r.repo, encoding: 'utf8' });
     assert.ok(diff.length > 0, 'the passing change is empty');
     assert.equal(readFileSync(req.diffFile, 'utf8'), diff);
