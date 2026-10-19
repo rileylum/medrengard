@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-068 — 2026-10-19 — 08-g: pi's auth.json writable for every pi run
+
+Owner, after the 08-g findings (the `.pi` overlay drops pi's refreshed OpenAI login; binding reviewers only does not fix it), offered three options (1, bind `auth.json` writable for every pi run and accept that a run can overwrite or delete the login; 2, leave it and log in again when needed; 3, refresh in the controller): “Yes option 1 is good”.
+
+Effect: 08-g binds `~/.pi/agent/auth.json` writable on top of the `.pi` overlay for every pi run, developer and reviewer. The owner accepts that risk; it is recorded in [work/accepted-risks.md](work/accepted-risks.md). Not covered: two pi runs refreshing at once (pools, row 13), and a run killed at its deadline in the middle of a refresh.
+
 ### A-067 — 2026-10-19 — 04-f and 08-g READY, stacked on 09-d
 
 Owner, after 09-d was committed and offered the order 04-f, 08-g, 06-d, 07-e, and asked whether to open a PR for the row 9 stack: “Okay lets start tackling 04-f into 08-g now”.

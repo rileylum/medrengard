@@ -160,6 +160,21 @@ test('bwrap: an overlay directory takes writes inside and leaves the host direct
   assert.ok(!existsSync(join(config, 'settings.json.lock')));
 });
 
+// 08-g: pi refreshes its login into auth.json inside the overlay; the new refresh token must outlive the run.
+test('bwrap: a writeOver file inside an overlay keeps its writes; the rest of the overlay is still dropped', async () => {
+  const { root, work } = scratch();
+  const config = join(root, 'config');
+  mkdirSync(config);
+  writeFileSync(join(config, 'auth.json'), 'old\n');
+  writeFileSync(join(config, 'settings.json'), 'original\n');
+  const policy: Policy = { cwd: work, write: [work], read: [], overlay: [config], writeOver: [join(config, 'auth.json')], network: false };
+  const r = await sh(BWRAP, policy, `mkdir ${config}/auth.json.lock && echo new > ${config}/auth.json && echo changed > ${config}/settings.json`);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(readFileSync(join(config, 'auth.json'), 'utf8'), 'new\n');
+  assert.equal(readFileSync(join(config, 'settings.json'), 'utf8'), 'original\n');
+  assert.ok(!existsSync(join(config, 'auth.json.lock')));
+});
+
 test('bwrap: home sets HOME; tmp binds a host directory at /tmp', async () => {
   const { root, work } = scratch();
   const tmp = join(root, 'run-tmp');

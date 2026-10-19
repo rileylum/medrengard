@@ -18,9 +18,9 @@ export interface CliSpec {
   /**
    * What the CLI needs of the owner's home inside a sandbox, relative to it; a path that does not
    * exist is skipped. `read` is bound read-only, `overlay` takes writes that are dropped after the
-   * run (docs/work/08-c-findings.md).
+   * run (docs/work/08-c-findings.md), and `write` paths keep their writes through the overlay (08-g).
    */
-  config: { read: string[]; overlay: string[] };
+  config: { read: string[]; overlay: string[]; write?: string[] };
 }
 
 export interface CliAdapterOptions {
@@ -74,7 +74,7 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
         const writes = opts.writes ?? req.role === 'developer';
         [command, args] = wrap(sandbox, {
           cwd: req.cwd, write: writes ? [req.cwd] : [], read: [dirname(bin), ...(writes ? [] : [req.cwd]), ...inHome(spec.config.read)],
-          overlay: inHome(spec.config.overlay), network: true, home, tmp,
+          overlay: inHome(spec.config.overlay), writeOver: inHome(spec.config.write ?? []), network: true, home, tmp,
         }, bin, spec.args);
       }
       try {
@@ -206,9 +206,11 @@ export const pi: CliSpec = {
   name: 'pi',
   command: 'pi',
   args: ['-p', '--mode', 'json', '--no-tools', '--no-session'],
-  // pi takes a lock file beside settings.json before it reads its key, so read-only fails. If a
-  // token refresh inside the overlay is ever lost, bind agent/auth.json writable on top (A-038).
-  config: { read: [], overlay: ['.pi'] },
+  // pi takes a lock file beside settings.json before it reads its key, so read-only fails. OpenAI
+  // rotates refresh tokens, so a refresh pi wrote only into the overlay spends the stored token
+  // and loses its replacement: auth.json stays writable (08-g, A-068). Removing it logs pi out
+  // after the next refresh.
+  config: { read: [], overlay: ['.pi'], write: ['.pi/agent/auth.json'] },
   parse(stdout, stderr, exitCode) {
     const events = stdout.split('\n').map(parseJson).filter((e) => e !== undefined);
     const session = events.find((e) => e.type === 'session');
