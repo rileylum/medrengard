@@ -117,4 +117,5 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 21. Done: 09-c reviews and owner-run tests waived by the owner (A-063).
 22. Done: three tickets drafted from the 09-c live run, to be taken after row 9 (A-064): 04-f, 06-d, 07-e.
 23. Next: 09-d, the spec rewrite (A-058). Drafted as [work/09-d-spec-rewrite.md](work/09-d-spec-rewrite.md) on `feat/09-d-spec-rewrite`, stacked on `feat/09-c-prompt-versions`. READY (A-066). The spec is rewritten, uncommitted; `npm test` 245 pass, 0 fail, implementer-run. Owner: read `docs/specs/core-lifecycle-v1.md` against the ticket's done-when list.
-24. Drafted at the owner's request: [work/08-g-pi-auth-refresh.md](work/08-g-pi-auth-refresh.md). It first checks whether the `.pi` overlay drops pi's refreshed OpenAI login, then binds `auth.json` writable (A-038). Not READY.
+24. Drafted at the owner's request: [work/08-g-pi-auth-refresh.md](work/08-g-pi-auth-refresh.md). It first checks whether the `.pi` overlay drops pi's refreshed OpenAI login, then binds `auth.json` writable (A-038). READY (A-067), stacked on 04-f.
+25. Done: 04-f implemented on `feat/04-f-pi-error-reason` as `e36d85e`; `npm test` implementer-run, 246 pass, 0 fail. Owner: run `npm test` on `e36d85e`, and run or waive the reviews.
