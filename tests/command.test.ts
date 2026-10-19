@@ -4,13 +4,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { EventStore } from '../src/store.ts';
 import { claude, cliAdapter } from '../src/runtime/cli-adapter.ts';
 import { develop, type Job } from '../src/developer.ts';
 import type { Workflow } from '../src/lifecycle.ts';
+import { review } from '../src/review.ts';
 import { verify, type Check, type VerifyOptions } from '../src/verify.ts';
+import { fakeAdapter } from './fake-adapter.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-command-');
@@ -67,5 +69,32 @@ test('a command stage with run runs those commands and not job.checks; one witho
   const build = await verify(store, cycleId, job, opts(runsDir));
   assert.equal(build.cycle.stage, 'REVIEW', build.cycle.escalation);
   assert.deepEqual(checksOf(build.cycle), [{ name: 'check', result: 'PASS' }]);
+  store.close();
+});
+
+test('two command stages on one head keep each other evidence, each under evidence/<head>/<stage>/', async () => {
+  const { store, runsDir, job, cycleId, head } = await atCommand(twoStages({ run: [sh('same', 'echo lint')] }, { run: [sh('same', 'echo build')] }));
+  const lint = await verify(store, cycleId, job, opts(runsDir));
+  const build = await verify(store, cycleId, job, opts(runsDir));
+  assert.equal(build.cycle.stage, 'REVIEW', build.cycle.escalation);
+  assert.equal(lint.evidenceDir, join(runsDir, 'evidence', head, 'LINT'));
+  assert.equal(build.evidenceDir, join(runsDir, 'evidence', head, 'BUILD'));
+  assert.equal(readFileSync(join(lint.evidenceDir, 'same.stdout'), 'utf8'), 'lint\n');
+  assert.equal(readFileSync(join(build.evidenceDir, 'same.stdout'), 'utf8'), 'build\n');
+  store.close();
+});
+
+test('the reviewer prompt lists every command stage verified on the head, as <stage>/<name>, with its evidence', async () => {
+  const { store, runsDir, job, cycleId, head } = await atCommand(twoStages({ run: [sh('same', 'echo from-lint')] }, { run: [sh('same', 'echo from-build')] }));
+  await verify(store, cycleId, job, opts(runsDir));
+  await verify(store, cycleId, job, opts(runsDir));
+  const reviewer = fakeAdapter({ outcome: { status: 'completed', claim: { head, verdict: 'PASS', findings: [] } } });
+  const c = await review(store, reviewer, cycleId, job, { deadlineMs: 20_000, runsDir });
+  assert.equal(c.stage, 'ACCEPTED', c.escalation);
+  const prompt = reviewer.requests[0]!.prompt;
+  assert.match(prompt, /^LINT\/same: PASS$/m);
+  assert.match(prompt, /^BUILD\/same: PASS$/m);
+  assert.match(prompt, /EVIDENCE LINT\/same\.stdout ====\nfrom-lint$/m);
+  assert.match(prompt, /EVIDENCE BUILD\/same\.stdout ====\nfrom-build$/m);
   store.close();
 });

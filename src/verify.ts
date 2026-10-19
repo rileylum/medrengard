@@ -45,7 +45,7 @@ export interface Verified {
   cycle: Cycle;
   /** `<runsDir>/<cycleId>-verify`, the candidate head's files with no `.git`. Kept for the reviewers (06-b). */
   worktree: string;
-  /** `<runsDir>/evidence/<head>/`, one `<name>.stdout`, `<name>.stderr`, `<name>.exit` per check. */
+  /** `<runsDir>/evidence/<head>/<stage>/`, one `<name>.stdout`, `<name>.stderr`, `<name>.exit` per check. */
   evidenceDir: string;
 }
 
@@ -83,7 +83,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
 
   const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
   const worktree = join(runsDir, `${cycleId}-verify`);
-  const evidenceDir = join(runsDir, 'evidence', head);
+  // Per stage: a second command stage on the same head must not delete the first one's evidence.
+  const evidenceDir = join(runsDir, 'evidence', head, cycle.stage);
   // Fresh every time: the spec wants checks that ran independently of the developer, and a
   // checkout of the commit alone is the only thing that proves it. A checkout left by an earlier
   // verification of this cycle (a fix run moved the head) goes first.

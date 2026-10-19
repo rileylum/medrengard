@@ -36,6 +36,7 @@ const COMMITS_KEEP = 16 * 1024;
 const COMMIT_FORMAT = '--format=commit %H%nAuthor: %an <%ae>%n%n%w(0,4,4)%B';
 
 type Verification = Extract<Event, { type: 'verification' }>;
+type Verified = Cycle['history'][number] & { event: Verification };
 const EVIDENCE_EXTS = ['exit', 'stdout', 'stderr'] as const;
 
 /** One reviewer run for whichever review stage the cycle is in. Returns the replayed Cycle. */
@@ -52,33 +53,40 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
   // before a run starts, so a reviewer never reads a tree the controller did not verify.
   const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
   const checkout = join(runsDir, `${cycleId}-verify`);
-  const evidenceDir = join(runsDir, 'evidence', head);
   if (!existsSync(checkout)) throw new Error(`no verify checkout at ${checkout}; run verify first`);
   // A check ran the candidate's code here; it may have rewritten a tracked file the reviewer
   // would then Read instead of the commit (06-b adversarial). The comparison is with the head,
   // so a checkout of any other commit fails it too. Untracked leftovers are allowed.
   const dirty = treeDiff(job.repo, checkout, head, opts.deadlineMs);
   if (dirty) throw new Error(`verify checkout ${checkout} is not clean against ${head}:\n${dirty}`);
-  if (!existsSync(evidenceDir)) throw new Error(`no verification evidence at ${evidenceDir}`);
-  // The last verification is the candidate's: apply admits one only in VERIFYING and only for the
-  // candidate SHA, so a mismatch here is a store or lifecycle bug, not a case to pick around.
-  const verification = cycle.history.map((h) => h.event).filter((e): e is Verification => e.type === 'verification').at(-1);
-  if (!verification) throw new Error(`cycle ${cycleId} has no verification event`);
-  if (verification.head !== head) throw new Error(`cycle ${cycleId}: last verification is for ${verification.head}, candidate is ${head}`);
-  for (const c of verification.checks) {
-    for (const ext of EVIDENCE_EXTS) {
-      const f = join(evidenceDir, `${c.name}.${ext}`);
-      if (!existsSync(f)) throw new Error(`verification evidence file ${f} is missing`);
+  // The last verification is the candidate's: apply admits one only in a command stage and only for
+  // the candidate SHA, so a mismatch here is a store or lifecycle bug, not a case to pick around.
+  const all = cycle.history.filter((h): h is Verified => h.event.type === 'verification');
+  const last = all.at(-1);
+  if (!last) throw new Error(`cycle ${cycleId} has no verification event`);
+  if (last.event.head !== head) throw new Error(`cycle ${cycleId}: last verification is for ${last.event.head}, candidate is ${head}`);
+  // Each command stage's last verification of this head (10-c, A-081 Q4): a reviewer shown only the
+  // last stage would miss a custom step's result. Keyed by the stage it was recorded in.
+  const byStage = new Map<string, Verification>();
+  for (const h of all) if (h.event.head === head) byStage.set(h.from, h.event);
+  const stages = [...byStage].map(([stage, verification]) => ({ stage, verification, dir: join(runsDir, 'evidence', head, stage) }));
+  for (const { verification, dir } of stages) {
+    if (!existsSync(dir)) throw new Error(`no verification evidence at ${dir}`);
+    for (const c of verification.checks) {
+      for (const ext of EVIDENCE_EXTS) {
+        const f = join(dir, `${c.name}.${ext}`);
+        if (!existsSync(f)) throw new Error(`verification evidence file ${f} is missing`);
+      }
     }
   }
 
-  const { text, ...versions } = reviewPrompt(def.roleText, gather(job.ticket, head, base, job.repo, opts.instructions ?? ['AGENTS.md'], verification, evidenceDir));
+  const { text, ...versions } = reviewPrompt(def.roleText, gather(job.ticket, head, base, job.repo, opts.instructions ?? ['AGENTS.md'], stages));
   return execute(store, cycleId, adapter, { role, prompt: text, cwd: checkout }, { deadlineMs: opts.deadlineMs, versions });
 }
 
 // What the reviewer is shown, gathered from Git and the evidence files; the wording around it is
 // src/prompt.ts's.
-function gather(ticket: string, head: string, base: string, repo: string, instructions: string[], verification: Verification, evidenceDir: string): ReviewParts {
+function gather(ticket: string, head: string, base: string, repo: string, instructions: string[], stages: { stage: string; verification: Verification; dir: string }[]): ReviewParts {
   // --text: a committed .gitattributes with `-diff` would otherwise turn every file into
   // "Binary files differ" (06-b adversarial); the cut bounds any real binary.
   const diff = quoteGit(repo, 'diff', '--text', base, head);
@@ -88,11 +96,12 @@ function gather(ticket: string, head: string, base: string, repo: string, instru
     ticket,
     // ls-tree answers absence with empty output and exit 0; any failure is not absence and surfaces.
     instructions: instructions.map((path) => ({ path, text: git(repo, 'ls-tree', head, '--', path) ? quoteGit(repo, 'show', `${head}:${path}`) : `${path}: not present in the candidate commit` })),
-    checks: verification.checks,
+    checks: stages.flatMap(({ stage, verification }) => verification.checks.map((c) => ({ ...c, name: `${stage}/${c.name}` }))),
     paths: quoteGit(repo, 'diff', '--name-status', base, head),
     commits: cut(quoteGit(repo, 'log', '--reverse', COMMIT_FORMAT, `${base}..${head}`), COMMITS_KEEP),
     diff: cut(diff, DIFF_MAX),
-    evidence: verification.checks.flatMap((c) => EVIDENCE_EXTS.map((ext) => ({ name: `${c.name}.${ext}`, text: cut(readFileSync(join(evidenceDir, `${c.name}.${ext}`), 'utf8'), EVIDENCE_KEEP) }))),
+    evidence: stages.flatMap(({ stage, verification, dir }) => verification.checks.flatMap((c) =>
+      EVIDENCE_EXTS.map((ext) => ({ name: `${stage}/${c.name}.${ext}`, text: cut(readFileSync(join(dir, `${c.name}.${ext}`), 'utf8'), EVIDENCE_KEEP) })))),
   };
 }
 
