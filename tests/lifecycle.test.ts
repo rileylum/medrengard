@@ -375,3 +375,19 @@ test('checkWorkflow refuses a role that produces both a commit and a verdict, an
   refused({ ...noHuman, name: '' }, /name/);
   assert.deepEqual(checkWorkflow(ownerCheck), []);
 });
+
+// Ticket 10-c: a command stage's run, network and file arguments are refused at load, not at verify.
+test('checkWorkflow refuses a malformed run, network or file argument on a command stage', () => {
+  const cmd = (extra: object) => withStage('VERIFYING', { kind: 'command', transitions: { PASS: 'STANDARD_REVIEW' }, ...extra });
+  const ok = { name: 'lint', command: ['node', { file: 'lint.ts' }, '--strict'] };
+  assert.deepEqual(checkWorkflow(cmd({ run: [ok, { name: 'sub', command: [{ file: 'bin/check.sh' }] }], network: true })), []);
+  for (const run of [[], 'npm test', {}, [['npm', 'test']], [null]]) refused(cmd({ run }), /VERIFYING.*run/);
+  for (const name of ['a b', '../x', '..', '', 'tree', 7]) refused(cmd({ run: [{ ...ok, name }] }), /VERIFYING.*name/);
+  refused(cmd({ run: [ok, ok] }), /VERIFYING.*lint.*twice/);
+  for (const command of [[], 'npm test', undefined]) refused(cmd({ run: [{ name: 'c', command }] }), /VERIFYING.*c.*command/);
+  for (const arg of [7, null, {}, { path: 'x' }, { file: 'x', mode: 1 }, ['x']]) refused(cmd({ run: [{ name: 'c', command: ['node', arg] }] }), /VERIFYING.*c.*argument/);
+  for (const file of [7, '', '/etc/passwd', '../x.ts', 'a/../../x.ts', 'a\\..\\x.ts']) refused(cmd({ run: [{ name: 'c', command: ['node', { file }] }] }), /VERIFYING.*c.*file/);
+  for (const network of ['yes', 1, null]) refused(cmd({ network }), /VERIFYING.*network/);
+  // Its name is a directory under evidence/<head>/.
+  refused({ ...noHuman, stages: { ...noHuman.stages, DEV: { ...noHuman.stages.DEV!, transitions: { PASS: '../x' } }, '../x': noHuman.stages.BUILD! } }, /\.\.\/x.*command stage name/);
+});

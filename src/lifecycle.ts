@@ -198,6 +198,7 @@ export function checkWorkflow(w: Workflow): string[] {
     if (def.kind === 'agent' && !str(def.role)) reasons.push(`stage ${name} is an agent stage with no role`);
     if (def.kind === 'agent' && def.produces !== 'commit' && def.produces !== 'verdict') reasons.push(`stage ${name} produces ${String(def.produces)}, not commit or verdict`);
     if (def.kind === 'agent') reasons.push(...roleTextReasons(name, def));
+    if (def.kind === 'command') reasons.push(...commandReasons(name, def));
     if (def.budget !== undefined && !(Number.isSafeInteger(def.budget) && def.budget > 0)) reasons.push(`stage ${name} budget must be a positive integer`);
     if (!obj(def.transitions) || !str(def.transitions.PASS)) reasons.push(`stage ${name} has no PASS transition`);
   }
@@ -260,6 +261,39 @@ function roleTextReasons(name: Stage, def: Extract<StageDef, { kind: 'agent' }>)
   if (def.produces !== 'commit') reasons.push(`stage ${name} has fix role text but produces ${String(def.produces)}, not commit`);
   else if (!str(def.fixRoleText)) reasons.push(`stage ${name} fix role text must be a non-empty string`);
   else if (LINE_BREAK.test(def.fixRoleText)) reasons.push(`stage ${name} fix role text must be one line`);
+  return reasons;
+}
+
+/** A file stem, nothing that could leave the evidence directory or hide a sibling's file. Check and command names, and command stage names. */
+export const FILE_STEM = /^(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/;
+/** verify's own tracked-tree check, recorded under this name when a check dirtied the checkout. */
+export const TREE_CHECK = 'tree';
+
+// verify's rules for job.checks names, at load time for `run` (10-c), plus what a file argument may name.
+function commandReasons(name: Stage, def: Extract<StageDef, { kind: 'command' }>): string[] {
+  const reasons: string[] = [];
+  // The stage's evidence directory is evidence/<head>/<stage>/.
+  if (!FILE_STEM.test(name)) reasons.push(`stage ${name}: a command stage name must be a file stem`);
+  if (def.network !== undefined && typeof def.network !== 'boolean') reasons.push(`stage ${name} network must be true or false`);
+  if (def.run === undefined) return reasons;
+  if (!Array.isArray(def.run) || def.run.length === 0) return [...reasons, `stage ${name} run must be a non-empty array of { name, command }`];
+  const seen = new Set<unknown>();
+  for (const c of def.run as unknown[]) {
+    if (!obj(c)) { reasons.push(`stage ${name} run entry ${JSON.stringify(c)} must be { name, command }`); continue; }
+    const label = `stage ${name} command ${JSON.stringify(c.name)}`;
+    if (typeof c.name !== 'string' || !FILE_STEM.test(c.name)) reasons.push(`${label}: name is not a file stem`);
+    else if (c.name === TREE_CHECK) reasons.push(`${label}: name ${TREE_CHECK} is reserved for the controller's tracked-tree check`);
+    else if (seen.has(c.name)) reasons.push(`${label}: declared twice`);
+    seen.add(c.name);
+    if (!Array.isArray(c.command) || c.command.length === 0) { reasons.push(`${label}: command must be a non-empty array`); continue; }
+    for (const arg of c.command as unknown[]) {
+      if (typeof arg === 'string') continue;
+      if (!obj(arg) || Object.keys(arg).join() !== 'file') reasons.push(`${label}: argument ${JSON.stringify(arg)} is neither a string nor { file }`);
+      // Copied to files/<file> in the stage directory, so it must stay inside both.
+      else if (typeof arg.file !== 'string' || arg.file === '' || arg.file.startsWith('/') || arg.file.split(/[\\/]/).includes('..'))
+        reasons.push(`${label}: file ${JSON.stringify(arg.file)} must be a relative path beside the workflow, without ..`);
+    }
+  }
   return reasons;
 }
 
