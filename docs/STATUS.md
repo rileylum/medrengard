@@ -94,6 +94,8 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 2026-10-19: `npm test` on `c368009` (09-c, `feat/09-c-prompt-versions`), implementer-run, not independent — 269 tests, 245 pass, 19 skipped, 5 todo, 0 fail. Mutation checks: 5 of 5 mutants caught. `npm run test:learn`: 3 of 6 fail (2 already failed on 09-b; 09-c adds stale references to `prompt`, `oneLine` and `buildPrompt`).
 2026-10-19: `RUNTIME_SPIKE=1 npm test` on `6ab20d6` (09-c), owner-run: every claude live test passed, including a real developer run, a real standard review and the end-to-end `main.ts` job. Every pi test that needed a reply failed: pi's OpenAI OAuth refresh returned `invalid_grant`. After the owner logged pi in again, `RUNTIME_SPIKE=1 node --test --test-name-pattern='pi'`, owner-run: 40 tests, 40 pass, 0 fail, including a real pi developer run and a real pi standard review. Seen live, not yet ticketed: the pi adapter records an error `turn_end` as "no claim block in reply" instead of pi's `errorMessage`; in the live `main.ts` job, the standard reviewer FAILed for a commit message it cannot see, and the fix run made no new commit.
 
+2026-10-19: `npm test` on `e7eb056` (06-d, `feat/06-d-reviewer-commit-messages`), implementer-run, not independent — 276 tests, 252 pass, 19 skipped, 5 todo, 0 fail. Mutation checks: 5 of 5 caught.
+
 ## Next action
 
 1. Done: plan step 8 merged (`86dde47`, `f479736`, `73463fc`); the owner's `npm test` on `73463fc` passes.
@@ -125,3 +127,4 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 27. Done: 08-g implemented on `feat/08-g-pi-auth-refresh` as `9fb570c` (A-068): pi's `auth.json` keeps its writes through the overlay. `npm test` implementer-run, 248 pass, 0 fail. Owner: run `npm test` on `9fb570c`, run or waive the reviews for 04-f and 08-g, and confirm the next pi refresh survives. Next tickets: 06-d, then 07-e (Design).
 28. Done: reviews for 04-f and 08-g waived, and the stack merged into main (A-069).
 29. Next: 06-d (Fast), then 07-e (Design), in a new session. Neither is READY.
+30. Done: 06-d READY (A-070) and implemented on `feat/06-d-reviewer-commit-messages` as `e7eb056`. Owner: run `npm test` on `e7eb056`, and run or waive the reviews. Then 07-e (Design), not READY.

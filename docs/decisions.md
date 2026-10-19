@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-070 — 2026-10-19 — 06-d READY
+
+Owner, after the handoff named 06-d then 07-e as next and neither READY: “go on 06-d”.
+
+Effect: [06-d](work/06-d-reviewer-commit-messages.md) is READY and is implemented on `feat/06-d-reviewer-commit-messages`, off main at `7a3ca4e`. 07-e is still not READY.
+
 ### A-069 — 2026-10-19 — 04-f and 08-g reviews waived; merge row 9, 04-f and 08-g
 
 Owner, asked to run or waive the reviews for 04-f and 08-g and whether to open a PR: “waive. Lets merge actually then we'll look at 06-d and 07-e in a new session (so we'll need to update the handoff after the merge)”.
