@@ -1,6 +1,6 @@
 # 10-f — Fixes for 10-a's adversarial minors
 
-Route: Fast. Fix ticket for the four minors of 10-a's adversarial PASS on `bb40612` (A-076). Each fix is local, and the expected behaviour is already stated: "as a CLI runtime does" and the contract the controller keeps.
+Route: Fast. Fix ticket for the four minors and two notes of 10-a's adversarial PASS on `bb40612` (A-076). Each fix is local, and the expected behaviour is already stated: "as a CLI runtime does" and the contract the controller keeps.
 
 Goal: an extension runtime's failure reason is bounded like a CLI's, and `runtimeKit` judges an adapter by the contract the controller relies on, with each of its cases pinned by a test.
 
@@ -9,11 +9,13 @@ Done when:
 - The kit passes an outcome the controller accepts, including `{ status: 'completed', claim, sessionId: undefined }`. Verified by test.
 - The kit's reviewer case sends a role and prompt the controller sends (`standard_reviewer`, with the reviewer phrase), and an adapter that rejects for a reviewer role fails the kit. The fixture's reviewer case returns a verdict, not a commit. Verified by test.
 - Removing the kit's name check or its abort check makes `tests/kits.test.ts` fail. Verified by test and by mutation.
+- A job-file runtime named `__proto__` is refused when the registry is built, with an error naming it, before its module is read (adversarial note). Verified by test.
 - The `SHAPE` versions check is tested on `developer_result`, `verdict` and `dispute`, not only `run_failed` (adversarial note). Verified by mutation.
 
 Constraints: zero dependencies; no paid calls. Existing tests pass unchanged except where a case above changes what they pin.
-Non-goals: refusing lookalike runtime names (`Claude`), and the `__proto__` name (adversarial notes; the record still tells them apart). Unless the owner adds it: refusing `__proto__` is one line.
+Non-goals: refusing lookalike runtime names such as `Claude` (adversarial note; their `moduleHash` tells them apart in the record).
 Verification: `npm test`, run by the owner on the reviewed SHA.
 
 ## Log
 - 2026-10-19 — drafted from 10-a's adversarial verdict (A-076). Not READY until the owner says go.
+- 2026-10-19 — owner: "Approve,d"; on `__proto__`: "Okay lets refuse it, then start work". `__proto__` refusal added to Done when. READY. Branch `feat/10-f-registries-fixes`.
