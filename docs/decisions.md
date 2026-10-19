@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-069 — 2026-10-19 — 04-f and 08-g reviews waived; merge row 9, 04-f and 08-g
+
+Owner, asked to run or waive the reviews for 04-f and 08-g and whether to open a PR: “waive. Lets merge actually then we'll look at 06-d and 07-e in a new session (so we'll need to update the handoff after the merge)”.
+
+Effect: 04-f and 08-g carry no reviews and no owner-run `npm test`; the implementer's run on `9fb570c` (272 tests, 248 pass, 0 fail) stands as the record. The repository has no remote, so the stack (09-a, 09-b, 09-c, 09-d, 04-f, 08-g) merges into main locally with `--no-ff`, as earlier merges did. Plan row 9 is done. 06-d and 07-e come next, in a new session.
+
 ### A-068 — 2026-10-19 — 08-g: pi's auth.json writable for every pi run
 
 Owner, after the 08-g findings (the `.pi` overlay drops pi's refreshed OpenAI login; binding reviewers only does not fix it), offered three options (1, bind `auth.json` writable for every pi run and accept that a run can overwrite or delete the login; 2, leave it and log in again when needed; 3, refresh in the controller): “Yes option 1 is good”.

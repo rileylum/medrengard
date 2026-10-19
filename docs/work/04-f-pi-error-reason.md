@@ -20,3 +20,4 @@ Related, not in scope: the pi config is an overlay (A-038), so a token pi refres
 ## Log
 - 2026-10-19 — drafted after the 09-c live run (A-064). Not READY until the owner says go.
 - 2026-10-19 — owner: “Okay lets start tackling 04-f into 08-g now” (A-067); READY. Implemented on `feat/04-f-pi-error-reason`, stacked on `feat/09-d-spec-rewrite`, as `e36d85e`: two fixture cases copied from the live stream (`error-turn`, `error-turn-bare`), one test, and an error-turn branch in pi's `parse`. Red before the change (`no claim block in reply`). `npm test` on `e36d85e`, implementer-run, not independent: 270 tests, 246 pass, 19 skipped, 5 todo, 0 fail. Mutation: a parse that drops `errorMessage` fails the test. Next: the owner runs `npm test` on `e36d85e`; reviews per the workflow unless waived.
+- 2026-10-19 — reviews and the owner-run `npm test` waived by the owner (A-069): “waive”. Merged into main with the row 9 stack, locally with `--no-ff` (no remote).
