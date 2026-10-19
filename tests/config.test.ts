@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { loadConfig, storeOf } from '../src/config.ts';
 import { ownerCheck } from './workflows.ts';
@@ -294,6 +294,19 @@ test('a repository workflow\'s file argument keeps the executable bit Git record
   const c = await loadConfig(jobFile, env);
   assert.equal(statSync(join(c.workflowDir!, 'check.sh')).mode & 0o111, 0o111);
   assert.equal(statSync(join(c.workflowDir!, 'data.txt')).mode & 0o111, 0);
+});
+
+test('a repository workflow file argument that Git stores as a symlink or a directory is refused, naming it', async () => {
+  for (const [file, make] of [
+    ['link.sh', (repo: string) => { writeFileSync(join(repo, 'real.sh'), 'echo real\n'); symlinkSync('real.sh', join(repo, 'link.sh')); }],
+    ['dir', (repo: string) => { mkdirSync(join(repo, 'dir')); writeFileSync(join(repo, 'dir', 'x'), 'x\n'); }],
+  ] as const) {
+    const { repo, jobFile, env } = scratch();
+    writeFileSync(join(repo, 'flow.ts'), fileFlow(file));
+    make(repo);
+    commitRepoLayer(repo, { workflow: 'flow.ts' });
+    await assert.rejects(loadConfig(jobFile, env), new RegExp(`names file ${file}, which is not a regular file in the repository at [0-9a-f]{40}`));
+  }
 });
 
 test('a repository workflow naming a file that is not committed at the base is refused, naming it', async () => {

@@ -166,6 +166,8 @@ function extractFiles(repo: string, sha: string, workflowPath: string, w: Workfl
     const path = posix.join(posix.dirname(workflowPath), file);
     const entry = git(repo, 'ls-tree', sha, '--', path);
     if (entry === '') throw new Error(`workflow ${workflowPath} names file ${file}, which is not in the repository at ${sha}`);
+    // A symlink's blob is its target's path, and a job workflow's symlink is followed: refused, not run as that text.
+    if (!/^100(644|755) blob /.test(entry)) throw new Error(`workflow ${workflowPath} names file ${file}, which is not a regular file in the repository at ${sha}`);
     const out = join(runsDir, 'repo-config', sha, path);
     mkdirSync(dirname(out), { recursive: true });
     // Not the git helper: it trims and decodes, and these bytes are hashed and run as they are.
