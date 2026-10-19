@@ -615,3 +615,38 @@ test('a FIFO at the clone\'s .git/HEAD before a fix: fix throws naming the timeo
   assert.equal(survivors(worktree), '');
   store.close();
 });
+
+// Parked 08-f minor: the 08-f tests above all use 2000 ms, so a call site hard-wired to 2000 would
+// pass them. A deadline of 3000 and a lower bound on the elapsed time pin each call site to the
+// stage's deadline: the reason text alone repeats whatever deadline it was given.
+test('the fetch of a claimed branch is killed at the stage deadline, not at a fixed one (parked 08-f minor)', async () => {
+  const { repo, store, runsDir } = scratch();
+  const fifo: DeveloperAdapter = {
+    name: 'fifo',
+    async start(req) {
+      writeFileSync(join(req.cwd, 'done.txt'), 'done\n');
+      git(req.cwd, 'add', 'done.txt');
+      git(req.cwd, 'commit', '-q', '-m', 'done');
+      const head = git(req.cwd, 'rev-parse', 'HEAD');
+      fifoHead(req.cwd);
+      return { status: 'completed', claim: { head, artifacts: ['done.txt'] } };
+    },
+  };
+  const started = Date.now();
+  const { cycle } = await develop(store, fifo, job(repo), { deadlineMs: 3000, runsDir, sandbox: { backend: 'none' } });
+  const took = Date.now() - started;
+  assert.ok(took >= 2900 && took < 15_000, `develop took ${took} ms`);
+  assert.match(cycle.escalation ?? '', /fetch of sf\/\S+ from .* timed out after 3000 ms/);
+  store.close();
+});
+
+test('git in the clone before a fix is killed at the stage deadline, not at a fixed one (parked 08-f minor)', async () => {
+  const { store, runsDir, job: j, cycleId, worktree } = await failed();
+  fifoHead(worktree);
+  const started = Date.now();
+  await assert.rejects(fix(store, fake(claude), cycleId, j, { deadlineMs: 3000, runsDir }), /git rev-parse in .* timed out after 3000 ms/);
+  const took = Date.now() - started;
+  assert.ok(took >= 2900 && took < 15_000, `fix took ${took} ms`);
+  execFileSync('rm', ['-rf', worktree]);
+  store.close();
+});

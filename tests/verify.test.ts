@@ -607,3 +607,15 @@ test('a committed directory whose name is not valid UTF-8 verifies and is review
   assert.equal(reviewed.stage, 'ADVERSARIAL_REVIEW', reviewed.escalation);
   store.close();
 });
+
+// Parked 08-f minor: the test above uses 2000 ms, so checkoutGit hard-wired to 2000 would pass it.
+// The reason text repeats whatever deadline it was given; the elapsed time is what pins it.
+test('git over the verify checkout is killed at the stage deadline, not at a fixed one (parked 08-f minor)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('evil', 'mkdir -p vendor/.git; mkfifo vendor/.git/HEAD')], committing(nestedRepo));
+  const started = Date.now();
+  const { evidenceDir } = await verify(store, cycle.cycleId, job, { ...opts({ deadlineMs: 3000 }), runsDir });
+  const took = Date.now() - started;
+  assert.ok(took >= 2900 && took < 20_000, `verify took ${took} ms`);
+  assert.match(evidence(evidenceDir, 'tree').stdout, /^git update-index for .* timed out after 3000 ms/m);
+  store.close();
+});
