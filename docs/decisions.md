@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-064 — 2026-10-19 — Three tickets from the 09-c live run, after row 9
+
+Owner, asked whether the three issues seen in the 09-c live run become tickets or are parked under O-013: “Yes all three should be tickets, we'll deal with them and any others after we finish this 09 work.”
+
+Effect: drafted, not READY: [04-f](work/04-f-pi-error-reason.md) (a pi error turn records pi's own reason), [06-d](work/06-d-reviewer-commit-messages.md) (reviewers see the candidate's commit messages) and [07-e](work/07-e-fix-without-tree-change.md) (a fix whose findings need no tree change; Design route). Each is numbered by the plan step whose code it changes. They wait until row 9 is finished: 09-d first.
+
 ### A-063 — 2026-10-19 — 09-c reviews and owner-run tests waived
 
 Owner, told that `npm test` on `c368009` was run by the implementer session and is not independent: “Okay I'm going to waive that and the review.”

@@ -115,4 +115,5 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 19. Done: 09-b reviews waived by the owner (A-060).
 20. Done: 09-c implemented on `feat/09-c-prompt-versions`, stacked on `feat/09-b-generic-driver` (A-061, A-062; plan `plans/2026-10-19-prompt-versions.md`, uncommitted), code head `c368009`.
 21. Done: 09-c reviews and owner-run tests waived by the owner (A-063).
-22. Next: 09-d, the spec rewrite (A-058). Not drafted yet.
+22. Done: three tickets drafted from the 09-c live run, to be taken after row 9 (A-064): 04-f, 06-d, 07-e.
+23. Next: 09-d, the spec rewrite (A-058). Not drafted yet.
