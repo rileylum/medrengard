@@ -196,3 +196,23 @@ test('a file argument with no workflow directory, or not in it, throws before an
   assert.ok(!existsSync(join(runsDir, 'evidence', head)));
   store.close();
 });
+
+test('readRequest reads the file SF_REQUEST names, and refuses one missing a field, naming it', async () => {
+  const { readRequest } = await import('../src/kits/request.ts');
+  const file = join(dir, `request${n++}.json`);
+  const request = { cycleId: 'c', workId: 'w', stage: 'LINT', head: 'h', base: 'b', ticket: 't', diffFile: '/d', outputDir: '/o' };
+  writeFileSync(file, JSON.stringify(request));
+  const saved = process.env.SF_REQUEST;
+  process.env.SF_REQUEST = file;
+  try {
+    assert.deepEqual(readRequest(), request);
+    const { outputDir: _, ...short } = request;
+    writeFileSync(file, JSON.stringify(short));
+    assert.throws(() => readRequest(), new RegExp(`${file}: outputDir is not a non-empty string`));
+    delete process.env.SF_REQUEST;
+    assert.throws(() => readRequest(), /SF_REQUEST is not set/);
+  } finally {
+    if (saved === undefined) delete process.env.SF_REQUEST;
+    else process.env.SF_REQUEST = saved;
+  }
+});
