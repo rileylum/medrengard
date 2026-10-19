@@ -203,7 +203,7 @@ test('dispute: a fix run escalates with its reason and spends nothing; a duplica
   let c = apply(fixing(), { type: 'dispute', runId: 'dev2', head: 'H1', reason: 'wrong' });
   assert.equal(c.stage, 'ESCALATED');
   assert.equal(c.escalation, 'developer disputes the findings on H1: wrong');
-  assert.deepEqual(counters(c), [1, 0]);
+  assert.deepEqual(c.budgets, fixing().budgets);
   assert.ok(c.consumed.includes('dev2'));
   c = apply(c, { type: 'dispute', runId: 'dev2', head: 'H1', reason: 'wrong' });
   assert.match(c.history.at(-1)!.note ?? '', /ignored/);
