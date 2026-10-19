@@ -382,3 +382,30 @@ test('a repository layer that gives grants stops main.ts with exit 2 before any 
   assert.ok(!existsSync(marker), 'no runtime CLI was spawned');
   assert.ok(!existsSync(db), 'no store was created');
 });
+
+test('cancel works at the cycle\'s own base when the configuration at the branch tip is refused or broken (10-b standard 1)', () => {
+  for (const breakTip of [
+    (repo: string) => writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ workflow: 'flow.ts', deadlineMs: 1 })),
+    (repo: string) => rmSync(join(repo, 'flow.ts')),
+  ]) {
+    const { root, repo, jobFile } = scratch();
+    mkdirSync(join(repo, '.factory'));
+    writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ workflow: 'flow.ts' }));
+    writeFileSync(join(repo, 'flow.ts'), `export { ownerCheck as workflow } from ${JSON.stringify(WORKFLOWS)};\n`);
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'factory workflow');
+    const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+    writeFileSync(jobFile, JSON.stringify({ ...job, runtime: { writer: 'claude', reviewer: 'claude' } }));
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+    const first = sf([jobFile], env);
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    breakTip(repo);
+    git(repo, 'commit', '-q', '-am', 'tip change');
+    const cancelled = sf(['cancel', jobFile], env);
+    assert.equal(cancelled.status, 0, cancelled.stdout + cancelled.stderr);
+    assert.match(cancelled.stdout, /^Stage: CANCELLED$/m);
+  }
+});

@@ -173,6 +173,13 @@ export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = proce
   };
 }
 
+/** Where the job's store is. The repository layer may set neither, so this reads no Git and cannot fail on it. */
+export function storeOf(jobFile: string, env: NodeJS.ProcessEnv = process.env): { runsDir: string; workId: string } {
+  const job = readLayer(resolve(jobFile), JOB_KEYS, false);
+  const spec = merge([DEFAULTS, readLayer(personalFile(env), PERSONAL_KEYS, true), job]);
+  return { runsDir: resolve(spec.runsDir as string), workId: job.workId as string };
+}
+
 // Checked here, though the store checks it too: the adapters are built from it before the store opens.
 async function loadWorkflow(file: string | undefined): Promise<Workflow> {
   if (file === undefined) return defaultWorkflow;

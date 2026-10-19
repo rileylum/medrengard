@@ -9,7 +9,7 @@
 // Ticket 10-b: the job's settings come from four layers, read by src/config.ts.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { loadConfig, type JobFile } from './config.ts';
+import { loadConfig, storeOf, type JobFile } from './config.ts';
 import { oneLine, type Job } from './developer.ts';
 import { defaultWorkflow, type Workflow } from './lifecycle.ts';
 import { ROLE_ALIASES, run, type Adapters } from './run.ts';
@@ -41,22 +41,20 @@ const humanStages = (w: Workflow) => Object.keys(w.stages).filter((s) => w.stage
 
 /**
  * The job's configuration as its existing cycles were opened under. The base ref has usually
- * moved since (the owner merges into it), and a repository workflow read at the new tip would
- * not load them (A-078 Q4). With no match, the job file's base: the store's refusal then names
- * both workflows.
+ * moved since (the owner merges into it), and the layers at the new tip may not load them, or
+ * not load at all (A-078 Q4). The recorded bases come first; the job file's base is the last
+ * resort, and its error, or the store's refusal naming both workflows, is the one reported.
  */
 async function decisionConfig(file: string) {
-  const now = await loadConfig(file);
-  const db = join(now.runsDir, 'events.sqlite');
-  if (!existsSync(db)) return now;
-  const opened = openings(db, now.spec.workId);
-  const fits = (w: Workflow) => opened.every((o) => o.hash === workflowHash(w));
-  if (fits(now.workflow)) return now;
+  const { runsDir, workId } = storeOf(file);
+  const db = join(runsDir, 'events.sqlite');
+  const opened = existsSync(db) ? openings(db, workId) : [];
   for (const base of new Set(opened.flatMap((o) => (o.base ? [o.base] : [])))) {
-    const then = await loadConfig(file, process.env, { base });
-    if (fits(then.workflow)) return then;
+    // A base whose layers no longer load cannot be the one the cycles were opened under.
+    const then = await loadConfig(file, process.env, { base }).catch(() => undefined);
+    if (then && opened.every((o) => o.hash === workflowHash(then.workflow))) return then;
   }
-  return now;
+  return loadConfig(file);
 }
 
 async function accept(file: string, sha: string): Promise<number> {
