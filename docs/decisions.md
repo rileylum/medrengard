@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-075 — 2026-10-19 — 10-a READY; registries design approved
+
+Owner, after reading the 10-a ticket: “go”. Then, given [design/2026-10-19-registries.md](design/2026-10-19-registries.md) (a runtime registry in `src/runtime/registry.ts`; an extension runs as `node <module>` through `cliAdapter` with `CliSpec` gaining `input`, `bind` and `moduleHash`; `runtime` and `moduleHash` on every outcome event; a `BACKENDS` table in `src/sandbox.ts`; `runtimeKit` in `src/kits/runtime.ts`, imported by path): “approve”.
+
+Effect: 10-a is READY and follows that note. A job-file runtime may not reuse a built-in name. The module is hashed once, when its adapter is built.
+
 ### A-074 — 2026-10-19 — Row 10 design answers (O-016 items 3 to 6)
 
 Owner, after reading the handoff: “lets handle row 10”, the planned order (A-055). Offered seven answers for O-016 items 3 to 6, then worked examples of extension steps and of extensions that would not fit. Owner, concerned that extensions were being forced into one shape: “why not have an extension that simply listens in to the current state of a ticket and reports that out [...] OR what about some sort of discord notification bot that pings a user when we hit an escalation.” Shown that both are observers, not steps, and asked about the use of an extension step beside a workflow: “I'm a bit confused as to the utility of steps as extensions - when you could simply just write a different workflow.” Offered folding the extension step into the command stage, since a command stage already runs an argv in the sandbox at the candidate SHA: “Yes I think thats a much better place for these custom steps that run commands”. Offered the revised answers: “Okay I agree with your recommendations for 1, 2, 3, 4, 5, 7 and 8.” Offered the widened observation stream (Q6) and observers that run `accept` (Q6a): “Yes I like both, 6a would allow me to auto approve things that were only comments for example”.

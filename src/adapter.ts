@@ -26,8 +26,10 @@ export type RunOutcome =
   | { status: 'cancelled' };
 
 export interface Adapter {
-  /** Recorded as `runtime` on the Run by the claim event: `claude`, `pi`, or a test double's name. */
+  /** Recorded as `runtime` on the Run by the claim event, and on every outcome event (10-a): `claude`, `pi`, an extension's name, or a test double's. */
   name: string;
+  /** SHA-256 of an extension runtime's module file, recorded on every outcome event (10-a). */
+  moduleHash?: string;
   /**
    * Must settle after `signal` aborts. The controller does not wait past its deadline either
    * way, so an adapter that ignores abort only leaks its own process; it cannot hold a cycle.

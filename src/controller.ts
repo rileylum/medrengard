@@ -2,7 +2,7 @@
 // bounds it with a deadline, and turns the outcome into exactly one lifecycle event.
 import { randomUUID } from 'node:crypto';
 import type { Adapter, RunOutcome, RunRequest } from './adapter.ts';
-import { producedBy, type Cycle, type Event, type PromptVersions, type Role, type Stage } from './lifecycle.ts';
+import { producedBy, type Cycle, type Event, type PromptVersions, type Role, type RunVersions, type Stage } from './lifecycle.ts';
 import { oneLine } from './prompt.ts';
 import { UnclassifiableEvent, type EventStore } from './store.ts';
 
@@ -52,7 +52,8 @@ export async function execute(
     requireStage(store, cycleId, req.role);
   }
   const outcome = await bounded(adapter, { ...req, runId }, deadlineMs);
-  return receive(store, cycleId, runId, req.role, outcome, opts.accept, opts.versions);
+  const versions: Partial<RunVersions> = { ...opts.versions, runtime: adapter.name, ...(adapter.moduleHash === undefined ? {} : { moduleHash: adapter.moduleHash }) };
+  return receive(store, cycleId, runId, req.role, outcome, opts.accept, versions);
 }
 
 /**
@@ -60,7 +61,7 @@ export async function execute(
  * per run, so a redelivery returns the current Cycle unchanged. Never throws for what the adapter
  * returned; only for the controller's own misuse (wrong stage, unopened cycle) or a store failure.
  */
-export function receive(store: EventStore, cycleId: string, runId: string, role: Role, outcome: RunOutcome, accept?: ExecuteOptions['accept'], versions?: PromptVersions): Cycle {
+export function receive(store: EventStore, cycleId: string, runId: string, role: Role, outcome: RunOutcome, accept?: ExecuteOptions['accept'], versions?: Partial<RunVersions>): Cycle {
   const commit = producedBy(store.workflow, role) === 'commit';
   if (!commit) requireStage(store, cycleId, role, runId);
   const o = normalise(plain(outcome));

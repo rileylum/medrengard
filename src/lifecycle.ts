@@ -75,6 +75,14 @@ export interface PromptVersions {
   roleTextHash: string;
 }
 
+/** What a run's outcome event records of what ran it (10-a): the prompt wording and the runtime. */
+export interface RunVersions extends PromptVersions {
+  /** The adapter's name. */
+  runtime: string;
+  /** SHA-256 of an extension runtime's module file; absent for a built-in runtime. */
+  moduleHash?: string;
+}
+
 export interface Candidate {
   head: string;
   base: string;
@@ -92,9 +100,9 @@ export interface Run {
 /** `step` names the stage an event belongs to; without it the event belongs to the current stage. */
 export type Event = (
   | { type: 'claim'; runId: string; base: string; runtime: string }
-  | ({ type: 'developer_result'; runId: string; head?: string; artifacts: string[] } & Partial<PromptVersions>)
+  | ({ type: 'developer_result'; runId: string; head?: string; artifacts: string[] } & Partial<RunVersions>)
   | { type: 'verification'; head: string; checks: { name: string; result: 'PASS' | 'FAIL' | 'MISSING' }[] }
-  | ({ type: 'verdict'; runId: string; head: string; verdict: 'PASS' | 'FAIL'; findings?: string[] } & Partial<PromptVersions>)
+  | ({ type: 'verdict'; runId: string; head: string; verdict: 'PASS' | 'FAIL'; findings?: string[] } & Partial<RunVersions>)
   | { type: 'head_changed'; head: string }
   | { type: 'base_changed'; base: string }
   | { type: 'accept'; head: string }
@@ -102,31 +110,33 @@ export type Event = (
   | { type: 'cancel' }
   | { type: 'reject_dispatch'; reason: string }
   /** A fix run's claim that it will not change the candidate, with the developer's reason (07-e). */
-  | ({ type: 'dispute'; runId: string; head: string; reason: string } & Partial<PromptVersions>)
+  | ({ type: 'dispute'; runId: string; head: string; reason: string } & Partial<RunVersions>)
   /** The run ended with no usable claim: timeout, crash, malformed output, cancelled by deadline. */
-  | ({ type: 'run_failed'; runId: string; reason: string } & Partial<PromptVersions>)
+  | ({ type: 'run_failed'; runId: string; reason: string } & Partial<RunVersions>)
 ) & { step?: string };
 
 const str = (v: unknown) => typeof v === 'string' && v.length > 0;
 const arr = (v: unknown, each: (x: unknown) => boolean) => Array.isArray(v) && v.every(each);
 const obj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+// Not read by apply, but a value of the wrong type would be a false record of what ran.
+const versions = (e: Record<string, unknown>) => (e.runtime === undefined || str(e.runtime)) && (e.moduleHash === undefined || str(e.moduleHash));
 const isCheck = (v: unknown) => obj(v) && str(v.name) && ['PASS', 'FAIL', 'MISSING'].includes(v.result as string);
 
 // Shape checks, one per Event type. Everything apply dereferences must be present; anything else
 // is the sender's business. Extra fields are tolerated so an older controller can read newer logs.
 const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
   claim: (e) => str(e.runId) && str(e.base) && str(e.runtime),
-  developer_result: (e) => str(e.runId) && arr(e.artifacts, str) && (e.head === undefined || typeof e.head === 'string'),
+  developer_result: (e) => str(e.runId) && arr(e.artifacts, str) && (e.head === undefined || typeof e.head === 'string') && versions(e),
   verification: (e) => str(e.head) && arr(e.checks, isCheck),
-  verdict: (e) => str(e.runId) && str(e.head) && (e.verdict === 'PASS' || e.verdict === 'FAIL'),
+  verdict: (e) => str(e.runId) && str(e.head) && (e.verdict === 'PASS' || e.verdict === 'FAIL') && versions(e),
   head_changed: (e) => str(e.head),
   base_changed: (e) => str(e.base),
   accept: (e) => str(e.head),
   request_changes: () => true,
   cancel: () => true,
   reject_dispatch: (e) => str(e.reason),
-  run_failed: (e) => str(e.runId) && str(e.reason),
-  dispute: (e) => str(e.runId) && str(e.head) && str(e.reason),
+  run_failed: (e) => str(e.runId) && str(e.reason) && versions(e),
+  dispute: (e) => str(e.runId) && str(e.head) && str(e.reason) && versions(e),
 };
 
 /** True when apply can classify the value. Use at every boundary where events arrive as data. */

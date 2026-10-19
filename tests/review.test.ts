@@ -59,7 +59,7 @@ for (const spec of [claude, pi]) {
     assert.deepEqual([first.budgets.STANDARD_REVIEW ?? 0, first.budgets.ADVERSARIAL_REVIEW ?? 0], [1, 0]);
     // Reviewer runs have no claim event, so the Run list stays the developer's; the verdict's run ID is consumed.
     const verdict = first.history.at(-1)!.event as { type: string; runId: string; contractHash: string; roleTextHash: string };
-    assert.deepEqual(verdict, { type: 'verdict', runId: verdict.runId, head, verdict: 'PASS', findings: [], contractHash: verdict.contractHash, roleTextHash: verdict.roleTextHash });
+    assert.deepEqual(verdict, { type: 'verdict', runId: verdict.runId, head, verdict: 'PASS', findings: [], contractHash: verdict.contractHash, roleTextHash: verdict.roleTextHash, runtime: spec.name });
     assert.ok(first.consumed.includes(verdict.runId));
     const second = await review(store, fake(spec, 'verdict', 'pass'), cycleId, job, opts(runsDir));
     assert.equal(second.stage, 'AWAITING_ACCEPTANCE', second.escalation);
