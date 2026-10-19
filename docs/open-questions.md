@@ -17,7 +17,6 @@ O-001 to O-010 moved here from `decisions.md` on 2026-10-18; the IDs are unchang
 | O-013 | The initial prompt for each role, the skills each role gets, and how a run records which versions it used ([below](#o-013-role-prompts-and-skills)) | Before the first real repository's tickets |
 | O-014 | Survey of skills libraries, harnesses and other factories: what to borrow, and whether our flow should change ([below](#o-014-survey-skills-libraries-harnesses-and-other-factories)) | Before O-011 and O-013 are decided |
 | O-015 | Acceptance evidence (A-051): which tickets need it, which artifact type comes first, and when it gets a plan row ([below](#o-015-acceptance-evidence)) | When the stage gets a plan row |
-| O-016 | The workflow definition and the extension host (A-054): the workflow format, how the engine enforces its guarantees on a user workflow, the extension protocol, grants for outward effects, and where this goes in the plan ([below](#o-016-workflow-definition-and-extension-host)) | Before the row 9 tickets |
 
 ## O-005 Independent verification of "done when"
 
@@ -91,7 +90,7 @@ Raised 2026-10-19; design agreed in A-051, building it parked.
 
 ## O-016 Workflow definition and extension host
 
-Raised 2026-10-19; principles agreed in A-054.
+Raised 2026-10-19; principles agreed in A-054. **Answered:** items 1 and 2 in A-056, items 3 to 6 in A-074 (D-024). Kept for the reasoning; the decisions win where they differ.
 
 **Why it matters.** A-054 makes the stages, steps, budgets, human acceptance and merging user-definable, with today's lifecycle as the default workflow. The core keeps its promises only if the engine can check a user's workflow against them before it runs.
 
