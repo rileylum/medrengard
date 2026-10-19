@@ -1,7 +1,7 @@
 // Ticket 10-b: a job's settings, from four layers (A-074, A-078). Every command in main.ts reads
 // its job through loadConfig, so the limits on each layer are enforced here and nowhere else.
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Job } from './developer.ts';
 import { checkWorkflow, defaultWorkflow, type Workflow } from './lifecycle.ts';
@@ -38,9 +38,29 @@ export interface Config {
 
 const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
 
-export async function loadConfig(jobFile: string): Promise<Config> {
+/** Merged one level down; every other key is replaced whole, arrays included (A-078 Q3). */
+const NESTED = ['runtime', 'runtimes', 'sandbox'];
+
+function merge(layers: Record<string, unknown>[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const layer of layers)
+    for (const [key, value] of Object.entries(layer))
+      out[key] = NESTED.includes(key) ? { ...(out[key] as object | undefined), ...(value as object) } : value;
+  return out;
+}
+
+function personalFile(env: NodeJS.ProcessEnv): string {
+  return join(env.XDG_CONFIG_HOME || join(env.HOME ?? '', '.config'), 'software_factory', 'config.json');
+}
+
+function readLayer(file: string): Record<string, unknown> {
+  return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>) : {};
+}
+
+/** The job file's settings over the personal file's. `env` gives XDG_CONFIG_HOME and HOME. */
+export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = process.env): Promise<Config> {
   const path = resolve(jobFile);
-  const spec = JSON.parse(readFileSync(path, 'utf8')) as JobFile;
+  const spec = merge([readLayer(personalFile(env)), readLayer(path)]) as unknown as JobFile;
   const sandbox: Sandbox = spec.sandbox
     ? { ...spec.sandbox, read: spec.sandbox.read?.map((p) => (typeof p === 'string' ? resolve(path, '..', p) : p)) }
     : { backend: 'bwrap' };
