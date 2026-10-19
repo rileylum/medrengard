@@ -57,7 +57,7 @@ const NAME = /^(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/;
 // The controller's own check, recorded only when it fails: a check that rewrote a tracked file
 // (formatter, codegen) left a checkout that is not the commit, so what the reviewers would read
 // is not what was verified. Recording it escalates the cycle with evidence instead of leaving it
-// in STANDARD_REVIEW with review refusing the dirty checkout on every call (06-c adversarial).
+// in the review stage with review refusing the dirty checkout on every call (06-c adversarial).
 const TREE = 'tree';
 
 /** Run every declared check on the cycle's candidate and record one verification event. */
@@ -77,7 +77,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   checkSandbox(sandbox);
   const cycle = store.load(cycleId);
   if (!cycle) throw new Error(`cycle ${cycleId} not open`);
-  if (cycle.stage !== 'VERIFYING' || !cycle.candidate) throw new Error(`verify on a cycle in ${cycle.stage}, expected VERIFYING`);
+  if (store.workflow.stages[cycle.stage]?.kind !== 'command' || !cycle.candidate) throw new Error(`verify on a cycle in ${cycle.stage}, expected a command stage`);
   const head = cycle.candidate.head;
 
   const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);

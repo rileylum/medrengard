@@ -12,9 +12,13 @@ import type { Adapter } from './adapter.ts';
 import { checkDeadline, execute } from './controller.ts';
 import { bounded, git, stopped } from './git.ts';
 import type { Cycle, Event } from './lifecycle.ts';
+import { developerPrompt } from './prompt.ts';
 import { checkSandbox, wrap, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
 import type { Check } from './verify.ts';
+
+// main.ts and the tests import it from here, where it lived before the prompt moved (09-c).
+export { oneLine } from './prompt.ts';
 
 export interface Job {
   workId: string;
@@ -60,7 +64,7 @@ export interface Developed {
   branch: string;
 }
 
-const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
+export const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
 
 /** Open a cycle for the job, run the developer once, return the replayed Cycle and where its branch lives. */
 export async function develop(store: EventStore, adapter: DeveloperAdapter, job: Job, opts: DevelopOptions): Promise<Developed> {
@@ -76,17 +80,21 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
   checkDeadline(opts.deadlineMs);
   const sandbox = opts.sandbox ?? { backend: 'bwrap' };
   checkSandbox(sandbox);
+  // apply would escalate the first claim anyway; refusing here leaves no cycle behind.
+  const start = store.workflow.stages[store.workflow.start];
+  if (start?.kind !== 'agent' || start.produces !== 'commit') throw new Error(`start stage ${store.workflow.start} is not a commit stage; develop cannot open the cycle`);
   const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
   store.open(cycleId, job.workId, job.parentCycleId);
   try {
     mkdirSync(runsDir, { recursive: true });
     clone(job.repo, worktree, branch, base);
+    const { text, ...versions } = developerPrompt(start, job.ticket);
     const cycle = await execute(
       store,
       cycleId,
       developer,
-      { role: 'developer', prompt: prompt(job.ticket), cwd: worktree },
-      { deadlineMs: opts.deadlineMs, base, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, undefined, sandbox, opts.deadlineMs, claim) },
+      { role: start.role, prompt: text, cwd: worktree },
+      { deadlineMs: opts.deadlineMs, base, versions, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, undefined, sandbox, opts.deadlineMs, claim) },
     );
     return { cycle, worktree, branch };
   } catch (err) {
@@ -100,15 +108,6 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
 type Verdict = Extract<Event, { type: 'verdict' }>;
 
 /**
- * One finding, one line: every terminator JavaScript's `m` flag or a terminal treats as a line
- * break (\n, \r, \r\n, U+2028, U+2029, U+0085) becomes a space, so a reviewer's finding cannot
- * open a line of its own in the developer prompt or overwrite the owner's terminal (07-b adversarial).
- */
-export function oneLine(finding: unknown): string {
-  return String(finding).replace(/\s*(?:\r\n?|[\n\u2028\u2029\u0085])\s*/g, ' ');
-}
-
-/**
  * Run the developer again on the cycle's worktree after a standard FAIL. Everything comes from
  * the store and runsDir, as for verify and review: the findings are the last verdict's, the base
  * the candidate's, the worktree where develop left it. Returns the replayed Cycle and where its
@@ -118,10 +117,12 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
   checkDeadline(opts.deadlineMs);
   const cycle = store.load(cycleId);
   if (!cycle) throw new Error(`cycle ${cycleId} not open`);
-  // DEVELOPING with a head is only ever the stage after a standard FAIL; DEVELOPING without one
-  // is the first run, which develop owns.
-  if (cycle.stage !== 'DEVELOPING' || !cycle.candidate?.head) throw new Error(`fix on a cycle in ${cycle.stage}${cycle.candidate?.head ? '' : ' with no candidate'}, expected DEVELOPING after a standard FAIL`);
-  if (cycle.runs.some((r) => r.role === 'developer' && !cycle.consumed.includes(r.runId))) throw new Error(`cycle ${cycleId} has a developer run still active`);
+  // A commit stage with a head is a stage re-entered after a FAIL; without one it is the first
+  // run, which develop owns.
+  const def = store.workflow.stages[cycle.stage];
+  if (def?.kind !== 'agent' || def.produces !== 'commit' || !cycle.candidate?.head) throw new Error(`fix on a cycle in ${cycle.stage}${cycle.candidate?.head ? '' : ' with no candidate'}, expected a commit stage after a FAIL`);
+  // Only claims create runs, so any run without an outcome is a commit stage's.
+  if (cycle.runs.some((r) => !cycle.consumed.includes(r.runId))) throw new Error(`cycle ${cycleId} has a developer run still active`);
   const { head, base } = cycle.candidate;
   const verdict = cycle.history.map((h) => h.event).filter((e): e is Verdict => e.type === 'verdict').at(-1);
   if (!verdict || verdict.verdict !== 'FAIL' || verdict.head !== head) throw new Error(`cycle ${cycleId}: last verdict is not a FAIL for the candidate ${head}`);
@@ -142,12 +143,13 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
   const onto = ref.status === 0 ? ref.stdout : '(detached)';
   if (onto !== `refs/heads/${branch}`) throw new Error(`worktree ${worktree} is on ${onto}, not on ${branch}`);
   const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
+  const { text, ...versions } = developerPrompt(def, job.ticket, { head, findings: verdict.findings });
   const cycleAfter = await execute(
     store,
     cycleId,
     developer,
-    { role: 'developer', prompt: prompt(job.ticket, { head, findings: verdict.findings }), cwd: worktree },
-    { deadlineMs: opts.deadlineMs, base, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, head, sandbox, opts.deadlineMs, claim) },
+    { role: def.role, prompt: text, cwd: worktree },
+    { deadlineMs: opts.deadlineMs, base, versions, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, head, sandbox, opts.deadlineMs, claim) },
   );
   return { cycle: cycleAfter, worktree, branch };
 }
@@ -249,31 +251,4 @@ function gitStatus(cwd: string, ...args: string[]): number | null {
 function isCommit(repo: string, sha: string): boolean {
   if (!/^[0-9a-f]{40}$/.test(sha)) return false;
   try { return git(repo, 'cat-file', '-t', sha) === 'commit'; } catch { return false; }
-}
-
-// Two rules the developer cannot infer from the ticket, then the claim in the exact shape the
-// adapters parse (04-d). The fence text is asserted by tests/developer.test.ts. A fix run gets
-// the findings after the ticket; its first line differs from the first run's, which the fixture
-// developer relies on to produce a different commit.
-function prompt(ticket: string, fixing?: { head: string; findings: unknown }): string {
-  // The verdict shape does not check findings (07-a adversarial): a list is a line each, a bare
-  // string one line, anything else nothing; a newline inside one would otherwise open a line of
-  // its own in this prompt, such as a second Rules: section.
-  const raw = fixing?.findings;
-  const findings = (Array.isArray(raw) ? raw : typeof raw === 'string' ? [raw] : []).map((f) => `- ${oneLine(f)}`);
-  return [
-    fixing
-      ? 'You are the developer fixing review findings on the ticket below. The current directory is a Git clone on the branch for this work, at your earlier commit.'
-      : 'You are the developer for the ticket below. The current directory is a Git clone on the branch for this work.',
-    '',
-    ticket.trim(),
-    ...(fixing ? ['', `A review of your commit ${fixing.head} FAILED. Fix these findings, then commit:`, ...(findings.length ? findings : ['- (the reviewer listed no findings)'])] : []),
-    '',
-    'Rules:',
-    '- Make the change and commit it on the current branch. Do not push, do not switch or create branches, do not amend commits that were already there.',
-    '- When done, end your reply with exactly one fenced json block giving the full SHA of your final commit and the paths you changed:',
-    '```json',
-    '{"head": "<full commit sha>", "artifacts": ["<paths>"]}',
-    '```',
-  ].join('\n');
 }

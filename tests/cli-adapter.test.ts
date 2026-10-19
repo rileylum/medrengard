@@ -98,6 +98,11 @@ test('pi: a stream cut off before agent_end is failed, with the session id in th
   assert.match((o as any).reason, /agent_end/);
 });
 
+test('pi: an error turn fails with pi\'s errorMessage, not as a missing claim block (04-f)', async () => {
+  assert.deepEqual(await start(pi, 'error-turn'), { status: 'failed', reason: 'pi: OAuth refresh failed for openai: OpenAI OAuth token request failed (400): {' });
+  assert.deepEqual(await start(pi, 'error-turn-bare'), { status: 'failed', reason: 'pi: run ended with stopReason error' });
+});
+
 test('output past maxOutputBytes is failed with the cap in the reason, and never reaches the controller as a claim', async () => {
   const adapter = cliAdapter({ ...claude, command: process.execPath, args: [join(import.meta.dirname, 'fixtures', 'flood.ts')] }, { ...offline, maxOutputBytes: 65536, graceMs: 300 });
   const store = fresh();
@@ -290,9 +295,39 @@ test('sandboxed adapter: a binary reached through a symlink outside the bound ro
   }
 });
 
-test('runtime specs bind claude config read-only and overlay pi config', () => {
+// 08-g: the path a write config names keeps its writes through the overlay; a missing one is not created on the host.
+test('sandboxed adapter: write config outlives the run, the rest of the overlay does not, and a missing write path stays missing', async () => {
+  const root = mkdtempSync('/var/tmp/software_factory/sf-cli-sandbox-');
+  const home = join(root, 'home');
+  const cwd = join(root, 'runs', 'cycle');
+  mkdirSync(join(home, '.ov'), { recursive: true });
+  mkdirSync(cwd, { recursive: true });
+  writeFileSync(join(home, '.ov', 'auth.json'), 'old\n');
+  writeFileSync(join(home, '.ov', 'config'), 'ov\n');
+  const probe = join(import.meta.dirname, 'fixtures', 'sandbox-probe.ts');
+  const targets = { auth: join(home, '.ov', 'auth.json'), ov: join(home, '.ov', 'config'), missing: join(home, '.ov', 'missing.json') };
+  const spec: CliSpec = { ...claude, command: process.execPath, args: [probe, ...Object.entries(targets).map(([k, v]) => `${k}=${v}`)], config: { read: [], overlay: ['.ov'], write: ['.ov/auth.json', '.ov/missing.json'] } };
+  const was = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const adapter = cliAdapter(spec, { ...offline, sandbox: { backend: 'bwrap', read: [dirname(dirname(realpathSync(process.execPath))), import.meta.dirname] } });
+    // A reviewer: the write config does not depend on the run writing its cwd.
+    const o = await adapter.start({ runId: 'r-write-config', role: 'standard_reviewer', prompt: '', cwd }, new AbortController().signal);
+    assert.equal(o.status, 'completed', JSON.stringify(o));
+    const r = (o as { claim: Record<string, string> }).claim;
+    for (const k of ['auth', 'ov', 'missing']) assert.equal(r[k], 'ok', k);
+    assert.equal(readFileSync(targets.auth, 'utf8'), 'x\n');
+    assert.equal(readFileSync(targets.ov, 'utf8'), 'ov\n');
+    assert.ok(!existsSync(targets.missing));
+  } finally {
+    process.env.HOME = was;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runtime specs bind claude config read-only and overlay pi config, with pi auth.json writable (08-g)', () => {
   assert.deepEqual(claude.config, { read: ['.claude', '.claude.json'], overlay: [] });
-  assert.deepEqual(pi.config, { read: [], overlay: ['.pi'] });
+  assert.deepEqual(pi.config, { read: [], overlay: ['.pi'], write: ['.pi/agent/auth.json'] });
 });
 
 test('a sandbox that cannot start refuses at construction, naming none, before any run', () => {

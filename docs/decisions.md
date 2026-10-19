@@ -36,6 +36,84 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-069 — 2026-10-19 — 04-f and 08-g reviews waived; merge row 9, 04-f and 08-g
+
+Owner, asked to run or waive the reviews for 04-f and 08-g and whether to open a PR: “waive. Lets merge actually then we'll look at 06-d and 07-e in a new session (so we'll need to update the handoff after the merge)”.
+
+Effect: 04-f and 08-g carry no reviews and no owner-run `npm test`; the implementer's run on `9fb570c` (272 tests, 248 pass, 0 fail) stands as the record. The repository has no remote, so the stack (09-a, 09-b, 09-c, 09-d, 04-f, 08-g) merges into main locally with `--no-ff`, as earlier merges did. Plan row 9 is done. 06-d and 07-e come next, in a new session.
+
+### A-068 — 2026-10-19 — 08-g: pi's auth.json writable for every pi run
+
+Owner, after the 08-g findings (the `.pi` overlay drops pi's refreshed OpenAI login; binding reviewers only does not fix it), offered three options (1, bind `auth.json` writable for every pi run and accept that a run can overwrite or delete the login; 2, leave it and log in again when needed; 3, refresh in the controller): “Yes option 1 is good”.
+
+Effect: 08-g binds `~/.pi/agent/auth.json` writable on top of the `.pi` overlay for every pi run, developer and reviewer. The owner accepts that risk; it is recorded in [work/accepted-risks.md](work/accepted-risks.md). Not covered: two pi runs refreshing at once (pools, row 13), and a run killed at its deadline in the middle of a refresh.
+
+### A-067 — 2026-10-19 — 04-f and 08-g READY, stacked on 09-d
+
+Owner, after 09-d was committed and offered the order 04-f, 08-g, 06-d, 07-e, and asked whether to open a PR for the row 9 stack: “Okay lets start tackling 04-f into 08-g now”.
+
+Effect: 04-f and 08-g are READY. No PR is opened, so main still lacks row 9. As with 09-a to 09-c, `feat/04-f-pi-error-reason` is stacked on `feat/09-d-spec-rewrite`, and `feat/08-g-pi-auth-refresh` on 04-f. 08-g's fix waits on the owner's answer to the risk its ticket names (a developer run could overwrite the pi login).
+
+### A-066 — 2026-10-19 — 09-d READY; 08-g drafted
+
+Owner, after the 09-d draft and a request to file the pi login issue (“seems like we could easily investigate”): “go on 09-d”.
+
+Effect: [09-d](work/09-d-spec-rewrite.md) is READY; the spec rewrite starts on `feat/09-d-spec-rewrite`, stacked on `feat/09-c-prompt-versions`. [08-g](work/08-g-pi-auth-refresh.md) is drafted and not READY: it first checks whether the `.pi` overlay drops pi's refreshed login, then binds `auth.json` writable (A-038).
+
+### A-065 — 2026-10-19 — 09-c plan deleted
+
+Owner, asked whether to delete or commit the untracked 09-c plan: “delete the plan file”.
+
+Effect: `plans/2026-10-19-prompt-versions.md` is deleted uncommitted, as the 09-a and 09-b plans were (A-058, A-061). A-062, the 09-c ticket log and the handoff keep what it decided.
+
+### A-064 — 2026-10-19 — Three tickets from the 09-c live run, after row 9
+
+Owner, asked whether the three issues seen in the 09-c live run become tickets or are parked under O-013: “Yes all three should be tickets, we'll deal with them and any others after we finish this 09 work.”
+
+Effect: drafted, not READY: [04-f](work/04-f-pi-error-reason.md) (a pi error turn records pi's own reason), [06-d](work/06-d-reviewer-commit-messages.md) (reviewers see the candidate's commit messages) and [07-e](work/07-e-fix-without-tree-change.md) (a fix whose findings need no tree change; Design route). Each is numbered by the plan step whose code it changes. They wait until row 9 is finished: 09-d first.
+
+### A-063 — 2026-10-19 — 09-c reviews and owner-run tests waived
+
+Owner, told that `npm test` on `c368009` was run by the implementer session and is not independent: “Okay I'm going to waive that and the review.”
+
+Effect: 09-c carries no reviews and no owner-run `npm test`; the implementer's run on `c368009` (269 tests, 245 pass, 0 fail, 19 skipped, 5 todo) stands as the record. As with 09-a and 09-b (A-058, A-060), the stacked branch carrying 09-a to 09-c merges on the owner's word with the waivers on record. 09-d, the spec rewrite, is next.
+
+### A-062 — 2026-10-19 — 09-c prompt split shape
+
+Owner, offered three plan answers (Q1 `roleText` on every agent stage plus an optional `fixRoleText` on commit stages, with today's four first lines on `defaultWorkflow`; Q2 `checkWorkflow` refuses an agent stage with no role text; Q3 role text must be one line) and three interface answers (Q1 a new pure `src/prompt.ts` with `developerPrompt` and `reviewPrompt` returning the text and both hashes; Q2 an optional `versions` on `ExecuteOptions` that `receive` spreads onto every `developer_result`, `verdict` and `run_failed`; Q3 tests at `develop`, `fix` and `review`, at `src/prompt.ts` and at `checkWorkflow`): “take all”, then “take all”.
+
+Effect: 09-c follows `plans/2026-10-19-prompt-versions.md`. The contract hash is the hash of each kind's contract built from fixed placeholders, because the per-run nonce makes a hash of the sent text unique. Prompts with several paragraphs wait for O-013.
+
+### A-061 — 2026-10-19 — 09-b plan deleted; no runs to keep
+
+Owner, asked whether to keep the 09-b plan and whether any runs directory holds 09-b cycles worth keeping: “delete the plan. I don't need any runs”.
+
+Effect: `plans/2026-10-19-generic-driver.md` is deleted unmerged, as the 09-a plan was (A-058). 09-c may change `defaultWorkflow` and so its hash; cycles opened by 09-b code under the default workflow will be refused, and that is accepted.
+
+### A-060 — 2026-10-19 — 09-b reviews waived
+
+Owner, after an overview of 09-b on `61b550c`: “Okay lets waive the review again and prepare the handoff for a fresh session for 09-c”.
+
+Effect: 09-b carries no reviews, as 09-a (A-058). The stacked branch carrying 09-a and 09-b merges with 09-c on the owner's word, with both waivers on record. 09-c is next.
+
+### A-059 — 2026-10-19 — 09-b driver approach
+
+Owner, offered three registry approaches (one implementation per role; one per step kind with adapters by role, recommended; one function per workflow) and three questions (Q1 test the second workflow as `DEV → CHECK → REVIEW → OWNER`, because the engine can't start on a review stage and `review` needs `verify`; Q2 move 09-c's workflow record into 09-b, with the store refusing a cycle whose hash doesn't match; Q3 the job file names a workflow module, and `runtime` is keyed by role with `standard` and `adversarial` as aliases): “take all”.
+
+Effect: 09-b follows [design/2026-10-19-generic-driver.md](design/2026-10-19-generic-driver.md), pending the owner's approval of the note. Its second-workflow done-when line becomes Q1's four-stage workflow. The cycle-record line moves from 09-c to 09-b.
+
+### A-058 — 2026-10-19 — 09-a reviews waived; spec rewrite after 09-c
+
+Owner, asked whether 09-a's two standard reviews and one adversarial review are waived, run now, or run with 09-b's as a stacked branch: “waive”. Earlier, offered an overview of 09-a instead of a review: “okay I'm happy with that lets start on 09-b in a fresh context”. Asked where the spec rewrite that A-054 calls for goes: “up to you, should it happen now or after? Should it include changes from 09-c?”. Asked whether to commit the untracked 09-a plan: “No we can cut that plan document”.
+
+Effect: 09-a carries no reviews; it merges with 09-b and 09-c on the owner's word, with the waiver on record. The spec rewrite of [specs/core-lifecycle-v1.md](specs/core-lifecycle-v1.md) is a docs ticket, 09-d, after 09-c, so it describes the driver (09-b) and the workflow and prompt version records (09-c) once, not twice. `plans/2026-10-19-workflow-engine.md` is deleted uncommitted; the design note and the ticket log keep what it decided.
+
+### A-057 — 2026-10-19 — 09-a engine shape
+
+Owner, offered three approaches for the inside of `apply` (keep the switch on event type; a handler table by step kind; a compiled lookup table, with the first recommended) and three questions (Q1 replace `standard` and `adversarial` with `Cycle.budgets` and edit their read sites in callers, widening the ticket's constraint; Q2 `QUEUED` as a fourth engine stage, with the workflow naming its `start`; Q3 `apply(c, e, workflow = defaultWorkflow)` and an optional workflow on `EventStore`, recording nothing new on the open marker): “take all recommendations”. Then, given [design/2026-10-19-workflow-engine.md](design/2026-10-19-workflow-engine.md): “design is approved”. Then, offered three interface answers (the `EventStore` constructor runs `checkWorkflow` and `apply` trusts its caller; keep the three-argument `apply` and wrap each `reduce(apply, …)`; second workflows live in the tests only) and generic escalation reasons (`<STAGE> FAIL`, `<STAGE> FAIL at budget limit <n>`), which change two regexes in `tests/run.test.ts`: “take all”, then “Take all recommendations”.
+
+Effect: 09-a follows that design. Its constraint now also allows mechanical edits of `c.standard` and `c.adversarial` read sites in `src/main.ts` and the caller tests, and the two escalation regexes at `tests/run.test.ts:122` and `:132`. Agent stages carry `produces: 'commit' | 'verdict'` as part of the `agent` kind, not a fourth kind.
+
 ### A-056 — 2026-10-19 — Row 9 design answers
 
 Owner, offered four answers for the workflow engine (Q1 a TypeScript module that exports plain data, so the engine can check and hash it; Q2 today's event types kept with a `step` field, so existing stores replay; Q3 stage names defined by the workflow, with `ESCALATED`, `CANCELLED` and `ACCEPTED` fixed in the engine; Q4 the core owns a prompt's contract part and the workflow owns the role text) and three tickets (09-a engine and default workflow, 09-b generic driver, 09-c prompt split and version records): “accept all”.

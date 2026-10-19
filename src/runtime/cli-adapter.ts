@@ -18,9 +18,9 @@ export interface CliSpec {
   /**
    * What the CLI needs of the owner's home inside a sandbox, relative to it; a path that does not
    * exist is skipped. `read` is bound read-only, `overlay` takes writes that are dropped after the
-   * run (docs/work/08-c-findings.md).
+   * run (docs/work/08-c-findings.md), and `write` paths keep their writes through the overlay (08-g).
    */
-  config: { read: string[]; overlay: string[] };
+  config: { read: string[]; overlay: string[]; write?: string[] };
 }
 
 export interface CliAdapterOptions {
@@ -30,6 +30,11 @@ export interface CliAdapterOptions {
   maxOutputBytes?: number;
   /** SIGTERM to kill, default 5000. */
   graceMs?: number;
+  /**
+   * Whether the sandbox lets the run write its cwd. Default: only for role `developer`. A workflow
+   * names its own roles (09-b), so main.ts sets this from what the role produces: a commit writes.
+   */
+  writes?: boolean;
   /**
    * Run the CLI inside this sandbox (08-c): a developer writes the request's cwd, a reviewer only
    * reads it (08-d); either writes its own /tmp, reads its binary's directory and `spec.config`,
@@ -66,10 +71,10 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
         tmp = join(dirname(req.cwd), `${req.runId}-tmp`);
         mkdirSync(tmp);
         // A reviewer's cwd is the verify checkout: what it reads must stay the commit (08-d).
-        const writes = req.role === 'developer';
+        const writes = opts.writes ?? req.role === 'developer';
         [command, args] = wrap(sandbox, {
           cwd: req.cwd, write: writes ? [req.cwd] : [], read: [dirname(bin), ...(writes ? [] : [req.cwd]), ...inHome(spec.config.read)],
-          overlay: inHome(spec.config.overlay), network: true, home, tmp,
+          overlay: inHome(spec.config.overlay), writeOver: inHome(spec.config.write ?? []), network: true, home, tmp,
         }, bin, spec.args);
       }
       try {
@@ -201,9 +206,11 @@ export const pi: CliSpec = {
   name: 'pi',
   command: 'pi',
   args: ['-p', '--mode', 'json', '--no-tools', '--no-session'],
-  // pi takes a lock file beside settings.json before it reads its key, so read-only fails. If a
-  // token refresh inside the overlay is ever lost, bind agent/auth.json writable on top (A-038).
-  config: { read: [], overlay: ['.pi'] },
+  // pi takes a lock file beside settings.json before it reads its key, so read-only fails. OpenAI
+  // rotates refresh tokens, so a refresh pi wrote only into the overlay spends the stored token
+  // and loses its replacement: auth.json stays writable (08-g, A-068). Removing it logs pi out
+  // after the next refresh.
+  config: { read: [], overlay: ['.pi'], write: ['.pi/agent/auth.json'] },
   parse(stdout, stderr, exitCode) {
     const events = stdout.split('\n').map(parseJson).filter((e) => e !== undefined);
     const session = events.find((e) => e.type === 'session');
@@ -213,6 +220,11 @@ export const pi: CliSpec = {
       return failed(`pi: ${firstLine(stderr) || `run ended without agent_end (exit ${exitCode})`}`);
     }
     const turn = events.filter((e) => e.type === 'turn_end').at(-1);
+    // An error turn (a failed login refresh, say) still ends with agent_end and exit 0 (04-f).
+    if (turn?.message?.stopReason === 'error') {
+      const why = typeof turn.message.errorMessage === 'string' ? firstLine(turn.message.errorMessage) : '';
+      return failed(`pi: ${why || 'run ended with stopReason error'}`);
+    }
     const content: any[] = Array.isArray(turn?.message?.content) ? turn.message.content : [];
     const text = content.filter((c) => c?.type === 'text').map((c) => String(c.text ?? '')).join('');
     return claimFrom(text, sessionId);

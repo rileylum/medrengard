@@ -11,6 +11,10 @@ import { EventStore } from '../src/store.ts';
 import { claude, cliAdapter, type CliSpec } from '../src/runtime/cli-adapter.ts';
 import type { DeveloperAdapter, Job } from '../src/developer.ts';
 import { run, type Adapters, type RunOptions } from '../src/run.ts';
+import { resume } from '../src/run.ts';
+import { develop } from '../src/developer.ts';
+import type { Workflow } from '../src/lifecycle.ts';
+import { ownerCheck } from './workflows.ts';
 import { reviewerStub } from './stub-cli.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
@@ -71,7 +75,7 @@ test('happy path: develop, verify, standard PASS, adversarial PASS end in AWAITI
   const r = await run(store, adapters(dev, standard, adversarial), job(repo), opts(runsDir));
   assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation ?? r.error);
   assert.equal(r.error, undefined);
-  assert.deepEqual([r.cycle.standard, r.cycle.adversarial], [1, 1]);
+  assert.deepEqual([r.cycle.budgets.STANDARD_REVIEW ?? 0, r.cycle.budgets.ADVERSARIAL_REVIEW ?? 0], [1, 1]);
   assert.equal(r.cycle.runs.length, 1);
   assert.deepEqual(types(store, r.cycle.cycleId), ['claim', 'developer_result', 'verification', 'verdict', 'verdict']);
   assert.equal(r.branch, `sf/${r.cycle.cycleId}`);
@@ -95,7 +99,7 @@ test('a standard FAIL runs the fix, verifies the new head and reviews it again: 
   const adversarial = scripted('PASS');
   const r = await run(store, adapters(dev, standard, adversarial), job(repo), opts(runsDir));
   assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation ?? r.error);
-  assert.deepEqual([r.cycle.standard, r.cycle.adversarial], [2, 1]);
+  assert.deepEqual([r.cycle.budgets.STANDARD_REVIEW ?? 0, r.cycle.budgets.ADVERSARIAL_REVIEW ?? 0], [2, 1]);
   assert.equal(r.cycle.runs.length, 2);
   assert.deepEqual(types(store, r.cycle.cycleId), ['claim', 'developer_result', 'verification', 'verdict', 'claim', 'developer_result', 'verification', 'verdict', 'verdict']);
   const [first, second] = store.events(r.cycle.cycleId).filter((e) => e.type === 'verification') as { head: string }[];
@@ -118,8 +122,8 @@ test('an adversarial FAIL, a second standard FAIL and a failing check each stop 
     const r = await run(store, adapters(fake(claude), scripted('PASS'), scripted('FAIL')), job(repo), opts(runsDir));
     assert.equal(r.cycle.stage, 'ESCALATED');
     assert.equal(r.error, undefined);
-    assert.deepEqual([r.cycle.standard, r.cycle.adversarial], [1, 1]);
-    assert.match(r.cycle.escalation ?? '', /adversarial FAIL/);
+    assert.deepEqual([r.cycle.budgets.STANDARD_REVIEW ?? 0, r.cycle.budgets.ADVERSARIAL_REVIEW ?? 0], [1, 1]);
+    assert.match(r.cycle.escalation ?? '', /ADVERSARIAL_REVIEW FAIL/);
     assert.deepEqual((r.cycle.history.at(-1)!.event as { findings?: string[] }).findings, ['[major] done.txt:1 — adversarial_reviewer finding']);
     store.close();
   }
@@ -128,8 +132,8 @@ test('an adversarial FAIL, a second standard FAIL and a failing check each stop 
     const adversarial = scripted('PASS');
     const r = await run(store, adapters(fake(claude), scripted('FAIL', 'FAIL'), adversarial), job(repo), opts(runsDir));
     assert.equal(r.cycle.stage, 'ESCALATED');
-    assert.deepEqual([r.cycle.standard, r.cycle.adversarial], [2, 0]);
-    assert.match(r.cycle.escalation ?? '', /second standard FAIL/);
+    assert.deepEqual([r.cycle.budgets.STANDARD_REVIEW ?? 0, r.cycle.budgets.ADVERSARIAL_REVIEW ?? 0], [2, 0]);
+    assert.match(r.cycle.escalation ?? '', /STANDARD_REVIEW FAIL at budget limit/);
     assert.equal(r.cycle.runs.length, 2);
     assert.equal(adversarial.requests.length, 0);
     store.close();
@@ -305,4 +309,90 @@ test('live main.ts: a job file runs end to end and prints the stage, branch and 
   assert.match(r.stdout, /^Sandbox: bwrap$/m);
   assert.match(r.stdout, /standard_reviewer .*(PASS|FAIL)/);
   assert.equal(r.status, stage === 'AWAITING_ACCEPTANCE' ? 0 : 1, r.stdout);
+});
+
+// Ticket 09-b: the driver runs any workflow by step kind, resumes from a stored stage, and bounds
+// its loop by the workflow's budgets.
+/** scratch(), with the store running `w`. */
+function scratchUnder(w: Workflow) {
+  const s = scratch();
+  s.store.close();
+  return { ...s, store: new EventStore(join(s.root, 'events-wf.sqlite'), w) };
+}
+
+test('another workflow runs from open to its own human stage, with its own role names', async () => {
+  const { repo, store, runsDir } = scratchUnder(ownerCheck);
+  const writer = recording(fake(claude));
+  const reviewer = scripted('PASS');
+  const r = await run(store, { writer, reviewer }, job(repo), opts(runsDir));
+  assert.equal(r.cycle.stage, 'OWNER', r.cycle.escalation);
+  assert.equal(r.error, undefined);
+  assert.deepEqual(types(store, r.cycle.cycleId), ['claim', 'developer_result', 'verification', 'verdict']);
+  assert.deepEqual(reviewer.requests.map((q) => q.role), ['reviewer']);
+  assert.deepEqual(writer.requests.map((q) => q.role), ['writer']);
+  store.close();
+});
+
+test('another workflow: a FAIL at its only review escalates naming the stage', async () => {
+  const { repo, store, runsDir } = scratchUnder(ownerCheck);
+  const r = await run(store, { writer: fake(claude), reviewer: scripted('FAIL') }, job(repo), opts(runsDir));
+  assert.equal(r.cycle.stage, 'ESCALATED');
+  assert.match(r.cycle.escalation ?? '', /^REVIEW FAIL/);
+  store.close();
+});
+
+test('a role with no adapter is refused before any cycle opens or any run starts', async () => {
+  const { repo, store, runsDir } = scratchUnder(ownerCheck);
+  const writer = recording(fake(claude));
+  await assert.rejects(run(store, { writer }, job(repo), opts(runsDir)), /no adapter for role reviewer/);
+  assert.deepEqual(store.cycles('w1'), []);
+  assert.equal(writer.requests.length, 0);
+  store.close();
+});
+
+test('resume on a cycle left at VERIFYING runs the checks and continues, with no developer run', async () => {
+  const { repo, store, runsDir } = scratch();
+  const dev = recording(fake(claude));
+  const opened = await develop(store, dev, job(repo), opts(runsDir));
+  assert.equal(opened.cycle.stage, 'VERIFYING', opened.cycle.escalation);
+  const before = store.events(opened.cycle.cycleId).length;
+  const r = await resume(store, opened.cycle.cycleId, adapters(dev, scripted('PASS'), scripted('PASS')), job(repo), opts(runsDir));
+  assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation);
+  assert.equal(dev.requests.length, 1);
+  assert.equal(types(store, r.cycle.cycleId)[before], 'verification');
+  assert.equal(r.branch, opened.branch);
+  assert.equal(r.worktree, opened.worktree);
+  store.close();
+});
+
+test('resume refuses an unknown cycle, and returns a settled one without a step', async () => {
+  const { repo, store, runsDir } = scratch();
+  const none = adapters(fake(claude), scripted(), scripted());
+  await assert.rejects(resume(store, 'nope', none, job(repo), opts(runsDir)), /not open/);
+  store.open('c1', 'w1');
+  store.append('c1', { type: 'cancel' });
+  const r = await resume(store, 'c1', none, job(repo), opts(runsDir));
+  assert.equal(r.cycle.stage, 'CANCELLED');
+  assert.equal(store.events('c1').length, 1);
+  store.close();
+});
+
+test('the step cap comes from the budgets: five fix loops run past the old cap of 10', async () => {
+  const loop: Workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', budget: 6, transitions: { PASS: 'OWNER', FAIL: 'DEV' } } } };
+  const { repo, store, runsDir } = scratchUnder(loop);
+  // A new commit per run: the fixture CLI writes the same file for every fix, which the head guard refuses.
+  let n = 0;
+  const writer: Adapter = {
+    name: 'counter',
+    async start(req) {
+      writeFileSync(join(req.cwd, 'done.txt'), `${n++}\n`);
+      git(req.cwd, 'add', 'done.txt');
+      git(req.cwd, 'commit', '-q', '-m', `run ${n}`);
+      return { status: 'completed', claim: { head: git(req.cwd, 'rev-parse', 'HEAD'), artifacts: ['done.txt'] } };
+    },
+  };
+  const r = await run(store, { writer, reviewer: scripted('FAIL', 'FAIL', 'FAIL', 'FAIL', 'FAIL', 'PASS') }, job(repo), opts(runsDir));
+  assert.equal(r.cycle.stage, 'OWNER', r.cycle.escalation);
+  assert.equal(n, 6);
+  store.close();
 });

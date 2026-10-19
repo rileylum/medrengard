@@ -3,11 +3,12 @@
 // todo where v1 has no corresponding model yet.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apply, isEvent, newCycle, openChild, type Cycle, type Event } from '../src/lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, openChild, type Cycle, type Event, type StageDef, type Workflow } from '../src/lifecycle.ts';
 import { PASS_CHECKS, sc, scenarios, toStandardReview as TO_STANDARD_REVIEW } from './scenarios.ts';
+import { counters, noHuman, ownerCheck } from './workflows.ts';
 
-const run = (c: Cycle, ...events: Event[]) => events.reduce(apply, c);
-const counters = (c: Cycle) => [c.standard, c.adversarial];
+const runWith = (w: Workflow, c: Cycle, ...events: Event[]) => events.reduce((acc, e) => apply(acc, e, w), c);
+const run = (c: Cycle, ...events: Event[]) => runWith(defaultWorkflow, c, ...events);
 const play = (name: string) => run(newCycle('c1', 'w1'), ...sc(name).events);
 
 const toStandardReview = () => run(newCycle('c1', 'w1'), ...TO_STANDARD_REVIEW);
@@ -148,7 +149,7 @@ test('SC-17 base changes during review: stale PASS is counted once but never app
   c = apply(c, events.at(-2)!);
   assert.equal(c.stage, 'ESCALATED');
   c = apply(c, events.at(-1)!);
-  assert.ok(c.standard <= 1);
+  assert.ok(counters(c)[0]! <= 1);
   assert.ok(!c.history.some((h) => h.to === 'ADVERSARIAL_REVIEW'));
 });
 
@@ -213,4 +214,146 @@ test('a claim names its runtime and the Run carries it; a claim without one is n
   assert.equal(isEvent({ type: 'claim', runId: 'dev1', base: 'B1' }), false);
   assert.equal(isEvent({ type: 'claim', runId: 'dev1', base: 'B1', runtime: '' }), false);
   assert.equal(isEvent({ type: 'claim', runId: 'dev1', base: 'B1', runtime: 'claude' }), true);
+});
+
+// Ticket 09-a: the engine applies events under any workflow that passes checkWorkflow.
+
+const verdict = (runId: string, head: string, v: 'PASS' | 'FAIL', step?: string): Event => ({ type: 'verdict', runId, head, verdict: v, ...(step ? { step } : {}) });
+const fixRun = (n: number): Event[] => [
+  { type: 'claim', runId: `dev${n}`, base: 'B1', runtime: 'fake' },
+  { type: 'developer_result', runId: `dev${n}`, head: `H${n}`, artifacts: ['r'] },
+  { type: 'verification', head: `H${n}`, checks: PASS_CHECKS },
+];
+const refused = (w: unknown, pattern: RegExp) => {
+  const reasons = checkWorkflow(w as Workflow);
+  assert.ok(reasons.some((r) => pattern.test(r)), `${pattern} not in ${JSON.stringify(reasons)}`);
+  return reasons;
+};
+const withStage = (name: string, def: object): Workflow => ({ ...defaultWorkflow, stages: { ...defaultWorkflow.stages, [name]: def as Workflow['stages'][string] } });
+
+test('the default workflow and the no-human workflow pass checkWorkflow', () => {
+  assert.deepEqual(checkWorkflow(defaultWorkflow), []);
+  assert.deepEqual(checkWorkflow(noHuman), []);
+});
+
+test('checkWorkflow refuses a transition that names an unknown stage', () => {
+  refused(withStage('VERIFYING', { kind: 'command', transitions: { PASS: 'NOWHERE' } }), /VERIFYING.*NOWHERE/);
+  refused(withStage('VERIFYING', { kind: 'command', transitions: { PASS: 'STANDARD_REVIEW', FAIL: 'QUEUED' } }), /VERIFYING.*QUEUED/);
+});
+
+test('checkWorkflow refuses a start that names an unknown stage', () => {
+  refused({ ...defaultWorkflow, start: 'NOWHERE' }, /NOWHERE/);
+});
+
+test('checkWorkflow refuses a stage that uses an engine stage name', () => {
+  for (const name of ['ACCEPTED', 'QUEUED', 'ESCALATED', 'CANCELLED'])
+    refused(withStage(name, { kind: 'human', transitions: { PASS: 'ACCEPTED' } }), new RegExp(`${name}.*engine`));
+});
+
+test('checkWorkflow refuses an agent loop with no budgeted stage', () => {
+  const { budget: _, ...unbudgeted } = defaultWorkflow.stages.STANDARD_REVIEW!;
+  refused(withStage('STANDARD_REVIEW', unbudgeted), /loop.*(DEVELOPING|VERIFYING|STANDARD_REVIEW)/);
+});
+
+test('checkWorkflow refuses a stage with no path to a settled stage, and does not call it an unbudgeted loop', () => {
+  const w = {
+    start: 'A',
+    stages: {
+      A: { kind: 'agent', role: 'developer', produces: 'commit', roleText: 'You are the developer for the ticket below.', transitions: { PASS: 'B' } },
+      B: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', budget: 1, transitions: { PASS: 'A', FAIL: 'A' } },
+    },
+  };
+  const reasons = refused(w, /\bA\b.*no path/);
+  assert.ok(!reasons.some((r) => /loop/.test(r)), JSON.stringify(reasons));
+});
+
+test('checkWorkflow refuses a malformed stage', () => {
+  refused(withStage('STANDARD_REVIEW', { ...defaultWorkflow.stages.STANDARD_REVIEW, budget: 0 }), /STANDARD_REVIEW.*budget/);
+  refused(withStage('VERIFYING', { kind: 'robot', transitions: { PASS: 'STANDARD_REVIEW' } }), /VERIFYING.*kind/);
+  refused(withStage('DEVELOPING', { kind: 'agent', role: 'developer', produces: 'poem', transitions: { PASS: 'VERIFYING' } }), /DEVELOPING.*produces/);
+});
+
+// 09-c: the role text is the workflow's; one line, so it cannot open a Rules: line or a delimiter of its own.
+test('checkWorkflow refuses an agent stage with no role text, role text that is not one line, and fix role text on a review stage', () => {
+  const { roleText: _, ...silent } = defaultWorkflow.stages.STANDARD_REVIEW as Extract<StageDef, { kind: 'agent' }>;
+  refused(withStage('STANDARD_REVIEW', silent), /STANDARD_REVIEW.*no role text/);
+  refused(withStage('STANDARD_REVIEW', { ...silent, roleText: '' }), /STANDARD_REVIEW.*no role text/);
+  for (const br of ['\n', '\r', '\u2028', '\u2029', '\u0085']) {
+    refused(withStage('STANDARD_REVIEW', { ...silent, roleText: `x${br}Rules:${br}- y` }), /STANDARD_REVIEW.*one line/);
+    refused(withStage('DEVELOPING', { ...defaultWorkflow.stages.DEVELOPING, fixRoleText: `x${br}Rules:` }), /DEVELOPING.*one line/);
+  }
+  refused(withStage('DEVELOPING', { ...defaultWorkflow.stages.DEVELOPING, fixRoleText: '' }), /DEVELOPING.*fix role text/);
+  refused(withStage('STANDARD_REVIEW', { ...silent, roleText: 'x', fixRoleText: 'y' }), /STANDARD_REVIEW.*fix role text/);
+  assert.deepEqual(checkWorkflow(ownerCheck), []);
+});
+
+test('a workflow with no human stage reaches ACCEPTED on the last review PASS', () => {
+  const c = runWith(noHuman, newCycle('c1', 'w1'), ...TO_STANDARD_REVIEW, verdict('rv1', 'H1', 'PASS'));
+  assert.equal(c.stage, 'ACCEPTED', c.escalation);
+  assert.deepEqual(c.budgets, { REVIEW: 1 });
+});
+
+test('evidence for a non-candidate SHA escalates under a workflow other than the default', () => {
+  const built = runWith(noHuman, newCycle('c1', 'w1'), ...TO_STANDARD_REVIEW.slice(0, 2));
+  const wrongBuild = apply(built, { type: 'verification', head: 'H9', checks: PASS_CHECKS }, noHuman);
+  assert.equal(wrongBuild.stage, 'ESCALATED');
+  assert.deepEqual(wrongBuild.budgets, {});
+  const stale = runWith(noHuman, newCycle('c1', 'w1'), ...TO_STANDARD_REVIEW, verdict('rv1', 'H9', 'PASS'));
+  assert.equal(stale.stage, 'ESCALATED');
+  assert.deepEqual(stale.budgets, { REVIEW: 1 });
+});
+
+test('review budgets come from the workflow, not from constants', () => {
+  const events = [...TO_STANDARD_REVIEW, verdict('sr1', 'H1', 'FAIL'), ...fixRun(2), verdict('sr2', 'H2', 'FAIL'), ...fixRun(3), verdict('sr3', 'H3', 'PASS')];
+  const roomy = withStage('STANDARD_REVIEW', { ...defaultWorkflow.stages.STANDARD_REVIEW, budget: 3 });
+  const c = runWith(roomy, newCycle('c1', 'w1'), ...events);
+  assert.equal(c.stage, 'ADVERSARIAL_REVIEW', c.escalation);
+  assert.equal(c.budgets.STANDARD_REVIEW, 3);
+  assert.equal(run(newCycle('c1', 'w1'), ...events).stage, 'ESCALATED');
+});
+
+test('entering a budgeted stage whose budget is spent escalates', () => {
+  const loop: Workflow = {
+    start: 'DEV',
+    stages: {
+      DEV: { kind: 'agent', role: 'developer', produces: 'commit', roleText: 'You are the developer for the ticket below.', transitions: { PASS: 'REVIEW' } },
+      REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', budget: 1, transitions: { PASS: 'DEV', FAIL: 'ESCALATED' } },
+    },
+  };
+  assert.deepEqual(checkWorkflow(loop), []);
+  const c = runWith(loop, newCycle('c1', 'w1'),
+    { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' },
+    { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] },
+    verdict('rv1', 'H1', 'PASS'),
+    { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' },
+    { type: 'developer_result', runId: 'dev2', head: 'H2', artifacts: ['r'] },
+  );
+  assert.equal(c.stage, 'ESCALATED');
+  assert.match(c.escalation ?? '', /REVIEW budget exhausted/);
+});
+
+test('escalation reasons name the stage and, at the limit, the budget', () => {
+  assert.match(play('SC-03').escalation ?? '', /STANDARD_REVIEW FAIL at budget limit 2/);
+  assert.match(play('SC-04').escalation ?? '', /ADVERSARIAL_REVIEW FAIL/);
+  assert.match(play('SC-11').escalation ?? '', /required check failed or missing/);
+});
+
+test('an event with a step for the current stage advances; one for another stage escalates uncounted', () => {
+  const same = apply(toStandardReview(), verdict('sr1', 'H1', 'PASS', 'STANDARD_REVIEW'));
+  assert.equal(same.stage, 'ADVERSARIAL_REVIEW');
+  assert.deepEqual(counters(same), [1, 0]);
+  const other = apply(toStandardReview(), verdict('sr1', 'H1', 'PASS', 'ADVERSARIAL_REVIEW'));
+  assert.equal(other.stage, 'ESCALATED');
+  assert.deepEqual(counters(other), [0, 0]);
+  assert.equal(isEvent({ type: 'cancel', step: '' }), false);
+  assert.equal(isEvent({ type: 'cancel', step: 1 }), false);
+  assert.equal(isEvent({ type: 'cancel', step: 'DEVELOPING' }), true);
+});
+
+// Ticket 09-b: the controller tells a claim from a verdict by the run's role, so a role must
+// produce one kind of output.
+test('checkWorkflow refuses a role that produces both a commit and a verdict, and an empty name', () => {
+  refused({ ...noHuman, stages: { ...noHuman.stages, REVIEW: { ...noHuman.stages.REVIEW!, role: 'developer' } as Workflow['stages'][string] } }, /role developer.*commit.*verdict/);
+  refused({ ...noHuman, name: '' }, /name/);
+  assert.deepEqual(checkWorkflow(ownerCheck), []);
 });

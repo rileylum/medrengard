@@ -23,6 +23,8 @@ export interface Policy {
   network: boolean;
   /** Mounted as a temporary overlay: writes succeed inside and are dropped. pi must write its config directory but must not keep the writes (08-c-findings.md). */
   overlay?: string[];
+  /** Bound read-write after the overlays, so a file inside one keeps its writes: pi's auth.json, whose refreshed login must outlive the run (08-g). */
+  writeOver?: string[];
   /** HOME inside. Default /tmp; a runtime finds its config under the owner's real home. */
   home?: string;
   /** Host directory bound at /tmp. Default a tmpfs, which is RAM on this machine until the command exits. */
@@ -55,6 +57,8 @@ export function wrap(sandbox: Sandbox, policy: Policy, command: string, args: st
     ...(policy.network && existsSync(RESOLVE) ? ['--ro-bind', RESOLVE, RESOLVE] : []),
     ...binds([...(sandbox.read ?? []), ...policy.read], policy.write),
     ...(policy.overlay ?? []).flatMap((p) => ['--overlay-src', p, '--tmp-overlay', p]),
+    // After the overlays: a bind made before one sits under it and is hidden.
+    ...(policy.writeOver ?? []).flatMap((p) => ['--bind', p, p]),
     // bwrap's own root is a tmpfs; read-only, so nothing outside the binds takes writes (or RAM).
     '--remount-ro', '/',
     '--chdir', policy.cwd, '--', command, ...args,

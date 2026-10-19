@@ -28,6 +28,8 @@ Ticket 07-d (A-044), on `feat/07-d-accept-cancel` stacked on `feat/09-scoping`: 
 
 Experimental herdr TUI (A-046 to A-048), merged to main from `feat/proto-herdr-tui` and outside the ticket workflow: `proto/` is a herdr TUI. `proto/board.ts` lists jobs with stage, live agent and what needs the owner. `proto/run.ts` runs each stage as interactive claude in a herdr tab through `proto/herdr-adapter.ts`, inside the job's bwrap sandbox with three changes for interactive runs (A-047). See [proto/README.md](../proto/README.md). In live runs, two demo tickets reached AWAITING_ACCEPTANCE. A third, where the owner answered the developer in its tab, escalated: the reviewers cannot see what the owner says in a tab (O-010). The goal is a factory that runs in herdr (A-047); findings in [work/herdr-findings.md](work/herdr-findings.md).
 
+Plan step 9 done (workflow engine, A-054 to A-066), merged with 04-f and 08-g (A-069): `src/lifecycle.ts` runs any workflow that `checkWorkflow` accepts, and `defaultWorkflow` is the v1 lifecycle; `src/run.ts` drives any workflow by stage kind, with adapters by role, and `resume` continues a cycle from its stored stage; each cycle records its workflow's name and hash; each outcome event records `contractHash` and `roleTextHash` (`src/prompt.ts`). The spec is rewritten to match (09-d). 04-f: a pi error turn fails with pi's own message. 08-g: pi's `auth.json` keeps its writes through the sandbox overlay, so a refreshed login survives (risk accepted, A-068). All reviews waived (A-058, A-060, A-063, A-069). `npm run test:learn` fails 3 of 6 (stale `learn/` references), not ticketed.
+
 Open questions moved to their own file (A-049), merged as `5959506`.
 
 Experimental guide (A-050), outside the ticket workflow, merged to main as `596f620`: `learn/` is an interactive guide to the factory, modelled on the Cube Crawler learning guide. `npm run learn` serves it at http://127.0.0.1:8077/learn/. Twelve rooms with three detail levels, live code and docs read from the repository, and demos that run `src/` in the browser through an import map of stand-ins; the simulator runs the real `run`, `execute` and `apply` on a ticket the reader edits. `npm run test:learn` keeps it in step with `src/`, outside `npm test`. The owner walked through it on 2026-10-18; how to change it is in [learn/README.md](../learn/README.md).
@@ -86,6 +88,11 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 2026-10-18: `npm test` on `feat/proto-herdr-tui` (uncommitted: sandboxed herdr adapter), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. Live in an isolated herdr session: `demo-clamp` READY to ACCEPTED from the board with all three stages in bwrap and detected by herdr (sonnet; paid calls: 1 developer, 2 reviewers, plus 1 spike prompt).
 2026-10-18: `npm test` on `feat/proto-learn` (stacked on `feat/research-list`), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. `npm run test:learn` — 6 tests, 6 pass.
 2026-10-19: `npm test` on `596f620` (main after the A-049 and A-050 merges), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. `npm run test:learn` — 6 tests, 6 pass. No file in `src/` imports from `proto/` or `learn/`.
+2026-10-19: `npm test` on `4bd3605` (09-a, `feat/09-a-workflow-engine`), implementer-run, not independent — 246 tests, 222 pass, 19 skipped, 5 todo, 0 fail. Mutation checks on `4d45a54`: each of 11 mutants (entry guard, step check, isEvent step, loop, settled path, engine name, start, stale-verdict count, default budget, store refusal, store replay workflow) fails at least one test.
+
+2026-10-19: `npm test` on `61b550c` (09-b, `feat/09-b-generic-driver`), implementer-run, not independent — 264 tests, 240 pass, 19 skipped, 5 todo, 0 fail. Mutation checks: 13 of 13 mutants caught.
+2026-10-19: `npm test` on `c368009` (09-c, `feat/09-c-prompt-versions`), implementer-run, not independent — 269 tests, 245 pass, 19 skipped, 5 todo, 0 fail. Mutation checks: 5 of 5 mutants caught. `npm run test:learn`: 3 of 6 fail (2 already failed on 09-b; 09-c adds stale references to `prompt`, `oneLine` and `buildPrompt`).
+2026-10-19: `RUNTIME_SPIKE=1 npm test` on `6ab20d6` (09-c), owner-run: every claude live test passed, including a real developer run, a real standard review and the end-to-end `main.ts` job. Every pi test that needed a reply failed: pi's OpenAI OAuth refresh returned `invalid_grant`. After the owner logged pi in again, `RUNTIME_SPIKE=1 node --test --test-name-pattern='pi'`, owner-run: 40 tests, 40 pass, 0 fail, including a real pi developer run and a real pi standard review. Seen live, not yet ticketed: the pi adapter records an error `turn_end` as "no claim block in reply" instead of pi's `errorMessage`; in the live `main.ts` job, the standard reviewer FAILed for a commit message it cannot see, and the fix run made no new commit.
 
 ## Next action
 
@@ -104,4 +111,17 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 13. Done: the owner approved the order (A-055). Plan rows 9 (workflow engine) and 10 (extension host and observation stream) come before recovery; the plan lists what later work needs from them.
 14. Done: the row 9 design answers are recorded (A-056). Tickets 09-a, 09-b and 09-c are drafted under `docs/work/`.
 15. Done: the owner said go (“merge, I'm happy”) and asked for the docs branch to be merged. Tickets 09-a to 09-c are READY.
-16. Next: 09-a on `feat/09-a-workflow-engine` off main, test first, in a fresh session.
+16. Done: 09-a implemented on `feat/09-a-workflow-engine` (A-057; design `docs/design/2026-10-19-workflow-engine.md`, plan `plans/2026-10-19-workflow-engine.md`), head `4bd3605`.
+17. Done: 09-a reviews waived by the owner (A-058). The spec rewrite becomes ticket 09-d, after 09-c.
+18. Done: 09-b implemented on `feat/09-b-generic-driver` (A-059; design `docs/design/2026-10-19-generic-driver.md`, plan `plans/2026-10-19-generic-driver.md`, uncommitted), code head `61b550c`.
+19. Done: 09-b reviews waived by the owner (A-060).
+20. Done: 09-c implemented on `feat/09-c-prompt-versions`, stacked on `feat/09-b-generic-driver` (A-061, A-062; plan `plans/2026-10-19-prompt-versions.md`, uncommitted), code head `c368009`.
+21. Done: 09-c reviews and owner-run tests waived by the owner (A-063).
+22. Done: three tickets drafted from the 09-c live run, to be taken after row 9 (A-064): 04-f, 06-d, 07-e.
+23. Done: 09-d, the spec rewrite (A-058, A-066), committed as `5a1c93e` on `feat/09-d-spec-rewrite`. Row 9 is finished; the stack 09-a to 09-d is not merged.
+24. Drafted at the owner's request: [work/08-g-pi-auth-refresh.md](work/08-g-pi-auth-refresh.md). It first checks whether the `.pi` overlay drops pi's refreshed OpenAI login, then binds `auth.json` writable (A-038). READY (A-067), stacked on 04-f.
+25. Done: 04-f implemented on `feat/04-f-pi-error-reason` as `e36d85e`; `npm test` implementer-run, 246 pass, 0 fail. Owner: run `npm test` on `e36d85e`, and run or waive the reviews.
+26. 08-g investigation done ([work/08-g-findings.md](work/08-g-findings.md)): the overlay loses pi's refreshed login. Owner: choose an option from the findings and run `pi --version`. No code yet.
+27. Done: 08-g implemented on `feat/08-g-pi-auth-refresh` as `9fb570c` (A-068): pi's `auth.json` keeps its writes through the overlay. `npm test` implementer-run, 248 pass, 0 fail. Owner: run `npm test` on `9fb570c`, run or waive the reviews for 04-f and 08-g, and confirm the next pi refresh survives. Next tickets: 06-d, then 07-e (Design).
+28. Done: reviews for 04-f and 08-g waived, and the stack merged into main (A-069).
+29. Next: 06-d (Fast), then 07-e (Design), in a new session. Neither is READY.

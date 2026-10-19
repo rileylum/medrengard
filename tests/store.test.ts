@@ -1,19 +1,22 @@
 // Ticket 02-a: a cycle's state survives a process restart.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { apply, newCycle, type Cycle, type Event } from '../src/lifecycle.ts';
-import { EventStore, UnclassifiableEvent } from '../src/store.ts';
+import { DatabaseSync } from 'node:sqlite';
+import { apply, defaultWorkflow, newCycle, type Cycle, type Event } from '../src/lifecycle.ts';
+import { EventStore, UnclassifiableEvent, workflowHash } from '../src/store.ts';
 import { PASS_CHECKS, scenarios, toStandardReview } from './scenarios.ts';
+import { counters, noHuman, ownerCheck } from './workflows.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'sf-store-'));
 test.after(() => rmSync(dir, { recursive: true, force: true }));
 const dbPath = (name: string) => join(dir, `${name}.sqlite`);
 
-const stage = (c: Cycle) => [c.stage, c.standard, c.adversarial];
+const stage = (c: Cycle) => [c.stage, ...counters(c)];
+const replay = (events: Event[], c: Cycle) => events.reduce((acc, e) => apply(acc, e), c);
 // Everything but history: the store drops redelivered events at the door, while apply records
 // them as "ignored", so the two histories differ by exactly those entries. Stage and counters are
 // what the ticket requires to match.
@@ -52,7 +55,7 @@ test('loading a cycle replays every SC scenario (minus the five todo ones) to th
   const store = new EventStore(dbPath('replay'));
   for (const s of scenarios) {
     // One work item per scenario: open refuses a second open cycle for the same work (05-a).
-    const expected = s.events.reduce(apply, newCycle(s.name, s.name));
+    const expected = replay(s.events, newCycle(s.name, s.name));
     assert.equal(expected.stage, s.stage, `${s.name} scenario data matches lifecycle tests`);
     store.open(s.name, s.name);
     for (const e of s.events) store.append(s.name, e);
@@ -60,7 +63,7 @@ test('loading a cycle replays every SC scenario (minus the five todo ones) to th
   }
   store.close();
   const reopened = new EventStore(dbPath('replay'));
-  for (const s of scenarios) assert.deepEqual(state(reopened.load(s.name)!), state(s.events.reduce(apply, newCycle(s.name, s.name))), s.name);
+  for (const s of scenarios) assert.deepEqual(state(reopened.load(s.name)!), state(replay(s.events, newCycle(s.name, s.name))), s.name);
   const child = reopened.open('child', 'SC-04', 'SC-04');
   assert.equal(child.parentCycleId, 'SC-04');
   assert.deepEqual(reopened.load('child'), child);
@@ -167,7 +170,7 @@ test('store dedup matches apply: a redelivered claim reaches apply, results and 
   const store = new EventStore(dbPath('dedup'));
   store.open('c1', 'w1');
   for (const e of events) store.append('c1', e);
-  const expected = events.reduce(apply, newCycle('c1', 'w1'));
+  const expected = replay(events, newCycle('c1', 'w1'));
   assert.deepEqual(stage(expected), ['VERIFYING', 1, 0]);
   assert.deepEqual(stage(store.load('c1')!), stage(expected));
   // Redelivered claim after the second result: apply escalates (claim outside QUEUED); the store must not hide it.
@@ -187,7 +190,7 @@ test('append returns the replayed Cycle, never one built from the caller\'s obje
   assert.equal(returned.stage, 'ADVERSARIAL_REVIEW');
   assert.deepEqual(returned, store.load('c1'));
   // The divergence the finding describes: the live object reads as a FAIL.
-  assert.equal(apply(toStandardReview.reduce(apply, newCycle('c1', 'w1')), wrapped).stage, 'DEVELOPING');
+  assert.equal(apply(replay(toStandardReview, newCycle('c1', 'w1')), wrapped).stage, 'DEVELOPING');
   store.close();
 });
 
@@ -266,5 +269,75 @@ test('a cycle whose row 0 is not the open marker fails to load, naming the cycle
   raw.close();
   const store = new EventStore(path);
   assert.throws(() => store.load('bad'), /cycle bad: row 0 is cancel, not the open marker/);
+  store.close();
+});
+
+// Ticket 09-a: stores outlive the stage table they were written under.
+
+test('a store written before the workflow engine still loads every cycle to its stage and counters', () => {
+  // Written by src/store.ts and src/lifecycle.ts at dfaf0c9; copied so the committed file is never opened for writing.
+  const path = dbPath('v1-fixture');
+  copyFileSync(join(import.meta.dirname, 'fixtures', 'v1-store.sqlite'), path);
+  const store = new EventStore(path);
+  for (const s of scenarios) assert.deepEqual(stage(store.load(s.name)!), [s.stage, ...s.counters], s.name);
+  store.close();
+});
+
+test('the store refuses a workflow checkWorkflow refuses, before creating anything', () => {
+  const path = dbPath('refused-workflow');
+  assert.throws(() => new EventStore(path, { ...noHuman, start: 'NOWHERE' }), /NOWHERE/);
+  assert.equal(existsSync(path), false);
+});
+
+test('a store given another workflow replays its cycles under it', () => {
+  const path = dbPath('no-human');
+  const store = new EventStore(path, noHuman);
+  store.open('c1', 'w1');
+  for (const e of toStandardReview) store.append('c1', e);
+  store.append('c1', { type: 'verdict', runId: 'rv1', head: 'H1', verdict: 'PASS' });
+  store.close();
+  const reopened = new EventStore(path, noHuman);
+  assert.equal(reopened.load('c1')!.stage, 'ACCEPTED');
+  reopened.close();
+});
+
+// Ticket 09-b: a cycle replays only under the workflow it was opened with (A-059).
+const openRow = (path: string, cycleId: string) => {
+  const db = new DatabaseSync(path);
+  try { return JSON.parse((db.prepare('SELECT body FROM events WHERE cycle_id = ? AND seq = 0').get(cycleId) as { body: string }).body); } finally { db.close(); }
+};
+
+test('open records the workflow name and hash, and the cycle reloads under the same workflow', () => {
+  const path = dbPath('record');
+  const store = new EventStore(path, ownerCheck);
+  store.open('c1', 'w1');
+  store.close();
+  assert.deepEqual(openRow(path, 'c1').workflow, { name: 'owner-check', hash: workflowHash(ownerCheck) });
+  assert.match(workflowHash(ownerCheck), /^[0-9a-f]{64}$/);
+  assert.notEqual(workflowHash(ownerCheck), workflowHash(defaultWorkflow));
+  const reopened = new EventStore(path, ownerCheck);
+  assert.equal(reopened.load('c1')!.stage, 'QUEUED');
+  reopened.close();
+});
+
+test('a cycle opened under one workflow is refused by a store running another, naming both', () => {
+  const path = dbPath('mismatch');
+  const store = new EventStore(path);
+  store.open('c1', 'w1');
+  store.close();
+  const other = new EventStore(path, ownerCheck);
+  assert.throws(() => other.load('c1'), /c1 was opened under workflow default \([0-9a-f]{12}\).*owner-check \([0-9a-f]{12}\)/);
+  // open's one-open-cycle guard loads the work's cycles, so it refuses too rather than miscount.
+  assert.throws(() => other.open('c2', 'w1'), /opened under workflow default/);
+  other.close();
+});
+
+test('a store written before 09-b loads under the default workflow only', () => {
+  const path = dbPath('v1-other');
+  copyFileSync(join(import.meta.dirname, 'fixtures', 'v1-store.sqlite'), path);
+  const [first] = scenarios;
+  assert.equal(openRow(path, first!.name).workflow, undefined);
+  const store = new EventStore(path, ownerCheck);
+  assert.throws(() => store.load(first!.name), /opened under workflow default/);
   store.close();
 });

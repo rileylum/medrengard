@@ -232,3 +232,64 @@ test('a job naming a parent that is no longer ESCALATED is refused before any ru
   assert.deepEqual(store.cycles('w').map((c) => c.stage), ['CANCELLED', 'CANCELLED']);
   store.close();
 });
+
+// Ticket 09-b: the job file names a workflow module; runtimes are keyed by role.
+const WORKFLOWS = join(import.meta.dirname, 'workflows.ts');
+/** scratch(), with the job file naming a workflow module written next to it, and a stub claude. */
+function withWorkflow(moduleSource: string, runtime: Record<string, string>) {
+  const s = scratch();
+  writeFileSync(join(s.root, 'flow.ts'), moduleSource);
+  writeFileSync(s.jobFile, JSON.stringify({ workId: 'w', ticket: 'x', repo: s.repo, runsDir: s.runsDir, checks: [{ name: 'ok', command: ['true'] }], runtime, workflow: 'flow.ts' }));
+  const bin = join(s.root, 'bin');
+  mkdirSync(bin);
+  return { ...s, bin, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } };
+}
+/** A claude that only records that it was spawned. */
+function spawnMarker(bin: string, root: string) {
+  const marker = join(root, 'spawned');
+  writeFileSync(join(bin, 'claude'), `#!/bin/sh\ntouch ${marker}\nexit 1\n`);
+  chmodSync(join(bin, 'claude'), 0o755);
+  return marker;
+}
+
+test('main.ts runs the workflow the job file names to its human stage, and accept settles it', () => {
+  const { root, bin, env, jobFile } = withWorkflow(`export { ownerCheck as workflow } from ${JSON.stringify(WORKFLOWS)};\n`, { writer: 'claude', reviewer: 'claude' });
+  reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+  const first = sf([jobFile], env);
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  assert.match(first.stdout, /^Stage: OWNER$/m);
+  assert.match(first.stdout, /^reviewer [0-9a-f]{7}: PASS$/m);
+  const head = /^Head: ([0-9a-f]{40})$/m.exec(first.stdout)![1]!;
+  assert.ok(first.stdout.includes(`node ${MAIN} accept ${jobFile} ${head}`), first.stdout);
+  const accepted = sf(['accept', jobFile, head], env);
+  assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+  assert.match(accepted.stdout, /^Stage: ACCEPTED$/m);
+});
+
+test('main.ts refuses a workflow checkWorkflow refuses, before any run and before the store exists', () => {
+  const { root, bin, env, jobFile, db } = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};\nexport const workflow = { ...ownerCheck, start: 'NOWHERE' };\n`, { writer: 'claude', reviewer: 'claude' });
+  const marker = spawnMarker(bin, root);
+  const r = sf([jobFile], env);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /workflow refused.*NOWHERE/);
+  assert.ok(!existsSync(marker), 'no runtime CLI was spawned');
+  assert.ok(!existsSync(db), 'no store was created');
+});
+
+test('main.ts refuses a workflow module with no workflow export', () => {
+  const { root, bin, env, jobFile } = withWorkflow('export const flow = {};\n', { writer: 'claude', reviewer: 'claude' });
+  const marker = spawnMarker(bin, root);
+  const r = sf([jobFile], env);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /flow\.ts has no named export workflow/);
+  assert.ok(!existsSync(marker));
+});
+
+test('main.ts refuses a job with no runtime for one of the workflow\'s roles, before any run', () => {
+  const { root, bin, env, jobFile } = withWorkflow(`export { ownerCheck as workflow } from ${JSON.stringify(WORKFLOWS)};\n`, { writer: 'claude' });
+  const marker = spawnMarker(bin, root);
+  const r = sf([jobFile], env);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /runtime\.reviewer/);
+  assert.ok(!existsSync(marker));
+});

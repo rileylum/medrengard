@@ -17,9 +17,12 @@ Done when:
 - A verdict or verification for a SHA that is not the candidate escalates under any workflow, not only the default one. Verified by test against a second workflow.
 - A store written by `main` before this ticket still loads, and every cycle replays to the same stage and counters. Verified by test.
 
-Constraints: zero dependencies. `apply` stays pure. Only `lifecycle.ts`, `store.ts` and their tests change; the callers keep working through the default workflow.
+Constraints: zero dependencies. `apply` stays pure. Only `lifecycle.ts`, `store.ts` and their tests change, plus mechanical edits where `src/main.ts` and the caller tests read `c.standard` and `c.adversarial`, and the two escalation regexes in `tests/run.test.ts` (A-057); the callers keep working through the default workflow.
 Non-goals: driving a workflow (09-b); prompts (09-c); extension steps and observers (row 10); a workflow file the job names (09-b).
 Verification: `npm test`, run by the owner on the reviewed SHA.
 
 ## Log
 - 2026-10-19 — drafted on `feat/docs-core-principles` (A-056). Owner, asked to read the three tickets and say go: “merge, I'm happy. We'll then start work on a fresh context”. Read as go for 09-a to 09-c; READY.
+- 2026-10-19 — engine shape decided (A-057): [design/2026-10-19-workflow-engine.md](../design/2026-10-19-workflow-engine.md). Owner: “take all recommendations”, then “design is approved”. Constraint widened for the counter read sites.
+- 2026-10-19 — implemented. `c6a133d`: fixture `tests/fixtures/v1-store.sqlite`, written by the code at `dfaf0c9` (plus a `.gitignore` exception, since `*.sqlite` is ignored). `4d45a54`: engine, `defaultWorkflow`, `checkWorkflow`, `Cycle.budgets`, `step` field, store workflow; `4bd3605`: lazy-review shrink. `npm test` on `4bd3605`, implementer-run, not independent: 246 tests, 222 pass, 19 skipped, 5 todo, 0 fail. Mutation checks: 11 of 11 mutants caught. Next: standard review 1.
+- 2026-10-19 — reviews waived by the owner (A-058): “waive”. No standard or adversarial review runs on 09-a. The plan file was deleted uncommitted at the owner's request. Next: 09-b on `feat/09-b-generic-driver`, stacked on this branch.
