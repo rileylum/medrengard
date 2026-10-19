@@ -88,6 +88,8 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 2026-10-19: `npm test` on `596f620` (main after the A-049 and A-050 merges), implementer-run, not independent — 230 tests, 206 pass, 19 skipped, 5 todo, 0 fail. `npm run test:learn` — 6 tests, 6 pass. No file in `src/` imports from `proto/` or `learn/`.
 2026-10-19: `npm test` on `4bd3605` (09-a, `feat/09-a-workflow-engine`), implementer-run, not independent — 246 tests, 222 pass, 19 skipped, 5 todo, 0 fail. Mutation checks on `4d45a54`: each of 11 mutants (entry guard, step check, isEvent step, loop, settled path, engine name, start, stale-verdict count, default budget, store refusal, store replay workflow) fails at least one test.
 
+2026-10-19: `npm test` on `61b550c` (09-b, `feat/09-b-generic-driver`), implementer-run, not independent — 264 tests, 240 pass, 19 skipped, 5 todo, 0 fail. Mutation checks: 13 of 13 mutants caught.
+
 ## Next action
 
 1. Done: plan step 8 merged (`86dde47`, `f479736`, `73463fc`); the owner's `npm test` on `73463fc` passes.
@@ -107,4 +109,5 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 15. Done: the owner said go (“merge, I'm happy”) and asked for the docs branch to be merged. Tickets 09-a to 09-c are READY.
 16. Done: 09-a implemented on `feat/09-a-workflow-engine` (A-057; design `docs/design/2026-10-19-workflow-engine.md`, plan `plans/2026-10-19-workflow-engine.md`), head `4bd3605`.
 17. Done: 09-a reviews waived by the owner (A-058). The spec rewrite becomes ticket 09-d, after 09-c.
-18. Next: 09-b on `feat/09-b-generic-driver`, stacked on `feat/09-a-workflow-engine`. Design route: brainstorm, plan, implement, reviews.
+18. Done: 09-b implemented on `feat/09-b-generic-driver` (A-059; design `docs/design/2026-10-19-generic-driver.md`, plan `plans/2026-10-19-generic-driver.md`, uncommitted), code head `61b550c`.
+19. Next: 09-b standard review 1 on `61b550c`, then adversarial review, per `docs/workflow.md`. Owner: run `npm test` on the reviewed SHA.
