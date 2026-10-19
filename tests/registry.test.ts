@@ -91,7 +91,7 @@ test('extension: the adapter carries the module name and the SHA-256 of the modu
   assert.equal(cliAdapter(extensionSpec('ext', EXT), offline).moduleHash, EXT_HASH);
 });
 
-test('extension: malformed JSON, a non-zero exit, a deadline overrun and a cancel each end as one run_failed', async () => {
+test('extension: malformed JSON, a non-zero exit, a deadline overrun, a cancel and its own failed outcome each end as one run_failed', async () => {
   const { cwd } = repo();
   const adapter = cliAdapter(extensionSpec('ext', EXT), { ...offline, graceMs: 500 });
   const failures = async (prompt: string, deadlineMs: number) => {
@@ -105,6 +105,9 @@ test('extension: malformed JSON, a non-zero exit, a deadline overrun and a cance
   assert.match(await failures('EXT:bad-json', 10_000), /ext stdout is not JSON/);
   assert.match(await failures('EXT:exit', 10_000), /ext exited 1: ext failed on purpose/);
   assert.equal(await failures('EXT:sleep', 1000), 'timeout');
+  // The module's own reason is bounded as a CLI's is: trimmed, cut to 1 KB, well-formed.
+  assert.equal(await failures('EXT:fail-big', 10_000), 'x'.repeat(1024));
+  assert.equal(await failures('EXT:fail-surrogate', 10_000), 'bad \uFFFD end');
 
   const ac = new AbortController();
   const run = start('EXT:sleep', cwd, ac.signal);
