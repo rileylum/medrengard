@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-059 — 2026-10-19 — 09-b driver approach
+
+Owner, offered three registry approaches (one implementation per role; one per step kind with adapters by role, recommended; one function per workflow) and three questions (Q1 test the second workflow as `DEV → CHECK → REVIEW → OWNER`, because the engine can't start on a review stage and `review` needs `verify`; Q2 move 09-c's workflow record into 09-b, with the store refusing a cycle whose hash doesn't match; Q3 the job file names a workflow module, and `runtime` is keyed by role with `standard` and `adversarial` as aliases): “take all”.
+
+Effect: 09-b follows [design/2026-10-19-generic-driver.md](design/2026-10-19-generic-driver.md), pending the owner's approval of the note. Its second-workflow done-when line becomes Q1's four-stage workflow. The cycle-record line moves from 09-c to 09-b.
+
 ### A-058 — 2026-10-19 — 09-a reviews waived; spec rewrite after 09-c
 
 Owner, asked whether 09-a's two standard reviews and one adversarial review are waived, run now, or run with 09-b's as a stacked branch: “waive”. Earlier, offered an overview of 09-a instead of a review: “okay I'm happy with that lets start on 09-b in a fresh context”. Asked where the spec rewrite that A-054 calls for goes: “up to you, should it happen now or after? Should it include changes from 09-c?”. Asked whether to commit the untracked 09-a plan: “No we can cut that plan document”.
