@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { EventStore } from '../src/store.ts';
 import { claude, cliAdapter } from '../src/runtime/cli-adapter.ts';
@@ -141,3 +142,20 @@ test('a command can write outputDir and the checkout, and not its own evidence, 
   assert.ok(!existsSync(outside));
   store.close();
 });
+
+for (const network of [true, undefined]) {
+  test(`with network ${network}, a command ${network ? 'reaches' : 'cannot reach'} a listener on the host`, async () => {
+    const server = createServer((s) => s.end('hello\n'));
+    await new Promise<void>((res) => server.listen(0, '127.0.0.1', res));
+    const { port } = server.address() as { port: number };
+    const connect = node('connect', `require('node:net').connect(${port}, '127.0.0.1').on('data', (d) => process.stdout.write(d)).on('error', (e) => { console.log(e.code); process.exitCode = 1; });`);
+    const { store, runsDir, job, cycleId } = await atCommand(twoStages({ run: [connect], ...(network === undefined ? {} : { network }) }));
+    try {
+      const r = await verify(store, cycleId, job, opts(runsDir));
+      assert.equal(readFileSync(join(r.evidenceDir, 'connect.stdout'), 'utf8'), network ? 'hello\n' : 'ECONNREFUSED\n');
+    } finally {
+      server.close();
+      store.close();
+    }
+  });
+}
