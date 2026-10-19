@@ -21,7 +21,7 @@ test('runtimeKit passes against the fixture extension runtime', () => {
   ], r.stdout);
 });
 
-test('runtimeKit passes a completed outcome whose sessionId is undefined, which the controller accepts', () => {
+test('runtimeKit passes a completed outcome whose sessionId or claim field is undefined, which the controller accepts', () => {
   const r = kit('no-session.kit.ts');
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /# fail 0/);
