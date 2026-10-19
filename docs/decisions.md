@@ -36,6 +36,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-063 — 2026-10-19 — 09-c reviews and owner-run tests waived
+
+Owner, told that `npm test` on `c368009` was run by the implementer session and is not independent: “Okay I'm going to waive that and the review.”
+
+Effect: 09-c carries no reviews and no owner-run `npm test`; the implementer's run on `c368009` (269 tests, 245 pass, 0 fail, 19 skipped, 5 todo) stands as the record. As with 09-a and 09-b (A-058, A-060), the stacked branch carrying 09-a to 09-c merges on the owner's word with the waivers on record. 09-d, the spec rewrite, is next.
+
 ### A-062 — 2026-10-19 — 09-c prompt split shape
 
 Owner, offered three plan answers (Q1 `roleText` on every agent stage plus an optional `fixRoleText` on commit stages, with today's four first lines on `defaultWorkflow`; Q2 `checkWorkflow` refuses an agent stage with no role text; Q3 role text must be one line) and three interface answers (Q1 a new pure `src/prompt.ts` with `developerPrompt` and `reviewPrompt` returning the text and both hashes; Q2 an optional `versions` on `ExecuteOptions` that `receive` spreads onto every `developer_result`, `verdict` and `run_failed`; Q3 tests at `develop`, `fix` and `review`, at `src/prompt.ts` and at `checkWorkflow`): “take all”, then “take all”.
