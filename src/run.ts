@@ -109,6 +109,19 @@ function driverLimits(w: Workflow): string[] {
     const d = w.stages[s];
     return d?.kind === 'agent' ? d.produces : d?.kind;
   };
+  // apply takes only PASS at a commit stage (a dispute or a failed run escalates), so its FAIL
+  // edge is never followed; nor is any edge of a stage the start never reaches.
+  const edges = (s: Stage): [string, Stage][] => {
+    const t = w.stages[s]!.transitions;
+    return kind(s) === 'commit' ? [['PASS', t.PASS]] : Object.entries(t);
+  };
+  const reached = new Set<Stage>();
+  const reach = (s: Stage): void => {
+    if (reached.has(s) || !w.stages[s]) return;
+    reached.add(s);
+    for (const [, to] of edges(s)) reach(to);
+  };
+  reach(w.start);
   const reasons: string[] = [];
   // fix takes its findings from the last verdict, which must be a FAIL for the candidate. A new
   // commit or a review's PASS leaves none; command and human stages pass that on unchanged, so
@@ -118,21 +131,20 @@ function driverLimits(w: Workflow): string[] {
   const mark = (s: Stage): void => {
     if (noFail.has(s) || (kind(s) !== 'command' && kind(s) !== 'human')) return;
     noFail.add(s);
-    for (const to of Object.values(w.stages[s]!.transitions)) mark(to);
+    for (const [, to] of edges(s)) mark(to);
   };
   const leavesNoFail = (name: Stage, outcome: string) => kind(name) === 'commit' || (kind(name) === 'verdict' && outcome === 'PASS');
-  for (const [name, def] of Object.entries(w.stages))
-    for (const [outcome, to] of Object.entries(def.transitions)) if (leavesNoFail(name, outcome)) mark(to);
-  for (const [name, def] of Object.entries(w.stages))
-    for (const [outcome, to] of Object.entries(def.transitions))
+  for (const name of reached) for (const [outcome, to] of edges(name)) if (leavesNoFail(name, outcome)) mark(to);
+  for (const name of reached)
+    for (const [outcome, to] of edges(name))
       if (kind(to) === 'commit' && (leavesNoFail(name, outcome) || noFail.has(name)))
         reasons.push(`stage ${name} ${outcome} enters commit stage ${to}, but the last verdict there may not be a review's FAIL for the candidate, which a fix run takes as its findings`);
   // review reads the checkout and evidence verify made of the candidate, so after each commit a
   // command stage must come before any review.
-  for (const [from] of Object.entries(w.stages).filter(([s]) => kind(s) === 'commit')) {
+  for (const from of [...reached].filter((s) => kind(s) === 'commit')) {
     const seen = new Set<Stage>();
     const walk = (s: Stage) => {
-      for (const to of Object.values(w.stages[s]!.transitions)) {
+      for (const [, to] of edges(s)) {
         if (seen.has(to) || !w.stages[to] || kind(to) === 'command' || kind(to) === 'commit') continue;
         seen.add(to);
         if (kind(to) === 'verdict') reasons.push(`review stage ${to} follows commit stage ${from} with no command stage between`);

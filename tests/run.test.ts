@@ -642,3 +642,24 @@ test('the owner requesting changes after the last review PASS is refused: the la
   assert.equal(developer.requests.length, 0);
   store.close();
 });
+
+// Standard review 2 of sweep-preflight: a commit stage only ever takes PASS, and a stage the start
+// never reaches never runs, so neither may make the driver refuse a workflow that runs on main.
+test('a commit stage FAIL edge, which is never taken, and stages the start never reaches do not make run refuse', async () => {
+  const D = defaultWorkflow.stages;
+  const notes = { kind: 'command', budget: 2, run: [{ name: 'notes', command: ['true'] }], transitions: { PASS: 'DEVELOPING' } };
+  const cases: [string, Record<string, object>, ('PASS' | 'FAIL')[]][] = [
+    ['commit FAIL into a stage between a review FAIL and the fix', { DEVELOPING: { ...D.DEVELOPING, transitions: { PASS: 'VERIFYING', FAIL: 'NOTES' } }, STANDARD_REVIEW: { ...D.STANDARD_REVIEW, transitions: { PASS: 'ADVERSARIAL_REVIEW', FAIL: 'NOTES' } }, NOTES: notes }, ['FAIL', 'PASS']],
+    ['an unreachable commit stage', { ORPHAN: { ...D.DEVELOPING, transitions: { PASS: 'DEVELOPING' } } }, ['PASS']],
+    ['an unreachable review whose PASS enters a commit stage', { ORPHAN: { ...D.STANDARD_REVIEW, budget: 1, transitions: { PASS: 'DEVELOPING' } } }, ['PASS']],
+  ];
+  const { root, repo, runsDir } = scratch();
+  for (const [i, [label, stages, standard]] of cases.entries()) {
+    const w = { ...defaultWorkflow, name: `case-${i}`, stages: { ...D, ...stages } } as Workflow;
+    assert.deepEqual(checkWorkflow(w), [], label);
+    const store = new EventStore(join(root, `case-${i}.sqlite`), w);
+    const r = await run(store, adapters(fake(claude), scripted(...standard), scripted('PASS')), job(repo, { workId: `w-${i}` }), opts(runsDir));
+    assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', `${label}: ${r.cycle.escalation ?? r.error}`);
+    store.close();
+  }
+});
