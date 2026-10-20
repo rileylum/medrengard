@@ -47,6 +47,8 @@ Effect, a standing principle for every ticket: build the capability or extension
 3. A stronger model: a workflow choice. A second commit stage under its own role is likely possible today and gets a proving test; a runtime entry may name a model or arguments (Role prompts row).
 4. GitHub sync notes: confirmations of A-095, A-100, no automatic merge, and grants (row 12).
 
+Owner, asked whether to add the principle to `AGENTS.md` as well: “Yes add it to agents.md as well.” It is a line under "Rules".
+
 ### A-112 — 2026-10-20 — Two live-run gaps placed; row 11 starts with one driver entry point
 
 The owner asked which research findings were left out of the walkthrough (A-105 to A-111) and why. The session listed them (`docs/research/2026-10-20/`); this and the next entries record the owner's decisions on them.
