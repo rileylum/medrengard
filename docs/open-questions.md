@@ -28,6 +28,8 @@ Raised 2026-10-18, guide walkthrough.
 
 **Would settle it.** The design asks that each "done when" line name an independent verification method (source §04, "Definition of Ready is risk-aware") and that quality profiles set required checks per risk tier (source §09, "Quality profiles and independent gates"; defaults OPEN in §15). Decide whether owner-held acceptance tests become standard, prove the `sandbox.read` route with a test, and decide who writes those tests.
 
+**Partly settled (A-107).** Tests stay visible in the default workflow; hiding them is a workflow choice for later, made from run logs. The route is a `{ file }` argument from a `workflowDir` outside the repository, not `sandbox.read`. Still open: who writes acceptance tests, and the "run on base" primitive.
+
 ## O-011 What to do when a cycle runs out of review budget
 
 Raised 2026-10-18, guide walkthrough.
@@ -59,6 +61,8 @@ Raised 2026-10-18, guide walkthrough.
 **Would settle it.** Two answers, each from a survey of published practice and a trial on this factory's own tickets:
 1. The initial prompt for each role: developer, fix run, standard reviewer, adversarial reviewer.
 2. The supplementary skills each role gets, and how a run records which prompt and skill versions it used.
+
+Inputs from the 2026-10-20 research (A-110; `docs/research/2026-10-20/harnesses.md` finding 5): no-mistakes's reviewer lines ("construct at least one concrete input or state and trace it"; "report a finding only when you can construct a concrete sequence that occurs during the change's intended usage"; one finding per broken invariant; a simplification pass; "prior findings and fix summaries are claims, not evidence"). Also to decide: whether a re-review after a fix sees the earlier findings, labelled as claims, and answers ADDRESSED or NOT ADDRESSED for each, with the adversarial reviewer kept cold (the session's recommendation).
 
 Constraint from A-100: any instructions, prompts or skills a repository supplies are read from the base, never the candidate, as AGENTS.md is for reviewers since sweep-reviewer-instructions. Otherwise a candidate rewrites the rules it is judged by.
 

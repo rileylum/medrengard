@@ -37,6 +37,64 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-111 — 2026-10-20 — The smaller research items: three soon, the rest tracked; "Ken Chun" is Kun Chen
+
+Asked, from the overnight research (TRIAGE owner items 8 to 18): ticket soon (1) run records: `run_failed.cause`, cost, tokens, model and CLI version per run, and `claude`'s turn and budget caps; (2) JSON workflows, with a repository workflow required to be data (closes A-078); (3) `protocol: 1` on the extension contracts. Track for later: a `doctor` command, a `status` command with clearer job-file errors, clone cleanup, faster tests, and a warning at `accept` when the base moved (`head_changed`/`base_changed` have no producer, A-103). Owner: “Yes agree with the split, these all seem very useful so I'd definitely want them all done at some point.”
+
+Also, the owner on the person the brief named "Ken Chun": “Kun Chen is the correct person” (GitHub `kunchenguid`, author of no-mistakes, which the research used).
+
+Effect: each item is a row in `docs/plan.md`'s later work. The three "soon" items are drafted as tickets first; each needs the owner's go before it is READY.
+
+### A-110 — 2026-10-20 — Reviewer wording kept as input to O-013; no prompt change now
+
+Asked, from the overnight research (`docs/research/2026-10-20/harnesses.md` finding 5, TRIAGE owner item 6): borrow no-mistakes's reviewer wording, and should a re-review after a fix see the earlier findings, labelled as claims. Owner: “yes I agree generally so we can log these findings to be reviewed when we get to the currently planned prompt etc. stage”.
+
+Effect: the default prompts do not change now. O-013 lists the research's wording and the prior-findings question as inputs, to be decided when the prompts and skills row starts.
+
+### A-109 — 2026-10-20 — Structured findings, and the owner may overrule a finding inside the cycle
+
+Asked, from the overnight research (`docs/research/2026-10-20/deep-research.md` proposals 7 and 8, `harnesses.md` finding 4, TRIAGE owner item 5): (A) findings carry `file:line`, `requirement`, `severity` (blocking or minor), `scenario` (input, expected, actual) and `action` (fix, or needs the owner; missing means the owner); only a blocking finding can FAIL; minor findings go to the owner, not the fix run; a needs-the-owner finding escalates. (B) an owner command marks a finding false with a quoted reason, refunds the budget the FAIL spent, reruns the same review stage, and shows the ruling to the next reviewer. The session recommended both: A as a Design-route ticket landing before or with A-108's primitive, B after A, with those defaults. Owner: “Yes to both”.
+
+Effect: two tickets to draft, A first. A changes the verdict contract and the fix-run input (O-011, O-013 touch it). B is the ticket A-072 named. Each still needs the owner's go before it is READY.
+
+Owner, adding: “we should look for other opportunities to provide structure to input/output across the core AND potentially have the ability to set this up in the workflow definitions and other extensions.” So A's design also surveys the core's other free-text inputs and outputs for the same treatment, and asks whether a workflow definition or an extension (runtime, kit) may declare the shape of what a step takes and returns. Recorded on the plan's "Structured findings" row.
+
+### A-108 — 2026-10-20 — A commit stage can act on a red check; the default workflow still escalates
+
+Asked, from the overnight research (`docs/research/2026-10-20/harnesses.md` findings 2 and 3, TRIAGE owner item 4): build the engine primitive that lets a commit stage take a failed verification as its findings, and whether the default workflow should loop on a red check. Owner: “Yes build the primitive, in fact I would want to theoretically allow a workflow step that is meant to act as a reviewer to have the authority to make these small edits themselves, especially when its a docs, comment or some other trivial fix. My feeling is that we could already achieve that though. Lets leave the default workflow as is.”
+
+Effect:
+1. A ticket (Design route, to be drafted) lets a commit stage re-entered from a command stage's FAIL run as a fix with the failed checks (name, command, output tail) as its findings. Preflight's refusal of that shape (`driverLimits`) is then deleted.
+2. The default workflow keeps `VERIFYING: FAIL → ESCALATED`. The owner tunes it later from run logs.
+3. The owner wants a reviewer-like step that may make small edits itself (docs, comments, trivial fixes). The session found this is not possible today: a role produces either a commit or a verdict, never both; a commit stage entered by a PASS is refused by preflight because `fix` needs a FAIL's findings; and a commit stage has no "nothing to change" outcome. The same ticket's design should consider generalising a commit stage's input (a review's findings, a check's failures, or none) and a "no change" outcome, so such an editing step can be written as a workflow. Any commit it makes is a new SHA, so verify runs again; whether its edits are reviewed again is the workflow's choice.
+
+Owner, after the session explained why an editing reviewer is not possible today and that it is the same primitive: “Okay yes, I agree that we should work on that primitive with those use cases in mind.” The ticket's design covers all three inputs (a review's findings, failed checks, none) and the "no change" outcome.
+
+### A-107 — 2026-10-20 — Owner-held tests (O-005): visible by default; the core keeps the primitives for a hidden holdout
+
+Asked, from the overnight research (`docs/research/2026-10-20/deep-research.md` proposal 4, `harnesses.md` finding 7, TRIAGE owner item 3): who writes acceptance tests, may the developer see them, and must they fail on base. The owner: “Okay at this stage, the workflow that I envisage doesn't hide tests. Though I think we should build the primitives to allow this”. The session found two of three primitives exist (a `{ file }` argument from a `workflowDir` outside the repository is copied into the stage's evidence and bound only for that check; a protected-path check is an ordinary check reading `diff.patch`), and that "must fail on base" needs the core (verify runs checks only on the candidate, and evidence binds to the candidate SHA). Owner: “Yes thats good, at some point I will start tuning the workflow and especially with the recording of logs and seeing where our failures are then we'll know if the develop stage is consistently writing bad tests or changing them etc.”
+
+Effect:
+1. The default workflow uses visible tests. Whether to hide them is a workflow choice, made later from run logs: whether developers write weak tests or edit them.
+2. Later, small: a sandbox test pinning that the developer cannot read `workflowDir` or any stage's evidence copies; an example protected-path check.
+3. Later, Design route: a "run on base" option for command stages, with the evidence rule extended to name the SHA each result is for.
+4. Known leak, accepted: a hidden test's failure output reaches reviewers, whose findings reach the fix prompt.
+
+### A-106 — 2026-10-20 — Networked sandboxes get their own network namespace through pasta
+
+Asked, from the overnight research (`docs/research/2026-10-20/security.md` finding 3, TRIAGE owner item 2): a networked sandbox (`--share-net`) reaches every service on the host's 127.0.0.1 and its abstract Unix sockets (CUPS, PostgreSQL and Steam ports confirmed). Fix with `pasta` (Arch `passt`, a new system dependency) with host loopback unmapped, with a controller-run proxy, or leave it. The session recommended `pasta` now and the proxy later, for domain filtering (the parked 08-a note). Owner: “pasta now”.
+
+Effect: a ticket, to be drafted, replaces `--share-net` with `--unshare-net` plus `pasta` with host loopback unmapped, for every networked sandbox (agent runs and network command stages, grant stages included). Test first: a `node:net` server on 127.0.0.1 in the test process is unreachable from a `network: true` sandbox. `passt` is a new system dependency; the owner installs it (`sudo pacman -S passt`, in `extra`). The proxy stays parked with 08-a. The ticket still needs the owner's go before it is READY.
+
+### A-105 — 2026-10-20 — Row 11 (recovery): always escalate a crashed run; resume refuses a changed job
+
+Asked, from the overnight research (`docs/research/2026-10-20/`, TRIAGE owner item 1): after an agent run whose controller died, relaunch it once or always escalate; and should a resume refuse when the job file changed since the cycle opened. The session recommended always escalate for now, and yes to the refusal. Owner: “Yes to both recommendations”.
+
+Effect, for row 11's tickets (none built yet):
+1. A run whose controller died without an outcome is recorded as `run_failed` and escalates, as D-016's plain rule says. No relaunch. The spec's "may relaunch a failed run once per cycle" proposal and the plan's "relaunch budget per cycle" are withdrawn for row 11; they may return once `run_failed` records a cause (research item `run_failed.cause`), with a cap and only for a crash, as every surveyed system that relaunches does.
+2. The open row records a hash of the job's ticket and checks; `resume` refuses a cycle whose job no longer matches.
+3. The rest of row 11 follows the research's restart rules (`harnesses.md` finding 1, `deep-research.md` proposal 1): every run, reviewers included, records `run_started`; recovery leaves a cycle parked at a human stage or ESCALATED, reruns a command stage, and for an agent stage with a started run and no outcome pins the clone's branch tip under a recovery ref, then records `run_failed`; a lock is taken before recovery. These are design inputs; each ticket still needs the owner's go.
+
 ### A-104 — 2026-10-20 — sweep-lifecycle-constants: merged after the owner's walkthrough
 
 Owner, after the walkthrough: “Yep this is a good change, merge”.
