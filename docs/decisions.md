@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-106 — 2026-10-20 — Networked sandboxes get their own network namespace through pasta
+
+Asked, from the overnight research (`docs/research/2026-10-20/security.md` finding 3, TRIAGE owner item 2): a networked sandbox (`--share-net`) reaches every service on the host's 127.0.0.1 and its abstract Unix sockets (CUPS, PostgreSQL and Steam ports confirmed). Fix with `pasta` (Arch `passt`, a new system dependency) with host loopback unmapped, with a controller-run proxy, or leave it. The session recommended `pasta` now and the proxy later, for domain filtering (the parked 08-a note). Owner: “pasta now”.
+
+Effect: a ticket, to be drafted, replaces `--share-net` with `--unshare-net` plus `pasta` with host loopback unmapped, for every networked sandbox (agent runs and network command stages, grant stages included). Test first: a `node:net` server on 127.0.0.1 in the test process is unreachable from a `network: true` sandbox. `passt` is a new system dependency; the owner installs it (`sudo pacman -S passt`, in `extra`). The proxy stays parked with 08-a. The ticket still needs the owner's go before it is READY.
+
 ### A-105 — 2026-10-20 — Row 11 (recovery): always escalate a crashed run; resume refuses a changed job
 
 Asked, from the overnight research (`docs/research/2026-10-20/`, TRIAGE owner item 1): after an agent run whose controller died, relaunch it once or always escalate; and should a resume refuse when the job file changed since the cycle opened. The session recommended always escalate for now, and yes to the refusal. Owner: “Yes to both recommendations”.
