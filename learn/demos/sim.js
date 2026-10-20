@@ -1,14 +1,15 @@
 // The simulator. src/run.ts drives one job through the real controller (src/controller.ts) and
-// the real lifecycle (src/lifecycle.ts); the stages are the stand-ins in shims/sim-*.js, and the
-// agents are the reader, or a scripted autopilot. Replies go through the real claude and pi
+// the real lifecycle (src/lifecycle.ts) under the workflow the reader picks; the stages are the
+// stand-ins in shims/sim-*.js, and the agents are the reader, or a scripted autopilot. Replies go through the real claude and pi
 // parsers (src/runtime/cli-adapter.ts), so a reply without a claim block fails as it would live.
 import { run } from '/src/run.ts';
 import { claude, pi } from '/src/runtime/cli-adapter.ts';
 import { EventStore, SETTLED } from '/src/store.ts';
 import { readdirSync, readFileSync } from 'node:fs';
-import { flow, LIFECYCLE } from '../diagram.js';
+import { flow, layout } from '../diagram.js';
+import { lines } from '../lines.js';
 import { esc, highlight } from '../live.js';
-import { CHANGES, REPO, RUNS, TICKET, world } from '../shims/world.js';
+import { CHANGES, REPO, RUNS, TICKET, WORKFLOWS, world } from '../shims/world.js';
 import { cloneRef } from '../shims/sim-developer.js';
 
 const short = (s) => (s ? String(s).slice(0, 7) : '(none)');
@@ -44,6 +45,12 @@ const PRESETS = {
     developer: [{ change: 'nothing' }] },
   stale: { label: 'A verdict for the wrong SHA', about: 'After the fix run, the second standard reviewer names the first, failed commit. The verdict is recorded and counted, but cannot advance the cycle.',
     developer: [{ change: 'offByOne' }, { change: 'good' }], standard: [{ verdict: 'FAIL', findings: [F1, F1b] }, { verdict: 'PASS', sha: 'previous' }] },
+  dispute: { label: 'The developer disputes a finding', about: 'The standard reviewer FAILs a correct change with a finding the ticket does not ask for. The fix run commits nothing and disputes it instead. Only the owner can weigh a dispute against a verdict, so the cycle escalates.',
+    developer: [{ change: 'good' }, { dispute: 'The ticket lists undo as a non-goal; the finding asks for undo.' }], standard: [{ verdict: 'FAIL', findings: ['src/todo.js:9 — there is no way to undo `todo done`'] }] },
+  package: { label: 'A stage of its own', workflow: 'package', about: 'This workflow adds a PACKAGE stage after the reviews. It is a command stage with its own run, npm pack --dry-run, which the controller runs on the candidate as it runs the checks.',
+    developer: [{ change: 'good' }], standard: [{ verdict: 'PASS' }], adversarial: [{ verdict: 'PASS' }] },
+  light: { label: 'One reviewer, three tries', workflow: 'light', about: 'This workflow has one reviewer with a budget of three and no adversary. The reviewer FAILs twice; the third commit passes and the cycle waits at SIGN_OFF, the workflow\'s own human stage.',
+    developer: [{ change: 'offByOne' }, { change: 'upperOnly' }, { change: 'good' }], reviewer: [{ verdict: 'FAIL', findings: [F1, F1b] }, { verdict: 'FAIL', findings: [F2] }, { verdict: 'PASS' }] },
   manual: { label: 'You play every agent', about: 'No autopilot. Each agent waits for you: pick what the developer commits, how each check behaves, and what each reviewer says. Edit any reply by hand.' },
 };
 
@@ -56,15 +63,14 @@ export default function mount(el) {
       <div class="card violet sim-job">
         <h3>1 · The owner writes a job</h3>
         <div class="row"><label>Scenario</label><select class="preset">${Object.entries(PRESETS).map(([k, p]) => `<option value="${k}">${esc(p.label)}</option>`).join('')}</select></div>
+        <div class="row"><label>Workflow</label><select class="workflow" style="max-width:100%">${Object.entries(WORKFLOWS).map(([k, w]) => `<option value="${k}">${esc(w.label)}</option>`).join('')}</select></div>
         <p class="small muted about"></p>
         <label>Ticket <span class="dim">(the contract the developer and the reviewers read)</span></label>
         <textarea class="ticket" rows="9"></textarea>
         <details><summary class="small">Job file: work ID, checks, runtimes, deadline</summary>
           <div class="row" style="margin-top:8px"><label>workId</label><input class="workId" value="todo-01" size="10">
             <label>deadline</label><input class="deadline" type="number" min="1" max="3600" value="300" style="width:70px"><span class="small dim">s per stage</span></div>
-          <div class="row"><label>developer</label><select class="rt-developer"><option>claude</option><option>pi</option></select>
-            <label>standard</label><select class="rt-standard"><option>claude</option><option>pi</option></select>
-            <label>adversarial</label><select class="rt-adversarial"><option>pi</option><option>claude</option></select></div>
+          <div class="row runtimes"></div>
           <label>checks <span class="dim">(argv each; try a command that is not installed)</span></label>
           <textarea class="checks" rows="4"></textarea>
           <pre class="jobfile wrap small"></pre>
@@ -82,8 +88,7 @@ export default function mount(el) {
         <div class="row status">
           <span class="pill stage stage-now">no cycle</span>
           <span class="small">cycle <code class="cycle-id">—</code></span>
-          <span class="small">standard <span class="meter std"></span></span>
-          <span class="small">adversarial <span class="meter adv"></span></span>
+          <span class="small meters"></span>
           <span class="small">head <code class="head">—</code></span>
         </div>
         <div class="row interfere">
@@ -97,6 +102,8 @@ export default function mount(el) {
     <div class="sim-mid">
       <div class="sim-actors"><h3>2 · Who is working</h3><div class="timeline"><p class="muted small">Press ▶ to start. src/run.ts will call develop(), then whatever stage the cycle is in, until it reaches one no stage acts on.</p></div></div>
       <div class="card amber sim-log"><h3>3 · The event log <span class="dim small">(src/store.ts, replayed through apply)</span></h3>
+        <div class="row small"><label><input type="radio" name="logview" value="table" checked> as a table</label><label><input type="radio" name="logview" value="lines"> as <code>node src/main.ts events job.json --follow</code> prints it</label></div>
+        <pre class="lines wrap small" hidden></pre>
         <table class="log"><thead><tr><th>#</th><th>event</th><th>stage</th><th>note</th></tr></thead><tbody></tbody></table>
         <pre class="row-json wrap" hidden></pre>
         <details><summary class="small">The Cycle value, replayed</summary><pre class="cycle-json wrap"></pre></details>
@@ -108,9 +115,24 @@ export default function mount(el) {
     </div>
   </div>`;
   const $ = (s) => el.querySelector(s);
-  const diagram = flow($('.diagram'), LIFECYCLE);
-  diagram.onClick((id) => diagram.options(id));
-  const store = new EventStore(`${RUNS}/events.sqlite`);
+  // One runs directory holds one workflow per work ID, so a new workflow gets a new store.
+  let workflow, diagram, store;
+  function useWorkflow(key) {
+    // The store runs checkWorkflow and throws on a refused workflow, before anything changes here.
+    const next = new EventStore(`${RUNS}/events.sqlite`, WORKFLOWS[key].workflow);
+    workflow = next.workflow;
+    store = next;
+    store.subscribe(onChange);
+    $('.diagram').innerHTML = '';
+    diagram = flow($('.diagram'), layout(workflow));
+    diagram.onClick((id) => diagram.options(id));
+    const roles = [...new Set(Object.values(workflow.stages).filter((d) => d.kind === 'agent').map((d) => d.role))];
+    $('.runtimes').innerHTML = roles.map((r, i) => `<label>${esc(r)}</label><select data-role="${esc(r)}">${(i % 2 ? ['pi', 'claude'] : ['claude', 'pi']).map((n) => `<option>${n}</option>`).join('')}</select>`).join('');
+    tbody.innerHTML = '';
+    state.cycleId = undefined; state.parent = undefined;
+    board();
+    showJob();
+  }
   const state = {
     cycleId: undefined, parent: undefined, running: false, turns: {}, job: undefined, merged: [],
     cycle: () => (state.cycleId ? store.load(state.cycleId) : undefined),
@@ -163,14 +185,15 @@ export default function mount(el) {
     return {
       workId: $('.workId').value, ticket: $('.ticket').value, repo: REPO, checks,
       parentCycleId: state.parent,
-      runtime: { developer: $('.rt-developer').value, standard: $('.rt-standard').value, adversarial: $('.rt-adversarial').value },
+      runtime: Object.fromEntries([...el.querySelectorAll('.runtimes select')].map((s) => [s.dataset.role, s.value])),
       deadlineMs: Math.round(Number($('.deadline').value) * 1000),
     };
   }
   function showJob() {
     try {
       const j = jobFromForm();
-      $('.jobfile').innerHTML = highlight(JSON.stringify({ workId: j.workId, ticketFile: 'ticket.md', repo: '../projects/todo-cli', checks: j.checks, runtime: j.runtime, deadlineMs: j.deadlineMs, ...(j.parentCycleId ? { parentCycleId: j.parentCycleId } : {}) }, null, 2));
+      const named = $('.workflow').value === 'default' ? {} : { workflow: `${workflow.name}.ts` };
+      $('.jobfile').innerHTML = highlight(JSON.stringify({ workId: j.workId, ticketFile: 'ticket.md', repo: '../projects/todo-cli', ...named, checks: j.checks, runtime: j.runtime, deadlineMs: j.deadlineMs, ...(j.parentCycleId ? { parentCycleId: j.parentCycleId } : {}) }, null, 2));
     } catch (err) { $('.jobfile').textContent = err.message; }
   }
   function loadPreset(key) {
@@ -179,12 +202,14 @@ export default function mount(el) {
     $('.checks').value = JSON.stringify(preset.checksJson ?? DEFAULT_CHECKS, null, 1).replace(/\n\s*/g, ' ').replace('[ {', '[\n {').replace(/\}, \{/g, '},\n {').replace('} ]', '}\n]');
     $('.deadline').value = preset.deadline ?? (key === 'manual' ? 600 : 300);
     if (key === 'manual') el.querySelector('input[value=manual]').checked = true; else el.querySelector('input[value=auto]').checked = true;
+    if (preset.workflow || $('.workflow').value !== 'default' || !workflow) { $('.workflow').value = preset.workflow ?? 'default'; useWorkflow($('.workflow').value); }
     showJob();
   }
   $('.ticket').value = TICKET;
   $('.preset').addEventListener('change', (e) => loadPreset(e.target.value));
-  for (const s of ['.ticket', '.checks', '.workId', '.deadline', '.rt-developer', '.rt-standard', '.rt-adversarial']) $(s).addEventListener('input', showJob);
-  loadPreset('happy');
+  for (const s of ['.ticket', '.checks', '.workId', '.deadline']) $(s).addEventListener('input', showJob);
+  $('.runtimes').addEventListener('input', showJob);
+  $('.workflow').addEventListener('change', (e) => useWorkflow(e.target.value));
 
   // ---- the board ------------------------------------------------------------------------------
   function meter(used, limit) { return Array.from({ length: limit }, (_, i) => `<span class="pip ${i < used ? 'used' : ''}"></span>`).join('') + ` <span class="dim">${used}/${limit}</span>`; }
@@ -192,24 +217,30 @@ export default function mount(el) {
     $('.stage-now').textContent = cycle?.stage ?? 'no cycle';
     $('.stage-now').className = `pill stage stage-now ${cycle?.stage ?? ''}`;
     $('.cycle-id').textContent = cycle ? short(cycle.cycleId) + (cycle.parentCycleId ? ` (child of ${short(cycle.parentCycleId)})` : '') : '—';
-    $('.std').innerHTML = meter(cycle?.standard ?? 0, 2);
-    $('.adv').innerHTML = meter(cycle?.adversarial ?? 0, 1);
+    $('.meters').innerHTML = Object.entries(workflow.stages).filter(([, d]) => d.budget !== undefined)
+      .map(([s, d]) => `${esc(s)} <span class="meter">${meter(cycle?.budgets[s] ?? 0, d.budget)}</span>`).join(' · ');
     $('.head').textContent = short(cycle?.candidate?.head || undefined);
     $('.cycle-json').innerHTML = cycle ? highlight(JSON.stringify(cycle, null, 2)) : '';
   }
-  board();
 
   // ---- the event log --------------------------------------------------------------------------
   const tbody = $('.log tbody');
   const summary = (e) => {
-    const bits = { claim: () => `run ${short(e.runId)} · ${e.runtime} · base ${short(e.base)}`, developer_result: () => `head ${short(e.head)} · ${e.artifacts?.length ?? 0} artifacts`,
+    const bits = { dispute: () => `on ${short(e.head)}: ${esc(e.reason)}`, accept: () => `head ${short(e.head)}${e.source ? ` · by ${esc(e.source)}` : ''}`, cancel: () => (e.source ? `by ${esc(e.source)}` : ''), claim: () => `run ${short(e.runId)} · ${e.runtime} · base ${short(e.base)}`, developer_result: () => `head ${short(e.head)} · ${e.artifacts?.length ?? 0} artifacts`,
       verification: () => `${short(e.head)} · ${e.checks.map((c) => `${c.name} <span class="pill ${c.result}">${c.result}</span>`).join(' ')}`,
       verdict: () => `<span class="pill ${e.verdict}">${e.verdict}</span> on ${short(e.head)}${e.findings?.length ? ` · ${e.findings.length} findings` : ''}`,
-      run_failed: () => `run ${short(e.runId)}: ${esc(e.reason)}`, accept: () => `head ${short(e.head)}`, reject_dispatch: () => esc(e.reason),
+      run_failed: () => `run ${short(e.runId)}: ${esc(e.reason)}`, reject_dispatch: () => esc(e.reason),
       head_changed: () => `head ${short(e.head)}`, base_changed: () => `base ${short(e.base)}` };
     return bits[e.type]?.() ?? '';
   };
-  store.subscribe((ch) => {
+  const showLines = () => { $('.lines').textContent = lines(store.table).map((l) => JSON.stringify(l)).join('\n') || '(no rows yet)'; };
+  for (const r of el.querySelectorAll('input[name=logview]')) r.addEventListener('change', () => {
+    const asLines = el.querySelector('input[name=logview]:checked').value === 'lines';
+    $('.lines').hidden = !asLines; $('.log').hidden = asLines;
+    if (asLines) showLines();
+  });
+  function onChange(ch) {
+    if (!$('.lines').hidden) showLines();
     if (ch.kind === 'open') {
       const c = store.load(ch.cycleId);
       tbody.insertAdjacentHTML('beforeend', `<tr class="open"><td>0</td><td colspan="3"><b>open</b> cycle ${short(ch.cycleId)} for work ${esc(c.workId)}${c.parentCycleId ? `, parent ${short(c.parentCycleId)}` : ''} <span class="dim">(row 0, the store's own marker)</span></td></tr>`);
@@ -233,7 +264,7 @@ export default function mount(el) {
     if (moved) diagram.travel(h.from, h.to);
     diagram.current(h.to);
     if (ch.cycleId === state.cycleId) board(ch.cycle);
-  });
+  }
 
   // ---- the actors -----------------------------------------------------------------------------
   const timeline = $('.timeline');
@@ -256,10 +287,11 @@ export default function mount(el) {
       narrate(`<b>src/run.ts</b> → <code>develop()</code>: resolved the base <code>${short(d.base)}</code>, opened cycle <code>${short(d.cycleId)}</code>, made the clone <code>${esc(d.worktree)}</code> on branch <code>${esc(d.branch)}</code>.`);
       interfere(true);
     }
-    if (name === 'fix') narrate(`<b>src/run.ts</b> → <code>fix()</code>: the cycle is back in DEVELOPING after a standard FAIL. Same clone, same branch, prompted with ${d.findings?.length ?? 0} findings.`);
-    if (name === 'land') narrate(d.refused ? `<b>controller</b>: fetched the branch and judged <code>${short(d.head)}</code> with the real <code>refuse</code>: <span class="bad-t">${esc(d.refused)}</span>. The claim becomes <code>run_failed</code>.` : `<b>controller</b>: fetched the branch; <code>${short(d.head)}</code> is the tip, descends from the base and changes something. <code>${esc(d.branch)}</code> now points at it.`);
-    if (name === 'verify') narrate(`<b>src/run.ts</b> → <code>verify()</code>: a fresh checkout of <code>${short(d.head)}</code> with no <code>.git</code>, at <code>${esc(d.worktree)}</code>. The controller runs the checks, not the developer.`);
-    if (name === 'review') narrate(`<b>src/run.ts</b> → <code>review()</code>: the prompt for the ${d.role.replace('_', ' ')} holds the ticket, AGENTS.md, the check results, the diff and the evidence. Never the developer's transcript.`);
+    if (name === 'fix') narrate(`<b>src/run.ts</b> → <code>fix()</code>: the cycle is back in ${esc(d.stage)} after a FAIL. Same clone, same branch, prompted with ${d.findings?.length ?? 0} findings.`);
+    if (name === 'land' && d.dispute !== undefined) narrate(d.refused ? `<b>controller</b>: the dispute names <code>${short(d.head)}</code>: <span class="bad-t">${esc(d.refused)}</span>.` : `<b>controller</b>: a dispute keeps the candidate <code>${short(d.head)}</code>, so nothing is fetched and no branch moves. The developer's reason goes to the owner.`);
+    else if (name === 'land') narrate(d.refused ? `<b>controller</b>: fetched the branch and judged <code>${short(d.head)}</code> with the real <code>refuse</code>: <span class="bad-t">${esc(d.refused)}</span>. The claim becomes <code>run_failed</code>.` : `<b>controller</b>: fetched the branch; <code>${short(d.head)}</code> is the tip, descends from the base and changes something. <code>${esc(d.branch)}</code> now points at it.`);
+    if (name === 'verify') narrate(`<b>src/run.ts</b> → <code>verify()</code> for the command stage ${esc(d.stage)}: a fresh checkout of <code>${short(d.head)}</code> with no <code>.git</code>, at <code>${esc(d.worktree)}</code>. It runs ${d.own ? 'the stage\'s own <code>run</code>' : 'the job\'s checks'}; the controller runs them, not the developer.`);
+    if (name === 'review') narrate(`<b>src/run.ts</b> → <code>review()</code> for ${esc(d.stage)}: the prompt for the ${esc(d.role.replaceAll('_', ' '))} holds the ticket, AGENTS.md, the check results, the diff and the evidence. Never the developer's transcript.`);
   };
 
   function countdown(c, deadlineMs, signal) {
@@ -287,7 +319,8 @@ export default function mount(el) {
   // One adapter per role. start() shows the reader a card and settles when they (or the
   // autopilot) send a reply; it settles `cancelled` when the controller aborts it at the deadline.
   function adapter(role, runtime) {
-    return { name: runtime, start: (req, signal) => (role === 'developer' ? developerTurn(req, signal, runtime) : reviewerTurn(role, req, signal, runtime)) };
+    const commits = Object.values(workflow.stages).some((d) => d.kind === 'agent' && d.role === role && d.produces === 'commit');
+    return { name: runtime, start: (req, signal) => (commits ? developerTurn(req, signal, runtime) : reviewerTurn(role, req, signal, runtime)) };
   }
 
   function turn(role) { state.turns[role] = (state.turns[role] ?? -1) + 1; return (preset[role] ?? [])[state.turns[role]] ?? {}; }
@@ -315,7 +348,7 @@ export default function mount(el) {
     const c = card('agent', `DEVELOPER · ${runtime} · run ${short(req.runId)}`);
     const stop = countdown(c, state.job.deadlineMs, signal);
     c.body.innerHTML = `
-      <details><summary class="small">The prompt it was given <span class="tag real">real prompt()</span></summary><pre class="wrap small">${esc(req.prompt)}</pre></details>
+      <details><summary class="small">The prompt it was given <span class="tag real">real developerPrompt()</span></summary><pre class="wrap small">${esc(req.prompt)}</pre></details>
       <div class="row"><label>Change</label><select class="change">${Object.entries(CHANGES).map(([k, ch]) => `<option value="${k}">${esc(ch.label)}</option>`).join('')}</select><button class="commit">git commit</button></div>
       <pre class="diff small" hidden></pre>
       <label>Its reply <span class="dim">(ends with the claim: a fenced json block)</span></label>
@@ -335,12 +368,26 @@ export default function mount(el) {
       const claimed = script.claimHead === 'base' ? base : head;
       reply.value = script.reply ?? `I implemented the ticket and committed it.\n\n\`\`\`json\n${JSON.stringify({ head: claimed, artifacts: Object.keys(ch.files) })}\n\`\`\``;
     };
+    // A fix run may keep the candidate and say why (07-e): no commit, a claim with a dispute.
+    const dispute = (reason) => {
+      const previous = state.cycle()?.candidate?.head;
+      reply.value = `I did not change the commit: I believe the finding is wrong.\n\n\`\`\`json\n${JSON.stringify({ head: previous, artifacts: [], dispute: reason })}\n\`\`\``;
+    };
     c.body.querySelector('.commit').addEventListener('click', commit);
+    if (state.cycle()?.candidate?.head) {
+      c.body.querySelector('.commit').insertAdjacentHTML('afterend', '<button class="dispute">dispute instead</button>');
+      c.body.querySelector('.dispute').addEventListener('click', () => dispute('<your reason>'));
+    }
     const outcome = settleWith(c, runtime, signal, () => reply.value, stop);
     if (autoplay(c)) {
       (async () => {
-        if (!await pace(c, 'the developer commits', 1, signal)) return;
-        commit();
+        if (script.dispute) {
+          if (!await pace(c, 'the developer disputes the findings', 1, signal)) return;
+          dispute(script.dispute);
+        } else {
+          if (!await pace(c, 'the developer commits', 1, signal)) return;
+          commit();
+        }
         if (!await pace(c, script.hang ? 'the developer goes silent' : 'the developer sends its reply', 1.5, signal)) return;
         c.body.querySelector(script.hang ? '.hang' : '.send').click();
       })();
@@ -349,14 +396,14 @@ export default function mount(el) {
   }
 
   async function reviewerTurn(role, req, signal, runtime) {
-    const key = role === 'standard_reviewer' ? 'standard' : 'adversarial';
+    const key = { standard_reviewer: 'standard', adversarial_reviewer: 'adversarial' }[role] ?? role;
     const script = turn(key);
-    const c = card('agent', `${key.toUpperCase()} REVIEWER · ${runtime} · run ${short(req.runId)}`);
+    const c = card('agent', `${role.replaceAll('_', ' ').toUpperCase()} · ${runtime} · run ${short(req.runId)}`);
     const stop = countdown(c, state.job.deadlineMs, signal);
     const cycle = state.cycle();
     const prev = cycle.history.filter((h) => h.event.type === 'verification').map((h) => h.event.head).filter((h) => h !== cycle.candidate.head).at(-1);
     c.body.innerHTML = `
-      <details><summary class="small">The prompt it was given <span class="tag real">real buildPrompt()</span> · ${req.prompt.length.toLocaleString()} characters</summary><pre class="wrap small">${esc(req.prompt)}</pre></details>
+      <details><summary class="small">The prompt it was given <span class="tag real">real reviewPrompt()</span> · ${req.prompt.length.toLocaleString()} characters</summary><pre class="wrap small">${esc(req.prompt)}</pre></details>
       <div class="row"><label><input type="radio" name="v-${req.runId}" value="PASS" checked> PASS</label><label><input type="radio" name="v-${req.runId}" value="FAIL"> FAIL</label>
         <label>reviewed SHA</label><select class="sha"><option value="${cycle.candidate.head}">the candidate ${short(cycle.candidate.head)}</option>${prev ? `<option value="${prev}">the previous candidate ${short(prev)} (stale)</option>` : ''}<option value="">(none)</option></select></div>
       <label>Findings <span class="dim">(one per line: file:line — what is wrong)</span></label>
@@ -379,13 +426,13 @@ export default function mount(el) {
     if (script.sha === 'previous' && prev) q('.sha').value = prev;
     compose();
     const outcome = settleWith(c, runtime, signal, () => q('.reply').value, stop);
-    if (autoplay(c)) (async () => { if (await pace(c, `the ${key} reviewer sends its verdict`, 1.6, signal)) q('.send').click(); })();
+    if (autoplay(c)) (async () => { if (await pace(c, `the ${role.replaceAll('_', ' ')} sends its verdict`, 1.6, signal)) q('.send').click(); })();
     return outcome;
   }
 
-  world.ui.checks = (found, head, deadlineMs) => new Promise((resolve) => {
-    const script = turn('checks');
-    const c = card('ctl', `CONTROLLER · verify · ${short(head)}`);
+  world.ui.checks = (found, head, deadlineMs, stage) => new Promise((resolve) => {
+    const script = turn(stage === 'VERIFYING' ? 'checks' : stage);
+    const c = card('ctl', `CONTROLLER · verify · ${esc(stage)} · ${short(head)}`);
     c.body.innerHTML = `<table class="small"><thead><tr><th>check</th><th>command</th><th>binary</th><th>how it behaves</th></tr></thead><tbody>${found.map((f, i) => `
       <tr><td><b>${esc(f.check.name)}</b></td><td><code>${esc((f.check.command ?? []).join(' '))}</code></td>
       <td class="small">${f.missing ? `<span class="pill MISSING">MISSING</span> ${esc(f.missing)}` : `<code>${esc(f.path)}</code>`}</td>
@@ -402,7 +449,7 @@ export default function mount(el) {
       c.body.querySelector('.step-row')?.remove();
       const results = [...c.body.querySelectorAll('select')].map((s) => ({ check: found[s.dataset.i].check, behaviour: s.value }));
       c.done('checks ran', '');
-      setTimeout(() => evidenceView(c, head), 0);
+      setTimeout(() => evidenceView(c, head, stage), 0);
       resolve({ results, dirty: c.body.querySelector('.dirty').checked });
     };
     c.body.querySelector('.runchecks').addEventListener('click', go, { once: true });
@@ -410,16 +457,16 @@ export default function mount(el) {
     void deadlineMs;
   });
 
-  function evidenceView(c, head) {
-    const dir = `${RUNS}/evidence/${head}`;
-    const files = readdirSync(dir).sort();
+  function evidenceView(c, head, stage) {
+    const dir = `${RUNS}/evidence/${head}/${stage}`;
+    const files = readdirSync(dir).filter((f) => f !== 'output').sort();
     c.body.insertAdjacentHTML('beforeend', `<p class="small">Evidence in <code>${esc(dir)}</code>, bound to the SHA:</p>` +
       files.map((f) => `<details><summary class="small mono">${esc(f)}</summary><pre class="small wrap">${esc(readFileSync(`${dir}/${f}`, 'utf8') || '(empty)')}</pre></details>`).join(''));
   }
 
   // ---- interference: other processes writing to the same store --------------------------------
   function interfere(on) { for (const b of el.querySelectorAll('.interfere button')) b.disabled = !on; }
-  $('.i-cancel').addEventListener('click', () => { if (state.cycleId) store.append(state.cycleId, { type: 'cancel' }); narrate('<b>owner</b>: <code>node src/main.ts cancel job.json</code> from another terminal. The running agent is not told; its result will arrive at a settled cycle and change nothing.'); });
+  $('.i-cancel').addEventListener('click', () => { if (state.cycleId) store.append(state.cycleId, { type: 'cancel', source: 'owner' }); narrate('<b>owner</b>: <code>node src/main.ts cancel job.json</code> from another terminal. The running agent is not told; its result will arrive at a settled cycle and change nothing.'); });
   $('.i-base').addEventListener('click', () => {
     const sha = world.repo.commit('main', { 'README.md': world.repo.commits.get(world.repo.resolve('main')).tree['README.md'] + '\nSee also: todo help.\n' }, 'docs: mention help');
     store.append(state.cycleId, { type: 'base_changed', base: sha });
@@ -446,7 +493,7 @@ export default function mount(el) {
     term.textContent = '$ node src/main.ts job.json\n';
     // A run on main after a merge starts from main's new tip: the factory always resolves HEAD.
     try {
-      const adapters = { developer: adapter('developer', job.runtime.developer), standard: adapter('standard_reviewer', job.runtime.standard), adversarial: adapter('adversarial_reviewer', job.runtime.adversarial) };
+      const adapters = Object.fromEntries(Object.entries(job.runtime).map(([role, rt]) => [role, adapter(role, rt)]));
       const open = store.cycles(job.workId).find((c) => !SETTLED.includes(c.stage));
       if (open) throw new Error(`work ${job.workId} already has an open cycle ${open.cycleId}`);
       const r = await run(store, adapters, job, { deadlineMs: job.deadlineMs, runsDir: RUNS, sandbox: { backend: 'bwrap' } });
@@ -469,19 +516,23 @@ export default function mount(el) {
     const { cycle } = r;
     say(`Stage: ${cycle.stage}`); say(`Cycle: ${cycle.cycleId}`); say(`Branch: ${r.branch}`);
     say(`Head: ${cycle.candidate?.head || '(none)'}`); say(`Base: ${cycle.candidate?.base ?? '(none)'}`);
-    say(`Worktree: ${r.worktree}`); say('Sandbox: bwrap'); say(`Reviews: standard ${cycle.standard}, adversarial ${cycle.adversarial}`);
+    say(`Worktree: ${r.worktree}`); say('Sandbox: bwrap');
+    const budgeted = Object.keys(workflow.stages).filter((s) => workflow.stages[s].budget !== undefined);
+    say(workflow === WORKFLOWS.default.workflow
+      ? `Reviews: standard ${cycle.budgets.STANDARD_REVIEW ?? 0}, adversarial ${cycle.budgets.ADVERSARIAL_REVIEW ?? 0}`
+      : `Reviews: ${budgeted.map((s) => `${s} ${cycle.budgets[s] ?? 0}`).join(', ')}`);
     for (const h of cycle.history) {
       const e = h.event;
       if (e.type === 'verification') say(`verification ${e.head.slice(0, 7)}: ${e.checks.map((c) => `${c.name} ${c.result}`).join(', ') || 'no checks'}`);
       if (e.type === 'verdict') {
-        const role = h.from === 'STANDARD_REVIEW' ? 'standard_reviewer' : h.from === 'ADVERSARIAL_REVIEW' ? 'adversarial_reviewer' : 'reviewer';
+        const role = workflow.stages[h.from]?.role ?? 'reviewer';
         say(`${role} ${e.head.slice(0, 7)}: ${e.verdict}`);
         for (const f of Array.isArray(e.findings) ? e.findings : []) say(`  - ${f}`);
       }
     }
     if (cycle.escalation) say(`Escalation: ${cycle.escalation}`);
     if (r.error) say(`Error: ${r.error}`);
-    if (cycle.stage === 'AWAITING_ACCEPTANCE') {
+    if (human(cycle.stage)) {
       say(''); say('To review, accept and merge:');
       say(`  git -C ${job.repo} diff ${cycle.candidate.base}..${cycle.candidate.head}`);
       say(`  node src/main.ts accept job.json ${cycle.candidate.head}`);
@@ -496,7 +547,7 @@ export default function mount(el) {
     box.innerHTML = '';
     const btn = (label, cls, fn) => { const b = document.createElement('button'); b.className = cls; b.textContent = label; b.addEventListener('click', fn); box.append(b); };
     if (!c) return;
-    if (c.stage === 'AWAITING_ACCEPTANCE') {
+    if (human(c.stage)) {
       btn(`Accept ${short(c.candidate.head)}`, 'owner primary', () => decide('accept'));
       btn('Request changes', 'owner', () => decide('request_changes'));
       btn('Cancel', 'owner', () => decide('cancel'));
@@ -509,6 +560,7 @@ export default function mount(el) {
       btn('Next ticket on the same repository', 'owner', () => { state.parent = undefined; state.cycleId = undefined; diagram.reset(); board(); showJob(); $('.workId').value = nextWork($('.workId').value); showJob(); });
     }
   }
+  const human = (stage) => workflow.stages[stage]?.kind === 'human';
   const nextWork = (w) => w.replace(/(\d+)$/, (n) => String(Number(n) + 1).padStart(n.length, '0'));
 
   // What src/main.ts accept and cancel do: refuse rather than send an event apply would escalate on.
@@ -516,12 +568,12 @@ export default function mount(el) {
     const c = state.cycle();
     if (kind === 'accept') {
       say(`\n$ node src/main.ts accept job.json ${c.candidate.head}`);
-      const after = store.append(c.cycleId, { type: 'accept', head: c.candidate.head });
+      const after = store.append(c.cycleId, { type: 'accept', head: c.candidate.head, source: 'owner' });
       say(`Cycle: ${after.cycleId}`); say(`Stage: ${after.stage}`);
       if (after.stage === 'ACCEPTED') { say(''); say('To merge:'); say(`  git -C ${REPO} merge --no-ff ${c.candidate.head}`); }
     } else if (kind === 'cancel') {
       say('\n$ node src/main.ts cancel job.json');
-      const after = store.append(c.cycleId, { type: 'cancel' });
+      const after = store.append(c.cycleId, { type: 'cancel', source: 'owner' });
       say(`Cycle: ${after.cycleId}`); say(`Stage: ${after.stage}`);
       state.parent = undefined;
     } else {
@@ -552,13 +604,14 @@ export default function mount(el) {
     const { head, base } = cycle.candidate;
     if (!world.repo.commits.has(head)) { pr.innerHTML = `<p class="muted small">The head <code>${short(head)}</code> is not a commit in the repository.</p>`; return; }
     const commits = world.repo.log(head).filter((x) => x.sha !== base && !world.repo.isAncestor(x.sha, base));
-    const verdicts = cycle.history.filter((h) => h.event.type === 'verdict').map((h) => `<span class="pill ${h.event.verdict}">${h.from === 'ADVERSARIAL_REVIEW' ? 'adversarial' : 'standard'} ${h.event.verdict} · ${short(h.event.head)}</span>`).join(' ');
+    const verdicts = cycle.history.filter((h) => h.event.type === 'verdict').map((h) => `<span class="pill ${h.event.verdict}">${esc(h.from.toLowerCase().replaceAll('_', ' '))} ${h.event.verdict} · ${short(h.event.head)}</span>`).join(' ');
     pr.innerHTML = `<div class="row"><b class="mono">sf/${short(cycle.cycleId)}</b> → <b class="mono">main</b> <span class="pill ${cycle.stage}">${merged ? 'MERGED' : cycle.stage}</span></div>
       <div class="row small">${verdicts || '<span class="dim">no verdicts</span>'}</div>
       <p class="small">${commits.map((x) => `<code>${short(x.sha)}</code> ${esc(x.message)}`).join('<br>')}</p>
       <pre class="diff small">${colorDiff(world.repo.diff(base, head))}</pre>`;
   }
 
+  loadPreset('happy');
   $('.go').addEventListener('click', go);
   $('.reset').addEventListener('click', () => location.reload());
 }

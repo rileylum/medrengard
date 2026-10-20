@@ -1,7 +1,8 @@
 // The simulator's world: one hobby repository in a fake Git, the guide's live copies of the
-// factory's unexported guards, and the hooks the stage stand-ins (sim-*.js) call when they need
+// factory's unexported functions, and the hooks the stage stand-ins (sim-*.js) call when they need
 // the reader to decide something. demos/sim.js fills in `world.ui`.
 import { Repo, gitFor } from './fakegit.js';
+import { defaultWorkflow } from '/src/lifecycle.ts';
 import { liveFunction } from '../live.js';
 
 export const REPO = '/home/owner/projects/todo-cli';
@@ -141,25 +142,64 @@ test('done refuses a number outside the list', () => {
   nothing: { label: 'Nothing: commit no change at all (an empty commit)', message: 'WIP', files: {} },
 };
 
+const D = defaultWorkflow.stages;
+
+/**
+ * The workflows the simulator offers. Each passes the real checkWorkflow; the simulator's store
+ * refuses one that does not, as the factory's does.
+ */
+export const WORKFLOWS = {
+  default: { label: 'default: the v1 lifecycle', workflow: defaultWorkflow },
+  package: {
+    label: 'with a stage of its own: npm pack after the reviews',
+    workflow: {
+      name: 'with-package',
+      start: 'DEVELOPING',
+      stages: {
+        DEVELOPING: D.DEVELOPING,
+        VERIFYING: D.VERIFYING,
+        STANDARD_REVIEW: D.STANDARD_REVIEW,
+        ADVERSARIAL_REVIEW: { ...D.ADVERSARIAL_REVIEW, transitions: { PASS: 'PACKAGE', FAIL: 'ESCALATED' } },
+        PACKAGE: { kind: 'command', run: [{ name: 'pack', command: ['npm', 'pack', '--dry-run'] }], transitions: { PASS: 'AWAITING_ACCEPTANCE' } },
+        AWAITING_ACCEPTANCE: D.AWAITING_ACCEPTANCE,
+      },
+    },
+  },
+  light: {
+    label: 'light: one reviewer with three tries, then the owner signs off',
+    workflow: {
+      name: 'light',
+      start: 'DEVELOPING',
+      stages: {
+        DEVELOPING: D.DEVELOPING,
+        VERIFYING: { kind: 'command', transitions: { PASS: 'REVIEW' } },
+        REVIEW: {
+          kind: 'agent', role: 'reviewer', produces: 'verdict', budget: 3,
+          roleText: 'You are the reviewer for the change below. Judge the diff against the ticket and the verification evidence. The current directory is a read-only checkout of the candidate commit.',
+          transitions: { PASS: 'SIGN_OFF', FAIL: 'DEVELOPING' },
+        },
+        SIGN_OFF: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
+      },
+    },
+  },
+};
+
 export const repo = new Repo(REPO, FILES, 'todo-cli: add and list');
 export const { git, gitStatus, isCommit } = gitFor({ [REPO]: repo });
 
-// The factory's own guards and prompt builders, read from src/ when first needed and run here
-// against the fake Git. Not exported by their modules, so not importable; see live.js.
+// The factory's own guard and the reviewer's gatherer, read from src/ when first needed and run
+// here against the fake Git. Not exported by their modules, so not importable; see live.js.
 const memo = (fn) => { let p; return () => (p ??= fn()); };
 export const live = {
-  oneLine: memo(() => liveFunction('src/developer.ts', 'oneLine')),
-  prompt: memo(async () => liveFunction('src/developer.ts', 'prompt', { oneLine: await live.oneLine() })),
   refuse: memo(() => liveFunction('src/developer.ts', 'refuse', { git, gitStatus, isCommit })),
-  buildPrompt: memo(async () => {
-    const [cut, quoteGit, DIFF_MAX, EVIDENCE_KEEP, EVIDENCE_EXTS] = await Promise.all([
-      liveFunction('src/review.ts', 'cut'), liveFunction('src/review.ts', 'quoteGit', { git }),
-      liveFunction('src/review.ts', 'DIFF_MAX'), liveFunction('src/review.ts', 'EVIDENCE_KEEP'), liveFunction('src/review.ts', 'EVIDENCE_EXTS'),
-    ]);
-    const { randomBytes } = await import('./node/crypto.js');
+  cut: memo(() => liveFunction('src/review.ts', 'cut')),
+  gather: memo(async () => {
+    const names = ['DIFF_MAX', 'EVIDENCE_KEEP', 'COMMITS_KEEP', 'COMMIT_FORMAT', 'EVIDENCE_EXTS'];
+    const consts = Object.fromEntries(await Promise.all(names.map(async (n) => [n, await liveFunction('src/review.ts', n)])));
+    const quoteGit = await liveFunction('src/review.ts', 'quoteGit', { git });
     const { readFileSync } = await import('./node/fs.js');
     const { join } = await import('./node/path.js');
-    return liveFunction('src/review.ts', 'buildPrompt', { cut, quoteGit, DIFF_MAX, EVIDENCE_KEEP, EVIDENCE_EXTS, randomBytes, readFileSync, join, git });
+    return liveFunction('src/review.ts', 'gather', { ...consts, cut: await live.cut(), quoteGit, git, readFileSync, join });
   }),
 };
 
