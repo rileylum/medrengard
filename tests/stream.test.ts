@@ -381,3 +381,88 @@ test('an accept or cancel event without a source, from before 10-d, still replay
   assert.throws(() => store.append('c2', { type: 'cancel', source: '' } as never), /unclassifiable/);
   store.close();
 });
+
+// Review findings (A-090).
+
+test('a store file with no events table yet is no store: events refuses it, and --follow waits for the table (10-d standard 1)', async () => {
+  const j = job('w1');
+  writeFileSync(j.db, '');
+  const now = sf(['events', j.runsDir]);
+  assert.equal(now.status, 2, now.stderr);
+  assert.match(now.stderr, /no event store at /);
+  const child = spawn(process.execPath, [MAIN, 'events', j.runsDir, '--follow'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  let err = '';
+  child.stdout.on('data', (d) => { out += d; });
+  child.stderr.on('data', (d) => { err += d; });
+  try {
+    await new Promise((r) => setTimeout(r, 1200));
+    assert.equal(child.exitCode, null, err);
+    seed(j.db, 'c1', 'w1', TO_ACCEPTANCE.slice(0, 1));
+    for (let i = 0; i < 100 && lines(out).length < 1; i++) await new Promise((r) => setTimeout(r, 100));
+    assert.deepEqual(lines(out).map((l) => l.stage), ['DEVELOPING'], err);
+  } finally {
+    child.kill();
+  }
+});
+
+test('the store refuses a source that is not one line of printable text (10-d standard 1, adversarial note)', () => {
+  const db = join(fresh('source-shape'), 'events.sqlite');
+  const store = new EventStore(db);
+  store.open('c1', 'w1');
+  for (const bad of ['a\nb', 'a\rb', 'a b', 'a b', 'a\u0085b', 'a\vb', 'a\fb', 'a\u001bb', 'a\u007fb', 'a\tb'])
+    assert.throws(() => store.append('c1', { type: 'cancel', source: bad }), /unclassifiable/, JSON.stringify(bad));
+  assert.equal(store.append('c1', { type: 'cancel', source: 'observer:é ü' }).stage, 'CANCELLED');
+  store.close();
+});
+
+test('accept and cancel refuse a --source with any control character or line separator, writing nothing (10-d adversarial note)', () => {
+  const j = job('w');
+  seed(j.db, 'c1', 'w', TO_ACCEPTANCE);
+  const before = rows(j.db).length;
+  for (const bad of ['a b', 'a b', 'a\u0085b', 'a\u001bb', 'a\vb']) {
+    assert.equal(sf(['accept', j.jobFile, H, '--source', bad]).status, 2, JSON.stringify(bad));
+    assert.equal(sf(['cancel', j.jobFile, '--source', bad]).status, 2, JSON.stringify(bad));
+  }
+  assert.equal(rows(j.db).length, before);
+});
+
+test('an open row whose body is not an object gives null stages for its cycle, and the reader goes on (10-d adversarial note)', () => {
+  const db = join(fresh('null-open'), 'events.sqlite');
+  seed(db, 'c1', 'w1', TO_ACCEPTANCE.slice(0, 1));
+  const raw = new DatabaseSync(db);
+  for (const [id, body] of [['n1', 'null'], ['n2', '5'], ['n3', '"open"']]) {
+    raw.prepare("INSERT INTO events (cycle_id, seq, type, run_id, body, pos, at) SELECT ?, 0, 'open', NULL, ?, MAX(pos) + 1, NULL FROM events").run(id!, body!);
+    raw.prepare("INSERT INTO events (cycle_id, seq, type, run_id, body, pos, at) SELECT ?, 1, 'cancel', NULL, '{\"type\":\"cancel\"}', MAX(pos) + 1, NULL FROM events").run(id!);
+  }
+  raw.close();
+  const store = new EventStore(db);
+  store.append('c1', TO_ACCEPTANCE[1]!);
+  store.close();
+  const s = openStream(db);
+  const got = s.poll();
+  s.close();
+  assert.deepEqual(got.map((l) => [l.cycleId, l.stage]), [['c1', 'DEVELOPING'], ['n1', null], ['n2', null], ['n3', null], ['c1', 'VERIFYING']]);
+});
+
+test('cancel and events on a job file wait for another connection\'s exclusive lock instead of failing (10-d adversarial)', async () => {
+  const j = job('w');
+  seed(j.db, 'c1', 'w', []);
+  const run = (args: string[]) => new Promise<{ code: number | null; err: string }>((done) => {
+    const child = spawn(process.execPath, [MAIN, ...args], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('exit', (code) => done({ code, err }));
+  });
+  for (const args of [['events', j.jobFile], ['cancel', j.jobFile]]) {
+    // EXCLUSIVE, not IMMEDIATE: a read-only connection reads through a RESERVED lock.
+    const lock = new DatabaseSync(j.db);
+    lock.exec('BEGIN EXCLUSIVE');
+    const child = run(args);
+    await new Promise((r) => setTimeout(r, 1500));
+    lock.exec('COMMIT');
+    lock.close();
+    const { code, err } = await child;
+    assert.equal(code, 0, `${args[0]}: ${err}`);
+  }
+});

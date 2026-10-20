@@ -14,12 +14,12 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { join, resolve } from 'node:path';
 import { loadConfig, storeOf, type JobFile } from './config.ts';
 import { oneLine, type Job } from './developer.ts';
-import { defaultWorkflow, type Workflow } from './lifecycle.ts';
+import { defaultWorkflow, isSource, type Workflow } from './lifecycle.ts';
 import { ROLE_ALIASES, run, type Adapters } from './run.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
 import { EventStore, openings, SETTLED, workflowHash } from './store.ts';
-import { FOLLOW_MS, openStream } from './stream.ts';
+import { FOLLOW_MS, openStream, storeReady } from './stream.ts';
 
 const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> [--source <name>] | cancel <job.json> [--source <name>] | events <job.json | runsDir> [--after <seq>] [--follow]';
 
@@ -68,8 +68,7 @@ function withSource(rest: string[], positional: number): { args: string[]; sourc
   if (args.length !== positional) throw new Error(USAGE);
   if (flag.length === 0) return { args, source: 'owner' };
   if (flag.length !== 2 || flag[0] !== '--source') throw new Error(USAGE);
-  // One line, so a source cannot forge a second line in anything that prints it.
-  if (!/^[^\r\n\u2028\u2029]+$/.test(flag[1]!)) throw new Error('--source must be a non-empty single line');
+  if (!isSource(flag[1])) throw new Error('--source must be one line of printable text');
   return { args, source: flag[1]! };
 }
 
@@ -87,8 +86,8 @@ async function events(rest: string[]): Promise<number> {
   // A job file names one work and the workflow its older cycles need; a runs directory names neither.
   const { runsDir, workId, workflow } = dir ? { runsDir: target, workId: undefined, workflow: undefined } : { ...(await decisionConfig(target)), workId: storeOf(target).workId };
   const db = join(runsDir, 'events.sqlite');
-  if (!existsSync(db) && !follow) throw new Error(`no event store at ${db}`);
-  while (!existsSync(db)) await sleep(FOLLOW_MS);
+  if (!storeReady(db) && !follow) throw new Error(`no event store at ${db}`);
+  while (!storeReady(db)) await sleep(FOLLOW_MS);
   const stream = openStream(db, { workId, after, workflow });
   try {
     for (;;) {

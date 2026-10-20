@@ -147,3 +147,12 @@ test('observerKit fails an observer whose actions differ from a case\'s expected
   assert.match(r.stdout, /not ok \d+ - eager: a code change is left for the owner/);
   assert.match(r.stdout, /# fail 1$/m);
 });
+
+test('observerKit fails an observer that acts or throws on an unknown event only once the cycle has a head (10-d adversarial)', () => {
+  const r = kit('observe-late.kit.ts');
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /not ok \d+ - late-acts: an event of an unknown type, with unknown fields, makes the observer neither throw nor act/);
+  assert.match(r.stdout, /not ok \d+ - late-throws: an event of an unknown type, with unknown fields, makes the observer neither throw nor act/);
+  assert.match(r.stdout, /unknown event after a head/);
+  assert.match(r.stdout, /# fail 2$/m);
+});

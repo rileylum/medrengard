@@ -4,14 +4,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { storeOf } from '../config.ts';
 import type { Event } from '../lifecycle.ts';
 import { EventStore } from '../store.ts';
-import { FOLLOW_MS, openStream, type Line } from '../stream.ts';
+import { FOLLOW_MS, openStream, storeReady, type Line } from '../stream.ts';
 
 /** The owner's commands, run as `node src/main.ts … --source <source>` against the job file. A refused command rejects. */
 export interface Owner {
@@ -43,7 +43,7 @@ export async function observe(jobFile: string, source: string, observer: Observe
   let stream: ReturnType<typeof openStream> | undefined;
   try {
     while (!opts.signal?.aborted) {
-      stream ??= existsSync(db) ? openStream(db, { workId, after: opts.after }) : undefined;
+      stream ??= storeReady(db) ? openStream(db, { workId, after: opts.after }) : undefined;
       for (const line of stream?.poll() ?? []) {
         if (opts.signal?.aborted) return;
         await observer(line, owner);
@@ -106,13 +106,17 @@ export function observerKit(name: string, makeObserver: () => Observer, cases: O
     });
   }
 
+  // After a claim, and after each case's events: an observer may treat a cycle with a head differently.
   test(`${name}: an event of an unknown type, with unknown fields, makes the observer neither throw nor act`, async () => {
-    const observer = makeObserver();
-    const lines = linesOf([{ type: 'claim', runId: 'dev1', base: 'b'.repeat(40), runtime: 'kit' }], { type: 'kit_future_event', runId: 7, nested: { list: [null, 'x'] } });
-    const { actions, owner } = recording(false);
-    for (const line of lines.slice(0, -1)) await observer(line, recording(false).owner);
-    await observer(lines.at(-1)!, owner);
-    assert.deepEqual(actions, []);
+    const claim: Event = { type: 'claim', runId: 'dev1', base: 'b'.repeat(40), runtime: 'kit' };
+    for (const events of [[claim], ...cases.map((c) => c.events)]) {
+      const observer = makeObserver();
+      const lines = linesOf(events, { type: 'kit_future_event', runId: 7, nested: { list: [null, 'x'] } });
+      const { actions, owner } = recording(false);
+      for (const line of lines.slice(0, -1)) await observer(line, recording(false).owner);
+      await observer(lines.at(-1)!, owner);
+      assert.deepEqual(actions, []);
+    }
   });
 
   test(`${name}: a refused command does not make the observer throw`, async () => {

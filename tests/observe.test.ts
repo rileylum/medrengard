@@ -69,3 +69,20 @@ test('observe stops when the signal aborts, with no store', async () => {
   setTimeout(() => ac.abort(), 300);
   await running;
 });
+
+test('observe waits while the store file has no events table yet (10-d standard 1)', async () => {
+  const j = job('w');
+  writeFileSync(j.db, '');
+  const seen: string[] = [];
+  const ac = new AbortController();
+  const running = observe(j.jobFile, 'observer:test', (line) => { seen.push(line.cycleId); }, { signal: ac.signal });
+  await new Promise((r) => setTimeout(r, 700));
+  const store = new EventStore(j.db);
+  store.open('c1', 'w', undefined, base);
+  store.append('c1', toAcceptance(comment)[0]!);
+  store.close();
+  await settle(() => seen.length > 0);
+  ac.abort();
+  await running;
+  assert.deepEqual(seen, ['c1']);
+});

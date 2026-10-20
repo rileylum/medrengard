@@ -142,7 +142,9 @@ const arr = (v: unknown, each: (x: unknown) => boolean) => Array.isArray(v) && v
 const obj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 // Not read by apply, but a value of the wrong type would be a false record of what ran.
 const versions = (e: Record<string, unknown>) => (e.runtime === undefined || str(e.runtime)) && (e.moduleHash === undefined || str(e.moduleHash));
-const source = (e: Record<string, unknown>) => e.source === undefined || str(e.source);
+/** One line of printable text: a source is printed by the CLI and the stream, so it must not forge a line or a terminal sequence. */
+export const isSource = (v: unknown) => typeof v === 'string' && /^[^\p{Cc}\u2028\u2029]+$/u.test(v);
+const source = (e: Record<string, unknown>) => e.source === undefined || isSource(e.source);
 const isCheck = (v: unknown) => obj(v) && str(v.name) && ['PASS', 'FAIL', 'MISSING'].includes(v.result as string) && (v.files === undefined || (obj(v.files) && Object.values(v.files).every(str)));
 
 // Shape checks, one per Event type. Everything apply dereferences must be present; anything else

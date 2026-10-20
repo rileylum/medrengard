@@ -65,6 +65,8 @@ export function addPositions(db: DatabaseSync): void {
 export function openings(path: string, workId: string): { base?: string; hash: string }[] {
   const db = new DatabaseSync(path, { readOnly: true });
   try {
+    // A read waits out a writer's exclusive lock, as the store's own connection does.
+    db.exec('PRAGMA busy_timeout = 5000');
     return db
       .prepare("SELECT body FROM events WHERE seq = 0 AND json_extract(body, '$.workId') = ?")
       .all(workId)

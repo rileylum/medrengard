@@ -1,6 +1,7 @@
 // Ticket 10-d: the observation stream (A-074, A-088). A reader replays each cycle through apply to
 // give every event the stage it moved the cycle to, in store-wide order. It decides nothing: a row
 // it cannot replay is passed on as stored, with null stages, never escalated.
+import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, type Cycle, type Stage, type Workflow } from './lifecycle.ts';
 import { addPositions, DEFAULT_RECORD, workflowHash, type OpenRow } from './store.ts';
@@ -30,6 +31,18 @@ function workflowOf(open: OpenRow, given?: Workflow): Workflow | undefined {
   return [open.definition, defaultWorkflow, given].find((w) => w !== undefined && checkWorkflow(w).length === 0 && workflowHash(w) === hash);
 }
 
+/** True once `path` holds an events table: a writer creates the file before the table. Never creates the file. */
+export function storeReady(path: string): boolean {
+  if (!existsSync(path)) return false;
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    db.exec('PRAGMA busy_timeout = 5000');
+    return db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events'").get() !== undefined;
+  } finally {
+    db.close();
+  }
+}
+
 /** Lines after `after`, in seq order. Each poll returns the lines written since the last. */
 export function openStream(path: string, opts: { workId?: string; after?: number; workflow?: Workflow } = {}): { poll(): Line[]; close(): void } {
   const db = new DatabaseSync(path);
@@ -50,7 +63,8 @@ export function openStream(path: string, opts: { workId?: string; after?: number
         const cycleId = r.cycle_id as string;
         const body: unknown = JSON.parse(r.body as string);
         if (r.seq === 0) {
-          const open = body as OpenRow;
+          // Only a raw write makes row 0 anything but the open marker; its cycle then has no stages.
+          const open = (typeof body === 'object' && body !== null ? body : {}) as OpenRow;
           const workflow = open.type === 'open' ? workflowOf(open, opts.workflow) : undefined;
           const known = { workId: typeof open.workId === 'string' ? open.workId : '', workflow, cycle: workflow && newCycle(cycleId, open.workId, open.parentCycleId) };
           cycles.set(cycleId, known);
