@@ -459,13 +459,14 @@ test('an event the stage\'s kind does not take escalates with nothing counted, i
   for (const [stage, reached] of Object.entries(stages)) {
     assert.equal(reached.stage, stage);
     // Outside a commit stage no run is ever unfinished, so a result or dispute would stop at "unknown run" first.
+    // devX has an input so that, without the stage check, a dispute would not stop at "dispute outside a fix run" either.
     const c: Cycle = { ...reached, runs: [...reached.runs, { runId: 'devX', role: 'developer', input: { head: 'H1', base: 'B1' } }] };
     for (const e of events) {
       if (takes[stage]!.includes(e.type)) continue;
       const after = apply(c, e);
       const cell = `${e.type} in ${stage}`;
       assert.equal(after.stage, 'ESCALATED', cell);
-      assert.match(after.escalation ?? '', /outside/, cell);
+      assert.match(after.escalation ?? '', /^\S+( result)? outside (a (command|human|review|commit) stage|QUEUED or a commit stage)/, cell);
       assert.deepEqual(after.budgets, c.budgets, cell);
       cells++;
     }
@@ -480,13 +481,17 @@ test('a claim while a developer run is active is ignored and starts no run', () 
   assert.equal(c.history.at(-1)!.note, 'ignored: developer run already active');
 });
 
-test('outside a commit stage, a head or base change naming the candidate\'s own head or base is ignored', () => {
+test('a base change naming the candidate\'s base is ignored in any stage; a head change naming its head, outside a commit stage', () => {
   const reviewing = toStandardReview();
   for (const e of [{ type: 'head_changed', head: 'H1' }, { type: 'base_changed', base: 'B1' }] as Event[]) {
     const c = apply(reviewing, e);
     assert.equal(c.stage, 'STANDARD_REVIEW', e.type);
     assert.match(c.history.at(-1)!.note ?? '', /^ignored: same (head|base)$/, e.type);
   }
+  const fixing = run(reviewing, verdict('sr1', 'H1', 'FAIL'), { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' });
+  const developing = apply(fixing, { type: 'base_changed', base: 'B1' });
+  assert.equal(developing.stage, 'DEVELOPING');
+  assert.equal(developing.history.at(-1)!.note, 'ignored: same base');
   assert.equal(apply(reviewing, { type: 'head_changed', head: 'H2' }).stage, 'ESCALATED');
   assert.equal(apply(reviewing, { type: 'base_changed', base: 'B2' }).stage, 'ESCALATED');
 });

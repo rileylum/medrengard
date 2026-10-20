@@ -69,8 +69,8 @@ These hold under every workflow [lifecycle: evidence for a non-candidate SHA esc
 | any non-terminal | owner cancels | CANCELLED |
 | any non-terminal | verdict for a SHA that is not the candidate | recorded, counted, ESCALATED [lifecycle: SC-17b] |
 | any non-terminal | verification or `accept` for a SHA that is not the candidate | ESCALATED [lifecycle: SC-08; accept must name] |
-| outside a commit stage | candidate head changes | ESCALATED [lifecycle: SC-16]; the same head is ignored [lifecycle: outside a commit stage, a head or base change] |
-| any non-terminal | target base changes | ESCALATED [lifecycle: SC-17]; the same base is ignored [lifecycle: outside a commit stage, a head or base change] |
+| outside a commit stage | candidate head changes | ESCALATED [lifecycle: SC-16]; the same head is ignored [lifecycle: a base change naming the candidate's base] |
+| any non-terminal | target base changes | ESCALATED [lifecycle: SC-17]; the same base is ignored [lifecycle: a base change naming the candidate's base] |
 | any non-terminal | duplicate result, verdict or run failure (same run ID) | no change [lifecycle: SC-06; store: a duplicate event] |
 | any non-terminal | event tagged for another stage | ESCALATED, nothing counted [lifecycle: an event with a step] |
 | any non-terminal | event the stage's kind does not take | ESCALATED, nothing counted [lifecycle: an event the stage's kind does not take; store: store dedup matches apply]. A second claim while a developer run is active is ignored [lifecycle: a claim while a developer run is active] |
