@@ -68,3 +68,8 @@ Verification: `npm test` and `npm run test:learn`, run by the owner on the SHA.
 **Decision for you.** Merge as built (base only, with the note), ask for both versions labelled (alternative 2), or keep 06-b's choice (alternative 3). If you merge, record it in `docs/decisions.md` as reversing 06-b's "read from the candidate commit".
 
 ## Log
+- 2026-10-20 — `feat/sweep-reviewer-instructions`. Red on the unchanged code: both new review tests failed with `no INSTRUCTIONS AGENTS.md (at the base SHA; the candidate changes this file: …) section` and `no INSTRUCTIONS AGENTS.md (at the base SHA) section`; the golden-prompt test then failed on the INSTRUCTIONS header line only, and `standard.txt` and `adversarial.txt` were updated on purpose. The 06-c forged-header test now puts its AGENTS.md in the base, because a candidate's instruction file reaches the prompt only as `+` diff lines. New test: the review contract hash differs from 06-d's (`358ef159…`, main at `a3c74ff`).
+- Mutation checks on fac2018: `gather` quoting at head again → "a candidate that edits an instruction file" fails on the section text (`Expected values to be strictly equal`); `changed: false` always → the same test fails on the missing note header. Both restored with `git checkout -- src/review.ts`.
+- `npm test` (implementer's run, not independent): tests 422, pass 398, fail 0, skipped 19. `npm run test:learn`: tests 6, pass 6, fail 0. `lazy-review` on `git diff main...HEAD`: nothing to cut.
+- `learn/shims/fakegit.js`: `ls-tree` now hashes the file's text, not its path, as Git's blob ID does; `gather` compares the base and head lines, so the simulator needs it to see a change.
+- Next: the owner decides between the three alternatives above. Not merged.
