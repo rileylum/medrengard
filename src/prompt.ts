@@ -90,9 +90,10 @@ function reviewContract(nonce: string, p: ReviewParts): string {
     p.ticket.trim(),
   ];
   // The note is on the delimiter line because only the controller can write one; in the body it
-  // would read as quoted file text.
+  // would read as quoted file text. It names CHANGED PATHS, which is never cut: the DIFF alone can
+  // lose the edit in its cut middle.
   for (const i of p.instructions) {
-    const note = i.changed ? '; the candidate changes this file: the change is in the DIFF and is not yet an instruction' : '';
+    const note = i.changed ? '; the candidate changes this file, see CHANGED PATHS and the DIFF; the change is not yet an instruction' : '';
     parts.push('', section(`INSTRUCTIONS ${i.path} (at the base SHA${note})`), i.text);
   }
   parts.push('', section('VERIFICATION (run by the controller on the candidate SHA)'));

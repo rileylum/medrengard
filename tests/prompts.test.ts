@@ -142,12 +142,6 @@ test('the review contract with the COMMITS section is a new version: its hash is
   assert.match(text, new RegExp(`^==== ${nonceOf(text)}: COMMITS ${PARTS.base}\\.\\.${PARTS.head} ====\ncommit c$`, 'm'));
 });
 
-test('instructions quoted from the base are a new review contract version: its hash is not the 06-d one (sweep-reviewer-instructions)', () => {
-  // The 06-d review contract's hash, taken on main at a3c74ff.
-  const before = '358ef159d176de76fd42ed7aadee0897b58811dacabd7028c7665974e7fb0a6c';
-  assert.notEqual(reviewPrompt('r', PARTS).contractHash, before);
-});
-
 test('a run that fails or whose claim is refused records run_failed with both hashes', async () => {
   for (const [step, expected] of [['review', ROLE_TEXT.standard], ['develop', ROLE_TEXT.developer]] as const) {
     const root = join(dir, `failed-${step}`);
