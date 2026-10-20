@@ -37,6 +37,15 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-108 — 2026-10-20 — A commit stage can act on a red check; the default workflow still escalates
+
+Asked, from the overnight research (`docs/research/2026-10-20/harnesses.md` findings 2 and 3, TRIAGE owner item 4): build the engine primitive that lets a commit stage take a failed verification as its findings, and whether the default workflow should loop on a red check. Owner: “Yes build the primitive, in fact I would want to theoretically allow a workflow step that is meant to act as a reviewer to have the authority to make these small edits themselves, especially when its a docs, comment or some other trivial fix. My feeling is that we could already achieve that though. Lets leave the default workflow as is.”
+
+Effect:
+1. A ticket (Design route, to be drafted) lets a commit stage re-entered from a command stage's FAIL run as a fix with the failed checks (name, command, output tail) as its findings. Preflight's refusal of that shape (`driverLimits`) is then deleted.
+2. The default workflow keeps `VERIFYING: FAIL → ESCALATED`. The owner tunes it later from run logs.
+3. The owner wants a reviewer-like step that may make small edits itself (docs, comments, trivial fixes). The session found this is not possible today: a role produces either a commit or a verdict, never both; a commit stage entered by a PASS is refused by preflight because `fix` needs a FAIL's findings; and a commit stage has no "nothing to change" outcome. The same ticket's design should consider generalising a commit stage's input (a review's findings, a check's failures, or none) and a "no change" outcome, so such an editing step can be written as a workflow. Any commit it makes is a new SHA, so verify runs again; whether its edits are reviewed again is the workflow's choice.
+
 ### A-107 — 2026-10-20 — Owner-held tests (O-005): visible by default; the core keeps the primitives for a hidden holdout
 
 Asked, from the overnight research (`docs/research/2026-10-20/deep-research.md` proposal 4, `harnesses.md` finding 7, TRIAGE owner item 3): who writes acceptance tests, may the developer see them, and must they fail on base. The owner: “Okay at this stage, the workflow that I envisage doesn't hide tests. Though I think we should build the primitives to allow this”. The session found two of three primitives exist (a `{ file }` argument from a `workflowDir` outside the repository is copied into the stage's evidence and bound only for that check; a protected-path check is an ordinary check reading `diff.patch`), and that "must fail on base" needs the core (verify runs checks only on the candidate, and evidence binds to the candidate SHA). Owner: “Yes thats good, at some point I will start tuning the workflow and especially with the recording of logs and seeing where our failures are then we'll know if the develop stage is consistently writing bad tests or changing them etc.”
