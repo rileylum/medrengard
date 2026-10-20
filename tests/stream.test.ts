@@ -127,17 +127,21 @@ test('two processes opening one pre-10-d store at once both succeed', async () =
   const db = join(fresh('race'), 'events.sqlite');
   copyFileSync(join(FIXTURES, 'v1-store.sqlite'), db);
   const script = `import { EventStore } from ${JSON.stringify(join(import.meta.dirname, '..', 'src', 'store.ts'))}; new EventStore(${JSON.stringify(db)}).close();`;
-  const once = () => new Promise<number | null>((done) => {
+  // Hold the write lock so both children see no pos column, then queue on the lock together.
+  const lock = new DatabaseSync(db);
+  lock.exec('BEGIN IMMEDIATE');
+  const once = () => new Promise<{ code: number | null; err: string }>((done) => {
     const child = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'ignore', 'pipe'] });
     let err = '';
     child.stderr.on('data', (d) => { err += d; });
-    child.on('exit', (code) => { if (code !== 0) console.error(err); done(code); });
+    child.on('exit', (code) => done({ code, err }));
   });
-  for (let i = 0; i < 3; i++) {
-    copyFileSync(join(FIXTURES, 'v1-store.sqlite'), db);
-    assert.deepEqual(await Promise.all([once(), once(), once()]), [0, 0, 0]);
-    assert.ok(rows(db).every((r, k) => r.pos === k + 1));
-  }
+  const both = Promise.all([once(), once()]);
+  await new Promise((r) => setTimeout(r, 1500));
+  lock.exec('COMMIT');
+  lock.close();
+  for (const { code, err } of await both) assert.equal(code, 0, err);
+  assert.ok(rows(db).every((r, k) => r.pos === k + 1));
 });
 
 // The reader
