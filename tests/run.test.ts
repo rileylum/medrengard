@@ -16,6 +16,7 @@ import { develop } from '../src/developer.ts';
 import type { Workflow } from '../src/lifecycle.ts';
 import { ownerCheck } from './workflows.ts';
 import { reviewerStub } from './stub-cli.ts';
+import { fakeAdapter } from './fake-adapter.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
 mkdirSync('/var/tmp/software_factory', { recursive: true });
@@ -501,3 +502,66 @@ test('run refuses a grant the configuration does not give, and any grant under n
   assert.deepEqual(store.cycles('w1'), []);
   store.close();
 });
+
+// sweep-cancel-aborts: a cancel from another process stops the paid run in flight, not at its deadline.
+/** A CLI that never ends; it writes its pid first, so the test can cancel once it runs and check that it died. */
+const endless = (pidFile: string) => cliAdapter({ ...claude, command: process.execPath, args: ['-e', `require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`] }, { isolation: 'process-group' });
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+/** Wait for the endless CLI's pid, then cancel the work's cycle through a second connection, as `main.ts cancel` does. */
+async function cancelOnceRunning(root: string, pidFile: string): Promise<{ pid: number; at: number }> {
+  while (!existsSync(pidFile) || readFileSync(pidFile, 'utf8') === '') await pause(20);
+  const owner = new EventStore(join(root, 'events.sqlite'));
+  owner.append(owner.cycles('w1')[0]!.cycleId, { type: 'cancel', source: 'owner' });
+  owner.close();
+  return { pid: Number(readFileSync(pidFile, 'utf8')), at: Date.now() };
+}
+
+for (const role of ['developer', 'standard reviewer'] as const) {
+  test(`a cancel from another process aborts the ${role} run in flight long before its deadline, and the CLI dies`, async () => {
+    const { root, repo, store, runsDir } = scratch();
+    const pidFile = join(root, 'pid');
+    const r = role === 'developer'
+      ? run(store, adapters(endless(pidFile), scripted(), scripted()), job(repo), opts(runsDir))
+      : run(store, adapters(fake(claude), endless(pidFile), scripted()), job(repo), opts(runsDir));
+    const { pid, at } = await cancelOnceRunning(root, pidFile);
+    const { cycle } = await r;
+    const ms = Date.now() - at;
+    assert.ok(ms < 3000, `run returned ${ms} ms after the cancel; the deadline is 20 s`);
+    assert.equal(cycle.stage, 'CANCELLED');
+    const events = store.events(cycle.cycleId);
+    assert.deepEqual(events.slice(-2).map((e) => e.type), ['cancel', 'run_failed']);
+    assert.equal((events.at(-1) as { reason: string }).reason, 'cancelled');
+    for (let i = 0; alive(pid) && i < 100; i++) await pause(20);
+    assert.ok(!alive(pid), `the CLI (pid ${pid}) still runs after the cancel`);
+    store.close();
+  });
+}
+
+/** Starts a run that never ends on its own, and aborts the run's signal 50 ms later, as a Ctrl-C handler would. */
+function stopping(ac: AbortController): Adapter & { aborted: number } {
+  const inner = fakeAdapter('hang');
+  return { name: 'stopping', get aborted() { return inner.aborted; }, start(req, signal) { setTimeout(() => ac.abort(), 50); return inner.start(req, signal); } };
+}
+
+for (const where of ['developer', 'fix', 'standard reviewer'] as const) {
+  test(`RunOptions.signal aborts the ${where} run in flight: one run_failed cancelled, which escalates a cycle that is not settled`, async () => {
+    const { repo, store, runsDir } = scratch();
+    const ac = new AbortController();
+    const stop = stopping(ac);
+    const first = fake(claude);
+    let devRuns = 0;
+    // For the fix case the first developer run commits, the standard reviewer FAILs, and the fix run is stopped.
+    const dev: Adapter = where === 'developer' ? stop : where === 'fix' ? { name: 'dev', start: (req, signal) => (devRuns++ === 0 ? first : stop).start(req, signal) } : first;
+    const standard = where === 'standard reviewer' ? stop : scripted('FAIL');
+    const t0 = Date.now();
+    const { cycle } = await run(store, adapters(dev, standard, scripted()), job(repo), opts(runsDir, { signal: ac.signal }));
+    assert.ok(Date.now() - t0 < 5000, 'run waited for the deadline');
+    assert.equal(stop.aborted, 1);
+    assert.equal(cycle.stage, 'ESCALATED');
+    assert.equal(types(store, cycle.cycleId).at(-1), 'run_failed');
+    assert.equal((store.events(cycle.cycleId).at(-1) as { reason: string }).reason, 'cancelled');
+    store.close();
+  });
+}

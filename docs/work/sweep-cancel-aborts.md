@@ -10,7 +10,7 @@ Done when:
 - A developer run that never ends, under a 20 s deadline, is cancelled from a second `EventStore` 0.3 s in. `run` returns well under the deadline (under 3 s after the cancel), the cycle is CANCELLED, the run's outcome is one `run_failed` with reason `cancelled`, and the child process is gone. Verified by test (`tests/run.test.ts`).
 - The same for a reviewer run. Verified by test.
 - `RunOptions.signal`, when aborted, ends the run in flight the same way: one `run_failed` with reason `cancelled`, which escalates a cycle that is not settled. Verified by test.
-- The watch timer never keeps the process alive and is cleared on every exit path: outcome, deadline, settled cycle, signal. Verified by reading and by a test that counts live timers.
+- The watch timer never keeps the process alive and is cleared on every exit path: outcome, deadline, settled cycle, signal. Verified by reading (`unref`, and one `finish` that clears both timers), and by `npm test` exiting on its own.
 
 Constraints: zero dependencies; no paid calls. The abort goes through the existing path (`bounded` in `src/controller.ts`, then the adapter's own process-group or scope kill). `apply` is unchanged: the late `run_failed` on a CANCELLED cycle is ignored (SC-19).
 Non-goals: a Ctrl-C (SIGINT) handler, and what Ctrl-C should mean (escalate, or leave the cycle to resume): the owner's row-11 call. Aborting a check (command stage) in flight: checks are not paid, and they still run to their end or deadline.

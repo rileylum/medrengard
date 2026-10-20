@@ -21,6 +21,8 @@ export interface ReviewOptions {
   runsDir?: string;
   /** Repository instruction files to quote, read from the candidate commit. Default ['AGENTS.md']. */
   instructions?: string[];
+  /** Passed to execute (ExecuteOptions.signal). */
+  signal?: AbortSignal;
 }
 
 const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
@@ -81,7 +83,7 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
   }
 
   const { text, ...versions } = reviewPrompt(def.roleText, gather(job.ticket, head, base, job.repo, opts.instructions ?? ['AGENTS.md'], stages));
-  return execute(store, cycleId, adapter, { role, prompt: text, cwd: checkout }, { deadlineMs: opts.deadlineMs, versions });
+  return execute(store, cycleId, adapter, { role, prompt: text, cwd: checkout }, { deadlineMs: opts.deadlineMs, versions, signal: opts.signal });
 }
 
 // What the reviewer is shown, gathered from Git and the evidence files; the wording around it is

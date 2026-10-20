@@ -46,6 +46,8 @@ export interface DevelopOptions {
    * checks. Default bwrap. The developer's own sandbox is its adapter's (cliAdapter's `sandbox`).
    */
   sandbox?: Sandbox;
+  /** Passed to execute (ExecuteOptions.signal). */
+  signal?: AbortSignal;
 }
 
 /**
@@ -94,7 +96,7 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
       cycleId,
       developer,
       { role: start.role, prompt: text, cwd: worktree },
-      { deadlineMs: opts.deadlineMs, base, versions, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, undefined, sandbox, opts.deadlineMs, claim) },
+      { deadlineMs: opts.deadlineMs, base, versions, signal: opts.signal, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, undefined, sandbox, opts.deadlineMs, claim) },
     );
     return { cycle, worktree, branch };
   } catch (err) {
@@ -149,7 +151,7 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
     cycleId,
     developer,
     { role: def.role, prompt: text, cwd: worktree },
-    { deadlineMs: opts.deadlineMs, base, versions, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, head, sandbox, opts.deadlineMs, claim) },
+    { deadlineMs: opts.deadlineMs, base, versions, signal: opts.signal, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, head, sandbox, opts.deadlineMs, claim) },
   );
   return { cycle: cycleAfter, worktree, branch };
 }
