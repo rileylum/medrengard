@@ -514,6 +514,8 @@ const unrunnable: [string, Workflow, RegExp][] = [
     /stage CHECK FAIL enters commit stage DEV/],
   ['a human FAIL back to the developer', { ...ownerCheck, stages: { ...ownerCheck.stages, OWNER: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'DEV' } } } },
     /stage OWNER FAIL enters commit stage DEV/],
+  ['a human FAIL back to the developer, after a check and before any review', { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: { kind: 'command', transitions: { PASS: 'GATE' } }, GATE: { kind: 'human', budget: 1, transitions: { PASS: 'REVIEW', FAIL: 'DEV' } } } },
+    /stage GATE FAIL enters commit stage DEV/],
   ['a second commit stage entered by PASS', { ...ownerCheck, stages: { ...ownerCheck.stages, DEV: writer({ PASS: 'DOCS' }), DOCS: writer({ PASS: 'CHECK' }) } },
     /stage DEV PASS enters commit stage DOCS/],
   ['a review PASS back to the developer', { ...ownerCheck, stages: { ...ownerCheck.stages, REVIEW: { ...ownerCheck.stages.REVIEW, transitions: { PASS: 'DEV', FAIL: 'ESCALATED' } } as Workflow['stages'][string] } },
