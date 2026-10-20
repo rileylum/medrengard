@@ -31,7 +31,7 @@
 "runtime": { "developer": "local-llm" }</code></pre>
   <ul>
     <li>The module gets the whole run request as JSON on stdin and prints one outcome as JSON on stdout, under the controller's own <code>node</code>, in the sandbox, with only its own folder bound: it must be one bundled file.</li>
-    <li>Its SHA-256 is read before any run and recorded on every outcome event as <code>moduleHash</code>, so the log says which code answered.</li>
+    <li>Its SHA-256 is read when a role selects the runtime, before any run, and recorded on every outcome event as <code>moduleHash</code>, so the log says which code answered. An entry no role selects is never read, so a stale one in your personal file does not block <code>cancel</code>.</li>
     <li>A name may not reuse a built-in one: <code>claude</code> meaning someone's module would hide which runtime ran.</li>
   </ul>
   <p class="small">Sandbox backends are chosen by name too, <code>bwrap</code> or <code>none</code>, but only from the built-in ones: a backend you could add would decide what confines candidate code (A-074).</p>
