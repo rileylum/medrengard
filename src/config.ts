@@ -168,7 +168,8 @@ function readRepoLayer(repo: string, sha: string): Record<string, unknown> {
 function checkMerged(repo: string, sha: string, workflowPath: string): void {
   const refs = git(repo, 'for-each-ref', '--format=%(refname)', '--contains', sha, 'refs/heads/', 'refs/tags/').split('\n');
   if (refs.some((r) => r !== '' && !r.startsWith('refs/heads/sf/'))) return;
-  throw new Error(`base ${sha} is on no branch or tag outside sf/*; the repository workflow ${workflowPath} is not imported. Set "base" in the job file to a merged branch, or check one out`);
+  // The code lets decisionConfig tell this refusal from a base whose layers no longer load.
+  throw Object.assign(new Error(`base ${sha} is on no branch or tag outside sf/*; the repository workflow ${workflowPath} is not imported. Set "base" in the job file to a merged branch, or check one out`), { code: 'UNMERGED_BASE' });
 }
 
 /**
