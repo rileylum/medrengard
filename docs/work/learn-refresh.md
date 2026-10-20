@@ -85,3 +85,4 @@ Each batch ends with `npm run test:learn` green and a commit. The owner walks th
   - `lines.js` mirrors `src/stream.ts#openStream` over the store stand-in, as the design note said; `shims/store.js` gained the workflow on open, `pos`, `at`, and `dispute` in its one-outcome rule.
   - Old demos removed: `lc-drive`, `lc-scenarios`, `lc-map`, `store-travel`, `dev-prompt`. `tests/scenarios.ts` is still read by `store-dedup`.
   - Not done: the README's known gaps (the regex review badges, the untested sandbox table) stay open, as the ticket's non-goals say.
+- 2026-10-20 — owner: “Okay all good, merge” (A-094). Merged into main with `--no-ff`.

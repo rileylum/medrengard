@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-094 — 2026-10-20 — learn-refresh: merged after the owner's walkthrough
+
+Owner, after the report that all five batches were done: “Okay all good, merge”.
+
+Effect: `feat/learn-refresh` merges into main locally with `--no-ff`. No review covers it (A-092); the owner's walkthrough is the check. The owner did not run `npm test`; the implementer's run on `31fddb2` (419 tests, 395 pass, 0 fail) is not independent. Next: row 11 (recovery).
+
 ### A-093 — 2026-10-20 — learn-refresh is READY; build all five batches without stopping
 
 Owner, after reading the learn-refresh ticket: “Okay, go ahead and do this work by yourself this is an experimental feature not really important to the core. So you don't need my input as you go through the process. Report back to me when you've completed the 5 batches.”
