@@ -37,6 +37,16 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-113 — 2026-10-20 — Principle: capabilities and extension points in the core; defaults are sane, not enforced
+
+Owner, on the last unranked research items (a gate on cycles waiting for the owner, a stall watchdog, a stronger model for the last fix round, GitHub sync notes): “Okay these all look good, but I want to make sure we're focused on making them possible in the core and with extensions not necessarily just enforcing them.” And: “the check for what and when a ticket becomes available should be extensible”; “The watcdog itself is probably an extension built on our observability right?”; “The stronger model is probably just a different workflow, so again lets just make sure we support it in the workflow engine but we don't necessarily need to do that for our default.” Then, on the session's write-up: “Yes please”.
+
+Effect, a standing principle for every ticket: build the capability or extension point in the core, ship a sane default, and leave policy to workflows and extensions. A ticket that adds policy says which extension point holds it. Applied now (`docs/plan.md`):
+1. Dispatch (row 12): an extension point decides which ticket may start next and when; the default refuses a new cycle while K cycles wait on the owner.
+2. Watchdog: an observer extension. The core adds what it lacks: progress or heartbeats from a run in flight, and a request that stops one run without settling the cycle (Run records row).
+3. A stronger model: a workflow choice. A second commit stage under its own role is likely possible today and gets a proving test; a runtime entry may name a model or arguments (Role prompts row).
+4. GitHub sync notes: confirmations of A-095, A-100, no automatic merge, and grants (row 12).
+
 ### A-112 — 2026-10-20 — Two live-run gaps placed; row 11 starts with one driver entry point
 
 The owner asked which research findings were left out of the walkthrough (A-105 to A-111) and why. The session listed them (`docs/research/2026-10-20/`); this and the next entries record the owner's decisions on them.
