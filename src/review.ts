@@ -19,7 +19,7 @@ export interface ReviewOptions {
   deadlineMs: number;
   /** Same directory `develop` and `verify` used. Default /var/tmp/software_factory/runs. */
   runsDir?: string;
-  /** Repository instruction files to quote, read from the candidate commit. Default ['AGENTS.md']. */
+  /** Repository instruction files to quote, read from the base commit. Default ['AGENTS.md']. */
   instructions?: string[];
 }
 
@@ -95,8 +95,15 @@ function gather(ticket: string, head: string, base: string, repo: string, instru
     head,
     base,
     ticket,
-    // ls-tree answers absence with empty output and exit 0; any failure is not absence and surfaces.
-    instructions: instructions.map((path) => ({ path, text: git(repo, 'ls-tree', head, '--', path) ? quoteGit(repo, 'show', `${head}:${path}`) : `${path}: not present in the candidate commit` })),
+    // From the base: the candidate must not write the rules it is judged by. Its edit is in the
+    // diff, and `changed` tells the reviewer so. ls-tree answers absence with empty output and
+    // exit 0; any failure is not absence and surfaces. Its line holds the blob ID, so equal lines
+    // mean the same file.
+    instructions: instructions.map((path) => {
+      const atBase = git(repo, 'ls-tree', base, '--', path);
+      const text = atBase ? quoteGit(repo, 'show', `${base}:${path}`) : `${path}: not present in the base commit`;
+      return { path, text, changed: atBase !== git(repo, 'ls-tree', head, '--', path) };
+    }),
     checks: stages.flatMap(({ stage, verification }) => verification.checks.map((c) => ({ ...c, name: `${stage}/${c.name}` }))),
     paths: quoteGit(repo, 'diff', '--name-status', base, head),
     commits: cut(quoteGit(repo, 'log', '--reverse', COMMIT_FORMAT, `${base}..${head}`), COMMITS_KEEP),

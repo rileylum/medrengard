@@ -15,7 +15,7 @@ Base SHA: <sha>
 ==== <nonce>: TICKET ====
 TICKET: create done.txt and commit it.
 
-==== <nonce>: INSTRUCTIONS AGENTS.md ====
+==== <nonce>: INSTRUCTIONS AGENTS.md (at the base SHA) ====
 # Scratch rules
 
 Never delete README.md.
