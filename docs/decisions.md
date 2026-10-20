@@ -37,6 +37,14 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-111 — 2026-10-20 — The smaller research items: three soon, the rest tracked; "Ken Chun" is Kun Chen
+
+Asked, from the overnight research (TRIAGE owner items 8 to 18): ticket soon (1) run records: `run_failed.cause`, cost, tokens, model and CLI version per run, and `claude`'s turn and budget caps; (2) JSON workflows, with a repository workflow required to be data (closes A-078); (3) `protocol: 1` on the extension contracts. Track for later: a `doctor` command, a `status` command with clearer job-file errors, clone cleanup, faster tests, and a warning at `accept` when the base moved (`head_changed`/`base_changed` have no producer, A-103). Owner: “Yes agree with the split, these all seem very useful so I'd definitely want them all done at some point.”
+
+Also, the owner on the person the brief named "Ken Chun": “Kun Chen is the correct person” (GitHub `kunchenguid`, author of no-mistakes, which the research used).
+
+Effect: each item is a row in `docs/plan.md`'s later work. The three "soon" items are drafted as tickets first; each needs the owner's go before it is READY.
+
 ### A-110 — 2026-10-20 — Reviewer wording kept as input to O-013; no prompt change now
 
 Asked, from the overnight research (`docs/research/2026-10-20/harnesses.md` finding 5, TRIAGE owner item 6): borrow no-mistakes's reviewer wording, and should a re-review after a fix see the earlier findings, labelled as claims. Owner: “yes I agree generally so we can log these findings to be reviewed when we get to the currently planned prompt etc. stage”.

@@ -31,6 +31,11 @@ Rows 9 and 10 are built with the later rows and open questions in view (A-055), 
 | Structured findings | Data passed between steps through the workflow (a review's findings into the fix step), not hard-coded in `fix()`. A-109: findings with severity, scenario and action; other structured inputs and outputs across the core; a workflow or extension may declare a step's input and output shape |
 | Pools | A driver per cycle with no shared state, so several cycles can run at once |
 | Improvement loop and metrics | The observation stream, and step and run timings in the event log. Each run's raw runtime output kept under `runsDir`: live run 2026-10-20 could not show why the developer did not commit, because claude runs with `--no-session-persistence` and nothing keeps its stdout or stderr |
+| Run records (A-111, soon) | `run_failed` records a cause (infra, limit, output); each run records cost, tokens, model and CLI version; `claude` gets turn and budget caps. The data for tuning the workflow from logs, and what a later relaunch would key on (A-105) |
+| JSON workflows (A-111, soon) | A workflow loads from JSON; a repository's workflow must be data, so no repository code runs in the controller (closes A-078) |
+| Protocol version (A-111, soon) | `protocol: 1` on RunRequest, `request.json` and events |
+| Owner tools (A-111) | A `doctor` command (sandbox, runtimes, programs, and which layer set each config key); a `status` command; job-file errors that name each bad field; a warning at `accept` when the base moved |
+| Housekeeping (A-111) | Clone and checkout cleanup after `accept` or `cancel` (562 MB per cycle on a 508 MB repository); faster tests (split `developer.test.ts`, the runtime kit's fixed wait) |
 | Release tracking and deployment (O-009) | Command stages after acceptance, with grants |
 | Design Studio (O-012) | Stages with no candidate yet. The SHA guarantee applies to steps that produce evidence about code |
 | herdr frontend (O-010) | The observation stream drives the board. An owner's message to an agent is recorded as an event that later steps can see |
