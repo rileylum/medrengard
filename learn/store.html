@@ -52,7 +52,7 @@
 
 <section class="slide" id="code" data-lv="3">
   <h2>Read the code: src/store.ts and src/stream.ts</h2>
-  <p>One table for every cycle. The partial unique index is the one-outcome rule. <code>busy_timeout</code> lets a second process, such as <code>cancel</code> during a run, wait for the write lock instead of failing. Row 0 is written at a fixed <code>seq</code> of 0, so two racing opens collide on the primary key.</p>
+  <p>One table for every cycle. The partial unique index is the one-outcome rule. <code>busy_timeout</code> lets a second process, such as <code>cancel</code> during a run, wait for the write lock instead of failing. <code>open</code> runs its checks and its insert in one <code>BEGIN IMMEDIATE</code> transaction, so two processes opening a cycle for one work item take turns: the second sees the first cycle and is refused.</p>
   <pre data-code="src/store.ts#OpenRow,constructor,open,append,load,insert"></pre>
   <p>Each row's position and time are set inside the insert statement, under the write lock, so positions follow commit order.</p>
   <pre data-code="src/store.ts#POS,NOW"></pre>

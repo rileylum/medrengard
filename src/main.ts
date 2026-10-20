@@ -14,6 +14,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { join, resolve } from 'node:path';
 import { loadConfig, storeOf, type JobFile } from './config.ts';
 import { oneLine, type Job } from './developer.ts';
+import { printable } from './prompt.ts';
 import { defaultWorkflow, isSource, type Workflow } from './lifecycle.ts';
 import { ROLE_ALIASES, run, type Adapters } from './run.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
@@ -53,12 +54,19 @@ async function decisionConfig(file: string) {
   const { runsDir, workId } = storeOf(file);
   const db = join(runsDir, 'events.sqlite');
   const opened = existsSync(db) ? openings(db, workId) : [];
+  let unmerged: Error | undefined;
   for (const base of new Set(opened.flatMap((o) => (o.base ? [o.base] : [])))) {
     // A base whose layers no longer load cannot be the one the cycles were opened under.
-    const then = await loadConfig(file, process.env, { base }).catch(() => undefined);
+    const then = await loadConfig(file, process.env, { base }).catch((err: Error & { code?: string }) => {
+      if (err.code === 'UNMERGED_BASE') unmerged ??= err;
+    });
     if (then && opened.every((o) => o.hash === workflowHash(then.workflow))) return then;
   }
-  return loadConfig(file);
+  // A squash-merged and deleted branch leaves the base only on sf/*. The tip still serves if its
+  // workflow matches; otherwise the refusal says what to do, where the store's mismatch would not.
+  const now = await loadConfig(file).catch((err) => { throw unmerged ?? err; });
+  if (unmerged && !opened.every((o) => o.hash === workflowHash(now.workflow))) throw unmerged;
+  return now;
 }
 
 /** `--source <name>` at the end of `rest`, after `positional` words; the source is `owner` without it. */
@@ -193,12 +201,12 @@ async function main(argv: string[]): Promise<number> {
       if (e.type === 'verdict') {
         const def = workflow.stages[h.from];
         const role = def?.kind === 'agent' ? def.role : 'reviewer';
-        console.log(`${role} ${e.head.slice(0, 7)}: ${e.verdict}`);
-        for (const f of Array.isArray(e.findings) ? e.findings : []) console.log(`  - ${oneLine(f)}`);
+        console.log(`${role} ${printable(e.head.slice(0, 7))}: ${e.verdict}`);
+        for (const f of Array.isArray(e.findings) ? e.findings : []) console.log(`  - ${printable(oneLine(f))}`);
       }
     }
-    if (cycle.escalation) console.log(`Escalation: ${cycle.escalation}`);
-    if (r.error) console.log(`Error: ${r.error}`);
+    if (cycle.escalation) console.log(`Escalation: ${printable(cycle.escalation)}`);
+    if (r.error) console.log(`Error: ${printable(r.error)}`);
     if (humanStages(workflow).includes(cycle.stage)) {
       console.log('');
       console.log('To review, accept and merge:');
@@ -214,4 +222,4 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { console.error(err instanceof Error ? err.message : String(err)); process.exitCode = 2; });
+main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { console.error(printable(err instanceof Error ? err.message : err)); process.exitCode = 2; });
