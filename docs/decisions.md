@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-096 — 2026-10-20 — sweep-preflight: merged after the owner's walkthrough
+
+Owner, after the walkthrough: “Okay yes this is a good catch and a great implementation idea - 'pre-flight' checks are good and I think we could expand this to other uses in the future.” Then, asked for an explicit word: “Approved”.
+
+Effect: `feat/sweep-preflight` merges into main locally with `--no-ff`. The workflow shapes today's driver cannot run stay in `driverLimits` in the driver, not in `checkWorkflow` (the ticket's alternative 1). Owner's note for later, not a ticket: preflight could grow to other uses; the ticket's non-goals name two candidates (a missing `{ file }` argument, a job with no checks) and a known gap (a grant stage reached with no review PASS). Reviews: two fresh in-session standard reviews (FAIL, then PASS; findings fixed; the last round read by the session, not reviewed again); the `claude -p` reviews and the adversarial review did not run. The owner did not run `npm test`; the session's run on the branch with main merged in (431 tests, 407 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
 ### A-095 — 2026-10-20 — sweep-head-workflow: merged after the owner's walkthrough
 
 Owner, after the plain-English walkthrough and a worked example of the attack: “Okay, makes sense. Merge and onto the next one”.

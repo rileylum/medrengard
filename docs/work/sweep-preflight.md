@@ -68,3 +68,4 @@ Verification: `npm test` and `npm run test:learn`, run by the owner on the revie
   - Minor: a grant stage reachable from a commit stage with no review PASS between still throws only after the paid run. Not built, as asked; listed in Non-goals, "For the owner" and the spec's Driver section.
   - Nit: `learn/demos/ver-lab.js` now shows the "command is empty" refusal. Nit: "For the owner" now says what `resume` running `driverLimits` means for older cycles, and that a request-changes edge refuses the whole workflow.
 - 2026-10-20 — implementer's run after the standard 2 round, not independent: `npm test` 427 tests, 403 pass, 0 fail, 19 skipped, 5 todo; `npm run test:learn` 6 pass.
+- 2026-10-20 — owner: “Approved” (A-096); shape limits stay in the driver; preflight may grow to other uses later. Main merged into the branch (clean); session's run, not independent: `npm test` 431 tests, 407 pass, 0 fail; `test:learn` 6 pass. Merged into main with `--no-ff`.
