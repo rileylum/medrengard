@@ -7,8 +7,12 @@
 # make a broken merge pass. Skip with `git merge --no-verify`.
 set -eu
 dir=$(mktemp -d "${TMPDIR:-/var/tmp}/factory-premerge.XXXXXX")
-trap 'rm -rf "$dir"' EXIT
+trap 'rm -rf "$dir" "$dir.log"' EXIT
 git checkout-index -a --prefix="$dir/"
+# git runs the hook with GIT_INDEX_FILE set, and sometimes GIT_DIR. Left set,
+# they leak into the tests' own git calls, which then read or overwrite this
+# repository's index: a good merge fails, or the index is damaged.
+unset $(git rev-parse --local-env-vars)
 cd "$dir"
 echo "pre-merge-commit: npm test on the merge result" >&2
 npm test >"$dir.log" 2>&1 || { tail -40 "$dir.log" >&2; rm -f "$dir.log"; echo "pre-merge-commit: tests failed; merge not recorded" >&2; exit 1; }
