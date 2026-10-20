@@ -116,7 +116,7 @@ async function main(argv: string[]): Promise<number> {
   }
   // Extra words are refused, not ignored: `job.json cancel` would otherwise start a paid run.
   if (!first || rest.length !== 0) throw new Error(USAGE);
-  const { path, spec, repo, runsDir, workflow, registry, sandbox } = await loadConfig(first);
+  const { path, spec, repo, runsDir, workflow, registry, sandbox, workflowDir } = await loadConfig(first);
   const ticket = spec.ticket ?? (spec.ticketFile ? readFileSync(resolve(path, '..', spec.ticketFile), 'utf8') : undefined);
   if (!ticket) throw new Error('job needs ticket or ticketFile');
   const job: Job = { workId: spec.workId, ticket, repo, base: spec.base, parentCycleId: spec.parentCycleId, checks: spec.checks };
@@ -130,7 +130,7 @@ async function main(argv: string[]): Promise<number> {
     const parent = job.parentCycleId === undefined ? undefined : store.load(job.parentCycleId);
     if (parent && parent.stage !== 'ESCALATED')
       throw new Error(`parentCycleId ${parent.cycleId} is ${parent.stage}, not ESCALATED; remove parentCycleId from ${path} to start the work fresh`);
-    const r = await run(store, adapters, job, { deadlineMs: spec.deadlineMs ?? 120_000, runsDir, sandbox });
+    const r = await run(store, adapters, job, { deadlineMs: spec.deadlineMs ?? 120_000, runsDir, sandbox, workflowDir });
     const { cycle } = r;
     console.log(`Stage: ${cycle.stage}`);
     console.log(`Cycle: ${cycle.cycleId}`);

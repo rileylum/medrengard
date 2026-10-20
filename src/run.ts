@@ -6,11 +6,11 @@
 import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { DEFAULT_RUNS_DIR, develop, fix, type DeveloperAdapter, type Job } from './developer.ts';
-import type { Cycle, Role, Workflow } from './lifecycle.ts';
+import { fileArgs, type Cycle, type Role, type Workflow } from './lifecycle.ts';
 import { review } from './review.ts';
 import { checkSandbox, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
-import { verify, type VerifyOptions } from './verify.ts';
+import { noWorkflowDir, verify, type VerifyOptions } from './verify.ts';
 
 /** By role. A commit role may be a factory per worktree; a verdict role must be an Adapter. */
 export type Adapters = Record<Role, DeveloperAdapter>;
@@ -32,6 +32,8 @@ export interface RunOptions {
   instructions?: string[];
   /** Passed to verify. Default bwrap. */
   sandbox?: Sandbox;
+  /** Passed to verify: the workflow file's folder (Config.workflowDir). */
+  workflowDir?: string;
 }
 
 export interface RunResult {
@@ -47,6 +49,10 @@ export interface RunResult {
 export async function run(store: EventStore, adapters: Adapters, job: Job, opts: RunOptions): Promise<RunResult> {
   // Before develop: a sandbox that cannot start would fail verification after a paid developer run.
   checkSandbox(opts.sandbox ?? { backend: 'bwrap' });
+  // Before develop too: verify would refuse it, but only after a paid developer run.
+  if (opts.workflowDir === undefined)
+    for (const [name, def] of Object.entries(store.workflow.stages))
+      for (const file of def.kind === 'command' ? (def.run ?? []).flatMap(fileArgs) : []) throw new Error(noWorkflowDir(name, file));
   const roles = byRole(store.workflow, adapters);
   const start = store.workflow.stages[store.workflow.start];
   // checkWorkflow allows a start stage with no role; develop refuses it before using the adapter.

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { loadConfig, storeOf } from '../src/config.ts';
 import { ownerCheck } from './workflows.ts';
@@ -247,4 +247,72 @@ test('the job file\'s runsDir resolves against the working directory, as before 
   } finally {
     process.chdir(cwd);
   }
+});
+
+// Ticket 10-c: a command's { file } argument names a file beside the workflow.
+const fileFlow = (file: string) => `export const workflow = ${JSON.stringify({
+  start: 'DEV',
+  stages: {
+    DEV: { kind: 'agent', role: 'developer', produces: 'commit', roleText: 'You are the developer for the ticket below.', transitions: { PASS: 'LINT' } },
+    LINT: { kind: 'command', run: [{ name: 'lint', command: ['sh', { file }] }], transitions: { PASS: 'ACCEPTED' } },
+  },
+})};\n`;
+
+test('workflowDir is the job workflow file\'s folder, and undefined for the default workflow', async () => {
+  const { root, jobFile, env } = scratch();
+  assert.equal((await loadConfig(jobFile, env)).workflowDir, undefined);
+  mkdirSync(join(root, 'flows'));
+  writeFileSync(join(root, 'flows', 'mine.ts'), fileFlow('lint.sh'));
+  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', workflow: 'flows/mine.ts', runtime: { developer: 'claude' } });
+  assert.equal((await loadConfig(jobFile, env)).workflowDir, join(root, 'flows'));
+});
+
+test('a repository workflow\'s file argument is read at the base SHA, not the working tree or a later commit', async () => {
+  const { root, repo, jobFile, env } = scratch();
+  mkdirSync(join(repo, 'ci', 'bin'), { recursive: true });
+  writeFileSync(join(repo, 'ci', 'flow.ts'), fileFlow('bin/lint.sh'));
+  writeFileSync(join(repo, 'ci', 'bin', 'lint.sh'), 'echo base\n');
+  const base = commitRepoLayer(repo, { workflow: 'ci/flow.ts' });
+  // A later commit, made before loadConfig: HEAD and the base now differ.
+  writeFileSync(join(repo, 'ci', 'bin', 'lint.sh'), 'echo later\n');
+  git(repo, 'commit', '-q', '-am', 'later');
+  writeFileSync(join(repo, 'ci', 'bin', 'lint.sh'), 'echo working-tree\n');
+  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', base, runsDir: join(root, 'runs'), runtime: { developer: 'claude' } });
+  const c = await loadConfig(jobFile, env);
+  assert.equal(c.workflowDir, join(root, 'runs', 'repo-config', base, 'ci'));
+  assert.equal(readFileSync(join(c.workflowDir!, 'bin', 'lint.sh'), 'utf8'), 'echo base\n');
+});
+
+test('a repository workflow\'s file argument keeps the executable bit Git records, so it can run as the command itself', async () => {
+  const { repo, jobFile, env } = scratch();
+  writeFileSync(join(repo, 'flow.ts'), fileFlow('check.sh').replace('["sh",{"file":"check.sh"}]', '[{"file":"check.sh"},{"file":"data.txt"}]'));
+  writeFileSync(join(repo, 'check.sh'), '#!/bin/sh\necho checked\n');
+  chmodSync(join(repo, 'check.sh'), 0o755);
+  writeFileSync(join(repo, 'data.txt'), 'data\n');
+  commitRepoLayer(repo, { workflow: 'flow.ts' });
+  assert.equal(git(repo, 'ls-tree', 'HEAD', 'check.sh').split(' ')[0], '100755');
+  const c = await loadConfig(jobFile, env);
+  assert.equal(statSync(join(c.workflowDir!, 'check.sh')).mode & 0o111, 0o111);
+  assert.equal(statSync(join(c.workflowDir!, 'data.txt')).mode & 0o111, 0);
+});
+
+test('a repository workflow file argument that Git stores as a symlink or a directory is refused, naming it', async () => {
+  for (const [file, make] of [
+    ['link.sh', (repo: string) => { writeFileSync(join(repo, 'real.sh'), 'echo real\n'); symlinkSync('real.sh', join(repo, 'link.sh')); }],
+    ['dir', (repo: string) => { mkdirSync(join(repo, 'dir')); writeFileSync(join(repo, 'dir', 'x'), 'x\n'); }],
+  ] as const) {
+    const { repo, jobFile, env } = scratch();
+    writeFileSync(join(repo, 'flow.ts'), fileFlow(file));
+    make(repo);
+    commitRepoLayer(repo, { workflow: 'flow.ts' });
+    await assert.rejects(loadConfig(jobFile, env), new RegExp(`names file ${file}, which is not a regular file in the repository at [0-9a-f]{40}`));
+  }
+});
+
+test('a repository workflow naming a file that is not committed at the base is refused, naming it', async () => {
+  const { repo, jobFile, env } = scratch();
+  writeFileSync(join(repo, 'flow.ts'), fileFlow('lint.sh'));
+  commitRepoLayer(repo, { workflow: 'flow.ts' });
+  writeFileSync(join(repo, 'lint.sh'), 'echo untracked\n');
+  await assert.rejects(loadConfig(jobFile, env), /lint\.sh.*not in the repository at [0-9a-f]{40}/);
 });

@@ -118,8 +118,8 @@ test('the prompt carries the role, ticket, SHAs, instructions from the commit, e
   assert.match(p, new RegExp(`^Base SHA: ${base}$`, 'm'));
   assert.ok(p.includes(AGENTS.trim()), 'AGENTS.md content from the commit');
   assert.match(p, /MISSING\.md: not present/);
-  assert.match(p, /file: PASS/);
-  assert.match(p, /warn: PASS/);
+  assert.match(p, /^VERIFYING\/file: PASS$/m);
+  assert.match(p, /^VERIFYING\/warn: PASS$/m);
   assert.match(p, /\+\+\+ b\/done\.txt/);
   assert.match(p, /^A\tdone\.txt$/m, '06-c: uncut name-status before the diff');
   // 06-c: every delimiter carries the run's nonce, announced in the rules.
@@ -130,8 +130,8 @@ test('the prompt carries the role, ticket, SHAs, instructions from the commit, e
   assert.ok(headers.every((l) => l.startsWith(`==== ${nonce}: `)), headers.join('|'));
   assert.match(p, /done\.txt is there/);
   assert.match(p, /a warning/);
-  assert.match(p, /: EVIDENCE warn\.exit ====\nexit 0/);
-  assert.match(p, /: EVIDENCE file\.exit ====\nexit 1/);
+  assert.match(p, /: EVIDENCE VERIFYING\/warn\.exit ====\nexit 0/);
+  assert.match(p, /: EVIDENCE VERIFYING\/file\.exit ====\nexit 1/);
   assert.match(p, /```json\n\{"head": "<candidate sha>", "verdict": "PASS" \| "FAIL", "findings": \["<file:line — finding>"\]\}\n```/);
   assert.ok(!p.includes('MIDDLE'), 'the middle of a big evidence file is cut');
   assert.match(p, /characters cut/);
@@ -208,9 +208,9 @@ test('after a standard FAIL and a fix run, the prompt carries the verification f
   assert.equal(c.budgets.STANDARD_REVIEW ?? 0, 2);
   const p = adapter.requests[0]!.prompt;
   assert.match(p, new RegExp(`^Candidate SHA: ${head2}$`, 'm'));
-  assert.match(p, /second: PASS/);
-  assert.ok(!/^file: PASS$/m.test(p), 'the first verification is not quoted');
-  assert.ok(!/^warn: PASS$/m.test(p));
+  assert.match(p, /^VERIFYING\/second: PASS$/m);
+  assert.ok(!/^VERIFYING\/file: PASS$/m.test(p), 'the first verification is not quoted');
+  assert.ok(!/^VERIFYING\/warn: PASS$/m.test(p));
   store.close();
 });
 

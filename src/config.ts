@@ -1,11 +1,12 @@
 // Ticket 10-b: a job's settings, from four layers (A-074, A-078). Every command in main.ts reads
 // its job through loadConfig, so the limits on each layer are enforced here and nowhere else.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Job } from './developer.ts';
 import { git } from './git.ts';
-import { checkWorkflow, defaultWorkflow, type Workflow } from './lifecycle.ts';
+import { checkWorkflow, defaultWorkflow, fileArgs, type Workflow } from './lifecycle.ts';
 import { runtimes, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
 
@@ -35,6 +36,8 @@ export interface Config {
   workflow: Workflow;
   registry: Record<string, RuntimeEntry>;
   sandbox: Sandbox;
+  /** The workflow file's folder, where a command's `{ file }` argument is found. Undefined for the default workflow. */
+  workflowDir?: string;
 }
 
 // The factory-defaults layer. `none` must be written out by the owner (08-a).
@@ -154,6 +157,26 @@ function extractWorkflow(repo: string, sha: string, path: string, runsDir: strin
   return file;
 }
 
+/** Each `{ file }` a command names, copied from `sha` beside the extracted workflow. checkWorkflow has refused a path that climbs out. */
+function extractFiles(repo: string, sha: string, workflowPath: string, w: Workflow, runsDir: string): void {
+  const files = Object.values(w.stages).flatMap((d) => (d.kind === 'command' ? (d.run ?? []) : []))
+    .flatMap(fileArgs);
+  for (const file of new Set(files)) {
+    // posix join: a Git path, not a host one; './x' and 'x' name the same blob.
+    const path = posix.join(posix.dirname(workflowPath), file);
+    const entry = git(repo, 'ls-tree', sha, '--', path);
+    if (entry === '') throw new Error(`workflow ${workflowPath} names file ${file}, which is not in the repository at ${sha}`);
+    // A symlink's blob is its target's path, and a job workflow's symlink is followed: refused, not run as that text.
+    if (!/^100(644|755) blob /.test(entry)) throw new Error(`workflow ${workflowPath} names file ${file}, which is not a regular file in the repository at ${sha}`);
+    const out = join(runsDir, 'repo-config', sha, path);
+    mkdirSync(dirname(out), { recursive: true });
+    // Not the git helper: it trims and decodes, and these bytes are hashed and run as they are.
+    writeFileSync(out, execFileSync('git', ['cat-file', 'blob', `${sha}:${path}`], { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+    // Git's mode, so a committed script can be the command itself; verify's copy keeps it.
+    chmodSync(out, entry.startsWith('100755 ') ? 0o755 : 0o644);
+  }
+}
+
 /**
  * Personal, then repository, then the job file. `env` gives XDG_CONFIG_HOME and HOME. The base
  * is resolved to a SHA once, here, and `spec.base` carries it, so develop starts from the commit
@@ -168,13 +191,18 @@ export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = proce
   const spec = { ...merge([DEFAULTS, readLayer(personalFile(env), PERSONAL_KEYS, true), repoLayer, job]), base } as unknown as JobFile;
   const runsDir = resolve(spec.runsDir!);
   // The repository's path is relative to the repository; the job file's, already absolute, beats it.
-  if (repoLayer.workflow !== undefined && job.workflow === undefined) spec.workflow = extractWorkflow(repo, base, repoLayer.workflow as string, runsDir);
+  const fromRepo = repoLayer.workflow !== undefined && job.workflow === undefined;
+  if (fromRepo) spec.workflow = extractWorkflow(repo, base, repoLayer.workflow as string, runsDir);
+  const workflow = await loadWorkflow(spec.workflow);
+  // Only the workflow file was copied; what its commands name beside it comes from the same commit.
+  if (fromRepo) extractFiles(repo, base, repoLayer.workflow as string, workflow, runsDir);
   return {
     path,
     spec,
     repo,
     runsDir,
-    workflow: await loadWorkflow(spec.workflow),
+    workflow,
+    workflowDir: spec.workflow === undefined ? undefined : dirname(spec.workflow),
     // Every module path is absolute by now, so relativeTo is never used.
     registry: runtimes(spec.runtimes, '/'),
     sandbox: spec.sandbox!,

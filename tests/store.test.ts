@@ -341,3 +341,10 @@ test('a store written before 09-b loads under the default workflow only', () => 
   assert.throws(() => store.load(first!.name), /opened under workflow default/);
   store.close();
 });
+
+// Ticket 10-c: every store records this hash on open, so a change to defaultWorkflow refuses every
+// cycle already opened under it. The literal was computed on main at c04b4b8; never update it to
+// make this pass.
+test('the default workflow hash is the one recorded before 10-c', () => {
+  assert.equal(workflowHash(defaultWorkflow), '9ea6cdafca9addd7db5e8eec4bac8226b307546a4d88900d08775858f6de06c7');
+});
