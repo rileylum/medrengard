@@ -113,7 +113,7 @@ function driverLimits(w: Workflow): string[] {
   for (const [name, def] of Object.entries(w.stages))
     for (const [outcome, to] of Object.entries(def.transitions))
       // fix takes its findings from the last verdict, which must be a FAIL for the candidate.
-      // A bounded fix loop on red checks (harnesses finding 3) needs fix to read the verification.
+      // A check's FAIL back to the developer needs fix to take the failed checks as findings first.
       if (kind(to) === 'commit' && !(outcome === 'FAIL' && kind(name) === 'verdict'))
         reasons.push(`stage ${name} ${outcome} enters commit stage ${to}, but a fix run needs a review's FAIL findings`);
   // review reads the checkout and evidence verify made of the candidate, so after each commit a
