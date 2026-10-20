@@ -10,7 +10,7 @@ Done when:
 - The comment above the insert no longer claims a racing open collides on the primary key.
 
 Constraints: zero dependencies. The same pattern as `addPositions` (`BEGIN IMMEDIATE`, `COMMIT`, `ROLLBACK` on error). No change to `open`'s checks or messages.
-Non-goals: locking for `append` (one statement, already atomic). Two processes driving one open cycle (row 11). `learn/shims/store.js`: it is a single-threaded array in the browser and has no second writer, so it has nothing to mirror.
+Non-goals: locking for `append` (one statement, already atomic). Two processes driving one open cycle (row 11). `learn/shims/store.js`: it is a single-threaded array in the browser and has no second writer, so it has nothing to mirror. The guide's sentence on `learn/store.html` that repeated the wrong primary-key claim is corrected.
 Verification: `npm test` and `npm run test:learn`, run by the implementer.
 
 ## For the owner
@@ -30,3 +30,11 @@ Owner's instruction (2026-10-20): "Once all this research comes back, triage it 
 **Decision for the owner.** None beyond merging.
 
 ## Log
+
+2026-10-20, implementer:
+- Red: the new test `open enforces one open cycle per work item when two processes race (sweep-open-race)` failed on the unchanged `src/store.ts` with `AssertionError [ERR_ASSERTION]: opened | opened` (`2 !== 1`): both processes opened a cycle for `w1`.
+- Green: `open` wraps its checks and insert in `BEGIN IMMEDIATE` / `COMMIT`, with `ROLLBACK` on any throw. The insert is a plain `INSERT` now: under the lock, the `exists` check already refuses a used cycle ID, so `OR IGNORE` and the `changes !== 1` check had nothing left to catch. The new test passed five runs in a row.
+- The busy-timeout comment in the constructor now names open's transaction. The spec's bracket on "one open cycle" names the new test. `learn/store.html` no longer says racing opens collide on the primary key.
+- lazy-review: an extracted `checkOpen` helper (one caller) was inlined back into `open`.
+- `npm test`: 420 tests, 396 pass, 0 fail, 19 skipped, 5 todo (implementer's run, not independent). `npm run test:learn`: 6 tests, 6 pass.
+- Next: owner review of the branch.

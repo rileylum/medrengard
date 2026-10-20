@@ -129,7 +129,19 @@ export class EventStore {
     // opening different cycle IDs for one work both pass the open-cycle check and both insert.
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.checkOpen(cycleId, workId, parentCycleId);
+      if (this.exists(cycleId)) throw new Error(`cycle ${cycleId} already open`);
+      // Spec: one work item has at most one open cycle, and a new cycle names an ESCALATED parent
+      // (02-b adversarial; openChild checks the parent in memory, this is the store's copy).
+      if (parentCycleId !== undefined) {
+        const parent = this.load(parentCycleId);
+        if (!parent) throw new Error(`parent cycle ${parentCycleId} not found`);
+        if (parent.stage !== 'ESCALATED') throw new Error(`parent cycle ${parentCycleId} is ${parent.stage}, not ESCALATED`);
+        if (parent.workId !== workId) throw new Error(`parent cycle ${parentCycleId} belongs to work ${parent.workId}, not ${workId}`);
+      }
+      const { open, escalated } = this.cyclesFor(workId);
+      if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
+      // Spec: a new cycle for the same work names its parent; an escalated cycle is waiting for one.
+      if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
       const row: OpenRow = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow };
       // Fixed seq 0, not MAX+1: an open row that landed mid-log would reach apply, which has no
       // 'open' case.
@@ -142,22 +154,6 @@ export class EventStore {
       throw err;
     }
     return newCycle(cycleId, workId, parentCycleId);
-  }
-
-  private checkOpen(cycleId: string, workId: string, parentCycleId?: string): void {
-    if (this.exists(cycleId)) throw new Error(`cycle ${cycleId} already open`);
-    // Spec: one work item has at most one open cycle, and a new cycle names an ESCALATED parent
-    // (02-b adversarial; openChild checks the parent in memory, this is the store's copy).
-    if (parentCycleId !== undefined) {
-      const parent = this.load(parentCycleId);
-      if (!parent) throw new Error(`parent cycle ${parentCycleId} not found`);
-      if (parent.stage !== 'ESCALATED') throw new Error(`parent cycle ${parentCycleId} is ${parent.stage}, not ESCALATED`);
-      if (parent.workId !== workId) throw new Error(`parent cycle ${parentCycleId} belongs to work ${parent.workId}, not ${workId}`);
-    }
-    const { open, escalated } = this.cyclesFor(workId);
-    if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
-    // Spec: a new cycle for the same work names its parent; an escalated cycle is waiting for one.
-    if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
   }
 
   /**
