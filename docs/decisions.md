@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-103 — 2026-10-20 — sweep-stage-guards: merged after the owner's walkthrough
+
+Owner, after the walkthrough: “merge, good tests”.
+
+Effect: `feat/sweep-stage-guards` merges into main locally with `--no-ff`. Tests only: each event type sent to each stage kind that does not take it escalates "outside" and spends no budget, and the three ignore branches are pinned. The ticket's question, that `head_changed` and `base_changed` have no producer (warn at `accept`, or escalate when the base moves), is not decided; it stays open. One fresh in-session review covers the branch (PASS, 19 of 19 mutants caught); the `claude -p` reviews and the adversarial review did not run. The owner did not run `npm test`; the session's run on the branch with main merged in (449 tests, 425 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
 ### A-102 — 2026-10-20 — sweep-lazy-runtimes: merged after the owner's walkthrough
 
 Owner, after the walkthrough: “Looks good to me, merge”.
