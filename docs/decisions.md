@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-109 — 2026-10-20 — Structured findings, and the owner may overrule a finding inside the cycle
+
+Asked, from the overnight research (`docs/research/2026-10-20/deep-research.md` proposals 7 and 8, `harnesses.md` finding 4, TRIAGE owner item 5): (A) findings carry `file:line`, `requirement`, `severity` (blocking or minor), `scenario` (input, expected, actual) and `action` (fix, or needs the owner; missing means the owner); only a blocking finding can FAIL; minor findings go to the owner, not the fix run; a needs-the-owner finding escalates. (B) an owner command marks a finding false with a quoted reason, refunds the budget the FAIL spent, reruns the same review stage, and shows the ruling to the next reviewer. The session recommended both: A as a Design-route ticket landing before or with A-108's primitive, B after A, with those defaults. Owner: “Yes to both”.
+
+Effect: two tickets to draft, A first. A changes the verdict contract and the fix-run input (O-011, O-013 touch it). B is the ticket A-072 named. Each still needs the owner's go before it is READY.
+
 ### A-108 — 2026-10-20 — A commit stage can act on a red check; the default workflow still escalates
 
 Asked, from the overnight research (`docs/research/2026-10-20/harnesses.md` findings 2 and 3, TRIAGE owner item 4): build the engine primitive that lets a commit stage take a failed verification as its findings, and whether the default workflow should loop on a red check. Owner: “Yes build the primitive, in fact I would want to theoretically allow a workflow step that is meant to act as a reviewer to have the authority to make these small edits themselves, especially when its a docs, comment or some other trivial fix. My feeling is that we could already achieve that though. Lets leave the default workflow as is.”
