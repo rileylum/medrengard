@@ -89,3 +89,21 @@ for (const [file, kase] of [
     assert.match(r.stdout, /# fail 1$/m, r.stdout);
   });
 }
+
+// Ticket 10-e: a grant stage must report the head it acted on.
+test('commandKit passes a grant stage that writes the head, with the network case skipped', () => {
+  const r = kit('command-grant.kit.ts');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^ok \d+ - grant: the stage writes the request's head to outputDir\/head/m);
+  assert.match(r.stdout, /# pass 5$/m);
+  assert.match(r.stdout, /# skipped 1$/m);
+});
+
+test('commandKit fails a grant stage that does not write the head: the head case, and the passing change with it', () => {
+  const r = kit('command-nohead.kit.ts');
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^not ok \d+ - nohead: the stage writes the request's head to outputDir\/head$/m, r.stdout);
+  assert.match(r.stdout, /^not ok \d+ - nohead: the passing change gives PASS$/m, r.stdout);
+  assert.match(r.stdout, /no head file in outputDir/, r.stdout);
+  assert.match(r.stdout, /# fail 2$/m, r.stdout);
+});
