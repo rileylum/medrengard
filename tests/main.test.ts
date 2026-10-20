@@ -478,3 +478,58 @@ test('the developer starts from the SHA the layers were read at, though the base
     store.close();
   }
 });
+
+// sweep-head-workflow (security finding 1): looking at a candidate with `git switch sf/<id>` must
+// not let its workflow run as the owner on the next command.
+test('cancel with a candidate branch checked out and no base in the job file refuses, and the candidate workflow never runs', () => {
+  const { root, repo, jobFile, db } = scratch();
+  const marker = join(root, 'PWNED');
+  git(repo, 'switch', '-q', '-c', 'sf/0000-candidate');
+  mkdirSync(join(repo, '.factory'));
+  writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ workflow: 'flow.ts' }));
+  writeFileSync(join(repo, 'flow.ts'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran');\nexport { ownerCheck as workflow } from ${JSON.stringify(WORKFLOWS)};\n`);
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'candidate workflow');
+  const r = sf(['cancel', jobFile]);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /^base [0-9a-f]{40} is on no branch or tag outside sf\/\*/m);
+  assert.ok(!existsSync(marker), 'the candidate workflow did not run');
+  assert.ok(!existsSync(db), 'no store was created');
+});
+
+// sweep-head-workflow review: a feature branch squash-merged and deleted leaves the cycle's base
+// only on sf/<cycle>. The refusal names what to do; the tip's mismatched workflow would not.
+test('cancel on a cycle whose base only its sf/* branch now holds uses a matching tip, else reports the ref refusal, not a workflow mismatch', () => {
+  for (const tip of ['v1', 'v2']) {
+    const { root, repo, jobFile } = scratch();
+    const flow = (name: string) => `import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};\nexport const workflow = { ...ownerCheck, name: ${JSON.stringify(name)} };\n`;
+    git(repo, 'switch', '-q', '-c', 'feat');
+    mkdirSync(join(repo, '.factory'));
+    writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ workflow: 'flow.ts' }));
+    writeFileSync(join(repo, 'flow.ts'), flow('v1'));
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'factory workflow');
+    const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+    writeFileSync(jobFile, JSON.stringify({ ...job, runtime: { writer: 'claude', reviewer: 'claude' } }));
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+    const first = sf([jobFile], env);
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    git(repo, 'switch', '-q', 'main');
+    git(repo, 'merge', '-q', '--squash', 'feat');
+    git(repo, 'commit', '-q', '-m', 'squash feat');
+    git(repo, 'branch', '-q', '-D', 'feat');
+    writeFileSync(join(repo, 'flow.ts'), flow(tip));
+    git(repo, 'commit', '-q', '--allow-empty', '-am', `workflow ${tip}`);
+    const cancelled = sf(['cancel', jobFile], env);
+    if (tip === 'v1') {
+      assert.equal(cancelled.status, 0, cancelled.stdout + cancelled.stderr);
+      assert.match(cancelled.stdout, /^Stage: CANCELLED$/m);
+    } else {
+      assert.equal(cancelled.status, 2, cancelled.stdout + cancelled.stderr);
+      assert.match(cancelled.stderr, /^base [0-9a-f]{40} is on no branch or tag outside sf\/\*/m);
+    }
+  }
+});

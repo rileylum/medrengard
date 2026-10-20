@@ -90,6 +90,7 @@ These hold under every workflow [lifecycle: evidence for a non-candidate SHA esc
 One driver, `run` in `src/run.ts`, runs any workflow that passes the check. It opens the cycle with the developer run, then acts on each stage by kind: a fix run at a commit stage, a review at a verdict stage, the checks at a command stage. It stops at a human or settled stage [run: another workflow runs from open]. It never moves a stage itself; `apply` decides from what each step records.
 
 - The job file may name a workflow module, and `runtime` picks a CLI per role [main: main.ts runs the workflow the job file names]. `ROLE_ALIASES` keeps the old keys `standard` and `adversarial` working.
+- A workflow named by the repository's `.factory/config.json` is imported only when a branch or tag outside `sf/*` contains the base, so a checked-out candidate never runs as the owner [config: a repository workflow at a base only sf/*] [main: cancel with a candidate branch checked out].
 - A role with no adapter is refused before any cycle opens [run: a role with no adapter].
 - A step that throws escalates the cycle with `reject_dispatch` naming the stage [run: a stage that throws].
 - `resume` continues a cycle from its stored stage [run: resume on a cycle left at VERIFYING].
