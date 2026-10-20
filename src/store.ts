@@ -7,7 +7,7 @@ import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, type Cycle, t
 
 // Row 0 of every cycle is the store's own "open" marker; it is not a lifecycle Event and never
 // reaches apply. Keeping it in the same table honours the one-table constraint.
-interface OpenRow {
+export interface OpenRow {
   type: 'open';
   workId: string;
   parentCycleId?: string;
@@ -15,6 +15,8 @@ interface OpenRow {
   workflow?: { name: string; hash: string };
   /** The resolved base SHA (10-b): accept and cancel read the configuration layers at it. Absent before 10-b. */
   base?: string;
+  /** The workflow itself (10-d), so a reader with no job file can replay the cycle. Trust it only if it hashes to `workflow.hash`. */
+  definition?: Workflow;
 }
 
 /**
@@ -24,7 +26,37 @@ interface OpenRow {
 export function workflowHash(w: Workflow): string {
   return createHash('sha256').update(JSON.stringify(w)).digest('hex');
 }
-const DEFAULT_RECORD = { name: defaultWorkflow.name!, hash: workflowHash(defaultWorkflow) };
+export const DEFAULT_RECORD = { name: defaultWorkflow.name!, hash: workflowHash(defaultWorkflow) };
+
+// Each row's position across the store and the time it was written (10-d), both set inside the
+// one insert statement: SQLite holds the write lock for the statement, so positions follow commit
+// order and a reader never sees N+1 before N. The time stays out of the Event body, so replay is
+// unchanged.
+const POS = '(SELECT COALESCE(MAX(pos), 0) + 1 FROM events)';
+const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
+
+/**
+ * Add `pos` and `at` to a store written before 10-d. Old rows are numbered in (cycle_id, seq)
+ * order, before every new row, and keep a null time: their real order across cycles is lost.
+ * Checked again under the write lock, so two processes upgrading one store cannot both add them.
+ */
+export function addPositions(db: DatabaseSync): void {
+  const has = () => db.prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = 'pos'").get() !== undefined;
+  if (has()) return;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (!has()) db.exec(`
+      ALTER TABLE events ADD COLUMN pos INTEGER;
+      ALTER TABLE events ADD COLUMN at TEXT;
+      UPDATE events SET pos = n FROM (SELECT cycle_id AS c, seq AS s, ROW_NUMBER() OVER (ORDER BY cycle_id, seq) AS n FROM events) WHERE cycle_id = c AND seq = s;
+      CREATE UNIQUE INDEX events_pos ON events (pos);
+    `);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
 
 /**
  * How each cycle of the work was opened: its base and workflow hash. Read without replay, so it
@@ -83,6 +115,7 @@ export class EventStore {
       CREATE UNIQUE INDEX IF NOT EXISTS events_run_outcome
         ON events (cycle_id, run_id) WHERE run_id IS NOT NULL;
     `);
+    addPositions(this.db);
   }
 
   /** Create a cycle. Returns the initial Cycle. Throws if the ID is already in use. */
@@ -102,12 +135,12 @@ export class EventStore {
     if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
     // Spec: a new cycle for the same work names its parent; an escalated cycle is waiting for one.
     if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
-    const row: OpenRow = { type: 'open', workId, parentCycleId, workflow: this.record, base };
+    const row: OpenRow = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow };
     // Fixed seq 0, not MAX+1: a second open (racing the check above on another connection)
     // must collide on the primary key and be ignored, otherwise it would land mid-log and reach
     // apply, which has no 'open' case.
     const result = this.db
-      .prepare('INSERT OR IGNORE INTO events (cycle_id, seq, type, run_id, body) VALUES (?, 0, ?, NULL, ?)')
+      .prepare(`INSERT OR IGNORE INTO events (cycle_id, seq, type, run_id, body, pos, at) VALUES (?, 0, ?, NULL, ?, ${POS}, ${NOW})`)
       .run(cycleId, row.type, JSON.stringify(row));
     if (result.changes !== 1) throw new Error(`cycle ${cycleId} already open`);
     return newCycle(cycleId, workId, parentCycleId);
@@ -167,8 +200,8 @@ export class EventStore {
   private insert(cycleId: string, type: string, runId: string | null, body: string): void {
     this.db
       .prepare(
-        `INSERT OR IGNORE INTO events (cycle_id, seq, type, run_id, body)
-         SELECT ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ? FROM events WHERE cycle_id = ?`,
+        `INSERT OR IGNORE INTO events (cycle_id, seq, type, run_id, body, pos, at)
+         SELECT ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ?, ${POS}, ${NOW} FROM events WHERE cycle_id = ?`,
       )
       .run(cycleId, type, runId, body, cycleId);
   }

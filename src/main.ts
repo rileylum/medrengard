@@ -7,7 +7,10 @@
 // command runs the job under it, and `runtime` names a CLI per role. Ticket 10-a: `runtime` names
 // any registered runtime, and `runtimes` adds extension modules to the registry.
 // Ticket 10-b: the job's settings come from four layers, read by src/config.ts.
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+// Ticket 10-d: `events <job.json | runsDir>` prints the observation stream as JSON lines, and
+// `accept` and `cancel` record who ran them (`--source`, default `owner`).
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { join, resolve } from 'node:path';
 import { loadConfig, storeOf, type JobFile } from './config.ts';
 import { oneLine, type Job } from './developer.ts';
@@ -16,8 +19,11 @@ import { ROLE_ALIASES, run, type Adapters } from './run.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
 import { EventStore, openings, SETTLED, workflowHash } from './store.ts';
+import { openStream } from './stream.ts';
 
-const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> | cancel <job.json>';
+const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> [--source <name>] | cancel <job.json> [--source <name>] | events <job.json | runsDir> [--after <seq>] [--follow]';
+/** How often `events --follow` looks for new rows: SQLite cannot notify another process. */
+const FOLLOW_MS = 500;
 
 /** One adapter per agent role, from `runtime[role]` or the alias that names the role. */
 function adaptersFor(w: Workflow, registry: Record<string, RuntimeEntry>, runtime: JobFile['runtime'], sandbox: Sandbox): Adapters {
@@ -57,7 +63,47 @@ async function decisionConfig(file: string) {
   return loadConfig(file);
 }
 
-async function accept(file: string, sha: string): Promise<number> {
+/** `--source <name>` at the end of `rest`, after `positional` words; the source is `owner` without it. */
+function withSource(rest: string[], positional: number): { args: string[]; source: string } {
+  const args = rest.slice(0, positional);
+  const flag = rest.slice(positional);
+  if (args.length !== positional) throw new Error(USAGE);
+  if (flag.length === 0) return { args, source: 'owner' };
+  if (flag.length !== 2 || flag[0] !== '--source') throw new Error(USAGE);
+  // One line, so a source cannot forge a second line in anything that prints it.
+  if (!/^[^\r\n\u2028\u2029]+$/.test(flag[1]!)) throw new Error('--source must be a non-empty single line');
+  return { args, source: flag[1]! };
+}
+
+async function events(rest: string[]): Promise<number> {
+  const [target, ...flags] = rest;
+  let after = 0;
+  let follow = false;
+  for (let i = 0; i < flags.length; i++) {
+    if (flags[i] === '--follow') follow = true;
+    else if (flags[i] === '--after' && /^\d+$/.test(flags[i + 1] ?? '')) after = Number(flags[++i]);
+    else throw new Error(USAGE);
+  }
+  if (!target) throw new Error(USAGE);
+  const dir = existsSync(target) && statSync(target).isDirectory();
+  // A job file names one work and the workflow its older cycles need; a runs directory names neither.
+  const { runsDir, workId, workflow } = dir ? { runsDir: target, workId: undefined, workflow: undefined } : { ...(await decisionConfig(target)), workId: storeOf(target).workId };
+  const db = join(runsDir, 'events.sqlite');
+  if (!existsSync(db) && !follow) throw new Error(`no event store at ${db}`);
+  while (!existsSync(db)) await sleep(FOLLOW_MS);
+  const stream = openStream(db, { workId, after, workflow });
+  try {
+    for (;;) {
+      for (const line of stream.poll()) process.stdout.write(`${JSON.stringify(line)}\n`);
+      if (!follow) return 0;
+      await sleep(FOLLOW_MS);
+    }
+  } finally {
+    stream.close();
+  }
+}
+
+async function accept(file: string, sha: string, source: string): Promise<number> {
   const { path, spec, repo, runsDir, workflow } = await decisionConfig(file);
   const store = existingStore(runsDir, workflow);
   try {
@@ -68,7 +114,7 @@ async function accept(file: string, sha: string): Promise<number> {
     // The full SHA only: the owner accepts the exact commit the reviews were bound to.
     const head = cycle.candidate!.head;
     if (sha !== head) throw new Error(`${sha} is not the candidate head ${head} of cycle ${cycle.cycleId} (${path})`);
-    const after = store.append(cycle.cycleId, { type: 'accept', head });
+    const after = store.append(cycle.cycleId, { type: 'accept', head, source });
     console.log(`Cycle: ${after.cycleId}`);
     console.log(`Stage: ${after.stage}`);
     if (after.stage !== 'ACCEPTED') return 1;
@@ -81,7 +127,7 @@ async function accept(file: string, sha: string): Promise<number> {
   }
 }
 
-async function cancel(file: string): Promise<number> {
+async function cancel(file: string, source: string): Promise<number> {
   const { spec, runsDir, workflow } = await decisionConfig(file);
   const store = existingStore(runsDir, workflow);
   try {
@@ -93,7 +139,7 @@ async function cancel(file: string): Promise<number> {
     if (!store || targets.length === 0) throw new Error(`nothing to cancel for work ${spec.workId} in ${runsDir}`);
     let code = 0;
     for (const { cycleId } of targets) {
-      const after = store.append(cycleId, { type: 'cancel' });
+      const after = store.append(cycleId, { type: 'cancel', source });
       console.log(`Cycle: ${cycleId}`);
       console.log(`Stage: ${after.stage}`);
       if (after.stage !== 'CANCELLED') code = 1;
@@ -107,13 +153,14 @@ async function cancel(file: string): Promise<number> {
 async function main(argv: string[]): Promise<number> {
   const [first, ...rest] = argv;
   if (first === 'accept') {
-    if (rest.length !== 2) throw new Error(USAGE);
-    return accept(rest[0]!, rest[1]!);
+    const { args, source } = withSource(rest, 2);
+    return accept(args[0]!, args[1]!, source);
   }
   if (first === 'cancel') {
-    if (rest.length !== 1) throw new Error(USAGE);
-    return cancel(rest[0]!);
+    const { args, source } = withSource(rest, 1);
+    return cancel(args[0]!, source);
   }
+  if (first === 'events') return events(rest);
   // Extra words are refused, not ignored: `job.json cancel` would otherwise start a paid run.
   if (!first || rest.length !== 0) throw new Error(USAGE);
   const { path, spec, repo, runsDir, workflow, registry, sandbox, workflowDir, grants } = await loadConfig(first);
