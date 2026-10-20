@@ -85,3 +85,45 @@ test('a grant stage on a head no reviewer passed escalates with nothing run (A-0
   assert.ok(!existsSync(join(runsDir, 'evidence', head, 'MERGE')));
   store.close();
 });
+
+/** At MERGE on a reviewed head. */
+async function atMerge(script: string) {
+  const s = await atReview(reviewed(script));
+  assert.equal(s.store.append(s.cycleId, { type: 'verdict', runId: 'r1', head: s.head, verdict: 'PASS' }).stage, 'MERGE');
+  return s;
+}
+
+for (const [what, script, found] of [
+  ['a missing', '', /no head file/],
+  ['a different', `fs.writeFileSync(r.outputDir + '/head', '${'a'.repeat(40)}\\n');`, new RegExp(`head file names "${'a'.repeat(40)}"`)],
+  // Followed, a symlink would have the controller read any file the owner can.
+  ['a symlink as', `fs.writeFileSync(r.outputDir + '/real', r.head); fs.symlinkSync(r.outputDir + '/real', r.outputDir + '/head');`, /outputDir\/head is not a regular file/],
+] as const) {
+  test(`${what} output/head records a FAIL head check, with what was found, and escalates (A-083 Q4)`, async () => {
+    const { store, job, cycleId, head, opts } = await atMerge(script);
+    const r = await verify(store, cycleId, job, opts);
+    assert.equal(r.cycle.stage, 'ESCALATED');
+    const v = r.cycle.history.at(-1)!.event;
+    assert.deepEqual(v.type === 'verification' && v.checks, [{ name: 'merge', result: 'PASS' }, { name: 'head', result: 'FAIL' }]);
+    const stdout = readFileSync(join(r.evidenceDir, 'head.stdout'), 'utf8');
+    assert.match(stdout, found);
+    assert.match(stdout, new RegExp(`candidate is ${head}`));
+    store.close();
+  });
+}
+
+test('the right output/head passes, and a printed token reaches the evidence and the next reviewer only as [grant github]', async () => {
+  const { store, runsDir, job, cycleId, head, opts } = await atMerge(`${WRITES_HEAD} console.log('token ' + process.env.GH_TOKEN); console.error(process.env.GH_TOKEN + '!');`);
+  const r = await verify(store, cycleId, job, opts);
+  assert.equal(r.cycle.stage, 'AFTER', r.cycle.escalation);
+  assert.equal(readFileSync(join(r.evidenceDir, 'merge.stdout'), 'utf8'), 'token [grant github]\n');
+  assert.equal(readFileSync(join(r.evidenceDir, 'merge.stderr'), 'utf8'), '[grant github]!\n');
+  assert.ok(!existsSync(join(r.evidenceDir, 'head.stdout')), 'a passing head check leaves no evidence, as the tree check');
+  const reviewer = fakeAdapter({ outcome: { status: 'completed', claim: { head, verdict: 'PASS', findings: [] } } });
+  const c = await review(store, reviewer, cycleId, job, { deadlineMs: 20_000, runsDir });
+  assert.equal(c.stage, 'ACCEPTED', c.escalation);
+  const prompt = reviewer.requests[0]!.prompt;
+  assert.match(prompt, /EVIDENCE MERGE\/merge\.stdout ====\ntoken \[grant github\]$/m);
+  assert.ok(!prompt.includes(TOKEN));
+  store.close();
+});

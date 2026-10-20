@@ -15,7 +15,7 @@ import type { Job } from './developer.ts';
 import { bounded, git, stopped } from './git.ts';
 import type { CommandRequest } from './kits/request.ts';
 import type { Grant } from './config.ts';
-import { FILE_STEM, TREE_CHECK, fileArgs, type Command, type Cycle, type Event, type StageDef } from './lifecycle.ts';
+import { FILE_STEM, HEAD_CHECK, TREE_CHECK, fileArgs, type Command, type Cycle, type Event, type StageDef } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
 import { checkSandbox, confines, executables, reachable, restoreAccess, spawnEnv, wrap, type Policy, type Sandbox } from './sandbox.ts';
@@ -188,6 +188,14 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     const named = fileArgs(check);
     results.push({ name: check.name, result: r.result, ...(named.length ? { files: Object.fromEntries(named.map((f) => [f, hashes.get(f)!])) } : {}) });
   }
+  // The rule that makes a wrong merge visible: the stage says which head it acted on (A-074).
+  const wrongHead = grants.length > 0 ? headFile(join(outputDir, 'head'), head) : '';
+  if (wrongHead) {
+    writeFileSync(join(evidenceDir, `${HEAD_CHECK}.stdout`), wrongHead);
+    writeFileSync(join(evidenceDir, `${HEAD_CHECK}.stderr`), '');
+    writeFileSync(join(evidenceDir, `${HEAD_CHECK}.exit`), 'wrong head\n');
+    results.push({ name: HEAD_CHECK, result: 'FAIL' });
+  }
   let dirty = treeDiff(job.repo, worktree, head, opts.deadlineMs);
   // The reviewer reads this directory: a planted .git with its own config, or a symlink to the
   // owner's files, must not be there when it does (08-a adversarial). The full ls-tree format, not
@@ -207,6 +215,26 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   }
   const held = grants.length > 0 ? { grants: grants.map(([name]) => name) } : {};
   return { cycle: store.append(cycleId, { type: 'verification', head, checks: results, ...held }), worktree, evidenceDir };
+}
+
+/**
+ * Empty when `file` holds `head` and one optional newline; otherwise what was found, for the owner.
+ * The command wrote it: a symlink, a FIFO or a locked file must not make the controller read
+ * elsewhere, block or throw.
+ */
+function headFile(file: string, head: string): string {
+  const st = lstatSync(file, { throwIfNoEntry: false });
+  let found: string;
+  if (!st) found = 'no head file in outputDir';
+  else if (!st.isFile()) found = 'outputDir/head is not a regular file';
+  else if (st.size > 1024) found = `outputDir/head is ${st.size} bytes`;
+  else {
+    restoreAccess(file);
+    const text = readFileSync(file, 'utf8').replace(/\n$/, '');
+    if (text === head) return '';
+    found = `head file names ${JSON.stringify(text)}`;
+  }
+  return `${found}; candidate is ${head}\n`;
 }
 
 /**
