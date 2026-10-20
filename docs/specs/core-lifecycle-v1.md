@@ -87,10 +87,12 @@ These hold under every workflow [lifecycle: evidence for a non-candidate SHA esc
 
 ## Driver
 
-One driver, `run` in `src/run.ts`, runs any workflow that passes the check. It opens the cycle with the developer run, then acts on each stage by kind: a fix run at a commit stage, a review at a verdict stage, the checks at a command stage. It stops at a human or settled stage [run: another workflow runs from open]. It never moves a stage itself; `apply` decides from what each step records.
+One driver, `run` in `src/run.ts`, runs any workflow that passes the check, within the limits below. It opens the cycle with the developer run, then acts on each stage by kind: a fix run at a commit stage, a review at a verdict stage, the checks at a command stage. It stops at a human or settled stage [run: another workflow runs from open]. It never moves a stage itself; `apply` decides from what each step records.
 
 - The job file may name a workflow module, and `runtime` picks a CLI per role [main: main.ts runs the workflow the job file names]. `ROLE_ALIASES` keeps the old keys `standard` and `adversarial` working.
 - A role with no adapter is refused before any cycle opens [run: a role with no adapter].
+- `run` and `resume` share one preflight. Before any cycle opens or any step runs, it refuses what a later step would refuse only after a paid run: a sandbox that cannot start [run: a sandbox that cannot start]; a file argument with no `workflowDir` [run: a workflow whose command names a file]; a grant not given [run: run refuses a grant]; a job check name `verify` would refuse [run: run refuses a job check verify would refuse]; a check program, named without a slash, that is not found or lies outside the sandbox [run: run refuses a check program]. `resume` refuses the same [run: resume refuses what run refuses]. `verify` keeps its own checks.
+- The driver cannot yet run every shape `checkWorkflow` passes. Its preflight refuses an edge into a commit stage other than a review stage's `FAIL`, because a fix run takes its findings from that verdict; and a review stage that a commit stage reaches with no command stage between, because a reviewer reads the checkout `verify` made of the candidate [run: run refuses a workflow shape the driver cannot run]. These are limits of today's steps, not engine rules: `checkWorkflow` passes them and `apply` runs them. A check's `FAIL` back to the developer needs a fix run that reads the failed checks.
 - A step that throws escalates the cycle with `reject_dispatch` naming the stage [run: a stage that throws].
 - `resume` continues a cycle from its stored stage [run: resume on a cycle left at VERIFYING].
 

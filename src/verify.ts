@@ -82,6 +82,32 @@ export function stageGrants(stage: string, def: StageDef | undefined, grants: Re
   return given;
 }
 
+/** Throws for a check list verify cannot write evidence for. `own`: a stage's run, which may hold `{ file }` arguments. */
+export function checkCommands(checks: Command[], own: boolean): void {
+  const seen = new Set<string>();
+  for (const c of checks) {
+    if (typeof c.name !== 'string' || !FILE_STEM.test(c.name)) throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
+    if (c.name === TREE_CHECK) throw new Error(`check name ${TREE_CHECK} is reserved for the controller's own tracked-tree check`);
+    if (seen.has(c.name)) throw new Error(`check name ${c.name} is declared twice`);
+    // The repository layer may set checks; a file argument is the workflow's, and only in run.
+    if (!own && !(Array.isArray(c.command) && c.command.every((a) => typeof a === 'string'))) throw new Error(`check ${c.name}: every argument must be a string`);
+    seen.add(c.name);
+  }
+}
+
+/**
+ * Why `command` cannot start inside the sandbox, or undefined when it can. run's preflight asks
+ * with a policy that binds no stage folder, so a program found only under runsDir would be refused
+ * there and found here.
+ */
+export function missingProgram(command: string, sandbox: Sandbox, policy: Policy): string | undefined {
+  const found = executables(command, policy.cwd);
+  if (!found.length) return `${command || '(empty command)'} not found`;
+  // Inside, PATH lookup skips directories that are not bound, so any reachable match will run.
+  if (!found.some((p) => reachable(sandbox, policy, p))) return `${command} resolves to ${found[0]}, outside the sandbox; add its directory to sandbox.read`;
+  return undefined;
+}
+
 /**
  * A grant stage runs only on a reviewed head (A-074, A-083 Q3): each stage's last verdict,
  * verification or accept names the candidate, and at least one PASS verdict does. A workflow can
@@ -105,15 +131,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   const def = store.workflow.stages[cycle.stage];
   if (def?.kind !== 'command' || !cycle.candidate) throw new Error(`verify on a cycle in ${cycle.stage}, expected a command stage`);
   const checks: Command[] = def.run ?? job.checks ?? [];
-  const seen = new Set<string>();
-  for (const c of checks) {
-    if (typeof c.name !== 'string' || !FILE_STEM.test(c.name)) throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
-    if (c.name === TREE_CHECK) throw new Error(`check name ${TREE_CHECK} is reserved for the controller's own tracked-tree check`);
-    if (seen.has(c.name)) throw new Error(`check name ${c.name} is declared twice`);
-    // The repository layer may set checks; a file argument is the workflow's, and only in run.
-    if (!def.run && !(Array.isArray(c.command) && c.command.every((a) => typeof a === 'string'))) throw new Error(`check ${c.name}: every argument must be a string`);
-    seen.add(c.name);
-  }
+  // run's preflight made this check too; the job is the caller's object and may have changed since.
+  checkCommands(checks, def.run !== undefined);
   // Before anything is written: a missing file is the owner's setup, not a FAIL of the candidate.
   const files = [...new Set(checks.flatMap(fileArgs))];
   for (const f of files) {
@@ -380,12 +399,8 @@ async function runCheck(argv: string[], policy: Policy, isolation: 'cgroup' | 'p
   const [command = '', ...args] = argv;
   // Resolved here, not by the spawn: under a scope systemd-run does the lookup and exits 1 on a
   // missing binary, which would read as FAIL. MISSING must mean the same under both isolations.
-  const found = executables(command, cwd);
-  if (!found.length) return { stdout: '', stderr: '', result: 'MISSING', exit: `missing: ${command || '(empty command)'} not found` };
-  // Inside, PATH lookup skips directories that are not bound, so any reachable match will run.
-  if (!found.some((p) => reachable(sandbox, policy, p))) {
-    return { stdout: '', stderr: '', result: 'MISSING', exit: `missing: ${command} resolves to ${found[0]}, outside the sandbox; add its directory to sandbox.read` };
-  }
+  const why = missingProgram(command, sandbox, policy);
+  if (why) return { stdout: '', stderr: '', result: 'MISSING', exit: `missing: ${why}` };
   const [wrapped, wrappedArgs] = wrap(sandbox, policy, command, args);
   const run = spawnRuntime({
     command: wrapped, args: wrappedArgs, prompt: '', cwd,

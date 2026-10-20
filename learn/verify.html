@@ -45,7 +45,7 @@
       <tr><td><span class="pill MISSING">MISSING</span></td><td>Its binary is not on PATH, or it resolves outside what the <a class="w" href="words.html#sandbox">sandbox</a> can see.</td><td><code>missing: eslint not found</code></td></tr>
     </tbody>
   </table>
-  <p>MISSING is evidence that does not exist; FAIL is evidence that says no. Either takes the stage's FAIL transition, but you learn different things: MISSING says install a tool or add its directory to <code>sandbox.read</code>; FAIL says the candidate is wrong. The factory looks up the binary itself before it starts anything, so MISSING means the same under every isolation.</p>
+  <p>MISSING is evidence that does not exist; FAIL is evidence that says no. Either takes the stage's FAIL transition, but you learn different things: MISSING says install a tool or add its directory to <code>sandbox.read</code>; FAIL says the candidate is wrong. The factory looks up the binary itself before it starts anything, so MISSING means the same under every isolation. A program named without a slash is looked up once more before the developer starts, and <code>run</code> refuses the job if it is missing, so MISSING at this stage is mostly a path such as <code>./gradlew</code> that the candidate lacks.</p>
   <p>All commands run, in order, even after one fails. The evidence is for you and the reviewers, who want the whole picture.</p>
 </section>
 

@@ -6,11 +6,11 @@
 import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { DEFAULT_RUNS_DIR, develop, fix, type DeveloperAdapter, type Job } from './developer.ts';
-import { fileArgs, type Cycle, type Role, type Workflow } from './lifecycle.ts';
+import { fileArgs, type Cycle, type Role, type Stage, type Workflow } from './lifecycle.ts';
 import { review } from './review.ts';
 import { checkSandbox, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
-import { noWorkflowDir, stageGrants, verify, type VerifyOptions } from './verify.ts';
+import { checkCommands, missingProgram, noWorkflowDir, stageGrants, verify, type VerifyOptions } from './verify.ts';
 
 /** By role. A commit role may be a factory per worktree; a verdict role must be an Adapter. */
 export type Adapters = Record<Role, DeveloperAdapter>;
@@ -49,14 +49,7 @@ export interface RunResult {
 
 /** Drive one job from open to a stage the loop cannot leave. Never advances a stage itself. */
 export async function run(store: EventStore, adapters: Adapters, job: Job, opts: RunOptions): Promise<RunResult> {
-  // Before develop: a sandbox that cannot start would fail verification after a paid developer run.
-  checkSandbox(opts.sandbox ?? { backend: 'bwrap' });
-  // Before develop too: verify would refuse it, but only after a paid developer run.
-  if (opts.workflowDir === undefined)
-    for (const [name, def] of Object.entries(store.workflow.stages))
-      for (const file of def.kind === 'command' ? (def.run ?? []).flatMap(fileArgs) : []) throw new Error(noWorkflowDir(name, file));
-  for (const [name, def] of Object.entries(store.workflow.stages)) stageGrants(name, def, opts.grants, opts.sandbox);
-  const roles = byRole(store.workflow, adapters);
+  const roles = preflight(store.workflow, adapters, job, opts);
   const start = store.workflow.stages[store.workflow.start];
   // checkWorkflow allows a start stage with no role; develop refuses it before using the adapter.
   const developer = roles[start?.kind === 'agent' ? start.role : ''] as DeveloperAdapter;
@@ -71,11 +64,73 @@ export async function resume(store: EventStore, cycleId: string, adapters: Adapt
   if (!cycle) throw new Error(`cycle ${cycleId} not open`);
   // Nothing has run, so there is no clone to continue from; recovery (row 11) owns this case.
   if (cycle.stage === 'QUEUED') throw new Error(`cycle ${cycleId} is QUEUED: no run started; cancel it and run the job again`);
-  checkSandbox(opts.sandbox ?? { backend: 'bwrap' });
-  const roles = byRole(store.workflow, adapters);
+  const roles = preflight(store.workflow, adapters, job, opts);
   // Where develop put them.
   const worktree = join(resolve(opts.runsDir ?? DEFAULT_RUNS_DIR), cycleId);
   return drive(store, cycle, roles, job, opts, worktree, `sf/${cycleId}`);
+}
+
+/**
+ * Throws for what a later step would refuse only after a paid run: a sandbox that cannot start,
+ * a file argument with no workflowDir, a grant not given, a check verify would refuse or whose
+ * program the sandbox cannot reach, a workflow shape the driver cannot run, a role with no
+ * adapter. Returns the adapters by role.
+ */
+function preflight(w: Workflow, adapters: Adapters, job: Job, opts: RunOptions): Adapters {
+  const sandbox = opts.sandbox ?? { backend: 'bwrap' };
+  checkSandbox(sandbox);
+  const limits = driverLimits(w);
+  if (limits.length > 0) throw new Error(`the driver cannot run workflow ${w.name ?? '(unnamed)'}: ${limits.join('; ')}`);
+  // Only the paths every stage binds: the stage's own folders do not exist yet.
+  const policy = { cwd: '/', write: [], read: [], network: false };
+  for (const [name, def] of Object.entries(w.stages)) {
+    if (def.kind !== 'command') continue;
+    if (opts.workflowDir === undefined) for (const file of (def.run ?? []).flatMap(fileArgs)) throw new Error(noWorkflowDir(name, file));
+    stageGrants(name, def, opts.grants, opts.sandbox);
+    const checks = def.run ?? job.checks ?? [];
+    checkCommands(checks, def.run !== undefined);
+    for (const { name: check, command: [program] } of checks) {
+      // A path names a file in the candidate, which does not exist before the developer run.
+      if (typeof program !== 'string' || program.includes('/')) continue;
+      const why = missingProgram(program, sandbox, policy);
+      if (why) throw new Error(`stage ${name} check ${check}: ${why}`);
+    }
+  }
+  return byRole(w, adapters);
+}
+
+/**
+ * Shapes checkWorkflow accepts, which apply runs, but which today's steps cannot: each would
+ * throw only after a paid developer run. Limits of this driver, not engine rules, so they live
+ * here; when a step learns a case, delete its rule.
+ */
+function driverLimits(w: Workflow): string[] {
+  const kind = (s: Stage) => {
+    const d = w.stages[s];
+    return d?.kind === 'agent' ? d.produces : d?.kind;
+  };
+  const reasons: string[] = [];
+  for (const [name, def] of Object.entries(w.stages))
+    for (const [outcome, to] of Object.entries(def.transitions))
+      // fix takes its findings from the last verdict, which must be a FAIL for the candidate.
+      // A bounded fix loop on red checks (harnesses finding 3) needs fix to read the verification.
+      if (kind(to) === 'commit' && !(outcome === 'FAIL' && kind(name) === 'verdict'))
+        reasons.push(`stage ${name} ${outcome} enters commit stage ${to}, but a fix run needs a review's FAIL findings`);
+  // review reads the checkout and evidence verify made of the candidate, so after each commit a
+  // command stage must come before any review.
+  for (const [from] of Object.entries(w.stages).filter(([s]) => kind(s) === 'commit')) {
+    const seen = new Set<Stage>();
+    const walk = (s: Stage) => {
+      for (const to of Object.values(w.stages[s]!.transitions)) {
+        if (seen.has(to) || !w.stages[to] || kind(to) === 'command' || kind(to) === 'commit') continue;
+        seen.add(to);
+        if (kind(to) === 'verdict') reasons.push(`review stage ${to} follows commit stage ${from} with no command stage between`);
+        walk(to);
+      }
+    };
+    walk(from);
+  }
+  return reasons;
 }
 
 /** Adapters keyed by role, aliases renamed; throws for an agent stage whose role has none. */
