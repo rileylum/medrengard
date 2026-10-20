@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-084 — 2026-10-20 — 10-e: owner-run tests waived; run the reviews
+
+Owner, asked to run `npm test` on `231163d` or waive it, and to run or waive the reviews: “run the reviews, don't worry about the tests (though we should do a live run soon)”.
+
+Effect: 10-e carries no owner-run `npm test`; the implementer's run on `231163d` (374 tests, 350 pass, 0 fail) is labelled not independent in the review material. Standard review 1 runs on `231163d`, then the rest of the budget as `docs/workflow.md` sets it. A live run of the factory is wanted soon; not yet scheduled.
+
 ### A-083 — 2026-10-20 — 10-e READY; grants design approved
 
 Owner, after reading the 10-e ticket and [design/2026-10-20-grants.md](design/2026-10-20-grants.md) with its five questions: “take all”.

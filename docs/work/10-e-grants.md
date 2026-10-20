@@ -32,3 +32,4 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
   - The head gate counts every verdict, verification and `accept` in the history, including a redelivered one recorded as ignored. A late duplicate of an old verdict therefore escalates. That is conservative, and was not tested.
   - `output/head` must be a regular file of at most 1 KiB. A symlink, a FIFO or a larger file fails the `head` check without being read. Owner access is restored before reading, in case the command locked the file. A passing head check leaves no `head.*` evidence, as the tree check does.
   - For a grant stage, the kit adds a REVIEW stage before it and appends a PASS verdict, so the head gate passes. The new head case skips for a stage with no grant, so every existing kit now reports one more skip.
+- 2026-10-20 — owner: “run the reviews, don't worry about the tests (though we should do a live run soon)” (A-084). Owner-run `npm test` waived; standard 1 started on `231163d`.
