@@ -365,3 +365,30 @@ test('under another workflow, its commit role claims and its review role records
   assert.equal(reviewed.stage, 'OWNER', reviewed.escalation);
   store.close();
 });
+
+// sweep-cancel-aborts: the once-a-second watch for a settled cycle runs on a timer, where a throw
+// would crash the process and leave the CLI running. A store that cannot be read skips a tick.
+test('a store that cannot be read during the watch skips that tick; the run is aborted once the cancel can be read', async () => {
+  const store = fresh();
+  const real = store.load.bind(store);
+  let broken = false;
+  store.load = (id) => { if (broken) throw new Error('database is locked'); return real(id); };
+  setTimeout(() => {
+    broken = true;
+    const owner = new EventStore(join(dir, `${n - 1}.sqlite`));
+    owner.append('c1', { type: 'cancel', source: 'owner' });
+    owner.close();
+  }, 100);
+  // Past the first tick (1 s), before the second.
+  setTimeout(() => { broken = false; }, 1500);
+  const adapter = fakeAdapter('hang');
+  const t0 = Date.now();
+  const c = await execute(store, 'c1', adapter, { ...req, role: 'developer' }, { deadlineMs: 10_000, base: 'B1' });
+  const ms = Date.now() - t0;
+  assert.ok(ms >= 1500 && ms < 5000, `aborted after ${ms} ms`);
+  assert.equal(adapter.aborted, 1);
+  assert.equal(c.stage, 'CANCELLED');
+  assert.deepEqual(store.events('c1').map((e) => e.type), ['claim', 'cancel', 'run_failed']);
+  assert.equal((store.events('c1').at(-1) as { reason: string }).reason, 'cancelled');
+  store.close();
+});
