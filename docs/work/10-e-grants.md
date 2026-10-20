@@ -24,3 +24,4 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
 
 ## Log
 - 2026-10-20 — drafted on `feat/10-e-grants` (A-074). Not READY until the owner says go; no code before the design note is approved.
+- 2026-10-20 — owner: “take all” (A-083). READY; design note approved with Q1 to Q5 as recommended.

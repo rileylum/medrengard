@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-083 — 2026-10-20 — 10-e READY; grants design approved
+
+Owner, after reading the 10-e ticket and [design/2026-10-20-grants.md](design/2026-10-20-grants.md) with its five questions: “take all”.
+
+Effect: 10-e is READY, and the design note is approved with Q1 to Q5 as recommended. Q1: a grant is `{ variable, file }` in the personal or job layer; the value comes from the file only and reaches the stage as that variable, through the spawn environment, never bwrap's argv. Q2: a workflow with a grant stage is refused under `sandbox.backend: none`. Q3: a grant stage runs only when each stage's last verdict, verification and `accept` is for the current head and at least one PASS verdict is for it; otherwise the cycle escalates before anything runs. Q4: a grant stage needs `run` and `network: true`, its FAIL can only escalate, and a missing or wrong `output/head` is a reserved `head` check that FAILs. Q5: a repository workflow may not ask for grants. These refine A-074's grants bullet; "an environment variable or a file" is read as where the value comes from.
+
 ### A-082 — 2026-10-20 — 10-c: fix the adversarial findings and the standard 2 minors, then merge without another review
 
 Owner, after 10-c's adversarial FAIL on `69f402e` and the recommendation to fix on the branch and merge without another review, as for 10-b (A-080): “fix and merge without”, then, asked what “without” meant: “merge with out another review”.
