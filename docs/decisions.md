@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-132 — 2026-10-21 — 11-a2: the adversarial minor fixed on the branch; the race parked against 11-d
+
+Asked, after 11-a2's three reviews passed (standard 1 on `28de902`, standard 2 and adversarial on `80c321d`): (1) the adversarial minor, where `preflight` passes, the `accept` is recorded, and `verify` then refuses the grant stage before anything runs (an empty grant file, a missing `{ file }` argument, no PASS verdict for the head): fix on the branch, or a fix ticket; (2) the race between two overlapping `accept` commands: park it against 11-d. The session recommended fixing (1) on the branch, tests first, by moving `verify`'s file and empty-grant checks into `preflight` and running `headGate` on the predicted cycle, and parking (2) with the fix all three reviewers named. Owner: “Fix the minor and park the race”.
+
+Effect: (1) is fixed on `feat/11-a2-owner-drives`. The review budget is spent (A-125); the fix has the implementer's tests and mutants only. (2) is in `docs/work/parked.md` against 11-d: the store refuses an append when the cycle's stage, or its last sequence number, is not the one the writer loaded, checked in the same write; `commandId` alone does not close it.
+
 ### A-131 — 2026-10-21 — 11-a2's design approved; READY at Trust tier
 
 Asked: approve the design note for 11-a2 (`docs/design/2026-10-21-owner-drives.md`): `decideAndDrive` in `src/run.ts` works out with `apply` the stage an owner's event leads to; only when the loop runs that stage does it build adapters and run `preflight`, before the event is recorded; the default workflow's `accept` loads no runtime. Rejected: a separate `resume` command, recording before `preflight`, and `preflight` inside `acceptCycle`. Tier Trust (2+1 through `claude -p`). Owner: “go approved”.
