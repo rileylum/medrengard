@@ -152,9 +152,6 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // and rmSync cannot clear a directory it cannot read (08-b standard review 1).
   if (existsSync(worktree)) restoreAccess(worktree);
   rmSync(worktree, { recursive: true, force: true });
-  // A lock beside the private index is a crashed or interrupted verify's, and would fail every
-  // later verify of this cycle with "File exists". The index itself can stay: read-tree rebuilds it.
-  rmSync(`${worktree}.index.lock`, { force: true });
   // Before 08-a the checkout was a registered worktree; prune drops a registration left behind.
   git(job.repo, 'worktree', 'prune');
   mkdirSync(worktree, { recursive: true });
@@ -300,6 +297,9 @@ function headFile(file: string, head: string, redact: (text: string) => string):
 function checkoutGit(repo: string, checkout: string, timeoutMs: number) {
   const gitDir = git(repo, 'rev-parse', '--absolute-git-dir');
   const index = `${checkout}.index`;
+  // A lock found now is left by a verify or review that crashed or was SIGKILLed (it is no live
+  // call's, as below), and would fail every later one of this cycle with "File exists".
+  rmSync(`${index}.lock`, { force: true });
   const env = { ...process.env, GIT_INDEX_FILE: index, GIT_ATTR_NOSYSTEM: '1' };
   // cwd is the repository: --work-tree names the checkout, and a checkout a check locked cannot be
   // a working directory at all (08-a adversarial).

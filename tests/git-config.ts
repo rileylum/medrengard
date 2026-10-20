@@ -6,10 +6,11 @@ export async function withGitConfig<T>(config: Record<string, string>, fn: () =>
   const entries = Object.entries(config);
   const env: Record<string, string> = { GIT_CONFIG_COUNT: String(entries.length) };
   entries.forEach(([k, v], i) => { env[`GIT_CONFIG_KEY_${i}`] = k; env[`GIT_CONFIG_VALUE_${i}`] = v; });
+  const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
   Object.assign(process.env, env);
   try {
     return await fn();
   } finally {
-    for (const k of Object.keys(env)) delete process.env[k];
+    for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   }
 }

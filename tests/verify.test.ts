@@ -411,11 +411,16 @@ test('a filter the candidate\'s .gitattributes or the owner\'s attributes file n
   }
 });
 
-test('an index lock left by an interrupted verify does not stop the next verify of the cycle (sweep-git-hardening)', async () => {
+test('an index lock left by a crashed verify or review does not stop the next verify or review of the cycle (sweep-git-hardening)', async () => {
   const { store, runsDir, job, cycle } = await verifying([sh('ok', 'true')]);
-  writeFileSync(join(runsDir, `${cycle.cycleId}-verify.index.lock`), '');
+  const lock = join(runsDir, `${cycle.cycleId}-verify.index.lock`);
+  writeFileSync(lock, '');
   const { cycle: c } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
   assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  // review compares the checkout through the same index before it starts the reviewer.
+  writeFileSync(lock, '');
+  const reviewed = await review(store, fakeAdapter({ outcome: { status: 'completed', claim: { head: c.candidate!.head, verdict: 'PASS', findings: [] } } }), cycle.cycleId, job, { deadlineMs: 20_000, runsDir });
+  assert.equal(reviewed.stage, 'ADVERSARIAL_REVIEW', reviewed.escalation);
   store.close();
 });
 
