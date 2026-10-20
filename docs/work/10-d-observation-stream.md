@@ -33,3 +33,8 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
   - A pre-10-d controller writing to an upgraded store would leave `pos` null, and the reader would skip that row. One controller version runs on this machine, so this is noted, not handled.
   - `observe` does not catch: an observer that throws stops it, and it rejects with the error.
 - 2026-10-20 — owner: “run the reviews” (A-089). Standard 1 started on `05b550a`.
+- 2026-10-20 — standard 1 on `05b550a`: PASS, two minors, both reproduced by the reviewer:
+  - A store file that exists but has no `events` table yet makes `openStream` throw `no such table: events`. `events --follow` and `observe` wait only for the file, so a poll that lands between the writer's open and its `CREATE TABLE` exits 2. The reviewer reproduced it with an empty `events.sqlite`.
+  - `SHAPE` checks that `source` is a non-empty string, not a single line, so `store.append` stores `source: 'a\nb'`. Only the CLI refuses it.
+
+  Notes: the reviewer's independent `npm test` matched (412 tests, 388 pass, 0 fail). No path was found that loses, reorders or misnumbers an event, or changes replay. The reviewer confirmed the race test catches the missing re-check. The v2 test's "replays unchanged" compares two opens after the upgrade; the stream tests pin the stages instead. The kit's refused-command case is only as strong as the observer's own cases. Adversarial started on `05b550a`; the two minors wait for its verdict.
