@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-100 — 2026-10-20 — sweep-reviewer-instructions: merged; reverses 06-b's "read from the candidate commit"
+
+Owner, after asking whether the planned role prompts and skills work (O-013) would overwrite this, and hearing that it changes the core's side (where instructions are read from, and a delimiter line), not the role's judgement text: “Okay merge”.
+
+Effect: `feat/sweep-reviewer-instructions` merges into main locally with `--no-ff`. Reviewers get each repository instruction file from the base; when the candidate changes one, the section header says so and points to CHANGED PATHS and the DIFF. This reverses 06-b's "read from the candidate commit", which gave no reason. The review contract hash changes. O-013 gains the constraint that repository-supplied instructions, prompts and skills are read from the base. The parked `CLAUDE.md` discovery by the claude reviewer (06-c note) is now the main way around this rule. One fresh in-session review covers the branch (PASS); the `claude -p` reviews and the adversarial review did not run. Merging main into the branch conflicted in the spec's verify and review bullets; both sides kept. The owner did not run `npm test`; the session's run on the branch with main merged in (441 tests, 417 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
 ### A-099 — 2026-10-20 — sweep-git-hardening: merged; the stored-bytes trade-off logged
 
 Owner, after the walkthrough: “Okay this is good, but I'd want the tradeoff logged - probably as a limitation in the README if not elsewhere as well. It might be something we need to revisit”.

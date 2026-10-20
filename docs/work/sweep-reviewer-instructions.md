@@ -80,3 +80,4 @@ Verification: `npm test` and `npm run test:learn`, run by the owner on the SHA.
   - (nit) The "hash differs from 06-d" test is deleted. It passed on any change. The golden files and the review tests' exact header strings guard the wording.
   - For the owner: the parked `CLAUDE.md` item now matters more (a line was added).
 - `npm test` (implementer's run, not independent): tests 421, pass 397, fail 0, skipped 19. `npm run test:learn`: 6 pass, 0 fail.
+- 2026-10-20 — owner: “Okay merge” (A-100), after asking whether O-013's prompt work would overwrite this. O-013 now carries the base-only rule. Main merged into the branch; the spec's verify and review bullets conflicted, both sides kept. Session's run, not independent: `npm test` 441 tests, 417 pass, 0 fail; `test:learn` 6 pass. Merged into main with `--no-ff`.
