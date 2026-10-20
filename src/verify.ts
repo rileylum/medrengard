@@ -116,6 +116,14 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   }
   const grants = stageGrants(cycle.stage, def, opts.grants, opts.sandbox);
   if (grants.length > 0) headGate(cycle);
+  // Read now, not at load, so the value lives in this process no longer than the stage runs; and
+  // before the stage folder is cleared, so a refusal leaves the last run's evidence whole.
+  const values = grants.map(([name, g]) => {
+    const value = readFileSync(g.file, 'utf8').replace(/\n$/, '');
+    // An empty value would be redacted between every character of the evidence.
+    if (value === '') throw new Error(`grant ${name}: file ${g.file} is empty`);
+    return { name, variable: g.variable, value };
+  });
   checkDeadline(opts.deadlineMs);
   const isolation = opts.isolation ?? 'cgroup';
   if (isolation === 'cgroup') checkScopes();
@@ -165,13 +173,6 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // The stage directory is read-only inside, so a command cannot rewrite the evidence the reviewer
   // reads; output/ is bound writable over it. Another stage's directory is not bound at all.
   const policy: Policy = { cwd: worktree, write: [worktree, outputDir], read: [evidenceDir], network: def.network ?? false, env: { SF_REQUEST: requestFile } };
-  // Read now, not at load: the value lives in this process no longer than the stage runs.
-  const values = grants.map(([name, g]) => {
-    const value = readFileSync(g.file, 'utf8').replace(/\n$/, '');
-    // An empty value would be redacted between every character of the evidence.
-    if (value === '') throw new Error(`grant ${name}: file ${g.file} is empty`);
-    return { name, variable: g.variable, value };
-  });
   if (values.length > 0) policy.secrets = Object.fromEntries(values.map((v) => [v.variable, v.value]));
   // The reviewer is shown stdout and stderr; a command that prints its token must not hand it on.
   const redact = (text: string) => values.reduce((t, v) => t.replaceAll(v.value, `[grant ${v.name}]`), text);
@@ -191,7 +192,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // The rule that makes a wrong merge visible: the stage says which head it acted on (A-074).
   const wrongHead = grants.length > 0 ? headFile(join(outputDir, 'head'), head) : '';
   if (wrongHead) {
-    writeFileSync(join(evidenceDir, `${HEAD_CHECK}.stdout`), wrongHead);
+    // It quotes what the command wrote, which may be the token itself.
+    writeFileSync(join(evidenceDir, `${HEAD_CHECK}.stdout`), redact(wrongHead));
     writeFileSync(join(evidenceDir, `${HEAD_CHECK}.stderr`), '');
     writeFileSync(join(evidenceDir, `${HEAD_CHECK}.exit`), 'wrong head\n');
     results.push({ name: HEAD_CHECK, result: 'FAIL' });
@@ -223,13 +225,19 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
  * elsewhere, block or throw.
  */
 function headFile(file: string, head: string): string {
-  const st = lstatSync(file, { throwIfNoEntry: false });
+  let st;
+  // A command may lock outputDir itself; the controller must still record what it found.
+  try {
+    restoreAccess(dirname(file));
+    st = lstatSync(file, { throwIfNoEntry: false });
+  } catch (err) {
+    return `cannot read outputDir/head: ${(err as Error).message}; candidate is ${head}\n`;
+  }
   let found: string;
   if (!st) found = 'no head file in outputDir';
   else if (!st.isFile()) found = 'outputDir/head is not a regular file';
   else if (st.size > 1024) found = `outputDir/head is ${st.size} bytes`;
   else {
-    restoreAccess(file);
     const text = readFileSync(file, 'utf8').replace(/\n$/, '');
     if (text === head) return '';
     found = `head file names ${JSON.stringify(text)}`;

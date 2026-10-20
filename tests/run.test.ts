@@ -433,14 +433,16 @@ const NODE_PREFIX = dirname(dirname(realpathSync(process.execPath)));
 const merge = (script: string) => ({ name: 'merge', command: [process.execPath, '-e', `const fs = require('node:fs'); const r = JSON.parse(fs.readFileSync(process.env.SF_REQUEST, 'utf8')); ${script}`] });
 const WRITES_HEAD = `fs.writeFileSync(r.outputDir + '/head', r.head + '\\n');`;
 /** DEV, CHECK, REVIEW, then MERGE holding the github grant. */
-const granted = (mergeRun = [merge(WRITES_HEAD)], extra: object = {}) => ({
+const granted = (mergeRun = [merge(WRITES_HEAD)], extra: object = {}, tokenFile = '/nonexistent') => ({
   name: 'granted',
   start: 'DEV',
   stages: {
     DEV: { kind: 'agent', role: 'developer', produces: 'commit', roleText: 'You are the developer for the ticket below.', transitions: { PASS: 'CHECK' } },
     CHECK: { kind: 'command', run: [{ name: 'env', command: ['sh', '-c', 'env; ls -la /proc/self/'] }], transitions: { PASS: 'REVIEW' } },
     REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', budget: 1, transitions: { PASS: 'MERGE', FAIL: 'ESCALATED' } },
-    MERGE: { kind: 'command', run: mergeRun, network: true, grants: ['github'], transitions: { PASS: 'ACCEPTED' }, ...extra },
+    MERGE: { kind: 'command', run: mergeRun, network: true, grants: ['github'], transitions: { PASS: 'LATER' }, ...extra },
+    // After the grant stage: a leak into a later sandbox would show here.
+    LATER: { kind: 'command', run: [{ name: 'env', command: ['sh', '-c', 'env; cat "$0" || echo unreadable', tokenFile] }], transitions: { PASS: 'ACCEPTED' } },
   },
 }) as Workflow;
 /** A token file outside the repository, and the grants a personal file would give. */
@@ -458,22 +460,26 @@ function envWatch(inner: Adapter): Adapter & { requests: RunRequest[]; sawToken:
 
 test('only the grant stage sees the grant: not the developer, the check stage or the reviewer, and never the evidence', async () => {
   const { root, repo, runsDir } = scratch();
-  const store = new EventStore(join(root, 'granted.sqlite'), granted([merge(`${WRITES_HEAD} fs.writeFileSync(r.outputDir + '/token', process.env.GH_TOKEN); console.log('token is ' + process.env.GH_TOKEN);`)]));
+  const grants = grantFile(root);
+  const store = new EventStore(join(root, 'granted.sqlite'), granted([merge(`${WRITES_HEAD} fs.writeFileSync(r.outputDir + '/token', process.env.GH_TOKEN); console.log('token is ' + process.env.GH_TOKEN);`)], {}, grants.github.file));
   const developer = envWatch(fake(claude));
   const reviewer = envWatch(scripted('PASS'));
-  const r = await run(store, { developer, reviewer }, job(repo), opts(runsDir, { isolation: 'cgroup', sandbox: { backend: 'bwrap', read: [NODE_PREFIX] }, grants: grantFile(root) }));
+  const r = await run(store, { developer, reviewer }, job(repo), opts(runsDir, { isolation: 'cgroup', sandbox: { backend: 'bwrap', read: [NODE_PREFIX] }, grants }));
   assert.equal(r.cycle.stage, 'ACCEPTED', r.cycle.escalation);
   const head = r.cycle.candidate!.head;
   const evidence = join(runsDir, 'evidence', head);
   // Delivered: the command wrote what it was given to output/, which is not redacted.
   assert.equal(readFileSync(join(evidence, 'MERGE', 'output', 'token'), 'utf8'), TOKEN);
   assert.equal(readFileSync(join(evidence, 'MERGE', 'merge.stdout'), 'utf8'), 'token is [grant github]\n');
-  const checkEnv = readFileSync(join(evidence, 'CHECK', 'env.stdout'), 'utf8');
-  assert.ok(!checkEnv.includes(TOKEN) && !checkEnv.includes('GH_TOKEN'), checkEnv);
+  for (const stage of ['CHECK', 'LATER']) {
+    const seen = readFileSync(join(evidence, stage, 'env.stdout'), 'utf8');
+    assert.ok(!seen.includes(TOKEN) && !seen.includes('GH_TOKEN'), `${stage}: ${seen}`);
+  }
+  assert.match(readFileSync(join(evidence, 'LATER', 'env.stdout'), 'utf8'), /^unreadable$/m, 'the token file is not bound into another sandbox');
   assert.deepEqual([...developer.sawToken, ...reviewer.sawToken], [false, false]);
   assert.ok(!reviewer.requests[0]!.prompt.includes(TOKEN));
   assert.ok(!Object.values(process.env).some((v) => v?.includes(TOKEN)), 'the controller environment never holds it');
-  const merged = store.events(r.cycle.cycleId).filter((e) => e.type === 'verification').at(-1);
+  const merged = r.cycle.history.find((h) => h.from === 'MERGE')?.event;
   assert.deepEqual(merged?.type === 'verification' && merged.grants, ['github']);
   assert.ok(!JSON.stringify(store.events(r.cycle.cycleId)).includes(TOKEN));
   store.close();

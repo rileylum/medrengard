@@ -347,6 +347,16 @@ test('a grant with a missing file, a file inside the repository, a bad or reserv
   await given({ variable: 'GH_TOKEN', file: 'nope' }, /grant github: file .*nope does not exist/);
   await given({ variable: 'GH_TOKEN', file: 'repo/token' }, /grant github: file .*repo\/token is inside the repository/);
   await given({ variable: 'GH_TOKEN', file: 'repo' }, /grant github: file .*repo is inside the repository/);
+  // Through a symlink, either way round: the file a commit could carry is the same one.
+  symlinkSync(join(repo, 'token'), join(root, 'link-token'));
+  await given({ variable: 'GH_TOKEN', file: 'link-token' }, /grant github: file .*link-token is inside the repository/);
+  symlinkSync(repo, join(root, 'repo-link'));
+  await given({ variable: 'GH_TOKEN', file: 'repo-link/token' }, /grant github: file .*repo-link\/token is inside the repository/);
+  // A sandbox read root is bound into every sandbox, the developer's too.
+  mkdirSync(join(root, 'tools'));
+  writeFileSync(join(root, 'tools', 'token'), 't\n');
+  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', runtime: { developer: 'claude' }, sandbox: { backend: 'bwrap', read: ['tools'] }, grants: { github: { variable: 'GH_TOKEN', file: 'tools/token' } } });
+  await assert.rejects(loadConfig(jobFile, env), /grant github: file .*tools\/token is under sandbox read path .*tools, which every sandbox can read/);
   for (const variable of ['', '1X', 'A-B', 7, 'PATH', 'HOME', 'LANG', 'SF_REQUEST']) await given({ variable, file: 'token' }, /grant github: variable/);
   for (const grant of ['token', null, { variable: 'GH_TOKEN' }, { variable: 'GH_TOKEN', file: 'token', value: 'x' }]) await given(grant, /grant github: must be \{ variable, file \}/);
 });

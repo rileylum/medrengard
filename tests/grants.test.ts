@@ -96,6 +96,7 @@ async function atMerge(script: string) {
 for (const [what, script, found] of [
   ['a missing', '', /no head file/],
   ['a different', `fs.writeFileSync(r.outputDir + '/head', '${'a'.repeat(40)}\\n');`, new RegExp(`head file names "${'a'.repeat(40)}"`)],
+  ['the token as', `fs.writeFileSync(r.outputDir + '/head', process.env.GH_TOKEN);`, /head file names "\[grant github\]"/],
   // Followed, a symlink would have the controller read any file the owner can.
   ['a symlink as', `fs.writeFileSync(r.outputDir + '/real', r.head); fs.symlinkSync(r.outputDir + '/real', r.outputDir + '/head');`, /outputDir\/head is not a regular file/],
 ] as const) {
@@ -108,6 +109,7 @@ for (const [what, script, found] of [
     const stdout = readFileSync(join(r.evidenceDir, 'head.stdout'), 'utf8');
     assert.match(stdout, found);
     assert.match(stdout, new RegExp(`candidate is ${head}`));
+    assert.ok(!stdout.includes(TOKEN), stdout);
     store.close();
   });
 }
@@ -125,5 +127,20 @@ test('the right output/head passes, and a printed token reaches the evidence and
   const prompt = reviewer.requests[0]!.prompt;
   assert.match(prompt, /EVIDENCE MERGE\/merge\.stdout ====\ntoken \[grant github\]$/m);
   assert.ok(!prompt.includes(TOKEN));
+  store.close();
+});
+
+test('a command that locks outputDir still has its head read and its verification recorded (10-e standard 1)', async () => {
+  const { store, job, cycleId, opts } = await atMerge(`${WRITES_HEAD} fs.chmodSync(r.outputDir, 0);`);
+  const r = await verify(store, cycleId, job, opts);
+  assert.equal(r.cycle.stage, 'AFTER', r.cycle.escalation);
+  store.close();
+});
+
+test('an empty grant file is refused before the stage folder is touched', async () => {
+  const { root, store, runsDir, job, cycleId, head, opts } = await atMerge(WRITES_HEAD);
+  writeFileSync(join(root, 'gh-token'), '\n');
+  await assert.rejects(verify(store, cycleId, job, opts), /grant github: file .*gh-token is empty/);
+  assert.ok(!existsSync(join(runsDir, 'evidence', head, 'MERGE')));
   store.close();
 });

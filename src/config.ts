@@ -1,7 +1,7 @@
 // Ticket 10-b: a job's settings, from four layers (A-074, A-078). Every command in main.ts reads
 // its job through loadConfig, so the limits on each layer are enforced here and nowhere else.
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Job } from './developer.ts';
@@ -223,22 +223,30 @@ export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = proce
     // Every module path is absolute by now, so relativeTo is never used.
     registry: runtimes(spec.runtimes, '/'),
     sandbox: spec.sandbox!,
-    grants: checkGrants(spec.grants ?? {}, repo),
+    grants: checkGrants(spec.grants ?? {}, repo, spec.sandbox?.read ?? []),
   };
 }
 
 // The controller sets these inside the sandbox; a grant of the same name would be overwritten or hide them.
 const RESERVED_VARIABLES = ['PATH', 'HOME', 'LANG', 'SF_REQUEST'];
 
-/** The merged grants, refused unless each is { variable, file } with a file outside the repository, which a commit could carry. */
-function checkGrants(grants: Record<string, unknown>, repo: string): Record<string, Grant> {
+/**
+ * The merged grants, refused unless each is { variable, file } with a file outside the repository,
+ * which a commit could carry, and outside every sandbox read root, which every sandbox can read.
+ * Compared by real path, so a symlink on either side cannot hide where the file is.
+ */
+function checkGrants(grants: Record<string, unknown>, repo: string, read: unknown[]): Record<string, Grant> {
+  const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+  const inside = (file: string, root: string) => file === root || file.startsWith(root.endsWith('/') ? root : `${root}/`);
   for (const [name, g] of Object.entries(grants)) {
     if (!isObject(g) || Object.keys(g).sort().join() !== 'file,variable') throw new Error(`grant ${name}: must be { variable, file }`);
     const { variable, file } = g as unknown as Grant;
     if (typeof variable !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(variable) || RESERVED_VARIABLES.includes(variable))
       throw new Error(`grant ${name}: variable ${JSON.stringify(variable)} must be an environment variable name other than ${RESERVED_VARIABLES.join(', ')}`);
-    if (typeof file === 'string' && (file === repo || file.startsWith(`${repo}/`))) throw new Error(`grant ${name}: file ${file} is inside the repository`);
+    if (typeof file === 'string' && inside(real(file), real(repo))) throw new Error(`grant ${name}: file ${file} is inside the repository`);
     if (typeof file !== 'string' || !statSync(file, { throwIfNoEntry: false })?.isFile()) throw new Error(`grant ${name}: file ${String(file)} does not exist or is not a file`);
+    const root = read.find((r) => typeof r === 'string' && inside(real(file), real(r)));
+    if (root !== undefined) throw new Error(`grant ${name}: file ${file} is under sandbox read path ${String(root)}, which every sandbox can read`);
   }
   return grants as Record<string, Grant>;
 }
