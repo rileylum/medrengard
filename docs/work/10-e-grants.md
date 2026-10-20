@@ -47,3 +47,12 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
   Also taken from the reviewer's notes: a grant file under a `sandbox.read` root is refused, and the grant file is read before the stage folder is cleared. The reviewer also noted that an ignored, redelivered verdict could satisfy the gate. This cannot happen: the store drops a second `verdict`, `developer_result`, `run_failed` or `dispute` with the same run ID at insert (`DEDUP`, `src/store.ts`), so `apply` never records one.
 
   Reviewer notes for the owner: a grant stage after a human stage cannot run yet, because `accept` records and returns, and no command resumes the cycle (row 11). The reviewer's independent `npm test` matched: 374 tests, 350 pass, 0 fail. Implementer's `npm test` on `818de56`: 377 tests, 353 pass, 0 fail. Five more mutants were all caught (`10-e/mutants2.py`). Standard 2 started on `818de56`.
+- 2026-10-20 — standard 2 on `818de56`: FAIL, one major and three minors. The standard budget is spent, so the owner decides. The major: no test shows that `verify` delivers the token through `policy.secrets`. A mutant that puts it in `policy.env` (bwrap `--setenv`, so world-readable argv) passes every test; done-when 1 is tested only at `wrap()`. The minors:
+  - `redact` replaces values in grant order, so a value that contains another is only partly hidden.
+  - The read-root refusal covers `sandbox.read` but not the system roots, or the runtime roots the adapters bind.
+  - `tree.stdout` is not redacted.
+
+  Standard 1's four findings are confirmed fixed. The reviewer's independent `npm test` matched: 377 tests, 353 pass, 0 fail. Notes for the owner:
+  - A repository workflow runs unsandboxed at import (A-078 Q2), so it could read a grant file directly. Q5 stops it asking for a grant, not taking one.
+  - `grants` on an agent stage is accepted and ignored.
+  - Two grants with the same variable in one stage are not refused.
