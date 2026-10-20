@@ -126,9 +126,10 @@ export type Event = (
   | ({ type: 'verdict'; runId: string; head: string; verdict: 'PASS' | 'FAIL'; findings?: string[] } & Partial<RunVersions>)
   | { type: 'head_changed'; head: string }
   | { type: 'base_changed'; base: string }
-  | { type: 'accept'; head: string }
+  /** `source`: who ran the command, `owner` unless an observer named itself (10-d). A label, not an identity. */
+  | { type: 'accept'; head: string; source?: string }
   | { type: 'request_changes' }
-  | { type: 'cancel' }
+  | { type: 'cancel'; source?: string }
   | { type: 'reject_dispatch'; reason: string }
   /** A fix run's claim that it will not change the candidate, with the developer's reason (07-e). */
   | ({ type: 'dispute'; runId: string; head: string; reason: string } & Partial<RunVersions>)
@@ -141,6 +142,9 @@ const arr = (v: unknown, each: (x: unknown) => boolean) => Array.isArray(v) && v
 const obj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 // Not read by apply, but a value of the wrong type would be a false record of what ran.
 const versions = (e: Record<string, unknown>) => (e.runtime === undefined || str(e.runtime)) && (e.moduleHash === undefined || str(e.moduleHash));
+/** One line of printable text: a source is printed by the CLI and the stream, so it must not forge a line or a terminal sequence. */
+export const isSource = (v: unknown) => typeof v === 'string' && /^[^\p{Cc}\u2028\u2029]+$/u.test(v);
+const source = (e: Record<string, unknown>) => e.source === undefined || isSource(e.source);
 const isCheck = (v: unknown) => obj(v) && str(v.name) && ['PASS', 'FAIL', 'MISSING'].includes(v.result as string) && (v.files === undefined || (obj(v.files) && Object.values(v.files).every(str)));
 
 // Shape checks, one per Event type. Everything apply dereferences must be present; anything else
@@ -152,9 +156,9 @@ const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
   verdict: (e) => str(e.runId) && str(e.head) && (e.verdict === 'PASS' || e.verdict === 'FAIL') && versions(e),
   head_changed: (e) => str(e.head),
   base_changed: (e) => str(e.base),
-  accept: (e) => str(e.head),
+  accept: (e) => str(e.head) && source(e),
   request_changes: () => true,
-  cancel: () => true,
+  cancel: (e) => source(e),
   reject_dispatch: (e) => str(e.reason),
   run_failed: (e) => str(e.runId) && str(e.reason) && versions(e),
   dispute: (e) => str(e.runId) && str(e.head) && str(e.reason) && versions(e),

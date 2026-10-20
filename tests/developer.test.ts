@@ -114,6 +114,9 @@ test('a worktree that cannot be made cancels the cycle it opened, so the work is
   const adapter = fakeAdapter('hang');
   await assert.rejects(develop(store, adapter, job(repo), { deadlineMs: 500, runsDir }), /EEXIST|git worktree add/);
   assert.equal(adapter.requests.length, 0);
+  // The controller's cancel says it was not the owner's (10-d).
+  const [{ cycleId }] = store.cycles('w1');
+  assert.deepEqual(store.events(cycleId!).at(-1), { type: 'cancel', source: 'controller' });
   // The cycle it opened is CANCELLED, not left QUEUED behind the one-open-cycle guard: the next
   // develop for the same work must open.
   rmSync(runsDir);

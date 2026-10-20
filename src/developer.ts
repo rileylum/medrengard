@@ -100,7 +100,7 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
   } catch (err) {
     // An open cycle with no outcome would hold the one-open-cycle guard against this work until
     // the owner cancelled it by hand; a failure that never produced a run outcome is ours to close.
-    try { store.append(cycleId, { type: 'cancel' }); } catch { /* the store is the error; the original wins */ }
+    try { store.append(cycleId, { type: 'cancel', source: 'controller' }); } catch { /* the store is the error; the original wins */ }
     throw err;
   }
 }

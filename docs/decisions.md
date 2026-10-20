@@ -37,6 +37,24 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-090 — 2026-10-20 — 10-d: fix the review findings, then merge
+
+Owner, after standard 1 and the adversarial review both passed on `05b550a` with three minors and two notes, offered a fix of all five tests first, the busy timeout on `openings()`, and a merge without another review: “fix and merge”.
+
+Effect: the reader waits for the events table, not only the file; `source` is one single-line rule, checked by `SHAPE` and the CLI; the kit sends its unknown row after each case's events too; the reader skips an open row that is not an object; `openings()` sets a busy timeout. Tests first. Then `feat/10-d-observation-stream` merges into main with `--no-ff`, unreviewed after the fixes.
+
+### A-089 — 2026-10-20 — 10-d: run the reviews
+
+Owner, after 10-d was built at `05b550a` and asked to run `npm test` or waive it, and to run or waive the reviews: “run the reviews”.
+
+Effect: standard 1 starts on `05b550a`. The owner gave no answer on running `npm test`; no owner-run result is recorded, and the reviewers' own runs are the independent ones.
+
+### A-088 — 2026-10-20 — 10-d READY; observation stream design approved
+
+Owner, after reading the 10-d ticket and [design/2026-10-20-observation-stream.md](design/2026-10-20-observation-stream.md) with its six questions: “take all”.
+
+Effect: 10-d is READY, and the design note is approved with Q1 to Q6 as recommended. Q1: a line's `seq` is the row's store-wide position (`pos`), not its per-cycle number. Q2: rows written before 10-d get a position in `(cycle_id, seq)` order and a null `at`. Q3: the open row records the workflow's definition, so a runs directory replays without a job file; pre-10-d custom-workflow cycles print null stages unless the job file is given. Q4: `accept` and `cancel` take `--source <name>`, defaulting to `owner`. Q5: `observerKit` takes scripted cycles and expected actions, plus two fixed cases (an unknown event, a refused command). Q6: `proto/board.ts` stays as it is.
+
 ### A-087 — 2026-10-20 — Live run findings recorded in the plan; merge
 
 Owner, after live runs 1 and 2 escalated (a reviewer misread a silent check's `exit 0`; a developer could not commit, likely through a denied `$(cat …)`), on recording the gaps: “lets capture this in the plan - we already have two sections that are relevant, skills and montioring and self improvement”. After run 3 reached AWAITING_ACCEPTANCE with the MERGE grant stage passing: “accpepted and merged, merge live-run-fidnings into main”.
