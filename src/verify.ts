@@ -76,6 +76,22 @@ export function stageGrants(stage: string, def: StageDef | undefined, grants: Re
   });
 }
 
+/**
+ * A grant stage runs only on a reviewed head (A-074, A-083 Q3): each stage's last verdict,
+ * verification or accept names the candidate, and at least one PASS verdict does. A workflow can
+ * route a fix past its reviews, and one with no review at all has nothing to bind the head to.
+ */
+function headGate(cycle: Cycle): void {
+  const head = cycle.candidate!.head;
+  const last = new Map<string, string>();
+  for (const { event, from } of cycle.history)
+    if (event.type === 'verdict' || event.type === 'verification' || event.type === 'accept') last.set(from, event.head);
+  const stale = [...last].filter(([, h]) => h !== head).map(([stage, h]) => `${stage} (${h})`);
+  if (stale.length > 0) throw new Error(`stage ${cycle.stage} holds a grant, but the last outcome of ${stale.join(', ')} is not for the candidate ${head}`);
+  if (!cycle.history.some(({ event: e }) => e.type === 'verdict' && e.verdict === 'PASS' && e.head === head))
+    throw new Error(`stage ${cycle.stage} holds a grant, but no PASS verdict is for the candidate ${head}`);
+}
+
 /** Run every declared check on the cycle's candidate and record one verification event. */
 export async function verify(store: EventStore, cycleId: string, job: Job, opts: VerifyOptions): Promise<Verified> {
   const cycle = store.load(cycleId);
@@ -99,6 +115,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     if (!statSync(join(opts.workflowDir, f), { throwIfNoEntry: false })?.isFile()) throw new Error(`stage ${cycle.stage} names file ${f}, which is not a file in ${opts.workflowDir}`);
   }
   const grants = stageGrants(cycle.stage, def, opts.grants, opts.sandbox);
+  if (grants.length > 0) headGate(cycle);
   checkDeadline(opts.deadlineMs);
   const isolation = opts.isolation ?? 'cgroup';
   if (isolation === 'cgroup') checkScopes();
