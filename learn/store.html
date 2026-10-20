@@ -15,73 +15,51 @@
   <div class="cols">
     <div>
       <p class="lead">The factory never stores "the cycle is in STANDARD_REVIEW". It stores what happened: a claim, a result, a verification, a verdict. One <a class="w" href="words.html#event">event</a> per row, in order, and no row is ever changed or deleted.</p>
-      <p>To know where a cycle is, the store reads its rows and <a class="w" href="words.html#replay">replays</a> them through <code>apply</code>. The state is a sum, like a bank balance worked out from the statement.</p>
+      <p>To know where a cycle is, the store reads its rows and <a class="w" href="words.html#replay">replays</a> them through <code>apply</code>, under the workflow the cycle was opened with. The state is a sum, like a bank balance worked out from the statement.</p>
     </div>
     <div class="card amber">
       <h3>Why this way</h3>
       <ul class="small">
         <li>A crash loses nothing: the rows are the truth, and a restart replays them.</li>
         <li>Every decision has its reason on record: which event, from which stage, and apply's note.</li>
-        <li>The rules can be tested without a database: the same events give the same cycle.</li>
+        <li>Anyone can read what happened without asking the controller: that is the observation stream, below.</li>
       </ul>
     </div>
   </div>
 </section>
 
-<section class="slide" id="travel" data-lv="1">
-  <h2>Time travel</h2>
-  <p>Pick a scenario. Its events are appended to a store, one row each; row 0 is the store's own "open" marker. Drag the slider to replay only the first rows and see where the cycle stood at that moment.</p>
-  <div class="demo real" data-demo="store-travel"></div>
-  <p class="small muted">Some scenarios have fewer rows than events: a redelivered verdict is not written at all. The next slide shows why.</p>
+<section class="slide" id="query" data-lv="1">
+  <h2>Try it: read a day's log</h2>
+  <p>This runs directory holds a day of work on three work items. Read it the way <code>events</code> does: pick a work item or the whole directory, skip what you have seen with <code>--after</code>, or turn on <code>--follow</code> and let the rest of the day arrive. Click a line to read it.</p>
+  <div class="demo real" data-demo="store-query"></div>
+  <p class="small muted"><code>seq</code> is the row's place in the whole store, so lines from different work items interleave in the order they were written. <code>from</code> and <code>stage</code> are not stored: the reader works them out by replaying each cycle.</p>
 </section>
 
-<section class="slide" id="dedup" data-lv="2">
-  <h2>One outcome per run</h2>
-  <p>Results, verdicts and <a class="w" href="words.html#run-failed">run_failed</a> carry a <a class="w" href="words.html#run">run</a> ID. The table has a unique index on <code>(cycle_id, run_id)</code>, and the insert uses <code>OR IGNORE</code>. So the second outcome for the same run writes nothing, and <code>append</code> returns the cycle unchanged. That holds even if two processes race: the database, not the code, decides.</p>
-  <div class="demo real" data-demo="store-dedup"></div>
-  <p class="small muted"><code>apply</code> ignores duplicates too (the <code>consumed</code> list). The index is the second lock on the same door: a duplicate never reaches the log, so a replay never sees it.</p>
+<section class="slide" id="break" data-lv="2">
+  <h2>Try it: break the log</h2>
+  <p>Three ways a careless or hostile writer could spoil the log, and the rule in <code>src/store.ts</code> that stops each.</p>
+  <div class="demo real" data-demo="store-break"></div>
 </section>
 
-<section class="slide" id="bytes" data-lv="2">
-  <h2>Check the bytes, not the object</h2>
-  <p>Before a row is written, <code>append</code> turns the event into JSON, parses it back, and runs <code>isEvent</code> on that. Not on the object it was given. A JavaScript object can say one thing when you look at it and serialise to another. The row holds the JSON, and the replay reads the JSON, so that is what has to be valid. This came from an adversarial review (ticket 02-c): every object below fooled a check on the object.</p>
-  <div class="demo real" data-demo="store-bytes"></div>
-  <p class="small muted">A row <code>apply</code> could not read would make the whole cycle unloadable. So an unreadable event is refused before writing, with <code>UnclassifiableEvent</code>; the controller turns that into a <a class="w" href="words.html#run-failed">run_failed</a> for the run that sent it.</p>
+<section class="slide" id="stream" data-lv="2">
+  <h2>The observation stream</h2>
+  <p><code>node src/main.ts events</code> prints one JSON line per row. Each line gives the row's position, the time it was written, the cycle and work it belongs to, the event as stored, and the stage it moved the cycle from and to. With <code>--follow</code> it keeps reading: SQLite cannot notify another process, so it looks for new rows every 500 ms.</p>
+  <p>A reader decides nothing, and writes nothing except once, to number the rows of a store written before positions existed. It replays each cycle under the workflow its first row recorded, after checking that workflow's hash. A row it cannot replay, such as an event type from a newer controller, is passed on as stored with null stages, never escalated.</p>
+  <h3>Observers</h3>
+  <p>An observer is any process that reads the stream and acts. It may act only through your two commands, <code>accept</code> and <code>cancel</code>, which record its name with <code>--source</code>. The controller never starts one, and nothing it does is trusted more than you typing the command (D-024).</p>
+  <p class="small">The kit for an observer (<code>observerKit</code> in <code>src/kits/observe.ts</code>) feeds it lines from a scratch store and checks only what it does through those two commands, including that an unknown event type makes it neither throw nor act. The example in <code>tests/fixtures/comment-observer.ts</code> accepts a change whose every changed line is blank or a comment.</p>
 </section>
 
-<section class="slide" id="open" data-lv="2">
-  <h2>One open cycle per work item</h2>
-  <p>A <a class="w" href="words.html#work-item">work item</a> has at most one cycle that can still move. An ESCALATED cycle cannot move, but it waits for the <a class="w" href="words.html#owner">owner</a>: a new cycle for the same work must name it as its parent. That is a <a class="w" href="words.html#child-cycle">child cycle</a>. Cancelling the escalated one frees the work instead.</p>
-  <p>Try it: open a cycle, try to open a second, escalate the first, open again with and without a parent.</p>
-  <div class="demo real" data-demo="store-open"></div>
-</section>
-
-<section class="slide" id="code-table" data-lv="3">
-  <h2>The table</h2>
-  <p>One table for every cycle. <code>WITHOUT ROWID</code> stores rows in key order. The partial unique index is the one-outcome rule. <code>busy_timeout</code> lets a second process, such as <code>main.ts cancel</code> during a run, wait for the write lock instead of failing.</p>
-  <pre data-code="src/store.ts#constructor"></pre>
-</section>
-
-<section class="slide" id="code-open" data-lv="3">
-  <h2>open</h2>
-  <p>Row 0 is written at a fixed <code>seq</code> of 0, so two racing opens collide on the primary key.</p>
-  <pre data-code="src/store.ts#open"></pre>
-</section>
-
-<section class="slide" id="code-append" data-lv="3">
-  <h2>append, load and the private insert</h2>
-  <pre data-code="src/store.ts#append,load,insert"></pre>
-</section>
-
-<section class="slide" id="code-cycles" data-lv="3">
-  <h2>Finding a work item's cycles</h2>
-  <pre data-code="src/store.ts#cycles,cyclesFor"></pre>
-</section>
-
-<section class="slide" id="takeaway" data-lv="1">
-  <h2>Takeaway</h2>
-  <p class="lead">The log is the only state. Rows are only ever added, each is checked as the bytes it will be, and a run gets one outcome. Replay the rows through <code>apply</code> and you have the cycle.</p>
-  <p>Next, who writes those rows: <a class="portal" href="controller.html">the controller and its adapters</a></p>
+<section class="slide" id="code" data-lv="3">
+  <h2>Read the code: src/store.ts and src/stream.ts</h2>
+  <p>One table for every cycle. The partial unique index is the one-outcome rule. <code>busy_timeout</code> lets a second process, such as <code>cancel</code> during a run, wait for the write lock instead of failing. Row 0 is written at a fixed <code>seq</code> of 0, so two racing opens collide on the primary key.</p>
+  <pre data-code="src/store.ts#OpenRow,constructor,open,append,load,insert"></pre>
+  <p>Each row's position and time are set inside the insert statement, under the write lock, so positions follow commit order.</p>
+  <pre data-code="src/store.ts#POS,NOW"></pre>
+  <p>The reader:</p>
+  <pre data-code="src/stream.ts#Line,workflowOf,openStream"></pre>
+  <p>And the observer helper, which turns an observer's two actions into your commands with its name as the source:</p>
+  <pre data-code="src/kits/observe.ts#ownerFor,observe"></pre>
 </section>
 
 </main>

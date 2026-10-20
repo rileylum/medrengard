@@ -1,5 +1,5 @@
 // One outcome per run. The real table has a unique index on (cycle_id, run_id) for results,
-// verdicts and run_failed, and inserts with OR IGNORE, so a redelivered outcome writes nothing.
+// verdicts, disputes and run_failed, and inserts with OR IGNORE, so a redelivered outcome writes nothing.
 import { EventStore } from '/src/store.ts';
 import { toStandardReview } from '/tests/scenarios.ts';
 import { esc } from '../live.js';
@@ -21,7 +21,7 @@ export default function mount(el) {
   };
   const render = () => {
     const c = store.load('c1');
-    $('.out').innerHTML = `<p>rows in the table: <b>${store.table.length}</b> · stage <span class="pill stage ${c.stage}">${c.stage}</span> · standard ${c.standard}</p>` +
+    $('.out').innerHTML = `<p>rows in the table: <b>${store.table.length}</b> · stage <span class="pill stage ${c.stage}">${c.stage}</span> · STANDARD_REVIEW budget used ${c.budgets.STANDARD_REVIEW ?? 0} of 2</p>` +
       `<ol class="small">${log.map((ch) => ch.kind === 'duplicate' ? `<li class="dim">not written: run "sr1" already has an outcome <code>${esc(ch.body)}</code></li>` : `<li>row ${ch.seq} written: <code>${esc(JSON.stringify(ch.event))}</code></li>`).join('')}</ol>`;
   };
   const verdict = { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' };
