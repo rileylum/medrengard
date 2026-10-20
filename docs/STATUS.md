@@ -150,3 +150,8 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 49. Done: 10-e reviewed twice (A-084). Standard 1 FAIL on `231163d`, fixed at `818de56`; standard 2 FAIL on `818de56`, with one major (a test gap: nothing pins that `verify` keeps the token out of bwrap's argv) and three minors. The standard budget is spent. Next: the owner decides on the standard 2 findings and the adversarial review.
 50. Done: 10-e adversarial review on `79220e4` (A-085): FAIL, one major (a grant file beside the claude or pi binary is readable by the agents' sandboxes) and three minors. The budget is spent. Next: the owner decides on the findings and the merge.
 51. Done: 10-e's adversarial findings fixed at `9e3e5ac`, unreviewed (A-086). Implementer's `npm test`: 384 tests, 360 pass, 0 fail. Merged into main. Next: the owner chooses 10-d (observation stream) or a live run of the factory (A-084 asked for one soon).
+52. Done: live run of the factory in `/var/tmp/software_factory/live-1/`. It used the default workflow plus a MERGE grant stage, with a fake token.
+    - Run 1: escalated on a dispute. My checks were silent, and the reviewer read their `exit 0` as the script's own exit.
+    - Run 2: escalated on a missing commit. The developer could not commit, likely because of a denied `$(cat …)` in its commit command.
+    - The owner chose to record both gaps, and a third (runs keep no raw output), in `docs/plan.md`: the prompts-and-skills and improvement-loop rows. Run 3 uses checks that print what they observed, and a ticket line naming the allowed git commands.
+    - Next: the owner runs run 3.
