@@ -9,17 +9,19 @@
 // Ticket 10-b: the job's settings come from four layers, read by src/config.ts.
 // Ticket 10-d: `events <job.json | runsDir>` prints the observation stream as JSON lines, and
 // `accept` and `cancel` record who ran them (`--source`, default `owner`).
+// Ticket 11-a: the decisions' rules live in src/decide.ts, and `main` runs only as a program.
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { join, resolve } from 'node:path';
 import { loadConfig, storeOf, type JobFile } from './config.ts';
+import { acceptCycle, cancelWork, humanStages } from './decide.ts';
 import { oneLine, type Job } from './developer.ts';
 import { printable } from './prompt.ts';
 import { defaultWorkflow, isSource, type Workflow } from './lifecycle.ts';
 import { ROLE_ALIASES, run, type Adapters } from './run.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
-import { EventStore, openings, SETTLED, workflowHash } from './store.ts';
+import { EventStore, openings, workflowHash } from './store.ts';
 import { FOLLOW_MS, openStream, storeReady } from './stream.ts';
 
 const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> [--source <name>] | cancel <job.json> [--source <name>] | events <job.json | runsDir> [--after <seq>] [--follow]';
@@ -41,8 +43,6 @@ function existingStore(runsDir: string, workflow: Workflow): EventStore | undefi
   const db = join(runsDir, 'events.sqlite');
   return existsSync(db) ? new EventStore(db, workflow) : undefined;
 }
-
-const humanStages = (w: Workflow) => Object.keys(w.stages).filter((s) => w.stages[s]!.kind === 'human');
 
 /**
  * The job's configuration as its existing cycles were opened under. The base ref has usually
@@ -112,20 +112,13 @@ async function accept(file: string, sha: string, source: string): Promise<number
   const { path, spec, repo, runsDir, workflow } = await decisionConfig(file);
   const store = existingStore(runsDir, workflow);
   try {
-    const open = store?.cycles(spec.workId).find((c) => !SETTLED.includes(c.stage));
-    if (!store || !open) throw new Error(`no open cycle for work ${spec.workId} in ${runsDir}`);
-    const cycle = store.load(open.cycleId)!;
-    if (!humanStages(workflow).includes(cycle.stage)) throw new Error(`cycle ${cycle.cycleId} is ${cycle.stage}, not ${humanStages(workflow).join(' or ') || 'at a human stage'}`);
-    // The full SHA only: the owner accepts the exact commit the reviews were bound to.
-    const head = cycle.candidate!.head;
-    if (sha !== head) throw new Error(`${sha} is not the candidate head ${head} of cycle ${cycle.cycleId} (${path})`);
-    const after = store.append(cycle.cycleId, { type: 'accept', head, source });
+    const after = acceptCycle(store, spec.workId, sha, source, { runsDir, file: path });
     console.log(`Cycle: ${after.cycleId}`);
     console.log(`Stage: ${after.stage}`);
     if (after.stage !== 'ACCEPTED') return 1;
     console.log('');
     console.log('To merge:');
-    console.log(`  git -C ${repo} merge --no-ff ${head}`);
+    console.log(`  git -C ${repo} merge --no-ff ${after.candidate!.head}`);
     return 0;
   } finally {
     store?.close();
@@ -133,19 +126,12 @@ async function accept(file: string, sha: string, source: string): Promise<number
 }
 
 async function cancel(file: string, source: string): Promise<number> {
-  const { spec, runsDir, workflow } = await decisionConfig(file);
+  const { path, spec, runsDir, workflow } = await decisionConfig(file);
   const store = existingStore(runsDir, workflow);
   try {
-    const all = store?.cycles(spec.workId) ?? [];
-    const open = all.filter((c) => !SETTLED.includes(c.stage));
-    // With none open, every ESCALATED cycle: the store would ask a new cycle to name any of them
-    // as its parent, so cancelling only one would not free the work ID.
-    const targets = open.length > 0 ? open : all.filter((c) => c.stage === 'ESCALATED');
-    if (!store || targets.length === 0) throw new Error(`nothing to cancel for work ${spec.workId} in ${runsDir}`);
     let code = 0;
-    for (const { cycleId } of targets) {
-      const after = store.append(cycleId, { type: 'cancel', source });
-      console.log(`Cycle: ${cycleId}`);
+    for (const after of cancelWork(store, spec.workId, source, { runsDir, file: path })) {
+      console.log(`Cycle: ${after.cycleId}`);
       console.log(`Stage: ${after.stage}`);
       if (after.stage !== 'CANCELLED') code = 1;
     }
@@ -155,7 +141,8 @@ async function cancel(file: string, source: string): Promise<number> {
   }
 }
 
-async function main(argv: string[]): Promise<number> {
+/** Runs one command; returns its exit code, or throws a message for the owner. */
+export async function main(argv: string[]): Promise<number> {
   const [first, ...rest] = argv;
   if (first === 'accept') {
     const { args, source } = withSource(rest, 2);
@@ -222,4 +209,4 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { console.error(printable(err instanceof Error ? err.message : err)); process.exitCode = 2; });
+if (import.meta.main) main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { console.error(printable(err instanceof Error ? err.message : err)); process.exitCode = 2; });

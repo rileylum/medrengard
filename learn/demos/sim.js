@@ -568,7 +568,7 @@ export default function mount(el) {
   const human = (stage) => workflow.stages[stage]?.kind === 'human';
   const nextWork = (w) => w.replace(/(\d+)$/, (n) => String(Number(n) + 1).padStart(n.length, '0'));
 
-  // What src/main.ts accept and cancel do: refuse rather than send an event apply would escalate on.
+  // What src/decide.ts acceptCycle and cancelWork do: refuse rather than send an event apply would escalate on.
   function decide(kind) {
     const c = state.cycle();
     if (kind === 'accept') {

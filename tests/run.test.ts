@@ -11,7 +11,7 @@ import { EventStore } from '../src/store.ts';
 import { claude, cliAdapter, type CliSpec } from '../src/runtime/cli-adapter.ts';
 import type { DeveloperAdapter, Job } from '../src/developer.ts';
 import { run, type Adapters, type RunOptions } from '../src/run.ts';
-import { resume } from '../src/run.ts';
+import { drive } from '../src/run.ts';
 import { develop } from '../src/developer.ts';
 import { checkWorkflow, defaultWorkflow, type Workflow } from '../src/lifecycle.ts';
 import { ownerCheck } from './workflows.ts';
@@ -363,7 +363,7 @@ test('resume on a cycle left at VERIFYING runs the checks and continues, with no
   const opened = await develop(store, dev, job(repo), opts(runsDir));
   assert.equal(opened.cycle.stage, 'VERIFYING', opened.cycle.escalation);
   const before = store.events(opened.cycle.cycleId).length;
-  const r = await resume(store, opened.cycle.cycleId, adapters(dev, scripted('PASS'), scripted('PASS')), job(repo), opts(runsDir));
+  const r = await drive(store, opened.cycle.cycleId, adapters(dev, scripted('PASS'), scripted('PASS')), job(repo), opts(runsDir));
   assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation);
   assert.equal(dev.requests.length, 1);
   assert.equal(types(store, r.cycle.cycleId)[before], 'verification');
@@ -375,10 +375,10 @@ test('resume on a cycle left at VERIFYING runs the checks and continues, with no
 test('resume refuses an unknown cycle, and returns a settled one without a step', async () => {
   const { repo, store, runsDir } = scratch();
   const none = adapters(fake(claude), scripted(), scripted());
-  await assert.rejects(resume(store, 'nope', none, job(repo), opts(runsDir)), /not open/);
+  await assert.rejects(drive(store, 'nope', none, job(repo), opts(runsDir)), /not open/);
   store.open('c1', 'w1');
   store.append('c1', { type: 'cancel' });
-  const r = await resume(store, 'c1', none, job(repo), opts(runsDir));
+  const r = await drive(store, 'c1', none, job(repo), opts(runsDir));
   assert.equal(r.cycle.stage, 'CANCELLED');
   assert.equal(store.events('c1').length, 1);
   store.close();
@@ -633,7 +633,7 @@ test('resume refuses what run refuses before a step: a missing grant, no workflo
     store.open('c1', 'w1', undefined, base);
     // In DEV with a run active, as a crash mid-develop would leave it.
     store.append('c1', { type: 'claim', runId: 'r1', base, runtime: 'fake' });
-    await assert.rejects(resume(store, 'c1', roles, job(repo), opts(runsDir)), reason);
+    await assert.rejects(drive(store, 'c1', roles, job(repo), opts(runsDir)), reason);
     assert.equal(store.events('c1').length, 1);
     store.close();
   }
@@ -663,7 +663,7 @@ test('a human stage between a review FAIL and the fix: run stops there, and resu
   const first = await run(store, roles, job(repo), opts(runsDir));
   assert.equal(first.cycle.stage, 'BETWEEN', first.cycle.escalation ?? first.error);
   store.append(first.cycle.cycleId, { type: 'accept', head: first.cycle.candidate!.head });
-  const r = await resume(store, first.cycle.cycleId, roles, job(repo), opts(runsDir));
+  const r = await drive(store, first.cycle.cycleId, roles, job(repo), opts(runsDir));
   assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation ?? r.error);
   assert.equal(r.cycle.runs.length, 2);
   store.close();

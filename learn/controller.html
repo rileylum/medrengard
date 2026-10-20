@@ -83,10 +83,12 @@
 </section>
 
 <section class="slide" id="code" data-lv="3">
-  <h2>Read the code: src/controller.ts and src/main.ts</h2>
+  <h2>Read the code: src/controller.ts, src/decide.ts and src/main.ts</h2>
   <pre data-code="src/controller.ts#execute,receive,requireStage"></pre>
   <pre data-code="src/controller.ts#plain,normalise,toEvent,bounded"></pre>
-  <p>Your two commands, and how <code>--source</code> is read:</p>
+  <p>Your two decisions, as functions any caller can use:</p>
+  <pre data-code="src/decide.ts#acceptCycle,cancelWork"></pre>
+  <p>The commands that call them, and how <code>--source</code> is read:</p>
   <pre data-code="src/main.ts#withSource,accept,cancel"></pre>
 </section>
 

@@ -629,3 +629,12 @@ test('cancel on a cycle whose base only its sf/* branch now holds uses a matchin
     }
   }
 });
+
+// Ticket 11-a: main.ts runs only as a program, so code and tests can call main in-process.
+test('importing main.ts runs nothing; main(argv) is exported and refuses bad arguments with usage', async () => {
+  const { main } = await import('../src/main.ts');
+  await new Promise((done) => setImmediate(done));
+  assert.equal(process.exitCode, undefined);
+  await assert.rejects(main([]), /^Error: usage: /);
+  await assert.rejects(main(['accept', 'job.json']), /^Error: usage: /);
+});

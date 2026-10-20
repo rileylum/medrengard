@@ -55,14 +55,14 @@
   <h2>The loop never decides</h2>
   <p><code>run()</code> calls <code>develop()</code> once, then looks at the kind of stage the cycle is in: an agent stage that commits gets <code>fix()</code>, one that reviews gets <code>review()</code>, a command stage gets <code>verify()</code>. It never moves a stage itself: each step records an event, and <code>apply</code> decides where that leaves the cycle. At a human stage, or a stage that settles the cycle, the loop returns.</p>
   <p>If a step throws, the loop cannot tell what happened, so it does not guess. It records <code>reject_dispatch</code> with the message, which escalates the cycle, and you decide.</p>
-  <p class="small">Before the developer starts, <code>run</code> refuses a sandbox that cannot start, a grant nobody gave, a check name or program the command stage would refuse, and a workflow shape the steps cannot run, such as a check's FAIL back to the developer: each would fail only after a paid developer run. <code>resume</code> makes the same checks.</p>
+  <p class="small">Before the developer starts, <code>run</code> refuses a sandbox that cannot start, a grant nobody gave, a check name or program the command stage would refuse, and a workflow shape the steps cannot run, such as a check's FAIL back to the developer: each would fail only after a paid developer run. <code>drive</code>, which continues a cycle already open, makes the same checks.</p>
 </section>
 
 <section class="slide" id="code" data-lv="3">
   <h2>Read the code: the loop, and what the owner types</h2>
-  <pre data-code="src/run.ts#run,preflight,driverLimits,stepCap,drive"></pre>
-  <p>The accept and cancel buttons do what these two functions do: refuse rather than send an event that <code>apply</code> would escalate on, and record who ran them.</p>
-  <pre data-code="src/main.ts#accept,cancel"></pre>
+  <pre data-code="src/run.ts#run,drive,preflight,driverLimits,stepCap,loop"></pre>
+  <p>The accept and cancel buttons do what these two functions do, which the <code>accept</code> and <code>cancel</code> commands call: refuse rather than send an event that <code>apply</code> would escalate on, and record who ran them.</p>
+  <pre data-code="src/decide.ts#acceptCycle,cancelWork"></pre>
 </section>
 
 </main>
