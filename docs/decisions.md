@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-101 — 2026-10-20 — sweep-terminal-escapes: merged; the prototypes stay as they are
+
+Owner, after the walkthrough: “Looks good, we can leave the prototypes as is”. The owner runs the merge command.
+
+Effect: `feat/sweep-terminal-escapes` merges into main locally with `--no-ff`. `main.ts` passes every stored or agent string it prints through `printable`; the event log keeps the raw text. `proto/board.ts` and `proto/run.ts` stay unescaped, by the owner's choice. One fresh in-session review covers the branch (PASS); the `claude -p` reviews and the adversarial review did not run. The owner did not run `npm test`; the session's run on the branch with main merged in (443 tests, 419 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
 ### A-100 — 2026-10-20 — sweep-reviewer-instructions: merged; reverses 06-b's "read from the candidate commit"
 
 Owner, after asking whether the planned role prompts and skills work (O-013) would overwrite this, and hearing that it changes the core's side (where instructions are read from, and a delimiter line), not the role's judgement text: “Okay merge”.

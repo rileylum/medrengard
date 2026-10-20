@@ -55,3 +55,4 @@ The review also made a refused dispute cut the head it names, as a claim's refus
   - Also killed: the dispute `cut` reverted.
   - `proto/`: about a dozen lines across two files, not five; left noted.
 - `npm test` after the review fixes, implementer's run, not independent: tests 421, pass 397, fail 0, skipped 19, todo 5.
+- 2026-10-20 — owner: “Looks good, we can leave the prototypes as is” (A-101). Main merged into the branch (clean); session's run, not independent: `npm test` 443 tests, 419 pass, 0 fail; `test:learn` 6 pass. Merged into main with `--no-ff`.
