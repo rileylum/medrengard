@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-082 — 2026-10-20 — 10-c: fix the adversarial findings and the standard 2 minors, then merge without another review
+
+Owner, after 10-c's adversarial FAIL on `69f402e` and the recommendation to fix on the branch and merge without another review, as for 10-b (A-080): “fix and merge without”, then, asked what “without” meant: “merge with out another review”.
+
+Effect: four fixes on `feat/10-c-command-stages`, tests first, ending at `3e317b3`, with no further review. The adversarial major was a missing test: a repository file argument read at the base, not `HEAD`. The adversarial minor: `diff.patch` ignores the owner's external diff, textconv and colour. The standard 2 minors: a repository file argument must be a regular file in Git; the kit's writes case checks every file in the stage folder. Then `git merge --no-ff` into main. On record: standard 1 FAIL on `b97105f` (fixed at `69f402e`), standard 2 PASS on `69f402e`, adversarial FAIL on `69f402e`. The rule that a command stage's name must be a file stem was raised by both standard reviewers; the owner has not confirmed it, and it ships as built.
+
 ### A-081 — 2026-10-20 — 10-c READY; command stages design approved
 
 Owner, after reading the 10-c ticket and [design/2026-10-20-command-stages.md](design/2026-10-20-command-stages.md) with its four questions: “Approved all recommendations”.
