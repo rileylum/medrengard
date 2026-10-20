@@ -404,3 +404,44 @@ test('a grant file in a folder a runtime\'s sandbox binds is refused: the binary
     process.env.PATH = path;
   }
 });
+
+// sweep-head-workflow: the workflow runs as the owner at import, so a base only the factory's
+// candidate refs hold is the developer's unmerged code, not the owner's (A-078 Q2).
+const REFUSED_BASE = /base [0-9a-f]{40} is on no branch or tag outside sf\/\*; the repository workflow flow\.ts is not imported\. Set "base" in the job file to a merged branch, or check one out/;
+const markerFlow = (marker: string) => `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran');\nexport { ownerCheck as workflow } from ${JSON.stringify(join(import.meta.dirname, 'workflows.ts'))};\n`;
+
+test('a repository workflow at a base only sf/*, refs/sf/*, refs/remotes or refs/stash contain is refused before it is imported', async () => {
+  const { root, repo, jobFile, env } = scratch();
+  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', runsDir: join(root, 'runs'), runtime: { developer: 'claude' } });
+  const marker = join(root, 'PWNED');
+  git(repo, 'switch', '-q', '-c', 'sf/x');
+  writeFileSync(join(repo, 'flow.ts'), markerFlow(marker));
+  const candidate = commitRepoLayer(repo, { workflow: 'flow.ts' });
+  git(repo, 'update-ref', 'refs/sf/incoming/x', candidate);
+  git(repo, 'update-ref', 'refs/remotes/origin/x', candidate);
+  // A stash's commit has the checked-out candidate as its parent, so it "contains" it.
+  writeFileSync(join(repo, 'README.md'), 'dirty\n');
+  git(repo, 'stash', '-q');
+  for (const checkout of [['switch', '-q', 'sf/x'], ['checkout', '-q', '--detach', candidate]]) {
+    git(repo, ...checkout);
+    await assert.rejects(loadConfig(jobFile, env), REFUSED_BASE);
+    // Named in the job file, the candidate is refused the same way.
+    await assert.rejects(loadConfig(jobFile, env, { base: 'sf/x' }), REFUSED_BASE);
+  }
+  assert.ok(!existsSync(marker), 'the candidate workflow did not run');
+});
+
+test('a repository workflow at the head of an unmerged branch the owner made, or at an older commit of main, still loads', async () => {
+  const { root, repo, jobFile, env } = scratch();
+  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', runsDir: join(root, 'runs'), runtime: { developer: 'claude' } });
+  const marker = join(root, 'ran');
+  writeFileSync(join(repo, 'flow.ts'), markerFlow(marker));
+  const old = commitRepoLayer(repo, { workflow: 'flow.ts' });
+  git(repo, 'commit', '-q', '--allow-empty', '-m', 'later');
+  git(repo, 'checkout', '-q', '--detach', old);
+  assert.deepEqual((await loadConfig(jobFile, env)).workflow, ownerCheck);
+  git(repo, 'switch', '-q', '-c', 'owner-work');
+  git(repo, 'commit', '-q', '--allow-empty', '-m', 'owner work');
+  assert.deepEqual((await loadConfig(jobFile, env)).workflow, ownerCheck);
+  assert.ok(existsSync(marker));
+});

@@ -170,15 +170,17 @@ function refuse(repo: string, incoming: string, branch: string, base: string, pr
   if (head === base) return `commit ${head} is the base, not a new commit`;
   if (head === previous) return `commit ${head} is the previous candidate: the fix run made no new commit and gave no dispute`;
   if (head !== tip) {
-    return isCommit(repo, head) ? `commit ${head} is not the tip of ${branch} (${tip})` : `commit ${head} is not the full SHA of a commit on ${branch} (tip ${tip})`;
+    return isCommit(repo, head) ? `commit ${head} is not the tip of ${branch} (${tip})` : `commit ${cut(head)} is not the full SHA of a commit on ${branch} (tip ${tip})`;
   }
   if (gitStatus(repo, 'merge-base', '--is-ancestor', base, head) !== 0) return `commit ${head} is not descended from the base ${base}`;
   // --quiet answers in the exit code: 0 same, 1 different, anything else an error (a missing object is 128).
-  const diff = gitStatus(repo, 'diff', '--quiet', base, head);
+  // The flags: otherwise git compares what the owner's diff drivers print, and a textconv driver that
+  // renders two versions alike makes them "same". Either flag alone does it on git 2.56; both are kept.
+  const diff = gitStatus(repo, 'diff', '--quiet', '--no-ext-diff', '--no-textconv', base, head);
   if (diff === 0) return `commit ${head} has no changes against the base ${base}`;
   if (diff !== 1) return `commit ${head}: git diff ${base} ${head} failed with exit ${diff}`;
   if (previous !== undefined) {
-    const same = gitStatus(repo, 'diff', '--quiet', previous, head);
+    const same = gitStatus(repo, 'diff', '--quiet', '--no-ext-diff', '--no-textconv', previous, head);
     if (same === 0 && gitStatus(repo, 'merge-base', '--is-ancestor', previous, head) !== 0) {
       return `commit ${head} has the previous candidate's tree but does not descend from ${previous}; rewriting commits is not allowed`;
     }
@@ -214,7 +216,7 @@ function land(repo: string, clone: string, branch: string, cycleId: string, base
   // 07-e: a dispute keeps the candidate, so nothing is fetched and no branch moves. On a first run
   // there is no candidate; apply escalates that case as outside a fix run.
   if ((claim as { dispute?: unknown }).dispute !== undefined) {
-    return previous === undefined || head === previous ? undefined : `a dispute must name the previous candidate ${previous}, not ${head}`;
+    return previous === undefined || head === previous ? undefined : `a dispute must name the previous candidate ${previous}, not ${cut(head)}`;
   }
   const incoming = `refs/sf/incoming/${cycleId}`;
   try {
@@ -235,6 +237,9 @@ function land(repo: string, clone: string, branch: string, cycleId: string, base
     spawnSync('git', ['update-ref', '-d', incoming], { cwd: repo, stdio: 'ignore' });
   }
 }
+
+// A claimed head that is not a commit is the developer's text, of any length; 64 holds a SHA-256.
+const cut = (head: string) => (head.length <= 64 ? head : `${head.slice(0, 64)} [... ${head.length - 64} characters cut]`);
 
 const shellQuote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 

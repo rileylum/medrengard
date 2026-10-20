@@ -32,6 +32,10 @@ node src/main.ts cancel job.json         # cancel the open cycle, else every ESC
 
 A work ID runs again once its cycle is accepted or cancelled. Merging stays with you: the run and `accept` print the merge line. A `cancel` of an open child cycle leaves its ESCALATED parent; a second `cancel` clears it. Once the parent is cancelled, remove `parentCycleId` from the job file.
 
+## Known limitations
+
+- Verify checks out a candidate's stored bytes. It reads no `.gitattributes`: not the candidate's, not yours, not the system's. So `eol`, `ident` and filter conversions such as git-lfs smudge do not happen there: an LFS repository's checks see pointer files, and a file declared `eol=crlf` keeps the LF it is stored with. With `core.autocrlf=true` in your git config, a repository cannot opt files out with `-text`. Reading attributes would let a candidate run your filter programs outside the sandbox (A-099, [accepted risks](docs/work/accepted-risks.md)).
+
 ## Layout
 
 - `src/lifecycle.ts`: pure state machine for one delivery cycle.

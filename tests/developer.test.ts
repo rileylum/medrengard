@@ -12,6 +12,7 @@ import { develop, fix, oneLine, type DeveloperAdapter, type Job } from '../src/d
 import { verify } from '../src/verify.ts';
 import { review } from '../src/review.ts';
 import { fakeAdapter } from './fake-adapter.ts';
+import { withGitConfig } from './git-config.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
 const NODE_PREFIX = dirname(dirname(realpathSync(process.execPath)));
@@ -90,6 +91,25 @@ test('a claim whose head is not the branch tip, the base, unknown, or abbreviate
     if (variant === 'orphan') assert.match(cycle.escalation ?? '', /not descended from the base/);
     store.close();
   }
+});
+
+test('a change the owner\'s textconv driver renders the same is still a change (sweep-git-hardening)', async () => {
+  const { repo, store, runsDir } = scratch();
+  const attributes = join(dir, `same-attributes-${n}`);
+  writeFileSync(attributes, '* diff=same\n');
+  const editing: DeveloperAdapter = {
+    name: 'editing',
+    async start(req) {
+      writeFileSync(join(req.cwd, 'README.md'), '# changed\n');
+      git(req.cwd, 'commit', '-q', '-am', 'change README');
+      return { status: 'completed', claim: { head: git(req.cwd, 'rev-parse', 'HEAD'), artifacts: ['README.md'] } };
+    },
+  };
+  // A binary-to-text converter that cannot read either version prints the same thing for both.
+  const { cycle } = await withGitConfig({ 'core.attributesFile': attributes, 'diff.same.textconv': 'echo SAME #' },
+    () => develop(store, editing, job(repo), { deadlineMs: 20_000, runsDir }));
+  assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
+  store.close();
 });
 
 test('develop refuses a second open cycle for the work and an unknown base before anything is launched', async () => {

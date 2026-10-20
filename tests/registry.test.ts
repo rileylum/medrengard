@@ -54,9 +54,11 @@ test('an unknown runtime name is refused, and the reason lists the registered na
   assert.ok(runtimeFor(registry, 'ext', 'developer'));
 });
 
-test('a job-file runtime may not reuse a built-in name, and one whose module is missing is refused when the registry is built', () => {
+test('a job-file runtime may not reuse a built-in name, and one whose module is missing is refused when its adapter is built', () => {
   assert.throws(() => runtimes({ claude: { module: EXT } }, dir), /runtimes\.claude.*built-in/);
-  assert.throws(() => runtimes({ ext: { module: 'no-such-module.ts' } }, dir), /no-such-module\.ts/);
+  // Not when the registry is built: a broken entry no role selects must not block cancel or accept (A-075).
+  const missing = runtimes({ ext: { module: 'no-such-module.ts' } }, dir).ext!;
+  assert.throws(() => missing.adapter({ sandbox: { backend: 'none' }, writes: true }), new RegExp(`runtimes\\.ext: cannot read module ${join(dir, 'no-such-module.ts')}: ENOENT`));
   assert.throws(() => runtimes({ ext: {} as { module: string } }, dir), /runtimes\.ext\.module/);
   // The store refuses an empty runtime on an outcome event, so the run's outcome could not be recorded.
   assert.throws(() => runtimes({ '': { module: EXT } }, dir), /runtime name "" is empty/);

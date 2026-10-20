@@ -19,8 +19,12 @@ export interface CliSpec {
   input?(req: RunRequest): string;
   /** Absolute paths bound read-only inside a sandbox, beside `config`. */
   bind?: string[];
-  /** Copied onto the adapter, so every outcome event records it. */
-  moduleHash?: string;
+  /**
+   * An extension's module, read and hashed when the adapter is built (A-075), not when the config
+   * loads: an entry no role selects must not block `cancel` or `accept`. The hash goes on the
+   * adapter, so every outcome event records it.
+   */
+  module?: string;
   /** Turn a finished child into an outcome. Called only for status `exited`. A throw is a failed run, via the controller. */
   parse(stdout: string, stderr: string, exitCode: number | null): RunOutcome;
   /**
@@ -64,13 +68,14 @@ export function hostReads(spec: CliSpec, home: string): string[] {
 }
 
 export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter {
+  const moduleHash = spec.module === undefined ? undefined : hashModule(spec.name, spec.module);
   const isolation = opts.isolation ?? 'cgroup';
   if (isolation === 'cgroup') checkScopes();
   const sandbox = opts.sandbox && confines(opts.sandbox) ? opts.sandbox : undefined;
   if (sandbox) checkSandbox(sandbox);
   return {
     name: spec.name,
-    ...(spec.moduleHash === undefined ? {} : { moduleHash: spec.moduleHash }),
+    ...(moduleHash === undefined ? {} : { moduleHash }),
     async start(req, signal) {
       // systemd mangles characters outside this set (a space becomes \x20), so the scope would be
       // created under a different name than scopePath() computes and cgroup.kill would go nowhere.
@@ -255,18 +260,16 @@ export const pi: CliSpec = {
  * A runtime the owner adds as one TypeScript file (A-074, Q7): the whole RunRequest as JSON on
  * stdin, one RunOutcome as JSON on stdout, under the controller's own node. The controller's
  * normalise turns any other shape into a failed run. Only the module's directory is bound, so a
- * module that imports from above it fails inside bwrap: it must be bundled into one file. Reads
- * the module now, so a missing file is refused before any run.
+ * module that imports from above it fails inside bwrap: it must be bundled into one file.
  */
 export function extensionSpec(name: string, module: string): CliSpec {
-  const moduleHash = createHash('sha256').update(readFileSync(module)).digest('hex');
   return {
     name,
     command: process.execPath,
     args: [module],
     input: (req) => JSON.stringify(req),
     bind: [dirname(module)],
-    moduleHash,
+    module,
     config: { read: [], overlay: [] },
     parse(stdout, stderr, exitCode) {
       if (exitCode !== 0) return failed(`${name} exited ${exitCode}: ${firstLine(stderr) || firstLine(stdout) || 'no output'}`);
@@ -279,6 +282,15 @@ export function extensionSpec(name: string, module: string): CliSpec {
       }
     },
   };
+}
+
+/** The module's SHA-256. A bare ENOENT would not say which config entry points at the file. */
+function hashModule(name: string, module: string): string {
+  try {
+    return createHash('sha256').update(readFileSync(module)).digest('hex');
+  } catch (err) {
+    throw new Error(`runtimes.${name}: cannot read module ${module}: ${(err as Error).message}`);
+  }
 }
 
 /**
