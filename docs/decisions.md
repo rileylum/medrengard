@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-129 — 2026-10-21 — 11-a is READY at Light tier; `accept` drives on, in a ticket after 11-a; row 11's gaps placed
+
+Asked: is ticket 11-a (`docs/work/11-a-driver-entry.md`, a pure refactor) go, at Light tier; and the session's recommendations on two questions. (1) Should `accept` drive on into the next stage? The session recommended yes, as a Trust-tier ticket right after 11-a that sets one rule for every owner command: record the event, then drive the cycle until it stops; 11-d's owner moves reuse it. With the default workflow, `accept` still stops at ACCEPTED. (2) Should plan row 11 record where the gaps left out of 11-a go? The session recommended yes, in 11-a's docs change: the `resume` command with 11-f, because today's `resume` reruns a stage whose run started, which A-105 item 1 forbids; reviewer `run_started` with 11-e; the `head_changed` and `base_changed` producer stays on the Owner tools row. Owner: “Go on 11-a, and take your recommendations”.
+
+Effect: 11-a is READY at Light tier (one review, A-125). The new ticket is 11-a2, drafted after 11-a and not READY until the owner says go. Decides A-112 item 2's open point: `accept` drives on.
+
 ### A-128 — 2026-10-21 — The factory is named Medrengard; a private remote
 
 Owner, after A-125's private remote: “Okay, I have gh installed so create the private repo. This is probably a good time to name the factory though - medrengard”.

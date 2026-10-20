@@ -2,7 +2,8 @@
 // the cycle reaches a stage no step acts on. It never decides a transition: apply does, from what
 // each step records. A step that throws is the spec's "cannot classify": the cycle is escalated
 // with the message and the owner decides. Ticket 09-b: any workflow that passes checkWorkflow,
-// read from the store; adapters are chosen by the stage's role.
+// read from the store; adapters are chosen by the stage's role. Ticket 11-a: `drive` is the one
+// entry point for a cycle already open; `run` opens one first.
 import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { DEFAULT_RUNS_DIR, develop, fix, type DeveloperAdapter, type Job } from './developer.ts';
@@ -55,11 +56,11 @@ export async function run(store: EventStore, adapters: Adapters, job: Job, opts:
   const developer = roles[start?.kind === 'agent' ? start.role : ''] as DeveloperAdapter;
   // A throw here propagates: develop cancels any cycle it opened, so there is nothing to record.
   const { cycle, worktree, branch } = await develop(store, developer, job, opts);
-  return drive(store, cycle, roles, job, opts, worktree, branch);
+  return loop(store, cycle, roles, job, opts, worktree, branch);
 }
 
 /** Continue a cycle from its stored stage, as run would after develop. Settled cycles come back unchanged. */
-export async function resume(store: EventStore, cycleId: string, adapters: Adapters, job: Job, opts: RunOptions): Promise<RunResult> {
+export async function drive(store: EventStore, cycleId: string, adapters: Adapters, job: Job, opts: RunOptions): Promise<RunResult> {
   const cycle = store.load(cycleId);
   if (!cycle) throw new Error(`cycle ${cycleId} not open`);
   // Nothing has run, so there is no clone to continue from; recovery (row 11) owns this case.
@@ -67,7 +68,7 @@ export async function resume(store: EventStore, cycleId: string, adapters: Adapt
   const roles = preflight(store.workflow, adapters, job, opts);
   // Where develop put them.
   const worktree = join(resolve(opts.runsDir ?? DEFAULT_RUNS_DIR), cycleId);
-  return drive(store, cycle, roles, job, opts, worktree, `sf/${cycleId}`);
+  return loop(store, cycle, roles, job, opts, worktree, `sf/${cycleId}`);
 }
 
 /**
@@ -174,7 +175,7 @@ function stepCap(w: Workflow): number {
   return (stages.reduce((sum, d) => sum + (d.budget ?? 0), 0) + 1) * stages.length;
 }
 
-async function drive(store: EventStore, opened: Cycle, roles: Adapters, job: Job, opts: RunOptions, worktree: string, branch: string): Promise<RunResult> {
+async function loop(store: EventStore, opened: Cycle, roles: Adapters, job: Job, opts: RunOptions, worktree: string, branch: string): Promise<RunResult> {
   const w = store.workflow;
   const cap = stepCap(w);
   const { cycleId } = opened;
