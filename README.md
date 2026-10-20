@@ -1,4 +1,4 @@
-# Software Factory
+# Medrengard
 
 A vendor-neutral software delivery factory: a deterministic controller moves approved work through implementation, independent verification, bounded review and human acceptance. Agents do the reasoning; the controller decides state.
 
