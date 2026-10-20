@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-130 — 2026-10-21 — 11-a's review minor accepted: cancel prints after every cancel is recorded
+
+Asked, from 11-a's Light review (PASS on `df2af87`, one minor): `cancel` now prints its lines after every cancel is recorded, not after each one, so a store write that fails part way through a cancel of several cycles prints nothing for the cycles already cancelled; the store keeps each cancel, and the error still prints. The session recommended accepting it, because restoring the order would add a print callback to `cancelWork` for that one failure. Owner: “accept”.
+
+Effect: no code change. Logged in `docs/work/accepted-risks.md`; it reopens if a cancel's output is ever used to tell which cycles were cancelled.
+
 ### A-129 — 2026-10-21 — 11-a is READY at Light tier; `accept` drives on, in a ticket after 11-a; row 11's gaps placed
 
 Asked: is ticket 11-a (`docs/work/11-a-driver-entry.md`, a pure refactor) go, at Light tier; and the session's recommendations on two questions. (1) Should `accept` drive on into the next stage? The session recommended yes, as a Trust-tier ticket right after 11-a that sets one rule for every owner command: record the event, then drive the cycle until it stops; 11-d's owner moves reuse it. With the default workflow, `accept` still stops at ACCEPTED. (2) Should plan row 11 record where the gaps left out of 11-a go? The session recommended yes, in 11-a's docs change: the `resume` command with 11-f, because today's `resume` reruns a stage whose run started, which A-105 item 1 forbids; reviewer `run_started` with 11-e; the `head_changed` and `base_changed` producer stays on the Owner tools row. Owner: “Go on 11-a, and take your recommendations”.
