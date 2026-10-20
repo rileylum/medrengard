@@ -17,7 +17,7 @@ import type { CommandRequest } from './kits/request.ts';
 import { FILE_STEM, TREE_CHECK, fileArgs, type Command, type Cycle, type Event } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
-import { checkSandbox, executables, reachable, restoreAccess, wrap, type Policy, type Sandbox } from './sandbox.ts';
+import { checkSandbox, executables, reachable, restoreAccess, spawnEnv, wrap, type Policy, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
 
 export interface Check {
@@ -273,7 +273,7 @@ async function runCheck(argv: string[], policy: Policy, isolation: 'cgroup' | 'p
   const run = spawnRuntime({
     command: wrapped, args: wrappedArgs, prompt: '', cwd,
     // bwrap clears this and sets policy.env again inside; `none` runs in it as is.
-    env: { ...process.env, ...policy.env },
+    env: spawnEnv(policy),
     graceMs: opts.graceMs,
     maxOutputBytes: opts.maxOutputBytes,
     scope: isolation === 'cgroup' ? `sf-verify-${randomUUID()}` : undefined,

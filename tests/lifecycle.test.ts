@@ -398,3 +398,26 @@ test('a verification check may record files, path to SHA-256, and nothing else i
   assert.ok(isEvent(v({ 'lint.ts': 'a'.repeat(64) })));
   for (const bad of ['abc', ['lint.ts'], null, { 'lint.ts': 7 }, { 'lint.ts': '' }]) assert.ok(!isEvent(v(bad)), JSON.stringify(bad));
 });
+
+// Ticket 10-e: a grant stage holds the owner's credential, so its shape is fixed at load (A-083 Q4).
+test('checkWorkflow refuses malformed grants, and a grant stage without run, without network, with a FAIL that does not escalate, or with a command named head', () => {
+  const run = [{ name: 'merge', command: ['node', { file: 'merge.ts' }] }];
+  const grant = (extra: object) => withStage('VERIFYING', { kind: 'command', transitions: { PASS: 'STANDARD_REVIEW' }, run, network: true, grants: ['github'], ...extra });
+  assert.deepEqual(checkWorkflow(grant({})), []);
+  assert.deepEqual(checkWorkflow(grant({ grants: ['github', 'npm_2-x'], transitions: { PASS: 'STANDARD_REVIEW', FAIL: 'ESCALATED' } })), []);
+  for (const grants of [[], 'github', [''], ['GitHub'], ['a b'], [7], null]) refused(grant({ grants }), /VERIFYING.*grants/);
+  refused(grant({ grants: ['github', 'github'] }), /VERIFYING.*grant github.*twice/);
+  refused(grant({ run: undefined }), /VERIFYING.*grant.*run/);
+  for (const network of [undefined, false]) refused(grant({ network }), /VERIFYING.*grant.*network/);
+  refused(grant({ transitions: { PASS: 'STANDARD_REVIEW', FAIL: 'DEVELOPING' } }), /VERIFYING.*grant.*FAIL.*ESCALATED/);
+  refused(grant({ run: [...run, { name: 'head', command: ['true'] }] }), /VERIFYING.*head.*reserved/);
+  // Only a grant stage reserves head.
+  assert.deepEqual(checkWorkflow(withStage('VERIFYING', { kind: 'command', transitions: { PASS: 'STANDARD_REVIEW' }, run: [{ name: 'head', command: ['true'] }] })), []);
+});
+
+test('a verification may record the grant names its stage held, and nothing else in that field (10-e)', () => {
+  const v = (grants: unknown) => ({ type: 'verification', head: 'H1', checks: [{ name: 'merge', result: 'PASS' }], grants });
+  assert.ok(isEvent(v(undefined)));
+  assert.ok(isEvent(v(['github'])));
+  for (const bad of ['github', [''], [7], null, {}]) assert.ok(!isEvent(v(bad)), JSON.stringify(bad));
+});
