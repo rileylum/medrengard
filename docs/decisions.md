@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-086 — 2026-10-20 — 10-e: fix the adversarial findings, then merge
+
+Owner, after 10-e's adversarial FAIL on `79220e4` (one major: a grant file beside the claude or pi binary is readable by the agents' sandboxes; three minors: no test of the head gate's PASS-for-this-head rule, `head.stdout` redacted after JSON quoting, overlapping values partly left in clear) and the recommendation to fix all four tests first, trim `\r\n` from a grant value, add the child-argv and cwd-config warnings to the design note, then merge without another review, as for 10-b and 10-c (A-080, A-082): “fix and merge”.
+
+Effect: the fixes go on `feat/10-e-grants`, tests first, unreviewed. Then `git merge --no-ff` into main. On record: standard 1 FAIL on `231163d` (fixed at `818de56`), standard 2 FAIL on `818de56` (fixed at `79220e4`, A-085), adversarial FAIL on `79220e4`.
+
 ### A-085 — 2026-10-20 — 10-e: fix the standard 2 findings, then the adversarial review
 
 Owner, after 10-e's standard 2 FAIL on `818de56` (one major: no test pins that `verify` keeps a grant's value out of bwrap's argv; three minors: overlapping values defeat redaction, a grant file under a system or runtime root is not refused, `tree.stdout` is not redacted) and the recommendation to fix all four tests first, also refuse `grants` on an agent stage and two grants with one variable in a stage, record the Q5 point against A-078's accepted risk, then run the adversarial review: “go as recommended”.

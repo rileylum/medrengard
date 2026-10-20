@@ -79,3 +79,5 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
   - The `accept` part of the gate cannot be reached until row 11.
 
   The reviewer's independent `npm test` matched: 380 tests, 356 pass, 0 fail. The two leftover `sf-grants-*` folders were from the implementer's red run of the locked-`outputDir` test; they are deleted.
+- 2026-10-20 — owner: “fix and merge” (A-086). Fix the adversarial findings tests first, trim `
+`, add the two warnings to the design note, then merge without another review.
