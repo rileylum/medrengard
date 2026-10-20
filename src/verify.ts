@@ -58,6 +58,9 @@ export interface Verified {
 type CheckResult = Extract<Event, { type: 'verification' }>['checks'][number];
 
 const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
+// Git knows the empty tree without storing it. SHA-1 only, as the controller is: a SHA-256
+// repository names it differently, and every checkout there would fail.
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 /** A workflow passed as an object, not loaded from a file, has nowhere to find a file argument. */
 export const noWorkflowDir = (stage: string, file: string) => `stage ${stage} names file ${file}, but its workflow has no file of its own to find it beside`;
@@ -80,6 +83,34 @@ export function stageGrants(stage: string, def: StageDef | undefined, grants: Re
     if (other) throw new Error(`stage ${stage}: grants ${other[0]} and ${name} both set ${g.variable}`);
   }
   return given;
+}
+
+/** Throws for a check list verify cannot write evidence for. `own`: a stage's run, which may hold `{ file }` arguments. */
+export function checkCommands(checks: Command[], own: boolean): void {
+  const seen = new Set<string>();
+  for (const c of checks) {
+    if (typeof c.name !== 'string' || !FILE_STEM.test(c.name)) throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
+    if (c.name === TREE_CHECK) throw new Error(`check name ${TREE_CHECK} is reserved for the controller's own tracked-tree check`);
+    if (seen.has(c.name)) throw new Error(`check name ${c.name} is declared twice`);
+    // The repository layer may set checks; a file argument is the workflow's, and only in run.
+    if (!own && !(Array.isArray(c.command) && c.command.every((a) => typeof a === 'string'))) throw new Error(`check ${c.name}: every argument must be a string`);
+    // checkWorkflow refuses an empty run; a job's would be MISSING only after the developer run.
+    if (c.command.length === 0) throw new Error(`check ${c.name}: command is empty`);
+    seen.add(c.name);
+  }
+}
+
+/**
+ * Why `command` cannot start inside the sandbox, or undefined when it can. run's preflight asks
+ * with a policy that binds no stage folder, so a program found only under runsDir would be refused
+ * there and found here.
+ */
+export function missingProgram(command: string, sandbox: Sandbox, policy: Policy): string | undefined {
+  const found = executables(command, policy.cwd);
+  if (!found.length) return `${command || '(empty command)'} not found`;
+  // Inside, PATH lookup skips directories that are not bound, so any reachable match will run.
+  if (!found.some((p) => reachable(sandbox, policy, p))) return `${command} resolves to ${found[0]}, outside the sandbox; add its directory to sandbox.read`;
+  return undefined;
 }
 
 /**
@@ -105,15 +136,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   const def = store.workflow.stages[cycle.stage];
   if (def?.kind !== 'command' || !cycle.candidate) throw new Error(`verify on a cycle in ${cycle.stage}, expected a command stage`);
   const checks: Command[] = def.run ?? job.checks ?? [];
-  const seen = new Set<string>();
-  for (const c of checks) {
-    if (typeof c.name !== 'string' || !FILE_STEM.test(c.name)) throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
-    if (c.name === TREE_CHECK) throw new Error(`check name ${TREE_CHECK} is reserved for the controller's own tracked-tree check`);
-    if (seen.has(c.name)) throw new Error(`check name ${c.name} is declared twice`);
-    // The repository layer may set checks; a file argument is the workflow's, and only in run.
-    if (!def.run && !(Array.isArray(c.command) && c.command.every((a) => typeof a === 'string'))) throw new Error(`check ${c.name}: every argument must be a string`);
-    seen.add(c.name);
-  }
+  // run's preflight made this check too; the job is the caller's object and may have changed since.
+  checkCommands(checks, def.run !== undefined);
   // Before anything is written: a missing file is the owner's setup, not a FAIL of the candidate.
   const files = [...new Set(checks.flatMap(fileArgs))];
   for (const f of files) {
@@ -152,7 +176,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // Before 08-a the checkout was a registered worktree; prune drops a registration left behind.
   git(job.repo, 'worktree', 'prune');
   mkdirSync(worktree, { recursive: true });
-  const tree = checkoutGit(job.repo, worktree, head, opts.deadlineMs);
+  const tree = checkoutGit(job.repo, worktree, opts.deadlineMs);
   tree('read-tree', head);
   tree('checkout-index', '--all', '--force');
   // Evidence for this SHA is this run's alone: a reader listing the directory must not find a
@@ -282,19 +306,26 @@ function headFile(file: string, head: string, redact: (text: string) => string):
 
 /**
  * The controller's git over a verify checkout: the repository's own git dir, an index next to the
- * checkout and not in it, attributes from the head. Nothing inside the checkout is read as git
- * state, so a check that writes a `.git` pointer, a `.gitattributes` or index flags changes
- * nothing here (07-b adversarial). Not the git helper: it trims, and the buffer must stay 64 MiB
- * for a formatter that touched every file of a large tree. Each call gets the stage deadline.
+ * checkout and not in it, no attributes. Nothing inside the checkout is read as git state, so a
+ * check that writes a `.git` pointer, a `.gitattributes` or index flags changes nothing here (07-b
+ * adversarial). Attributes come from the empty tree, not the head: a head `filter=lfs` would run
+ * the owner's filter outside the sandbox, on candidate bytes, against the candidate's `.lfsconfig`
+ * (sweep-git-hardening). The owner's and the system attributes files are off for the same reason,
+ * so the checkout is the commit's bytes as stored. Not the git helper: it trims, and the buffer
+ * must stay 64 MiB for a formatter that touched every file of a large tree. Each call gets the
+ * stage deadline.
  */
-function checkoutGit(repo: string, checkout: string, head: string, timeoutMs: number) {
+function checkoutGit(repo: string, checkout: string, timeoutMs: number) {
   const gitDir = git(repo, 'rev-parse', '--absolute-git-dir');
   const index = `${checkout}.index`;
-  const env = { ...process.env, GIT_INDEX_FILE: index };
+  // A lock found now is left by a verify or review that crashed or was SIGKILLed (it is no live
+  // call's, as below), and would fail every later one of this cycle with "File exists".
+  rmSync(`${index}.lock`, { force: true });
+  const env = { ...process.env, GIT_INDEX_FILE: index, GIT_ATTR_NOSYSTEM: '1' };
   // cwd is the repository: --work-tree names the checkout, and a checkout a check locked cannot be
   // a working directory at all (08-a adversarial).
   return (...args: string[]) => {
-    const r = spawnSync('git', [`--git-dir=${gitDir}`, `--work-tree=${checkout}`, `--attr-source=${head}`, ...args], {
+    const r = spawnSync('git', ['-c', 'core.attributesFile=/dev/null', `--git-dir=${gitDir}`, `--work-tree=${checkout}`, `--attr-source=${EMPTY_TREE}`, ...args], {
       cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, ...bounded(timeoutMs),
     });
     const why = stopped(r, timeoutMs);
@@ -355,7 +386,7 @@ function removeUntracked(checkout: string, entries: { gitlink: boolean; path: st
 export function treeDiff(repo: string, checkout: string, head: string, timeoutMs: number): string {
   // A tree the controller cannot walk (a chain past PATH_MAX) is not one it can call the commit.
   try { restoreAccess(checkout); } catch (err) { return `cannot restore owner access in the checkout: ${(err as Error).message}\n`; }
-  const tree = checkoutGit(repo, checkout, head, timeoutMs);
+  const tree = checkoutGit(repo, checkout, timeoutMs);
   tree('read-tree', head);
   // -q: a file that differs is not an error (exit 0); diff-files reports it. A failure here is git
   // unable to compare what a check left, such as a malformed repository at a gitlink, which
@@ -380,12 +411,8 @@ async function runCheck(argv: string[], policy: Policy, isolation: 'cgroup' | 'p
   const [command = '', ...args] = argv;
   // Resolved here, not by the spawn: under a scope systemd-run does the lookup and exits 1 on a
   // missing binary, which would read as FAIL. MISSING must mean the same under both isolations.
-  const found = executables(command, cwd);
-  if (!found.length) return { stdout: '', stderr: '', result: 'MISSING', exit: `missing: ${command || '(empty command)'} not found` };
-  // Inside, PATH lookup skips directories that are not bound, so any reachable match will run.
-  if (!found.some((p) => reachable(sandbox, policy, p))) {
-    return { stdout: '', stderr: '', result: 'MISSING', exit: `missing: ${command} resolves to ${found[0]}, outside the sandbox; add its directory to sandbox.read` };
-  }
+  const why = missingProgram(command, sandbox, policy);
+  if (why) return { stdout: '', stderr: '', result: 'MISSING', exit: `missing: ${why}` };
   const [wrapped, wrappedArgs] = wrap(sandbox, policy, command, args);
   const run = spawnRuntime({
     command: wrapped, args: wrappedArgs, prompt: '', cwd,

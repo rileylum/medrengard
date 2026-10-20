@@ -13,6 +13,7 @@ import { claude, cliAdapter, type CliSpec } from '../src/runtime/cli-adapter.ts'
 import { develop, fix, type Job } from '../src/developer.ts';
 import { review } from '../src/review.ts';
 import { fakeAdapter } from './fake-adapter.ts';
+import { withGitConfig } from './git-config.ts';
 import { verify, type Check, type VerifyOptions } from '../src/verify.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
@@ -379,14 +380,47 @@ test('a sandbox that cannot start throws before anything is checked out (08-a)',
   store.close();
 });
 
-test('an untracked .gitattributes planted by a check does not change how the tree is compared: attributes come from the head (08-a)', async () => {
-  // Without --attr-source, a planted `notes.txt text` makes git normalise the rewritten CRLF back to LF and call the file clean.
+test('an untracked .gitattributes planted by a check does not change how the tree is compared: attributes never come from the checkout (08-a)', async () => {
+  // Without --attr-source (the empty tree since sweep-git-hardening), a planted `notes.txt text` makes git normalise the rewritten CRLF back to LF and call the file clean.
   const { store, runsDir, job, cycle } = await verifying([],
     committing((wt) => { writeFileSync(join(wt, 'done.txt'), 'done\n'); writeFileSync(join(wt, 'notes.txt'), 'a\n'); }));
   job.checks = [sh('crlf', "printf 'a\\r\\n' > notes.txt; echo 'notes.txt text' > .gitattributes")];
   const { cycle: c, evidenceDir } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
   assert.equal(c.stage, 'ESCALATED', c.escalation);
   assert.match(evidence(evidenceDir, 'tree').stdout, /^M\tnotes\.txt$/m);
+  store.close();
+});
+
+test('a filter the candidate\'s .gitattributes or the owner\'s attributes file names is not run by the controller\'s git (sweep-git-hardening)', async () => {
+  const ownerAttributes = join(dir, 'owner-attributes');
+  writeFileSync(ownerAttributes, '* filter=probe\n');
+  for (const [label, files, extra] of [
+    ['candidate .gitattributes', { '.gitattributes': '* filter=probe\n' }, {}],
+    ['owner core.attributesFile', {}, { 'core.attributesFile': ownerAttributes }],
+  ] as const) {
+    const { store, runsDir, job, cycle } = await verifying([sh('ok', 'true')],
+      committing((wt) => { writeFileSync(join(wt, 'done.txt'), 'done\n'); for (const [f, t] of Object.entries(files)) writeFileSync(join(wt, f), t); }));
+    // As `git lfs install` sets filter.lfs: in the owner's config, run as the controller, unsandboxed.
+    const marker = join(dir, `filter-ran-${n}`);
+    const driver = `touch ${marker}; cat`;
+    const { cycle: c } = await withGitConfig({ 'filter.probe.smudge': driver, 'filter.probe.clean': driver, ...extra },
+      () => verify(store, cycle.cycleId, job, { ...opts(), runsDir }));
+    assert.equal(c.stage, 'STANDARD_REVIEW', `${label}: ${c.escalation}`);
+    assert.ok(!existsSync(marker), `${label}: the owner's filter ran`);
+    store.close();
+  }
+});
+
+test('an index lock left by a crashed verify or review does not stop the next verify or review of the cycle (sweep-git-hardening)', async () => {
+  const { store, runsDir, job, cycle } = await verifying([sh('ok', 'true')]);
+  const lock = join(runsDir, `${cycle.cycleId}-verify.index.lock`);
+  writeFileSync(lock, '');
+  const { cycle: c } = await verify(store, cycle.cycleId, job, { ...opts(), runsDir });
+  assert.equal(c.stage, 'STANDARD_REVIEW', c.escalation);
+  // review compares the checkout through the same index before it starts the reviewer.
+  writeFileSync(lock, '');
+  const reviewed = await review(store, fakeAdapter({ outcome: { status: 'completed', claim: { head: c.candidate!.head, verdict: 'PASS', findings: [] } } }), cycle.cycleId, job, { deadlineMs: 20_000, runsDir });
+  assert.equal(reviewed.stage, 'ADVERSARIAL_REVIEW', reviewed.escalation);
   store.close();
 });
 

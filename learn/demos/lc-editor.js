@@ -48,7 +48,7 @@ export default function mount(el) {
     const reasons = checkWorkflow(w);
     $('.verdict').innerHTML = reasons.length
       ? `<p><span class="pill FAIL">refused</span> <span class="small">the store would not open, and no job would start</span></p><ul class="small">${reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>`
-      : '<p><span class="pill PASS">accepted</span> <span class="small">no reasons: the store may run it</span></p>';
+      : '<p><span class="pill PASS">accepted</span> <span class="small">no reasons: the store accepts it (run still refuses a few shapes its steps cannot run yet)</span></p>';
     $('.hash').innerHTML = reasons.length ? '' : `Recorded on every cycle it opens as <code>${esc(w.name ?? 'unnamed')}</code>, hash <code>${workflowHash(w).slice(0, 16)}…</code>`;
     if (reasons.length) return;
     const d = flow($('.diagram'), layout(w));

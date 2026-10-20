@@ -33,7 +33,7 @@ const PRESETS = {
     developer: [{ change: 'failingTest' }], checks: [{ test: 'fail' }] },
   formatter: { label: 'A check rewrites a file', about: 'Every check exits 0, but one rewrote a tracked file. The controller adds its own tree check, which FAILs: the reviewers must read the commit, not what a check left behind.',
     developer: [{ change: 'good' }], checks: [{ dirty: true }] },
-  missing: { label: 'A check is not installed', about: 'The job declares eslint, which this machine does not have. Missing evidence is never PASS: the check is MISSING and the cycle escalates.',
+  missing: { label: 'A check is not installed', about: 'The job declares eslint, which this machine does not have. run looks each check program up before the developer starts, so it refuses the job and exits 2: no cycle opens and no run is paid for.',
     checksJson: [...DEFAULT_CHECKS, { name: 'lint', command: ['eslint', '.'] }], developer: [{ change: 'good' }] },
   timeout: { label: 'The developer hangs', about: 'The developer commits and then says nothing. At the deadline (5 s here) the controller stops waiting, records run_failed: timeout, and escalates.',
     deadline: 5, developer: [{ change: 'good', hang: true }] },
@@ -328,11 +328,17 @@ export default function mount(el) {
   function replyButtons(body) {
     body.insertAdjacentHTML('beforeend', `<div class="row"><button class="primary send">Send reply</button><button class="bad crash">Crash</button><button class="hang">Go silent</button></div>`);
   }
+  // The controller aborts a run at its deadline or when another process settles the cycle; the
+  // stored stage tells the two apart.
+  function stoppedLabel() {
+    const stage = state.cycleId && store.load(state.cycleId)?.stage;
+    return SETTLED.includes(stage) ? `stopped: cycle ${stage}` : 'deadline: stopped';
+  }
   function settleWith(c, runtime, signal, getText, stop) {
     return new Promise((resolve) => {
       let settled = false;
       const finish = (outcome, label, cls) => { if (settled) return; settled = true; stop(); scripted.delete(c); c.body.querySelector('.step-row')?.remove(); c.done(label, cls); resolve(outcome); };
-      signal.addEventListener('abort', () => finish({ status: 'cancelled' }, 'deadline: stopped', 'bad'), { once: true });
+      signal.addEventListener('abort', () => finish({ status: 'cancelled' }, stoppedLabel(), 'bad'), { once: true });
       c.body.querySelector('.send').addEventListener('click', () => {
         const o = asRuntime(runtime, getText());
         finish(o, o.status === 'completed' ? 'replied' : `parse: ${o.reason}`, o.status === 'completed' ? 'good' : 'bad');
@@ -466,7 +472,7 @@ export default function mount(el) {
 
   // ---- interference: other processes writing to the same store --------------------------------
   function interfere(on) { for (const b of el.querySelectorAll('.interfere button')) b.disabled = !on; }
-  $('.i-cancel').addEventListener('click', () => { if (state.cycleId) store.append(state.cycleId, { type: 'cancel', source: 'owner' }); narrate('<b>owner</b>: <code>node src/main.ts cancel job.json</code> from another terminal. The running agent is not told; its result will arrive at a settled cycle and change nothing.'); });
+  $('.i-cancel').addEventListener('click', () => { if (state.cycleId) store.append(state.cycleId, { type: 'cancel', source: 'owner' }); narrate('<b>owner</b>: <code>node src/main.ts cancel job.json</code> from another terminal. Within about a second the controller sees the settled cycle and stops the running agent.'); });
   $('.i-base').addEventListener('click', () => {
     const sha = world.repo.commit('main', { 'README.md': world.repo.commits.get(world.repo.resolve('main')).tree['README.md'] + '\nSee also: todo help.\n' }, 'docs: mention help');
     store.append(state.cycleId, { type: 'base_changed', base: sha });
