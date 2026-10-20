@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-102 — 2026-10-20 — sweep-lazy-runtimes: merged after the owner's walkthrough
+
+Owner, after the walkthrough: “Looks good to me, merge”.
+
+Effect: `feat/sweep-lazy-runtimes` merges into main locally with `--no-ff`. An extension runtime's module is read and hashed when its adapter is built (A-075), so an entry no role selects blocks nothing, and `accept`, `cancel` and `events` never read one; a read error names `runtimes.<name>`. One fresh in-session review covers the branch (PASS); the `claude -p` reviews and the adversarial review did not run. Merging main into the branch conflicted in the spec's Driver bullets; both sides kept. The owner did not run `npm test`; the session's run on the branch with main merged in (446 tests, 422 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
 ### A-101 — 2026-10-20 — sweep-terminal-escapes: merged; the prototypes stay as they are
 
 Owner, after the walkthrough: “Looks good, we can leave the prototypes as is”. The owner runs the merge command.
