@@ -30,11 +30,13 @@ Verification: `npm test`, run by the implementer (not independent).
 **Newlines.** `printable` also escapes `\n`. Escalation and error are one-line fields; a raw newline in one would let an agent print a fake `Stage:` line without any escape sequence. A multi-line git error in `Error:` now shows as one line with `\n` in it. Findings still go through `oneLine` first, so they keep reading as before.
 
 **Risks and what this does not cover.**
-- `proto/board.ts` and `proto/run.ts` print the same fields with only `oneLine`. They are prototypes; I left them alone. Wrapping their `oneLine(...)` calls in `printable(...)` is a five-line follow-up if you want it.
+- `proto/board.ts` and `proto/run.ts` print the same fields with only `oneLine`. They are prototypes; I left them alone. Wrapping their prints in `printable(...)` touches about a dozen lines in two files (the board also prints heads and reasons), so it is left as a follow-up if you want it.
 - Stage names come from the workflow, which may be a repository module; a hostile workflow already runs code in the controller (security finding 1), so escaping its stage names would not help.
 - Prompts still carry raw control characters to the next agent. That reaches a model, not a terminal.
 
 **Decision for you.** None needed to merge. Optional: the `proto/` follow-up above.
+
+The review also made a refused dispute cut the head it names, as a claim's refusal already did.
 
 ## Log
 - 2026-10-20, implementer. Ticket committed first. New test `agent text with terminal escapes reaches stdout and stderr only as visible escapes` (`tests/main.test.ts`) with two new markers in `tests/fixtures/ext-runtime.ts`. On the unchanged code it failed for the stated reason: `AssertionError [ERR_ASSERTION]: EXT:esc-verdict`, `doesNotMatch /[\u0007\u001b‮]/`, with stdout holding `standard_reviewer \x1B[2JSta: FAIL` and the raw finding.
@@ -45,3 +47,11 @@ Verification: `npm test`, run by the implementer (not independent).
 - `npm test`, implementer's run, not independent: tests 420, pass 396, fail 0, skipped 19, todo 5.
 - lazy-review on `git diff main...HEAD`: lean already.
 - Next: owner review; optional `proto/` follow-up.
+- 2026-10-20, fresh standard review at 08f84c0: PASS with four findings. Outcomes:
+  1. [minor] dispute refusal in `land` named the head uncut: fixed with `cut(head)`. Test first: new marker `EXT:esc-dispute` (a real FAIL, then a fix run disputing with a 10,000-character escaped head) failed the length assertion on the unchanged code, with stdout holding `a dispute must name the previous candidate <sha>, not \u{1b}[2JStage: ...` uncut. Passes after the fix.
+  2. [minor] `Error:` and the top-level stderr print were not pinned: new test `a run error and a refusal on stderr show control characters only as visible escapes`, driven by a workflow module whose command stage names a missing file `ESC[2J CSI.sh` (reaches `Error:`) and one whose `start` is `ESC[2J` (reaches stderr). It passed at once; mutants killed: `Error:` printed raw, `console.error` printed raw.
+  3. [minor] C1 controls: U+009B added to the fixture's escape string and both `doesNotMatch` classes. Mutant killed: `printable` matching only C0 and DEL fails both tests.
+  4. [nit] spec bullet now names U+2028 and U+2029.
+  - Also killed: the dispute `cut` reverted.
+  - `proto/`: about a dozen lines across two files, not five; left noted.
+- `npm test` after the review fixes, implementer's run, not independent: tests 421, pass 397, fail 0, skipped 19, todo 5.
