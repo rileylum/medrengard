@@ -93,6 +93,7 @@ One driver, `run` in `src/run.ts`, runs any workflow that passes the check. It o
 - A role with no adapter is refused before any cycle opens [run: a role with no adapter].
 - A step that throws escalates the cycle with `reject_dispatch` naming the stage [run: a stage that throws].
 - `resume` continues a cycle from its stored stage [run: resume on a cycle left at VERIFYING].
+- While an agent run is in flight, the controller reloads its cycle once a second. If another process has settled it, for example with the owner's cancel, the run is aborted and its CLI killed; the outcome is `run_failed` with reason `cancelled`, which the settled cycle ignores [run: a cancel from another process aborts the developer run, the standard reviewer run]. Aborting `RunOptions.signal` ends the run in flight the same way [run: RunOptions.signal aborts]. A check in flight is not aborted.
 
 ## Prompts and version records
 

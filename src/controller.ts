@@ -187,6 +187,8 @@ function bounded(adapter: Adapter, req: RunRequest, deadlineMs: number, settled:
       resolve(o);
       clearTimeout(timer);
       clearInterval(watch);
+      // One signal may span every run of a job (run passes it to each); without this it would
+      // collect a listener per run.
       signal?.removeEventListener('abort', cancel);
     };
     const stop = (o: RunOutcome) => { if (!done) { finish(o); ac.abort(); } };
