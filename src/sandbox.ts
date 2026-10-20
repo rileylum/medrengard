@@ -39,7 +39,7 @@ export interface Policy {
 // The system directories every command needs: binaries, libraries, the dynamic loader and /etc.
 // Not $HOME, /var, /run or /srv: those hold the owner's files and sockets. On merged-/usr distros
 // /bin, /sbin, /lib and /lib64 are symlinks and are recreated as symlinks.
-const SYSTEM = ['/usr', '/etc', '/opt', '/bin', '/sbin', '/lib', '/lib64'];
+export const SYSTEM = ['/usr', '/etc', '/opt', '/bin', '/sbin', '/lib', '/lib64'];
 const RESOLVE = '/run/systemd/resolve';
 
 interface Backend {

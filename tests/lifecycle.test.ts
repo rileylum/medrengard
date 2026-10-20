@@ -411,6 +411,8 @@ test('checkWorkflow refuses malformed grants, and a grant stage without run, wit
   for (const network of [undefined, false]) refused(grant({ network }), /VERIFYING.*grant.*network/);
   refused(grant({ transitions: { PASS: 'STANDARD_REVIEW', FAIL: 'DEVELOPING' } }), /VERIFYING.*grant.*FAIL.*ESCALATED/);
   refused(grant({ run: [...run, { name: 'head', command: ['true'] }] }), /VERIFYING.*head.*reserved/);
+  // Nothing would be granted: refused, not ignored.
+  refused(withStage('STANDARD_REVIEW', { ...defaultWorkflow.stages.STANDARD_REVIEW!, grants: ['github'] } as StageDef), /STANDARD_REVIEW.*grants.*command stage/);
   // Only a grant stage reserves head.
   assert.deepEqual(checkWorkflow(withStage('VERIFYING', { kind: 'command', transitions: { PASS: 'STANDARD_REVIEW' }, run: [{ name: 'head', command: ['true'] }] })), []);
 });

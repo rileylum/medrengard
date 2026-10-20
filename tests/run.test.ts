@@ -493,6 +493,10 @@ test('run refuses a grant the configuration does not give, and any grant under n
   await assert.rejects(run(store, roles, job(repo), opts(runsDir)), /stage MERGE asks for grant github, which no personal or job file gives/);
   await assert.rejects(run(store, roles, job(repo), opts(runsDir, { grants: { npm: grantFile(root).github } })), /stage MERGE asks for grant github/);
   await assert.rejects(run(store, roles, job(repo), opts(runsDir, { sandbox: { backend: 'none' }, grants: grantFile(root) })), /stage MERGE holds a grant, which sandbox backend none cannot confine/);
+  // One value would silently replace the other.
+  const twice = new EventStore(join(root, 'twice.sqlite'), granted(undefined, { grants: ['github', 'npm'] }));
+  await assert.rejects(run(twice, roles, job(repo), opts(runsDir, { grants: { ...grantFile(root), npm: grantFile(root).github } })), /stage MERGE: grants github and npm both set GH_TOKEN/);
+  twice.close();
   assert.equal(developer.requests.length, 0);
   assert.deepEqual(store.cycles('w1'), []);
   store.close();

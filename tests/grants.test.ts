@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { EventStore } from '../src/store.ts';
 import { claude, cliAdapter } from '../src/runtime/cli-adapter.ts';
@@ -45,12 +45,13 @@ const reviewed = (script = WRITES_HEAD) => ({
 
 let n = 0;
 /** A scratch repository at the workflow's CHECK stage, verified, and a token file outside it. */
-async function atReview(workflow: Workflow) {
+async function atReview(workflow: Workflow, setup: (repo: string) => void = () => {}) {
   const root = join(dir, String(n++));
   const repo = join(root, 'repo');
   mkdirSync(repo, { recursive: true });
   git(repo, 'init', '-q', '-b', 'main');
   writeFileSync(join(repo, 'README.md'), '# scratch\n');
+  setup(repo);
   git(repo, 'add', 'README.md');
   git(repo, 'commit', '-q', '-m', 'initial');
   writeFileSync(join(root, 'gh-token'), `${TOKEN}\n`);
@@ -87,8 +88,8 @@ test('a grant stage on a head no reviewer passed escalates with nothing run (A-0
 });
 
 /** At MERGE on a reviewed head. */
-async function atMerge(script: string) {
-  const s = await atReview(reviewed(script));
+async function atMerge(script: string, setup?: (repo: string) => void) {
+  const s = await atReview(reviewed(script), setup);
   assert.equal(s.store.append(s.cycleId, { type: 'verdict', runId: 'r1', head: s.head, verdict: 'PASS' }).stage, 'MERGE');
   return s;
 }
@@ -142,5 +143,54 @@ test('an empty grant file is refused before the stage folder is touched', async 
   writeFileSync(join(root, 'gh-token'), '\n');
   await assert.rejects(verify(store, cycleId, job, opts), /grant github: file .*gh-token is empty/);
   assert.ok(!existsSync(join(runsDir, 'evidence', head, 'MERGE')));
+  store.close();
+});
+
+// Every process's argv is world-readable in /proc; verify must hand the token over some other way.
+test('while a grant stage runs, no process on the machine has the token in its argv (10-e standard 2)', async () => {
+  const { store, job, cycleId, opts } = await atMerge(`${WRITES_HEAD} setTimeout(() => {}, 1500);`);
+  let done = false;
+  const running = verify(store, cycleId, job, opts).finally(() => { done = true; });
+  const leaked: string[] = [];
+  let sawStage = false;
+  while (!done) {
+    for (const pid of readdirSync('/proc').filter((p) => /^\d+$/.test(p))) {
+      let argv: string;
+      try { argv = readFileSync(`/proc/${pid}/cmdline`, 'utf8'); } catch { continue; }
+      if (argv.includes(TOKEN)) leaked.push(argv.replaceAll('\0', ' '));
+      if (argv.includes('bwrap') && argv.includes('/MERGE/request.json')) sawStage = true;
+    }
+    await new Promise((res) => setTimeout(res, 20));
+  }
+  const r = await running;
+  assert.equal(r.cycle.stage, 'AFTER', r.cycle.escalation);
+  assert.ok(sawStage, 'the scan saw the grant stage running');
+  assert.deepEqual(leaked, []);
+  store.close();
+});
+
+test('a value that contains another grant\'s is redacted whole, whatever order the stage names them in (10-e standard 2)', async () => {
+  const { root, store, job, cycleId, opts } = await atMerge('');
+  writeFileSync(join(root, 'short'), 'sf-short');
+  writeFileSync(join(root, 'long'), 'sf-short-and-long');
+  const twoGrants = { ...opts, grants: { a: { variable: 'A', file: join(root, 'short') }, b: { variable: 'B', file: join(root, 'long') } } };
+  // Swap MERGE for one holding both grants, the shorter first.
+  const wf = store.workflow.stages.MERGE as { run: unknown[]; grants: string[] };
+  wf.grants = ['a', 'b'];
+  wf.run = [merge(`${WRITES_HEAD} console.log(process.env.B);`)];
+  const r = await verify(store, cycleId, job, twoGrants);
+  assert.equal(r.cycle.stage, 'AFTER', r.cycle.escalation);
+  assert.equal(readFileSync(join(r.evidenceDir, 'merge.stdout'), 'utf8'), '[grant b]\n');
+  store.close();
+});
+
+test('the tree check quotes a file a grant stage left in a gitlink only redacted (10-e standard 2)', async () => {
+  const gitlink = (repo: string) => git(repo, 'update-index', '--add', '--cacheinfo', `160000,${'1'.repeat(40)},sub`);
+  const { store, job, cycleId, opts } = await atMerge(`${WRITES_HEAD} fs.writeFileSync('sub/' + process.env.GH_TOKEN, '');`, gitlink);
+  const r = await verify(store, cycleId, job, opts);
+  assert.equal(r.cycle.stage, 'ESCALATED');
+  const tree = readFileSync(join(r.evidenceDir, 'tree.stdout'), 'utf8');
+  assert.match(tree, /gitlink sub is not empty: \[grant github\]/);
+  assert.ok(!tree.includes(TOKEN), tree);
   store.close();
 });

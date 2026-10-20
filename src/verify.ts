@@ -70,10 +70,16 @@ export function stageGrants(stage: string, def: StageDef | undefined, grants: Re
   const names = def?.kind === 'command' ? (def.grants ?? []) : [];
   const backend = sandbox ?? { backend: 'bwrap' };
   if (names.length > 0 && !confines(backend)) throw new Error(`stage ${stage} holds a grant, which sandbox backend ${backend.backend} cannot confine`);
-  return names.map((name) => {
+  const given = names.map((name): [string, Grant] => {
     if (!grants || !Object.hasOwn(grants, name)) throw new Error(`stage ${stage} asks for grant ${name}, which no personal or job file gives`);
     return [name, grants[name]!];
   });
+  // Both would be set in one variable, and the second value would silently win.
+  for (const [i, [name, g]] of given.entries()) {
+    const other = given.slice(0, i).find(([, o]) => o.variable === g.variable);
+    if (other) throw new Error(`stage ${stage}: grants ${other[0]} and ${name} both set ${g.variable}`);
+  }
+  return given;
 }
 
 /**
@@ -175,7 +181,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   const policy: Policy = { cwd: worktree, write: [worktree, outputDir], read: [evidenceDir], network: def.network ?? false, env: { SF_REQUEST: requestFile } };
   if (values.length > 0) policy.secrets = Object.fromEntries(values.map((v) => [v.variable, v.value]));
   // The reviewer is shown stdout and stderr; a command that prints its token must not hand it on.
-  const redact = (text: string) => values.reduce((t, v) => t.replaceAll(v.value, `[grant ${v.name}]`), text);
+  // Longest first: a value that contains another would otherwise be cut and partly left in clear.
+  const redact = (text: string) => values.toSorted((a, b) => b.value.length - a.value.length).reduce((t, v) => t.replaceAll(v.value, `[grant ${v.name}]`), text);
 
   const results: CheckResult[] = [];
   // In order, all of them: the evidence is for the owner and the reviewers, who want the whole
@@ -210,7 +217,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // the reviewer would read; that is dirt with its reason, not a throw (08-b adversarial).
   try { dirty += removeUntracked(worktree, entries); } catch (err) { dirty += `cannot remove untracked entries: ${(err as Error).message}\n`; }
   if (dirty) {
-    writeFileSync(join(evidenceDir, `${TREE_CHECK}.stdout`), dirty);
+    // It names files a command left in a gitlink, and a file name can carry a token.
+    writeFileSync(join(evidenceDir, `${TREE_CHECK}.stdout`), redact(dirty));
     writeFileSync(join(evidenceDir, `${TREE_CHECK}.stderr`), '');
     writeFileSync(join(evidenceDir, `${TREE_CHECK}.exit`), 'dirty\n');
     results.push({ name: TREE_CHECK, result: 'FAIL' });

@@ -356,7 +356,12 @@ test('a grant with a missing file, a file inside the repository, a bad or reserv
   mkdirSync(join(root, 'tools'));
   writeFileSync(join(root, 'tools', 'token'), 't\n');
   writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', runtime: { developer: 'claude' }, sandbox: { backend: 'bwrap', read: ['tools'] }, grants: { github: { variable: 'GH_TOKEN', file: 'tools/token' } } });
-  await assert.rejects(loadConfig(jobFile, env), /grant github: file .*tools\/token is under sandbox read path .*tools, which every sandbox can read/);
+  await assert.rejects(loadConfig(jobFile, env), /grant github: file .*tools\/token is under .*tools, which sandboxes other than the grant stage's can read/);
+  // So is every system directory, and the owner's runtime config the developer's sandbox binds.
+  await given({ variable: 'GH_TOKEN', file: '/etc/hostname' }, /grant github: file \/etc\/hostname is under \/etc, which sandboxes other than the grant stage's can read/);
+  mkdirSync(join(env.HOME, '.claude'), { recursive: true });
+  writeFileSync(join(env.HOME, '.claude', 'token'), 't\n');
+  await given({ variable: 'GH_TOKEN', file: join(env.HOME, '.claude', 'token') }, /grant github: file .*\.claude\/token is under .*\.claude, which sandboxes other than the grant stage's can read/);
   for (const variable of ['', '1X', 'A-B', 7, 'PATH', 'HOME', 'LANG', 'SF_REQUEST']) await given({ variable, file: 'token' }, /grant github: variable/);
   for (const grant of ['token', null, { variable: 'GH_TOKEN' }, { variable: 'GH_TOKEN', file: 'token', value: 'x' }]) await given(grant, /grant github: must be \{ variable, file \}/);
 });

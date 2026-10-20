@@ -206,6 +206,7 @@ export function checkWorkflow(w: Workflow): string[] {
     if (def.kind === 'agent' && def.produces !== 'commit' && def.produces !== 'verdict') reasons.push(`stage ${name} produces ${String(def.produces)}, not commit or verdict`);
     if (def.kind === 'agent') reasons.push(...roleTextReasons(name, def));
     if (def.kind === 'command') reasons.push(...commandReasons(name, def));
+    else if ((def as { grants?: unknown }).grants !== undefined) reasons.push(`stage ${name} asks for grants, which only a command stage can hold`);
     if (def.budget !== undefined && !(Number.isSafeInteger(def.budget) && def.budget > 0)) reasons.push(`stage ${name} budget must be a positive integer`);
     if (!obj(def.transitions) || !str(def.transitions.PASS)) reasons.push(`stage ${name} has no PASS transition`);
   }
