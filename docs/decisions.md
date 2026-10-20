@@ -37,11 +37,19 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-110 — 2026-10-20 — Reviewer wording kept as input to O-013; no prompt change now
+
+Asked, from the overnight research (`docs/research/2026-10-20/harnesses.md` finding 5, TRIAGE owner item 6): borrow no-mistakes's reviewer wording, and should a re-review after a fix see the earlier findings, labelled as claims. Owner: “yes I agree generally so we can log these findings to be reviewed when we get to the currently planned prompt etc. stage”.
+
+Effect: the default prompts do not change now. O-013 lists the research's wording and the prior-findings question as inputs, to be decided when the prompts and skills row starts.
+
 ### A-109 — 2026-10-20 — Structured findings, and the owner may overrule a finding inside the cycle
 
 Asked, from the overnight research (`docs/research/2026-10-20/deep-research.md` proposals 7 and 8, `harnesses.md` finding 4, TRIAGE owner item 5): (A) findings carry `file:line`, `requirement`, `severity` (blocking or minor), `scenario` (input, expected, actual) and `action` (fix, or needs the owner; missing means the owner); only a blocking finding can FAIL; minor findings go to the owner, not the fix run; a needs-the-owner finding escalates. (B) an owner command marks a finding false with a quoted reason, refunds the budget the FAIL spent, reruns the same review stage, and shows the ruling to the next reviewer. The session recommended both: A as a Design-route ticket landing before or with A-108's primitive, B after A, with those defaults. Owner: “Yes to both”.
 
 Effect: two tickets to draft, A first. A changes the verdict contract and the fix-run input (O-011, O-013 touch it). B is the ticket A-072 named. Each still needs the owner's go before it is READY.
+
+Owner, adding: “we should look for other opportunities to provide structure to input/output across the core AND potentially have the ability to set this up in the workflow definitions and other extensions.” So A's design also surveys the core's other free-text inputs and outputs for the same treatment, and asks whether a workflow definition or an extension (runtime, kit) may declare the shape of what a step takes and returns. Recorded on the plan's "Structured findings" row.
 
 ### A-108 — 2026-10-20 — A commit stage can act on a red check; the default workflow still escalates
 

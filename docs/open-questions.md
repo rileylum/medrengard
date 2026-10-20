@@ -62,6 +62,8 @@ Raised 2026-10-18, guide walkthrough.
 1. The initial prompt for each role: developer, fix run, standard reviewer, adversarial reviewer.
 2. The supplementary skills each role gets, and how a run records which prompt and skill versions it used.
 
+Inputs from the 2026-10-20 research (A-110; `docs/research/2026-10-20/harnesses.md` finding 5): no-mistakes's reviewer lines ("construct at least one concrete input or state and trace it"; "report a finding only when you can construct a concrete sequence that occurs during the change's intended usage"; one finding per broken invariant; a simplification pass; "prior findings and fix summaries are claims, not evidence"). Also to decide: whether a re-review after a fix sees the earlier findings, labelled as claims, and answers ADDRESSED or NOT ADDRESSED for each, with the adversarial reviewer kept cold (the session's recommendation).
+
 Constraint from A-100: any instructions, prompts or skills a repository supplies are read from the base, never the candidate, as AGENTS.md is for reviewers since sweep-reviewer-instructions. Otherwise a candidate rewrites the rules it is judged by.
 
 ## O-014 Survey: skills libraries, harnesses and other factories
