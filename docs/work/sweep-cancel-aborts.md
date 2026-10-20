@@ -49,3 +49,4 @@ Verification: `npm test`, run by the implementer (not independent); the owner re
   3. [minor] `RunOptions.signal` dropped with its pass-throughs in `develop`, `fix` and `review`, its listener and its three tests; "For the owner" says row 11 can add it. The store poll stays.
   `npm test`, implementer's run, not independent: 422 tests, 398 pass, 0 fail, 19 skipped, 5 todo. `npm run test:learn`: 6 pass, 0 fail.
 - Next: a second review on the fix commit.
+- 2026-10-20 — owner: “Looks good, merge” (A-098). Main merged into the branch; `tests/run.test.ts` conflicted (this branch's and preflight's appended blocks), both kept. Session's run, not independent: `npm test` 435 tests, 411 pass, 0 fail; `test:learn` 6 pass. Merged into main with `--no-ff`.

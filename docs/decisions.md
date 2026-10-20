@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-098 — 2026-10-20 — sweep-cancel-aborts: merged after the owner's walkthrough
+
+Owner, after the walkthrough: “Looks good, merge”.
+
+Effect: `feat/sweep-cancel-aborts` merges into main locally with `--no-ff`. A run in flight reloads its cycle once a second and aborts when the cycle has settled, recorded as `run_failed` with reason `cancelled`. `RunOptions.signal` is left to row 11. Reviews: two fresh in-session standard reviews (FAIL on guide text, then PASS); the `claude -p` reviews and the adversarial review did not run. Merging main into the branch conflicted only in `tests/run.test.ts` (two appended blocks; both kept). The owner did not run `npm test`; the session's run on the branch with main merged in (435 tests, 411 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
 ### A-097 — 2026-10-20 — sweep-open-race: merged after the owner's walkthrough
 
 Owner, after the walkthrough: “Makes sense to me, lets merge as well”.
