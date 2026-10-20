@@ -44,6 +44,14 @@ Verification: `npm test`, run by the owner.
 
 **Not covered.** `core.autocrlf`/`core.eol` in your own config still convert line endings in the checkout. `core.fsmonitor`, if you set it, still runs during the tree check. Both are your settings, not the candidate's.
 
+**A correction to the research.** The brief said a candidate's `.gitattributes` `diff=<driver>` could pick your textconv driver for the reviewer's diff. It cannot: `git diff base head` in your repository reads attributes from your working tree and `.git/info/attributes`, not from the candidate. The review fix still matters for your own `diff.external` and textconv settings.
+
 **Decision for the owner.** Whether the stored-bytes checkout (risk 1) is acceptable. If not, the alternative is `--attr-source=<head>` with every `filter` attribute forced off, which keeps `eol`/`ident` but is harder to get right (macro attributes can set `filter` too).
 
 ## Log
+- 2026-10-20 — branch `feat/sweep-git-hardening`, ticket `92b4b8f`. Tests first, on unchanged `a3c74ff` code, each failed for the stated reason:
+  - verify filter: `AssertionError: candidate .gitattributes: the owner's filter ran`.
+  - verify lock: `git read-tree for …-verify failed: fatal: Unable to create '…-verify.index.lock': File exists.`
+  - review diff: `The input did not match the regular expression /^\+\+\+ b\/quiet\.txt$/m … actual: 'EXTERNAL\n'`.
+  - develop textconv: `run failed: commit 37c0487… has no changes against the base 7a04fac…`.
+- 2026-10-20 — implementation `06d33ed`, follow-up `a634ddb` (spec sentences; the index itself is no longer deleted, only its lock; the 08-a test name no longer says "from the head"). Mutation checks on `06d33ed`, each restored with `git checkout -- src`: without `core.attributesFile=/dev/null`, the filter test fails on its owner-attributes case; without `--attr-source`, the filter test and the 08-a planted-attributes test fail; without the lock removal, the lock test fails; review without `--no-textconv` or without `--no-color`, the review test fails. Surviving mutant: develop's `--quiet` without `--no-textconv` still passes, because on git 2.56 `--no-ext-diff` alone also stops the textconv comparison; both flags are kept and the comment says so. `GIT_ATTR_NOSYSTEM` has no test: it needs a file in `/usr/etc` or `/etc`. `npm run test:learn`: pass. `npm test` on `a634ddb`: 423 tests, 399 pass, 0 fail, 19 skipped, 5 todo (implementer's run, not independent). Next: owner runs `npm test`, then the standard review.
