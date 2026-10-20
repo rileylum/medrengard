@@ -51,7 +51,7 @@
 
 <section class="slide" id="own" data-lv="2">
   <h2>A stage of its own</h2>
-  <p>A command stage with <code>run</code> runs its own commands instead of the job's checks. This is how you add a step without writing a new kind of extension (D-024).</p>
+  <p>A <a class="w" href="words.html#command-stage">command stage</a> with <code>run</code> runs its own commands instead of the job's checks. This is how you add a step without writing a new kind of extension (D-024).</p>
   <ul>
     <li><b>Names</b> are file stems, unique in the stage, because each names its evidence files. <code>tree</code> is reserved for the controller's own check, below.</li>
     <li><b>A file argument</b>, <code>{ "file": "scripts/notes.js" }</code>, names a file beside the workflow. The controller copies it into the stage's evidence, runs the copy, and records its SHA-256 on the event: what was hashed is what ran. The job's checks, which the repository may set, may not use one.</li>

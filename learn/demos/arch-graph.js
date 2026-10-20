@@ -5,9 +5,11 @@ import { esc, highlight, list, source } from '../live.js';
 import { extract } from '../refs.js';
 
 const ROOM = {
-  'lifecycle.ts': 'lifecycle.html', 'store.ts': 'store.html', 'controller.ts': 'controller.html', 'adapter.ts': 'controller.html',
-  'developer.ts': 'developer.html', 'verify.ts': 'verify.html', 'review.ts': 'review.html', 'sandbox.ts': 'sandbox.html',
-  'run.ts': 'sim.html#loop', 'main.ts': 'start.html#main', 'git.ts': 'developer.html', 'runtime/cli-adapter.ts': 'runtimes.html', 'runtime/spawn.ts': 'runtimes.html',
+  'lifecycle.ts': 'lifecycle.html', 'store.ts': 'store.html', 'stream.ts': 'store.html#stream', 'controller.ts': 'controller.html', 'adapter.ts': 'controller.html',
+  'developer.ts': 'developer.html', 'prompt.ts': 'developer.html#versions', 'verify.ts': 'verify.html', 'review.ts': 'review.html', 'sandbox.ts': 'sandbox.html',
+  'run.ts': 'sim.html#loop', 'main.ts': 'start.html#use', 'config.ts': 'config.html', 'git.ts': 'developer.html#landing',
+  'runtime/cli-adapter.ts': 'runtimes.html', 'runtime/spawn.ts': 'runtimes.html#spawn', 'runtime/registry.ts': 'runtimes.html#registry',
+  'kits/runtime.ts': 'runtimes.html#kits', 'kits/command.ts': 'verify.html#own', 'kits/request.ts': 'verify.html#own', 'kits/observe.ts': 'store.html#stream',
 };
 
 async function crawl() {
@@ -30,23 +32,27 @@ export default async function mount(el) {
   el.innerHTML = '<p class="muted small">Crawling src/ …</p>';
   const mods = await crawl();
   const byId = new Map(mods.map((m) => [m.id, m]));
-  // Hand-placed by layer (owner and loop, stages, core, outside world on the right) so the
-  // picture reads like the three-layers slide; a module added later lands in the spare row.
+  // Hand-placed by layer (the owner's entry and the loop, stages, core, outside world on the
+  // right, the kits at the bottom) so the picture reads like the layers slide; a module added
+  // later lands in the spare row.
   const AT = {
-    'main.ts': [110, 60], 'run.ts': [370, 60], 'developer.ts': [200, 190], 'verify.ts': [450, 190], 'review.ts': [700, 190],
-    'adapter.ts': [90, 320], 'controller.ts': [330, 320], 'store.ts': [580, 320], 'lifecycle.ts': [450, 440],
-    'runtime/cli-adapter.ts': [1010, 60], 'runtime/spawn.ts': [1010, 190], 'sandbox.ts': [1010, 320], 'git.ts': [820, 440],
+    'main.ts': [110, 60], 'config.ts': [300, 60], 'run.ts': [500, 60], 'stream.ts': [700, 60],
+    'developer.ts': [200, 190], 'verify.ts': [450, 190], 'review.ts': [700, 190],
+    'adapter.ts': [90, 320], 'controller.ts': [330, 320], 'store.ts': [580, 320], 'prompt.ts': [800, 320],
+    'lifecycle.ts': [450, 440], 'git.ts': [800, 440],
+    'runtime/registry.ts': [1010, 60], 'runtime/cli-adapter.ts': [1010, 190], 'sandbox.ts': [1010, 320], 'runtime/spawn.ts': [1010, 440],
+    'kits/runtime.ts': [200, 570], 'kits/command.ts': [450, 570], 'kits/observe.ts': [700, 570], 'kits/request.ts': [950, 570],
   };
   let spare = 0;
-  const height = 500;
+  const height = 620;
   const nodes = mods.map((m) => {
-    const [x, y] = AT[m.id] ?? [110 + 160 * spare++, 480];
+    const [x, y] = AT[m.id] ?? [110 + 160 * spare++, 690];
     return { id: m.id, x, y, w: 156, h: 44, label: `${m.id}\n${m.lines} lines`,
-      cls: m.id === 'lifecycle.ts' ? 'ctl' : m.id.startsWith('runtime/') || m.id === 'adapter.ts' ? 'agent' : m.id === 'main.ts' ? 'owner' : '' };
+      cls: m.id === 'lifecycle.ts' ? 'ctl' : m.id.startsWith('runtime/') || m.id === 'adapter.ts' ? 'agent' : m.id === 'main.ts' || m.id === 'config.ts' ? 'owner' : m.id.startsWith('kits/') ? 'dim' : '' };
   });
   const edges = mods.flatMap((m) => m.imports.filter((i) => byId.has(i.to)).map((i) => ({ from: m.id, to: i.to, dashed: i.typeOnly })));
   el.innerHTML = `<p class="small muted">${mods.length} modules, ${mods.reduce((s, m) => s + m.lines, 0).toLocaleString()} lines. Solid arrow: imports code. Dashed: imports only types (erased at run time). Click a module.</p><div class="fig"></div><div class="mod card" style="margin-top:10px"><p class="muted small">Click a module to see why it exists and what it exports.</p></div>`;
-  const g = flow(el.querySelector('.fig'), { width: 1120, height: spare ? 540 : height, nodes, edges });
+  const g = flow(el.querySelector('.fig'), { width: 1120, height: spare ? 740 : height, nodes, edges });
   const show = (id) => {
     const m = byId.get(id);
     g.current(id);

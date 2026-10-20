@@ -2,7 +2,8 @@
 
 An interactive tour of how the factory works, from the big ideas down to the real code. It is modelled on the
 [Cube Crawler learning guide](https://mitsuhiko.github.io/dungeon-crawler/learn/) (source: the `learn/` directory of
-https://github.com/mitsuhiko/dungeon-crawler). Status: a prototype, not a planned ticket.
+https://github.com/mitsuhiko/dungeon-crawler). Status: experimental (A-050); the 2026-10-20 refresh is the ticket
+[docs/work/learn-refresh.md](../docs/work/learn-refresh.md) (A-092, A-093).
 
 ## Run it
 
@@ -31,22 +32,34 @@ Three ideas carry the whole guide. Keep them if you rebuild it.
 | Module | Stand-in | What it does |
 | --- | --- | --- |
 | `node:fs`, `node:path`, `node:os`, `node:crypto`, `node:child_process` | `shims/node/*.js` | A made-up machine in memory; no process ever starts |
-| `src/store.ts` | `shims/store.js` | The store's rules over an array instead of SQLite; replays through the real `apply` |
+| `src/store.ts` | `shims/store.js` | The store's rules over an array instead of SQLite: the workflow on open, `pos` and `at`, one outcome per run; replays through the real `apply` |
 | `src/runtime/spawn.ts` | `shims/spawn.js` | Throws if anything tries to spawn |
 | `src/developer.ts`, `verify.ts`, `review.ts` (only on pages whose `boot.js` tag has `data-sim`) | `shims/sim-*.js` | The same steps; the clone, checkout and agents are the reader's |
 
-Functions a module does not export (`refuse`, `prompt`, `buildPrompt`, `cut`) are not copied either: `liveFunction`
-in `live.js` cuts the definition out of the served file and evaluates it with stand-ins for what it calls.
-`shims/fakegit.js` answers the few Git commands those guards run, with Git's outputs and exit codes.
-`shims/world.js` holds the simulator's hobby repository, its ticket and the changes a developer can commit.
+Functions a module does not export (`refuse`, `gather`, `cut`, `redactAll`, `headGate`, config's `merge` and `allow`)
+are not copied either: `liveFunction` in `live.js` cuts the definition out of the served file and evaluates it with
+stand-ins for what it calls. `shims/fakegit.js` answers the few Git commands those functions run, with Git's outputs
+and exit codes. `shims/world.js` holds the simulator's hobby repository, its ticket, the changes a developer can
+commit, and the three workflows the simulator offers. `node:crypto`'s stand-in has a SHA-256 of its own, because
+`src/` hashes synchronously and the browser's digest is async; the hashes match Node's.
+
+`src/stream.ts` opens SQLite itself and has no stand-in. `lines.js` gives the lines `events` prints from the store
+stand-in's rows, following `openStream`'s steps; keep the two in step.
 
 ## Change the guide
 
 ### A slide
 
 A room is `<main class="deck">` of `<section class="slide" id="…" data-lv="1|2|3">`. Level 1 is the idea, 2 how it
-works, 3 the real code; the reader's level setting hides deeper slides. Within a room go from 1 to 3 and end on a
-level 1 takeaway.
+works, 3 the real code; the reader's level setting hides deeper slides. Within a room go from 1 to 3, and end on one
+level 3 slide, "Read the code". Rooms have no takeaway of their own: the guide ends with one, in the last room.
+
+Three rules keep the rooms from repeating each other (A-092):
+
+- Only the simulator steps through a whole cycle. Every other demo shows one feature on its own.
+- Each room shows its feature in a way no other room uses: an editor, a query console, an attack lab, a prompt
+  diff, a command builder, a table of every path, a secret trace, a reply scanner, layer cards.
+- Each rule is explained in one room. Other rooms link to it rather than explain it again.
 
 - Show code with `data-code`, not a copy. A reference is `path#name`, `path#a,b`, `path#header` (the file's opening
   comment), `path#L10-L24`, or a bare path.
@@ -75,9 +88,10 @@ level 1 takeaway.
 
 ### The simulator
 
-`demos/sim.js` is the largest demo: the real `src/run.ts` drives the cycle while the reader, or a script, plays
-each agent through `shims/sim-*.js`. Scenarios are `PRESETS` at the top of `sim.js`: per actor, a list of what it
-does on its n-th turn. Three modes: *Autopilot* (a script at a chosen speed), *Step through* (the same script,
+`demos/sim.js` is the largest demo: the real `src/run.ts` drives the cycle under the workflow the reader picks
+(`WORKFLOWS` in `shims/world.js`) while the reader, or a script, plays each agent through `shims/sim-*.js`. A new
+workflow gets a new store, as one runs directory holds one workflow per work ID. Scenarios are `PRESETS` at the top
+of `sim.js`: per role, a list of what it does on its n-th turn; a preset may name its workflow. Three modes: *Autopilot* (a script at a chosen speed), *Step through* (the same script,
 one *Next* press per action) and *I play the agents*. A card the script plays hides the reader's controls; switching
 to *I play the agents* mid-run hands the open card back.
 
@@ -92,23 +106,28 @@ Two kinds of drift the tests cannot see:
 
 - **Words around live code.** If you change what a function does, read the slides that show it:
   `grep -rn 'src/<file>' learn/*.html learn/demos/*.js`.
-- **Stand-ins that copy rules.** `shims/store.js` and `shims/sim-*.js` repeat their `src/` module's steps by hand.
+- **Stand-ins that copy rules.** `shims/store.js`, `shims/sim-*.js` and `lines.js` repeat their `src/` module's
+  steps by hand, and the stand-ins for `verify.ts` and `review.ts` follow the workflow the way the real ones do.
   Change both together, and prefer `liveFunction` over copying when the logic is a pure function.
 
 ## Check it in a browser
 
 - Edited modules can stay cached across navigations: run `location.reload()` after editing a demo.
-- Demos start only when scrolled into view, so an offscreen sweep of the page starts none of them.
+- Demos start only when scrolled into view, so an offscreen sweep of the page starts none of them. Scroll each
+  `.demo` into view first; to sweep every page, load each in an iframe and scroll inside it. A sweep of all pages
+  takes over a minute: run it in the background and read the result after.
+- Some tools refuse to print text that looks like a token. The grant demo's fake token is such text: check the
+  yes/no column instead of the values.
 - The detail level is saved in `localStorage` (`sf.level`); at level 1 or 2 some slides are hidden.
 - Smooth scrolling takes about a second; a check that measures position straight after a click reads the old one.
 - Look at the result, not only the DOM: column alignment and overlapping diagram labels show only in a screenshot.
 
 ## Known gaps
 
-- The workflow room's review badges (`demos/wf-tickets.js`) read outcomes from free-text ticket logs with a regex,
+- The process room's review badges (`demos/wf-tickets.js`) read outcomes from free-text ticket logs with a regex,
   so they are approximate.
 - The sandbox room's "who may touch what" table was written from reading the code and has not been tested.
-- In the lifecycle room's diagram, the labels on the arrows into ESCALATED overlap.
+- The simulator offers three workflows and no editor; the Workflows room has the editor but does not run a cycle.
 
 ## How it was built
 
@@ -117,6 +136,9 @@ eight rooms in parallel and checked their own demos in Chrome. Nobody reviewed t
 until the owner's walkthrough, which found the errors noted under "A slide". If you rebuild it, build in this
 order: the server and its tests, then `refs.js` and `live.js`, then the deck engine, then one room end to end, then
 the simulator. Have each room's claims checked against `src/` by someone who did not write it.
+
+The 2026-10-20 refresh (ticket learn-refresh) was built by one session in five batches, with no review: the owner
+walks through the finished guide instead (A-092, A-093).
 
 ## Files
 
@@ -127,7 +149,8 @@ the simulator. Have each room's claims checked against `src/` by someone who did
 | `words.html` | The glossary; `<a class="w">` links show an entry on hover |
 | `deck.js` | Bar, levels, contents, live code and docs, demos, tips |
 | `boot.js` | Classic script in `<head>`: the import map, `process`, the saved level |
-| `diagram.js` | SVG flow diagrams, and the lifecycle laid out once |
+| `diagram.js` | SVG flow diagrams, and `layout`, which lays out any workflow |
+| `lines.js` | The lines `events` prints, from the store stand-in's rows |
 | `live.js`, `refs.js` | Reading the repository: source, served code, one definition, Markdown |
 | `serve.ts` | The server |
 | `demos/*.js` | One module per demo |
