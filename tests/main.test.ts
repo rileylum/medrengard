@@ -478,3 +478,21 @@ test('the developer starts from the SHA the layers were read at, though the base
     store.close();
   }
 });
+
+// sweep-head-workflow (security finding 1): looking at a candidate with `git switch sf/<id>` must
+// not let its workflow run as the owner on the next command.
+test('cancel with a candidate branch checked out and no base in the job file refuses, and the candidate workflow never runs', () => {
+  const { root, repo, jobFile, db } = scratch();
+  const marker = join(root, 'PWNED');
+  git(repo, 'switch', '-q', '-c', 'sf/0000-candidate');
+  mkdirSync(join(repo, '.factory'));
+  writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ workflow: 'flow.ts' }));
+  writeFileSync(join(repo, 'flow.ts'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran');\nexport { ownerCheck as workflow } from ${JSON.stringify(WORKFLOWS)};\n`);
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'candidate workflow');
+  const r = sf(['cancel', jobFile]);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /^base [0-9a-f]{40} is on no branch or tag outside sf\/\*/m);
+  assert.ok(!existsSync(marker), 'the candidate workflow did not run');
+  assert.ok(!existsSync(db), 'no store was created');
+});
