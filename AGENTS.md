@@ -14,6 +14,7 @@
 - Controller decides state; agents return claims. Evidence binds to a commit SHA.
 - Two standard reviews and one adversarial review per ticket. Fail at the limit: stop and ask the owner.
 - Anything you cannot classify: stop and ask the owner. Do not invent a recovery path.
+- Build capabilities and extension points in the core; ship a sane default; leave policy to workflows and extensions (A-113). A ticket that adds policy names the extension point that holds it.
 - Reviewers get the ticket, diff, SHA and test output. Never the implementer's transcript.
 - No automatic merge or deployment.
 - Owner approval is a quoted reply recorded in `docs/decisions.md`. Never invent one.
