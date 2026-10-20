@@ -37,3 +37,11 @@ Verification: `npm test`, run by the implementer (not independent).
 **Decision for you.** None needed to merge. Optional: the `proto/` follow-up above.
 
 ## Log
+- 2026-10-20, implementer. Ticket committed first. New test `agent text with terminal escapes reaches stdout and stderr only as visible escapes` (`tests/main.test.ts`) with two new markers in `tests/fixtures/ext-runtime.ts`. On the unchanged code it failed for the stated reason: `AssertionError [ERR_ASSERTION]: EXT:esc-verdict`, `doesNotMatch /[\u0007\u001b‮]/`, with stdout holding `standard_reviewer \x1B[2JSta: FAIL` and the raw finding.
+- Fix: `printable` in `src/prompt.ts`; `main.ts` wraps the verdict head, each finding, `Escalation:`, `Error:` and the top-level stderr message; `cut` in `src/developer.ts` bounds a non-commit claimed head to 64 characters. Test passes.
+- Mutation checks, one at a time, restored with `git checkout`: `cut` bound raised to 64e6 fails the test (`EXT:esc-head`, stdout over 2,000 characters); `Escalation:` printed raw fails it (`EXT:esc-head`). Both killed.
+- `grep -nP '[\x{2028}\x{2029}\x{202e}\x{1b}\x{07}]'` on the changed files: no raw characters.
+- Spec: one evidence-rules bullet naming the test.
+- `npm test`, implementer's run, not independent: tests 420, pass 396, fail 0, skipped 19, todo 5.
+- lazy-review on `git diff main...HEAD`: lean already.
+- Next: owner review; optional `proto/` follow-up.
