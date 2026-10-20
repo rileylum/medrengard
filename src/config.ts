@@ -8,7 +8,6 @@ import type { Job } from './developer.ts';
 import { git } from './git.ts';
 import { checkWorkflow, defaultWorkflow, fileArgs, type Workflow } from './lifecycle.ts';
 import { runtimes, type RuntimeEntry } from './runtime/registry.ts';
-import { claude, pi } from './runtime/cli-adapter.ts';
 import { SYSTEM, type Sandbox } from './sandbox.ts';
 
 export interface JobFile extends Omit<Job, 'ticket'> {
@@ -214,6 +213,10 @@ export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = proce
   if (fromRepo)
     for (const [name, def] of Object.entries(workflow.stages))
       if (def.kind === 'command' && def.grants !== undefined) throw new Error(`repository workflow ${repoLayer.workflow as string}: stage ${name} asks for grants; a repository workflow may not`);
+  // Every module path is absolute by now, so relativeTo is never used.
+  const registry = runtimes(spec.runtimes, '/');
+  // HOME as the adapters read it, through os.homedir; a relative one binds nothing they would find.
+  const home = env.HOME && isAbsolute(env.HOME) ? env.HOME : undefined;
   return {
     path,
     spec,
@@ -221,20 +224,10 @@ export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = proce
     runsDir,
     workflow,
     workflowDir: spec.workflow === undefined ? undefined : dirname(spec.workflow),
-    // Every module path is absolute by now, so relativeTo is never used.
-    registry: runtimes(spec.runtimes, '/'),
+    registry,
     sandbox: spec.sandbox!,
-    grants: checkGrants(spec.grants ?? {}, repo, [...SYSTEM, ...runtimeHome(env), ...(spec.sandbox?.read ?? [])]),
+    grants: checkGrants(spec.grants ?? {}, repo, [...SYSTEM, ...Object.values(registry).flatMap((r) => (home ? r.reads(home) : [])), ...(spec.sandbox?.read ?? [])]),
   };
-}
-
-/**
- * What the built-in runtimes bind of the owner's home into the developer's and reviewers' sandboxes
- * (cli-adapter's `config`). HOME as the adapters read it, through os.homedir.
- */
-function runtimeHome(env: NodeJS.ProcessEnv): string[] {
-  if (!env.HOME || !isAbsolute(env.HOME)) return [];
-  return [claude, pi].flatMap((s) => [...s.config.read, ...s.config.overlay, ...(s.config.write ?? [])]).map((p) => join(env.HOME!, p));
 }
 
 // The controller sets these inside the sandbox; a grant of the same name would be overwritten or hide them.
@@ -243,7 +236,7 @@ const RESERVED_VARIABLES = ['PATH', 'HOME', 'LANG', 'SF_REQUEST'];
 /**
  * The merged grants, refused unless each is { variable, file } with a file outside the repository,
  * which a commit could carry, and outside every root another sandbox binds: the system directories,
- * sandbox.read, and the runtimes' config in the owner's home.
+ * sandbox.read, and what each runtime binds (its binary's folder, bind paths, config in the home).
  * Compared by real path, so a symlink on either side cannot hide where the file is.
  */
 function checkGrants(grants: Record<string, unknown>, repo: string, bound: unknown[]): Record<string, Grant> {

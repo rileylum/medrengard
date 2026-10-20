@@ -125,7 +125,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // Read now, not at load, so the value lives in this process no longer than the stage runs; and
   // before the stage folder is cleared, so a refusal leaves the last run's evidence whole.
   const values = grants.map(([name, g]) => {
-    const value = readFileSync(g.file, 'utf8').replace(/\n$/, '');
+    // CRLF too: a tool that trims the \r would print a value redaction does not match.
+    const value = readFileSync(g.file, 'utf8').replace(/\r?\n$/, '');
     // An empty value would be redacted between every character of the evidence.
     if (value === '') throw new Error(`grant ${name}: file ${g.file} is empty`);
     return { name, variable: g.variable, value };
@@ -181,8 +182,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   const policy: Policy = { cwd: worktree, write: [worktree, outputDir], read: [evidenceDir], network: def.network ?? false, env: { SF_REQUEST: requestFile } };
   if (values.length > 0) policy.secrets = Object.fromEntries(values.map((v) => [v.variable, v.value]));
   // The reviewer is shown stdout and stderr; a command that prints its token must not hand it on.
-  // Longest first: a value that contains another would otherwise be cut and partly left in clear.
-  const redact = (text: string) => values.toSorted((a, b) => b.value.length - a.value.length).reduce((t, v) => t.replaceAll(v.value, `[grant ${v.name}]`), text);
+  const redact = (text: string) => redactAll(text, values);
 
   const results: CheckResult[] = [];
   // In order, all of them: the evidence is for the owner and the reviewers, who want the whole
@@ -197,7 +197,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     results.push({ name: check.name, result: r.result, ...(named.length ? { files: Object.fromEntries(named.map((f) => [f, hashes.get(f)!])) } : {}) });
   }
   // The rule that makes a wrong merge visible: the stage says which head it acted on (A-074).
-  const wrongHead = grants.length > 0 ? headFile(join(outputDir, 'head'), head) : '';
+  const wrongHead = grants.length > 0 ? headFile(join(outputDir, 'head'), head, redact) : '';
   if (wrongHead) {
     // It quotes what the command wrote, which may be the token itself.
     writeFileSync(join(evidenceDir, `${HEAD_CHECK}.stdout`), redact(wrongHead));
@@ -228,11 +228,37 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
 }
 
 /**
+ * `text` with every occurrence of each value replaced by `[grant <name>]`. Matches are found in the
+ * original text and overlapping ones merged, so no order of replacement can cut a value and leave
+ * part of it in clear (10-e adversarial). A merged span takes the name of its longest match.
+ */
+function redactAll(text: string, values: { name: string; value: string }[]): string {
+  const hits: { start: number; end: number; name: string }[] = [];
+  for (const { name, value } of values)
+    for (let i = text.indexOf(value); i !== -1; i = text.indexOf(value, i + 1)) hits.push({ start: i, end: i + value.length, name });
+  hits.sort((a, b) => a.start - b.start);
+  let out = '';
+  let at = 0;
+  for (let k = 0; k < hits.length; ) {
+    let { start, end, name } = hits[k]!;
+    let longest = end - start;
+    for (k++; k < hits.length && hits[k]!.start < end; k++) {
+      const h = hits[k]!;
+      if (h.end - h.start > longest) { name = h.name; longest = h.end - h.start; }
+      end = Math.max(end, h.end);
+    }
+    out += `${text.slice(at, start)}[grant ${name}]`;
+    at = end;
+  }
+  return out + text.slice(at);
+}
+
+/**
  * Empty when `file` holds `head` and one optional newline; otherwise what was found, for the owner.
  * The command wrote it: a symlink, a FIFO or a locked file must not make the controller read
  * elsewhere, block or throw.
  */
-function headFile(file: string, head: string): string {
+function headFile(file: string, head: string, redact: (text: string) => string): string {
   let st;
   // A command may lock outputDir itself; the controller must still record what it found.
   try {
@@ -248,7 +274,8 @@ function headFile(file: string, head: string): string {
   else {
     const text = readFileSync(file, 'utf8').replace(/\n$/, '');
     if (text === head) return '';
-    found = `head file names ${JSON.stringify(text)}`;
+    // Before quoting: JSON escapes a `"` or `\` in a token, and the escaped form would not match.
+    found = `head file names ${JSON.stringify(redact(text))}`;
   }
   return `${found}; candidate is ${head}\n`;
 }

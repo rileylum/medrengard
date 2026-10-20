@@ -381,3 +381,26 @@ test('a repository workflow that asks for a grant is refused, naming the stage (
   writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', base, runsDir: join(root, 'runs'), runtime: { developer: 'claude' } });
   await assert.rejects(loadConfig(jobFile, env), /repository workflow flow\.ts: stage MERGE asks for grants; a repository workflow may not/);
 });
+
+test('a grant file in a folder a runtime\'s sandbox binds is refused: the binary\'s folder, and an extension module\'s (10-e adversarial)', async () => {
+  const { root, jobFile, env } = scratch();
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  // A stand-in for the claude CLI: only its folder matters, it never runs.
+  writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(bin, 'claude'), 0o755);
+  writeFileSync(join(bin, 'gh-token'), 't\n');
+  mkdirSync(join(root, 'ext'));
+  writeFileSync(join(root, 'ext', 'runtime.ts'), 'process.stdout.write("{}");\n');
+  writeFileSync(join(root, 'ext', 'token'), 't\n');
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', runtime: { developer: 'claude' }, grants: { github: { variable: 'GH_TOKEN', file: 'bin/gh-token' } } });
+    await assert.rejects(loadConfig(jobFile, env), /grant github: file .*bin\/gh-token is under .*bin, which sandboxes other than the grant stage's can read/);
+    writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', runtime: { developer: 'claude' }, runtimes: { ext: { module: 'ext/runtime.ts' } }, grants: { github: { variable: 'GH_TOKEN', file: 'ext/token' } } });
+    await assert.rejects(loadConfig(jobFile, env), /grant github: file .*ext\/token is under .*ext, which sandboxes other than the grant stage's can read/);
+  } finally {
+    process.env.PATH = path;
+  }
+});

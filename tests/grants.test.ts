@@ -194,3 +194,47 @@ test('the tree check quotes a file a grant stage left in a gitlink only redacted
   assert.ok(!tree.includes(TOKEN), tree);
   store.close();
 });
+
+test('a PASS verdict for an older head does not let a grant stage run after a FAIL on the current one (10-e adversarial)', async () => {
+  // checkWorkflow accepts a REVIEW whose FAIL goes to the grant stage; only the PASS verdict's head tells H1 from H2.
+  const wf = { start: 'DEV', stages: {
+    DEV, CHECK: { kind: 'command', run: [{ name: 'ok', command: ['true'] }], transitions: { PASS: 'REVIEW' } },
+    REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', budget: 3, transitions: { PASS: 'FIX', FAIL: 'MERGE' } },
+    FIX: { kind: 'agent', role: 'developer', produces: 'commit', roleText: 'You are the developer for the ticket below.', transitions: { PASS: 'CHECK' } },
+    MERGE: MERGE(WRITES_HEAD), AFTER,
+  } } as unknown as Workflow;
+  const { repo, store, job, cycleId, head, base, opts } = await atReview(wf);
+  store.append(cycleId, { type: 'verdict', runId: 'r1', head, verdict: 'PASS' });
+  const fixed = git(repo, 'commit-tree', `${head}^{tree}`, '-p', head, '-m', 'fix');
+  store.append(cycleId, { type: 'claim', runId: 'd2', base, runtime: 'claude' });
+  store.append(cycleId, { type: 'developer_result', runId: 'd2', head: fixed, artifacts: [fixed] });
+  assert.equal((await verify(store, cycleId, job, opts)).cycle.stage, 'REVIEW');
+  assert.equal(store.append(cycleId, { type: 'verdict', runId: 'r2', head: fixed, verdict: 'FAIL', findings: ['[major] x'] }).stage, 'MERGE');
+  await assert.rejects(verify(store, cycleId, job, opts), new RegExp(`MERGE holds a grant, but no PASS verdict is for the candidate ${fixed}`));
+  store.close();
+});
+
+test('a token JSON would escape is still redacted where head.stdout quotes it (10-e adversarial)', async () => {
+  const { root, store, job, cycleId, opts } = await atMerge(`fs.writeFileSync(r.outputDir + '/head', process.env.GH_TOKEN);`);
+  writeFileSync(join(root, 'gh-token'), 'sf-"quoted"\\-token\n');
+  const r = await verify(store, cycleId, job, opts);
+  const stdout = readFileSync(join(r.evidenceDir, 'head.stdout'), 'utf8');
+  assert.match(stdout, /^head file names "\[grant github\]"/);
+  assert.ok(!stdout.includes('quoted'), stdout);
+  store.close();
+});
+
+test('two values that overlap at a join are both hidden, and a grant file\'s CRLF ending is not part of the value (10-e adversarial)', async () => {
+  const { root, store, job, cycleId, opts } = await atMerge('');
+  writeFileSync(join(root, 'b'), 'sf-secretXYZ\r\n');
+  writeFileSync(join(root, 'a'), 'XYZ12345');
+  const stage = store.workflow.stages.MERGE as { run: unknown[]; grants: string[] };
+  stage.grants = ['a', 'b'];
+  stage.run = [merge(`${WRITES_HEAD} fs.writeFileSync(r.outputDir + '/b', process.env.B); console.log(process.env.B + process.env.A);`)];
+  const r = await verify(store, cycleId, job, { ...opts, grants: { a: { variable: 'A', file: join(root, 'a') }, b: { variable: 'B', file: join(root, 'b') } } });
+  assert.equal(r.cycle.stage, 'AFTER', r.cycle.escalation);
+  assert.equal(readFileSync(join(r.evidenceDir, 'output', 'b'), 'utf8'), 'sf-secretXYZ');
+  const stdout = readFileSync(join(r.evidenceDir, 'merge.stdout'), 'utf8');
+  assert.ok(!/secret|XYZ|12345/.test(stdout), stdout);
+  store.close();
+});

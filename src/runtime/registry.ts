@@ -3,17 +3,19 @@
 import { resolve } from 'node:path';
 import type { DeveloperAdapter } from '../developer.ts';
 import type { Sandbox } from '../sandbox.ts';
-import { claudeDeveloper, claudeReviewer, cliAdapter, extensionSpec, piDeveloper, piReviewer } from './cli-adapter.ts';
+import { claude, claudeDeveloper, claudeReviewer, cliAdapter, extensionSpec, hostReads, pi, piDeveloper, piReviewer } from './cli-adapter.ts';
 
 export interface RuntimeEntry {
   /** One adapter for a role. `writes` is true when the role produces a commit. */
   adapter(opts: { sandbox: Sandbox; writes: boolean }): DeveloperAdapter;
+  /** What its sandbox can read from the host besides the cwd (hostReads), for the grant check. */
+  reads(home: string): string[];
 }
 
 export const BUILT_IN: Record<string, RuntimeEntry> = {
   // A function of the worktree: claude's developer allow list names it by absolute path.
-  claude: { adapter: ({ sandbox, writes }) => (writes ? (worktree) => cliAdapter(claudeDeveloper(worktree), { sandbox, writes }) : cliAdapter(claudeReviewer, { sandbox, writes })) },
-  pi: { adapter: ({ sandbox, writes }) => cliAdapter(writes ? piDeveloper : piReviewer, { sandbox, writes }) },
+  claude: { adapter: ({ sandbox, writes }) => (writes ? (worktree) => cliAdapter(claudeDeveloper(worktree), { sandbox, writes }) : cliAdapter(claudeReviewer, { sandbox, writes })), reads: (home) => hostReads(claude, home) },
+  pi: { adapter: ({ sandbox, writes }) => cliAdapter(writes ? piDeveloper : piReviewer, { sandbox, writes }), reads: (home) => hostReads(pi, home) },
 };
 
 /** The built-in runtimes plus the job's, whose modules resolve against `relativeTo`. */
@@ -28,7 +30,7 @@ export function runtimes(extra: Record<string, { module: string }> | undefined, 
     if (name === '__proto__') throw new Error('runtimes.__proto__ is not a usable runtime name; pick another');
     if (typeof entry?.module !== 'string') throw new Error(`runtimes.${name}.module must be a path to a TypeScript file`);
     const spec = extensionSpec(name, resolve(relativeTo, entry.module));
-    all[name] = { adapter: ({ sandbox, writes }) => cliAdapter(spec, { sandbox, writes }) };
+    all[name] = { adapter: ({ sandbox, writes }) => cliAdapter(spec, { sandbox, writes }), reads: (home) => hostReads(spec, home) };
   }
   return all;
 }

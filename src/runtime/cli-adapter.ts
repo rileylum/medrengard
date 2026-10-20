@@ -52,6 +52,17 @@ export interface CliAdapterOptions {
   sandbox?: Sandbox;
 }
 
+/**
+ * What a sandboxed run of `spec` can read from the host besides its cwd: the binary's real folder,
+ * `bind`, and `config` under `home`. These are the paths `start` binds; config's grant check refuses
+ * a grant file under any of them (10-e), so a path bound in `start` and missing here is a leak.
+ */
+export function hostReads(spec: CliSpec, home: string): string[] {
+  const found = executables(spec.command, '/')[0];
+  const { read, overlay, write = [] } = spec.config;
+  return [...(found ? [dirname(realpathSync(found))] : []), ...(spec.bind ?? []), ...[...read, ...overlay, ...write].map((p) => join(home, p))];
+}
+
 export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter {
   const isolation = opts.isolation ?? 'cgroup';
   if (isolation === 'cgroup') checkScopes();
