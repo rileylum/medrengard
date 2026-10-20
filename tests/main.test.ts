@@ -370,6 +370,45 @@ test('a personal-layer extension runtime, relative to the personal file, runs a 
   assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
 });
 
+// sweep-lazy-runtimes (A-075): a runtime's module is read when a role selects it, not when the config loads.
+/** A personal config naming runtime `old`, whose module is missing. */
+function brokenRuntime(root: string) {
+  const xdg = join(root, 'xdg');
+  mkdirSync(join(xdg, 'software_factory'), { recursive: true });
+  writeFileSync(join(xdg, 'software_factory', 'config.json'), JSON.stringify({ runtimes: { old: { module: 'gone.ts' } } }));
+  return { xdg, gone: join(xdg, 'software_factory', 'gone.ts') };
+}
+
+test('a personal runtime whose module is missing blocks neither a run nor cancel of a job that does not use it', () => {
+  const { root, jobFile } = scratch();
+  const { xdg } = brokenRuntime(root);
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+  const env = { ...process.env, XDG_CONFIG_HOME: xdg, PATH: `${bin}:${process.env.PATH}` };
+  const r = sf([jobFile], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+  const cancelled = sf(['cancel', jobFile], env);
+  assert.equal(cancelled.status, 0, cancelled.stdout + cancelled.stderr);
+  assert.match(cancelled.stdout, /^Stage: CANCELLED$/m);
+});
+
+test('a role whose runtime module is missing is refused before any cycle opens, naming runtimes.<name> and the path', () => {
+  const { root, jobFile, db } = scratch();
+  const { xdg, gone } = brokenRuntime(root);
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  const marker = spawnMarker(bin, root);
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...job, runtime: { developer: 'old', standard: 'claude', adversarial: 'claude' } }));
+  const r = sf([jobFile], { ...process.env, XDG_CONFIG_HOME: xdg, PATH: `${bin}:${process.env.PATH}` });
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, new RegExp(`^runtimes\\.old: cannot read module ${gone}: ENOENT`, 'm'));
+  assert.ok(!existsSync(marker), 'no runtime CLI was spawned');
+  assert.ok(!existsSync(db), 'no store was created');
+});
+
 // Ticket 10-b (A-078 Q4): accept reads the layers at the base the cycle opened at, not where the ref is now.
 test('accept loads a cycle run under a repository workflow after the base branch has moved and changed that workflow', () => {
   const { root, repo, jobFile } = scratch();
