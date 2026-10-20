@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-099 — 2026-10-20 — sweep-git-hardening: merged; the stored-bytes trade-off logged
+
+Owner, after the walkthrough: “Okay this is good, but I'd want the tradeoff logged - probably as a limitation in the README if not elsewhere as well. It might be something we need to revisit”.
+
+Effect: `feat/sweep-git-hardening` merges into main locally with `--no-ff`. Verify's checkout reads no attributes and holds the commit's stored bytes; the trade-off (no `eol`, `ident` or LFS conversions; the `core.autocrlf` caveat) is logged in the README's "Known limitations" and as a row in `docs/work/accepted-risks.md`, with the event that reopens it. One fresh in-session review covers the branch (PASS, findings fixed); the `claude -p` reviews and the adversarial review did not run. The owner did not run `npm test`; the session's run on the branch with main merged in is not independent (result in the ticket log).
+
 ### A-098 — 2026-10-20 — sweep-cancel-aborts: merged after the owner's walkthrough
 
 Owner, after the walkthrough: “Looks good, merge”.
