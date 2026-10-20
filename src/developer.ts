@@ -214,7 +214,7 @@ function land(repo: string, clone: string, branch: string, cycleId: string, base
   // 07-e: a dispute keeps the candidate, so nothing is fetched and no branch moves. On a first run
   // there is no candidate; apply escalates that case as outside a fix run.
   if ((claim as { dispute?: unknown }).dispute !== undefined) {
-    return previous === undefined || head === previous ? undefined : `a dispute must name the previous candidate ${previous}, not ${head}`;
+    return previous === undefined || head === previous ? undefined : `a dispute must name the previous candidate ${previous}, not ${cut(head)}`;
   }
   const incoming = `refs/sf/incoming/${cycleId}`;
   try {
