@@ -33,3 +33,17 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
   - `output/head` must be a regular file of at most 1 KiB. A symlink, a FIFO or a larger file fails the `head` check without being read. Owner access is restored before reading, in case the command locked the file. A passing head check leaves no `head.*` evidence, as the tree check does.
   - For a grant stage, the kit adds a REVIEW stage before it and appends a PASS verdict, so the head gate passes. The new head case skips for a stage with no grant, so every existing kit now reports one more skip.
 - 2026-10-20 — owner: “run the reviews, don't worry about the tests (though we should do a live run soon)” (A-084). Owner-run `npm test` waived; standard 1 started on `231163d`.
+- 2026-10-20 — standard 1 on `231163d`: FAIL, one major and three minors. The major: a grant stage that locks its own `outputDir` made `verify` throw on `lstat(output/head)` after the stage had run, so no verification was recorded. The minors:
+  - `head.stdout` quoted `output/head` without redaction.
+  - The check that a grant file is outside the repository did not use real paths.
+  - The end-to-end test had no stage after the grant stage.
+
+  All four are fixed at `818de56`, each test written first and seen red. The fixes:
+  - `headFile` restores owner access on `outputDir` and reports a read it cannot make as a FAIL.
+  - `head.stdout` is redacted.
+  - Grant files are compared by real path.
+  - A LATER command stage dumps its environment and tries to read the token file.
+
+  Also taken from the reviewer's notes: a grant file under a `sandbox.read` root is refused, and the grant file is read before the stage folder is cleared. The reviewer also noted that an ignored, redelivered verdict could satisfy the gate. This cannot happen: the store drops a second `verdict`, `developer_result`, `run_failed` or `dispute` with the same run ID at insert (`DEDUP`, `src/store.ts`), so `apply` never records one.
+
+  Reviewer notes for the owner: a grant stage after a human stage cannot run yet, because `accept` records and returns, and no command resumes the cycle (row 11). The reviewer's independent `npm test` matched: 374 tests, 350 pass, 0 fail. Implementer's `npm test` on `818de56`: 377 tests, 353 pass, 0 fail. Five more mutants were all caught (`10-e/mutants2.py`). Standard 2 started on `818de56`.
