@@ -13,7 +13,7 @@ import type { DeveloperAdapter, Job } from '../src/developer.ts';
 import { run, type Adapters, type RunOptions } from '../src/run.ts';
 import { resume } from '../src/run.ts';
 import { develop } from '../src/developer.ts';
-import type { Workflow } from '../src/lifecycle.ts';
+import { checkWorkflow, type Workflow } from '../src/lifecycle.ts';
 import { ownerCheck } from './workflows.ts';
 import { reviewerStub } from './stub-cli.ts';
 
@@ -155,8 +155,12 @@ test('an adversarial FAIL, a second standard FAIL and a failing check each stop 
 test('a stage that throws escalates the cycle with reject_dispatch naming the stage, returns the error, and calls nothing after it', async () => {
   const { repo, store, runsDir } = scratch();
   const standard = scripted('PASS');
-  // A check name that is not a file stem: verify throws before it checks anything out.
-  const r = await run(store, adapters(fake(claude), standard, scripted('PASS')), job(repo, { checks: [{ name: '../x', command: ['true'] }] }), opts(runsDir));
+  // preflight refuses a bad check name before develop, so the job changes after it: verify keeps
+  // its own check as a backstop and throws before it checks anything out.
+  const j = job(repo);
+  const inner = fake(claude);
+  const developer: Adapter = { name: inner.name, async start(req, signal) { const r = await inner.start(req, signal); j.checks = [{ name: '../x', command: ['true'] }]; return r; } };
+  const r = await run(store, adapters(developer, standard, scripted('PASS')), j, opts(runsDir));
   assert.equal(r.cycle.stage, 'ESCALATED');
   assert.match(r.error ?? '', /VERIFYING: .*not a file stem/);
   const last = r.cycle.history.at(-1)!.event;
@@ -500,4 +504,93 @@ test('run refuses a grant the configuration does not give, and any grant under n
   assert.equal(developer.requests.length, 0);
   assert.deepEqual(store.cycles('w1'), []);
   store.close();
+});
+
+// sweep-preflight: what a later step would refuse after a paid developer run is refused before it,
+// by run and by resume alike.
+const writer = (transitions: object) => ({ ...ownerCheck.stages.DEV, transitions }) as Workflow['stages'][string];
+const unrunnable: [string, Workflow, RegExp][] = [
+  ['a check FAIL back to the developer', { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: { kind: 'command', budget: 2, transitions: { PASS: 'REVIEW', FAIL: 'DEV' } } } },
+    /stage CHECK FAIL enters commit stage DEV/],
+  ['a human FAIL back to the developer', { ...ownerCheck, stages: { ...ownerCheck.stages, OWNER: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'DEV' } } } },
+    /stage OWNER FAIL enters commit stage DEV/],
+  ['a second commit stage entered by PASS', { ...ownerCheck, stages: { ...ownerCheck.stages, DEV: writer({ PASS: 'DOCS' }), DOCS: writer({ PASS: 'CHECK' }) } },
+    /stage DEV PASS enters commit stage DOCS/],
+  ['a review with no command stage before it', { ...ownerCheck, stages: { ...ownerCheck.stages, DEV: writer({ PASS: 'REVIEW' }) } },
+    /review stage REVIEW follows commit stage DEV with no command stage between/],
+];
+
+test('run refuses a workflow shape the driver cannot run, before the developer starts, though checkWorkflow passes it', async () => {
+  const { root, repo, runsDir } = scratch();
+  const developer = recording(fake(claude));
+  for (const [label, w, reason] of unrunnable) {
+    assert.deepEqual(checkWorkflow(w), [], label);
+    const store = new EventStore(join(root, `${label}.sqlite`), w);
+    await assert.rejects(run(store, { writer: developer, reviewer: scripted('PASS') }, job(repo), opts(runsDir)), reason, label);
+    assert.deepEqual(store.cycles('w1'), [], label);
+    store.close();
+  }
+  assert.equal(developer.requests.length, 0);
+});
+
+test('run refuses a job check verify would refuse, before the developer starts', async () => {
+  const { repo, store, runsDir } = scratch();
+  const developer = recording(fake(claude));
+  const bad: [Job['checks'], RegExp][] = [
+    [[{ name: '../x', command: ['true'] }], /check name "\.\.\/x" is not a file stem/],
+    [[{ name: 'tree', command: ['true'] }], /check name tree is reserved/],
+    [[{ name: 'a', command: ['true'] }, { name: 'a', command: ['true'] }], /check name a is declared twice/],
+    [[{ name: 'a', command: ['true', 1 as unknown as string] }], /check a: every argument must be a string/],
+  ];
+  for (const [checks, reason] of bad)
+    await assert.rejects(run(store, adapters(developer, scripted('PASS'), scripted('PASS')), job(repo, { checks }), opts(runsDir)), reason);
+  assert.equal(developer.requests.length, 0);
+  assert.deepEqual(store.cycles('w1'), []);
+  store.close();
+});
+
+test('run refuses a check program that is not installed or is outside the sandbox, job or stage, before the developer starts', async () => {
+  const { root, repo, store, runsDir } = scratch();
+  const developer = recording(fake(claude));
+  const roles = adapters(developer, scripted('PASS'), scripted('PASS'));
+  await assert.rejects(run(store, roles, job(repo, { checks: [{ name: 'lint', command: ['sf-no-such-program-7c1d', '.'] }] }), opts(runsDir)),
+    /stage VERIFYING check lint: sf-no-such-program-7c1d not found/);
+  // Found on PATH, but in a folder the sandbox does not bind: inside it would not run.
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'sf-outside-7c1d'), '#!/bin/sh\nexit 0\n');
+  chmodSync(join(bin, 'sf-outside-7c1d'), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    await assert.rejects(run(store, roles, job(repo, { checks: [{ name: 'lint', command: ['sf-outside-7c1d'] }] }), opts(runsDir)),
+      new RegExp(`stage VERIFYING check lint: sf-outside-7c1d resolves to ${bin}/sf-outside-7c1d, outside the sandbox; add its directory to sandbox.read`));
+  } finally {
+    process.env.PATH = path;
+  }
+  const own = new EventStore(join(root, 'own.sqlite'), { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: { kind: 'command', run: [{ name: 'fmt', command: ['sf-no-such-program-7c1d'] }], transitions: { PASS: 'REVIEW' } } } });
+  await assert.rejects(run(own, { writer: developer, reviewer: scripted('PASS') }, job(repo), opts(runsDir)), /stage CHECK check fmt: sf-no-such-program-7c1d not found/);
+  own.close();
+  assert.equal(developer.requests.length, 0);
+  assert.deepEqual(store.cycles('w1'), []);
+  store.close();
+});
+
+test('resume refuses what run refuses before a step: a missing grant, no workflowDir, a shape the driver cannot run', async () => {
+  const { root, repo, base, runsDir } = scratch();
+  const withFile = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: { kind: 'command', run: [{ name: 'lint', command: ['sh', { file: 'lint.sh' }] }], transitions: { PASS: 'REVIEW' } } } } as Workflow;
+  const cases: [Workflow, Adapters, RegExp][] = [
+    [granted(), { developer: fake(claude), reviewer: scripted() }, /stage MERGE asks for grant github, which no personal or job file gives/],
+    [withFile, { writer: fake(claude), reviewer: scripted() }, /CHECK names file lint\.sh, but its workflow has no file of its own/],
+    [unrunnable[0]![1], { writer: fake(claude), reviewer: scripted() }, unrunnable[0]![2]],
+  ];
+  for (const [i, [w, roles, reason]] of cases.entries()) {
+    const store = new EventStore(join(root, `resume-${i}.sqlite`), w);
+    store.open('c1', 'w1', undefined, base);
+    // In DEV with a run active, as a crash mid-develop would leave it.
+    store.append('c1', { type: 'claim', runId: 'r1', base, runtime: 'fake' });
+    await assert.rejects(resume(store, 'c1', roles, job(repo), opts(runsDir)), reason);
+    assert.equal(store.events('c1').length, 1);
+    store.close();
+  }
 });
