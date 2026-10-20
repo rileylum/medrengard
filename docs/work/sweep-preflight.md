@@ -22,7 +22,7 @@ Done when:
 - The spec's Driver section lists the preflight with test names; `npm run test:learn` passes; guide text that became wrong is fixed.
 
 Constraints: zero dependencies; no paid calls; `checkWorkflow` and the default workflow unchanged; `verify` keeps its checks as a backstop.
-Non-goals: supporting a check-fix loop; checking a slash path (it names a file in the candidate, which does not exist yet); checking that a `{ file }` argument exists before develop; a job with no checks (still escalates after the developer run, as the spec says).
+Non-goals: supporting a check-fix loop; checking a slash path (it names a file in the candidate, which does not exist yet); checking that a `{ file }` argument exists before develop; a job with no checks (still escalates after the developer run, as the spec says); a grant stage reachable from a commit stage with no review PASS between (the head gate in `verify` still refuses it, but only after the developer run).
 Verification: `npm test` and `npm run test:learn`, run by the owner on the reviewed SHA.
 
 ## For the owner
@@ -46,6 +46,10 @@ Verification: `npm test` and `npm run test:learn`, run by the owner on the revie
 - A `{ file }` argument missing from `workflowDir` is still found only at `verify`. Same class, not in this item.
 - A job with no checks still escalates after the developer run ("Missing evidence is never PASS"). Same class; refusing it is a spec change.
 
+- A grant stage that a commit stage reaches with no review PASS between still fails only after the developer run, at `verify`'s head gate. No rule was added for it (standard review 2 asked to leave it as a known gap).
+- `resume` now runs `driverLimits` too. A cycle opened earlier on a workflow that is now refused (for example `AWAITING_ACCEPTANCE: { FAIL: 'DEVELOPING' }`) can no longer be resumed; it can only be accepted or cancelled.
+- A natural "request changes" edge (a human stage's FAIL back to the developer after the last review PASS) now makes the whole workflow refused at `run`. Before, such a workflow ran, and only escalated if the owner actually requested changes.
+
 **Decision for you.** Whether these shape limits belong in the driver (built) or in `checkWorkflow` (alternative 2).
 
 ## Log
@@ -59,3 +63,8 @@ Verification: `npm test` and `npm run test:learn`, run by the owner on the revie
   - Minor: an empty job check command passed preflight and was MISSING after the run. `checkCommands` now refuses it (`check a: command is empty`), test first (red: "Missing expected rejection"). `verify` shares the rule, so a job changed after preflight to an empty command now escalates by `reject_dispatch` rather than recording MISSING.
   - Mutants (`/tmp/sfp-mut.py`): 8 tried on the fix, 8 caught after adding the human-after-check case for the one that first survived (the recursion in `mark`).
 - 2026-10-20 — implementer's run after the fix, not independent: `npm test` 426 tests, 402 pass, 0 fail, 19 skipped, 5 todo; `npm run test:learn` 6 pass.
+- 2026-10-20 — standard 2 on `c9e1f54`: PASS, with three minors and two nits. The review budget is now spent; this last round is small and was not reviewed again.
+  - Minor: a commit stage's FAIL edge, which `apply` never takes, counted as an edge (probe P1 refused here, runs on `main`). Minor: stages the start never reaches were checked (P2, P2b). Fixed: `driverLimits` follows only a commit stage's PASS, and checks only stages reachable from `start`. Test first, red with "the driver cannot run workflow case-0: stage NOTES PASS enters commit stage DEVELOPING"; it now runs all three to AWAITING_ACCEPTANCE. Two mutants (follow every commit edge; check every stage) are each caught. The reviewer's probe (`review-preflight-probes/probe.ts`) on this tree: P1, P2 and P2b each RAN to AWAITING_ACCEPTANCE.
+  - Minor: a grant stage reachable from a commit stage with no review PASS between still throws only after the paid run. Not built, as asked; listed in Non-goals, "For the owner" and the spec's Driver section.
+  - Nit: `learn/demos/ver-lab.js` now shows the "command is empty" refusal. Nit: "For the owner" now says what `resume` running `driverLimits` means for older cycles, and that a request-changes edge refuses the whole workflow.
+- 2026-10-20 — implementer's run after the standard 2 round, not independent: `npm test` 427 tests, 403 pass, 0 fail, 19 skipped, 5 todo; `npm run test:learn` 6 pass.
