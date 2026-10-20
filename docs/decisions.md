@@ -37,6 +37,13 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-112 — 2026-10-20 — Two live-run gaps placed; row 11 starts with one driver entry point
+
+The owner asked which research findings were left out of the walkthrough (A-105 to A-111) and why. The session listed them (`docs/research/2026-10-20/`); this and the next entries record the owner's decisions on them.
+
+1. The two live-run gaps already in `docs/plan.md` (reviewers see each check's command; each run's raw runtime output is kept). The session recommended raw output go with A-111's run-records ticket, since tuning from logs needs the why as well as the cost, and the check command stay with the prompts row, so the contract hash changes once. Owner: “okay make sure we've logged your findings against the plan so we don't miss these.”
+2. One driver entry point (`architecture.md` finding 2): `drive` exported from `src/run.ts`; `acceptCycle` and `cancelWork` in a new `src/decide.ts`, without printing; `main()` only under `import.meta.main`. A pure refactor; whether `accept` then drives on (the grant-after-human gap) is decided in row 11 or 12. Owner: “Yes lets make it row 11s first ticket”.
+
 ### A-111 — 2026-10-20 — The smaller research items: three soon, the rest tracked; "Ken Chun" is Kun Chen
 
 Asked, from the overnight research (TRIAGE owner items 8 to 18): ticket soon (1) run records: `run_failed.cause`, cost, tokens, model and CLI version per run, and `claude`'s turn and budget caps; (2) JSON workflows, with a repository workflow required to be data (closes A-078); (3) `protocol: 1` on the extension contracts. Track for later: a `doctor` command, a `status` command with clearer job-file errors, clone cleanup, faster tests, and a warning at `accept` when the base moved (`head_changed`/`base_changed` have no producer, A-103). Owner: “Yes agree with the split, these all seem very useful so I'd definitely want them all done at some point.”
