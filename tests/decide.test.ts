@@ -170,3 +170,25 @@ test('decideAndDrive records an event that escalates, without calling ready', as
     store.close();
   }
 });
+
+test('decideAndDrive prepares the loop for an agent stage after the human one, as for a command stage', async () => {
+  const reviewAfterOwner = {
+    ...ownerCheck,
+    stages: {
+      ...ownerCheck.stages,
+      OWNER: { kind: 'human', transitions: { PASS: 'LAST', FAIL: 'ESCALATED' } },
+      LAST: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', budget: 1, transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
+    },
+  } as Workflow;
+  const store = fresh(reviewAfterOwner);
+  try {
+    seed(store, 'c1', AT_OWNER);
+    let called = false;
+    const ready = async () => { called = true; return { adapters: none, job, opts: { deadlineMs: 1000, runsDir: dir } }; };
+    await assert.rejects(decideAndDrive(store, 'c1', ACCEPT, ready), /^Error: no adapter for role writer \(stage DEV\)$/);
+    assert.ok(called);
+    assert.equal(store.events('c1').length, AT_OWNER.length);
+  } finally {
+    store.close();
+  }
+});
