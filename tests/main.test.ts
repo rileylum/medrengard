@@ -282,6 +282,23 @@ export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: 
   assert.equal(readFileSync(join(runsDir, 'evidence', head, 'CHECK', 'lint.stdout'), 'utf8'), 'linted\n');
 });
 
+// sweep-terminal-escapes: `Error:` and the top-level stderr message print a thrown message, which can
+// quote a name with control characters in it. Here the names come from a workflow module.
+test('a run error and a refusal on stderr show control characters only as visible escapes', () => {
+  const missing = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};
+export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: { ...ownerCheck.stages.CHECK, run: [{ name: 'lint', command: ['sh', { file: '\\u001b[2J\\u009b.sh' }] }] } } };\n`, { writer: 'claude', reviewer: 'claude' });
+  reviewerStub(missing.bin, 'claude', 'nobody', join(missing.root, 'outside'));
+  const r = sf([missing.jobFile], missing.env);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Error: CHECK: stage CHECK names file \\u\{1b\}\[2J\\u\{9b\}\.sh/m);
+  assert.doesNotMatch(r.stdout + r.stderr, /[\u001b\u009b]/);
+  const refused = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};\nexport const workflow = { ...ownerCheck, start: '\\u001b[2J' };\n`, { writer: 'claude', reviewer: 'claude' });
+  const e = sf([refused.jobFile], refused.env);
+  assert.equal(e.status, 2, e.stdout + e.stderr);
+  assert.match(e.stderr, /^workflow refused.*\\u\{1b\}\[2J/m);
+  assert.doesNotMatch(e.stdout + e.stderr, /\u001b/);
+});
+
 // Ticket 10-e: the job file's grants reach verify, so the grant stage holds the value.
 test('main.ts gives a grant stage the grant the job file names', () => {
   const field = (k: string) => `$(sed -n 's/.*"${k}": "\\(.*\\)".*/\\1/p' "$SF_REQUEST")`;
@@ -357,7 +374,7 @@ test('a job naming an extension runtime runs from open to AWAITING_ACCEPTANCE, a
 // sweep-terminal-escapes: findings, heads and reasons are agent text; a raw ESC or BEL would let an
 // agent erase the owner's screen, print a fake stage or write the clipboard (OSC 52).
 test('agent text with terminal escapes reaches stdout and stderr only as visible escapes', () => {
-  for (const marker of ['EXT:esc-verdict', 'EXT:esc-head']) {
+  for (const marker of ['EXT:esc-verdict', 'EXT:esc-head', 'EXT:esc-dispute']) {
     const { root, jobFile } = scratch();
     copyFileSync(join(import.meta.dirname, 'fixtures', 'ext-runtime.ts'), join(root, 'ext-runtime.ts'));
     const job = JSON.parse(readFileSync(jobFile, 'utf8'));
@@ -365,13 +382,13 @@ test('agent text with terminal escapes reaches stdout and stderr only as visible
     const r = sf([jobFile]);
     assert.equal(r.status, 1, r.stdout + r.stderr);
     assert.match(r.stdout, /^Stage: ESCALATED$/m, marker);
-    assert.doesNotMatch(r.stdout + r.stderr, /[\u0007\u001b\u202e]/, marker);
+    assert.doesNotMatch(r.stdout + r.stderr, /[\u0007\u001b\u009b\u202e]/, marker);
     // The one line break in the text is shown, not obeyed: no line of its own starts with "fake".
     assert.doesNotMatch(r.stdout, /^fake/m, marker);
     assert.match(r.stdout, /\\u\{1b\}\[2JStage: AWAITING_ACCEPTANCE\\u\{1b\}\]52;c;cm0gLXJmIH4=\\u\{7\}/, marker);
     assert.equal(r.stdout.match(/^Stage: /gm)?.length, 1, marker);
     if (marker === 'EXT:esc-verdict') assert.match(r.stdout, /^ {2}- \\u\{1b\}\[2J/m);
-    // 10,000 characters of claimed head are cut to 64 before the escalation names them.
+    // 10,000 characters of claimed head, in a claim or a dispute, are cut to 64 before the escalation names them.
     else assert.ok(r.stdout.length < 2_000, r.stdout);
   }
 });

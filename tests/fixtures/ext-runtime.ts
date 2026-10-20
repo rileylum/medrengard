@@ -21,10 +21,13 @@ process.stdin.on('end', () => {
   if (p.includes('EXT:fail-big')) return void process.stdout.write(JSON.stringify({ status: 'failed', reason: `  ${'x'.repeat(5_000_000)}` }));
   if (p.includes('EXT:fail-surrogate')) return void process.stdout.write(JSON.stringify({ status: 'failed', reason: 'bad \uD800 end' }));
   const reply = (claim: unknown) => process.stdout.write(JSON.stringify({ status: 'completed', claim }));
-  // Terminal escapes in agent text: clear screen, an OSC 52 clipboard write, a line break.
-  const esc = '\u001b[2JStage: AWAITING_ACCEPTANCE\u001b]52;c;cm0gLXJmIH4=\u0007\nfake\u202e';
+  // Terminal escapes in agent text: clear screen, an OSC 52 clipboard write, a line break, bidi, a C1 CSI.
+  const esc = '\u001b[2JStage: AWAITING_ACCEPTANCE\u001b]52;c;cm0gLXJmIH4=\u0007\nfake\u202e\u009b';
   if (p.includes('EXT:esc-head') && !p.includes('reviewer for the change below')) return reply({ head: esc + 'x'.repeat(10_000), artifacts: ['x'] });
   if (p.includes('EXT:esc-verdict') && p.includes('reviewer for the change below')) return reply({ head: esc, verdict: 'FAIL', findings: [esc] });
+  // A real FAIL, then a fix run that disputes it naming a long, escaped head.
+  if (p.includes('EXT:esc-dispute') && p.includes('reviewer for the change below')) return reply({ head: /^Candidate SHA: (\S+)$/m.exec(p)?.[1], verdict: 'FAIL', findings: ['no'] });
+  if (p.includes('EXT:esc-dispute') && p.includes('FAILED. Fix these findings')) return reply({ head: esc + 'x'.repeat(10_000), dispute: 'no' });
   if (p.includes('reviewer for the change below')) {
     return reply({ head: /^Candidate SHA: (\S+)$/m.exec(p)?.[1], verdict: 'PASS', findings: [] });
   }

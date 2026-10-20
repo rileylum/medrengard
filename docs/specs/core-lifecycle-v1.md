@@ -107,7 +107,7 @@ Every `developer_result`, `verdict`, `dispute` and `run_failed` records `contrac
 - The controller runs the repository's declared checks in a sandbox, on a fresh checkout of the candidate with no `.git`, and stores output and exit code against the SHA [verify: passing checks run in a fresh checkout].
 - A reviewer gets the ticket, the diff, the SHAs, the repository instructions and the verification evidence, never the developer's transcript [review: the prompt carries the role]. It also gets each commit in `base..head`, oldest first, with full SHA, author and message, because its checkout has no `.git` [review: the COMMITS section lists every commit].
 - A verdict with the wrong SHA is recorded but cannot advance the cycle [lifecycle: SC-17b].
-- `main.ts` prints agent text (findings, verdict heads, escalation and error reasons) with every control character but tab and every bidi control shown as a visible `\u{..}`; the event log keeps the raw text. A claimed head that is not a commit is cut to 64 characters before a refusal names it [main: agent text with terminal escapes].
+- `main.ts` prints agent text (findings, verdict heads, escalation and error reasons) with every control character but tab, every bidi control, and U+2028 and U+2029 shown as a visible `\u{..}`; the event log keeps the raw text. A claimed head that is not a commit is cut to 64 characters before a refusal names it [main: agent text with terminal escapes].
 - Missing evidence is never PASS [verify: no declared checks; review: review throws and appends nothing].
 
 ## Recovery
