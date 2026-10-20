@@ -409,6 +409,24 @@ test('a role whose runtime module is missing is refused before any cycle opens, 
   assert.ok(!existsSync(db), 'no store was created');
 });
 
+test('accept, cancel and events work when a role selects a runtime whose module is missing: they build no adapter', () => {
+  const { root, jobFile, db } = scratch();
+  const { xdg } = brokenRuntime(root);
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...job, runtime: { developer: 'old', standard: 'claude', adversarial: 'claude' } }));
+  const env = { ...process.env, XDG_CONFIG_HOME: xdg };
+  seed(db, 'c1', TO_ACCEPTANCE);
+  const accepted = sf(['accept', jobFile, H], env);
+  assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+  assert.match(accepted.stdout, /^Stage: ACCEPTED$/m);
+  seed(db, 'c2', ESCALATE);
+  const cancelled = sf(['cancel', jobFile], env);
+  assert.equal(cancelled.status, 0, cancelled.stdout + cancelled.stderr);
+  assert.match(cancelled.stdout, /^Stage: CANCELLED$/m);
+  const events = sf(['events', jobFile], env);
+  assert.equal(events.status, 0, events.stdout + events.stderr);
+});
+
 // Ticket 10-b (A-078 Q4): accept reads the layers at the base the cycle opened at, not where the ref is now.
 test('accept loads a cycle run under a repository workflow after the base branch has moved and changed that workflow', () => {
   const { root, repo, jobFile } = scratch();
