@@ -66,3 +66,16 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
   - Two grants with one variable in a stage are refused.
 
   The A-078 row in `accepted-risks.md` now names the grant-file exposure. Known limit: an extension runtime's binary folder and `bind` paths are not checked against grant files. Implementer's `npm test` on `79220e4`: 380 tests, 356 pass, 0 fail. Seven more mutants were all caught (`10-e/mutants3.py`). Adversarial started on `79220e4`.
+- 2026-10-20 — adversarial on `79220e4`: FAIL, one major and three minors. The budget is spent, so the owner decides.
+  - Major, reproduced (probe `10-e/probes/adv/bindir.test.ts`): a grant file in the folder that holds the claude or pi binary passes `loadConfig`. Every agent sandbox binds that folder read-only (`dirname(realpath(bin))`, `src/runtime/cli-adapter.ts`), so the developer can read the file.
+  - Minor: no test pins `e.head === head` in the gate's PASS rule. A mutant passes, and the probe `passrule.ts` shows a workflow where it matters.
+  - Minor: `head.stdout` redacts after `JSON.stringify`, so a token containing `"`, `\` or a control character is quoted unredacted.
+  - Minor: two values that overlap without one containing the other leave part of one in clear.
+
+  Notes:
+  - A grant command that puts the token in a child's argv, or a tool that reads config from the cwd (`.npmrc`), exposes it. The design note's advice should say so.
+  - A grant file ending in `\r\n` keeps the `\r`.
+  - Another job running at the same time with a wider `sandbox.read` is not checked.
+  - The `accept` part of the gate cannot be reached until row 11.
+
+  The reviewer's independent `npm test` matched: 380 tests, 356 pass, 0 fail. The two leftover `sf-grants-*` folders were from the implementer's red run of the locked-`outputDir` test; they are deleted.
