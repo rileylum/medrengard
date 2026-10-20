@@ -139,3 +139,11 @@ test('observerKit fails an observer that throws when a command is refused', () =
   assert.match(r.stdout, /not ok \d+ - unguarded: a refused command does not make the observer throw/);
   assert.match(r.stdout, /# fail 1$/m);
 });
+
+test('observerKit fails an observer whose actions differ from a case\'s expected ones', () => {
+  const r = kit('observe-eager.kit.ts');
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^ok \d+ - eager: a comment-only change is accepted$/m);
+  assert.match(r.stdout, /not ok \d+ - eager: a code change is left for the owner/);
+  assert.match(r.stdout, /# fail 1$/m);
+});
