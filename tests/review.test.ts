@@ -12,6 +12,7 @@ import { develop, fix, type Job } from '../src/developer.ts';
 import { verify } from '../src/verify.ts';
 import { review } from '../src/review.ts';
 import { fakeAdapter } from './fake-adapter.ts';
+import { withGitConfig } from './git-config.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
 mkdirSync('/var/tmp/software_factory', { recursive: true });
@@ -271,6 +272,21 @@ test('a committed .gitattributes with "* -diff" cannot hide content: the diff is
   const { prompt } = await reviewableWith({ '.gitattributes': '* -diff\n', 'evil.ts': 'export const marker = "REAL_CONTENT_HERE";\n' });
   assert.match(prompt, /REAL_CONTENT_HERE/);
   assert.ok(!/Binary files .* differ/.test(prompt), 'no "Binary files differ" lines');
+});
+
+test('the reviewer\'s diff is the plain patch whatever the owner\'s diff settings: no external diff, textconv or colour (sweep-git-hardening)', async () => {
+  const external = join(dir, 'external.sh');
+  writeFileSync(external, '#!/bin/sh\necho EXTERNAL\n');
+  chmodSync(external, 0o755);
+  const attributes = join(dir, 'shout-attributes');
+  writeFileSync(attributes, '*.txt diff=shout\n');
+  const { prompt, base, head } = await withGitConfig(
+    { 'diff.external': external, 'diff.shout.textconv': 'tr a-z A-Z <', 'core.attributesFile': attributes, 'color.diff': 'always' },
+    () => reviewableWith({ 'quiet.txt': 'quiet words\n' }));
+  const diff = sectionOf(prompt, `DIFF ${base}..${head}`);
+  assert.match(diff, /^\+\+\+ b\/quiet\.txt$/m);
+  assert.match(diff, /^\+quiet words$/m);
+  assert.doesNotMatch(diff, /EXTERNAL|QUIET|\x1b/);
 });
 
 test('every changed path is named even when the cut drops the middle of the diff (06-c)', async () => {

@@ -159,6 +159,20 @@ function readRepoLayer(repo: string, sha: string): Record<string, unknown> {
 }
 
 /**
+ * Refuses `sha` unless a branch or tag outside the factory's `sf/*` contains it. A-078 Q2 accepts
+ * a repository workflow because only merged code runs, but the base defaults to HEAD, which is a
+ * candidate whenever the owner has checked one out to look at it. An allow list, not "every ref
+ * but sf/*": `refs/stash` after a stash on the candidate, `refs/sf/incoming/*` (develop) and a
+ * fetched remote branch all contain code nobody merged here.
+ */
+function checkMerged(repo: string, sha: string, workflowPath: string): void {
+  const refs = git(repo, 'for-each-ref', '--format=%(refname)', '--contains', sha, 'refs/heads/', 'refs/tags/').split('\n');
+  if (refs.some((r) => r !== '' && !r.startsWith('refs/heads/sf/'))) return;
+  // The code lets decisionConfig tell this refusal from a base whose layers no longer load.
+  throw Object.assign(new Error(`base ${sha} is on no branch or tag outside sf/*; the repository workflow ${workflowPath} is not imported. Set "base" in the job file to a merged branch, or check one out`), { code: 'UNMERGED_BASE' });
+}
+
+/**
  * The repository's workflow as committed at `sha`, copied to a file and imported from there. It
  * runs unsandboxed in the controller (accepted risk, A-078 Q2). One file only, so it must not
  * import a sibling: the copy has none beside it.
@@ -205,7 +219,10 @@ export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = proce
   const runsDir = resolve(spec.runsDir!);
   // The repository's path is relative to the repository; the job file's, already absolute, beats it.
   const fromRepo = repoLayer.workflow !== undefined && job.workflow === undefined;
-  if (fromRepo) spec.workflow = extractWorkflow(repo, base, repoLayer.workflow as string, runsDir);
+  if (fromRepo) {
+    checkMerged(repo, base, repoLayer.workflow as string);
+    spec.workflow = extractWorkflow(repo, base, repoLayer.workflow as string, runsDir);
+  }
   const workflow = await loadWorkflow(spec.workflow);
   // Only the workflow file was copied; what its commands name beside it comes from the same commit.
   if (fromRepo) extractFiles(repo, base, repoLayer.workflow as string, workflow, runsDir);

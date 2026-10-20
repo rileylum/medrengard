@@ -88,8 +88,9 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
 // src/prompt.ts's.
 function gather(ticket: string, head: string, base: string, repo: string, instructions: string[], stages: { stage: string; verification: Verification; dir: string }[]): ReviewParts {
   // --text: a committed .gitattributes with `-diff` would otherwise turn every file into
-  // "Binary files differ" (06-b adversarial); the cut bounds any real binary.
-  const diff = quoteGit(repo, 'diff', '--text', base, head);
+  // "Binary files differ" (06-b adversarial); the cut bounds any real binary. The rest: the owner's
+  // diff.external, textconv or color.diff would otherwise replace the patch, as in verify.
+  const diff = quoteGit(repo, 'diff', '--text', '--no-ext-diff', '--no-textconv', '--no-color', base, head);
   return {
     head,
     base,
