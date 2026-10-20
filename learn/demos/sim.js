@@ -549,7 +549,6 @@ export default function mount(el) {
     if (!c) return;
     if (human(c.stage)) {
       btn(`Accept ${short(c.candidate.head)}`, 'owner primary', () => decide('accept'));
-      btn('Request changes', 'owner', () => decide('request_changes'));
       btn('Cancel', 'owner', () => decide('cancel'));
     } else if (c.stage === 'ACCEPTED' && !state.merged.includes(c.cycleId)) {
       btn(`git merge --no-ff ${short(c.candidate.head)}`, 'owner primary', merge);
@@ -571,14 +570,11 @@ export default function mount(el) {
       const after = store.append(c.cycleId, { type: 'accept', head: c.candidate.head, source: 'owner' });
       say(`Cycle: ${after.cycleId}`); say(`Stage: ${after.stage}`);
       if (after.stage === 'ACCEPTED') { say(''); say('To merge:'); say(`  git -C ${REPO} merge --no-ff ${c.candidate.head}`); }
-    } else if (kind === 'cancel') {
+    } else {
       say('\n$ node src/main.ts cancel job.json');
       const after = store.append(c.cycleId, { type: 'cancel', source: 'owner' });
       say(`Cycle: ${after.cycleId}`); say(`Stage: ${after.stage}`);
       state.parent = undefined;
-    } else {
-      say('\n# owner requests changes');
-      store.append(c.cycleId, { type: 'request_changes' });
     }
     ownerActions();
     prView(state.cycle());
