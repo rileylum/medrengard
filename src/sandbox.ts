@@ -32,12 +32,14 @@ export interface Policy {
   tmp?: string;
   /** Set inside after --clearenv. The caller also adds it to the spawn environment, which is what `none` runs in. */
   env?: Record<string, string>;
+  /** Reach the command through spawnEnv, never argv: bwrap's argv is world-readable in /proc (10-e). The caller must spawn in spawnEnv(policy). */
+  secrets?: Record<string, string>;
 }
 
 // The system directories every command needs: binaries, libraries, the dynamic loader and /etc.
 // Not $HOME, /var, /run or /srv: those hold the owner's files and sockets. On merged-/usr distros
 // /bin, /sbin, /lib and /lib64 are symlinks and are recreated as symlinks.
-const SYSTEM = ['/usr', '/etc', '/opt', '/bin', '/sbin', '/lib', '/lib64'];
+export const SYSTEM = ['/usr', '/etc', '/opt', '/bin', '/sbin', '/lib', '/lib64'];
 const RESOLVE = '/run/systemd/resolve';
 
 interface Backend {
@@ -65,6 +67,11 @@ export function confines(sandbox: Sandbox): boolean {
   return backend(sandbox).confines;
 }
 
+/** The environment to spawn a wrapped command in. wrapBwrap unsets every name in it but the secrets, so the two must agree. */
+export function spawnEnv(policy: Policy): NodeJS.ProcessEnv {
+  return { ...process.env, ...policy.env, ...policy.secrets };
+}
+
 export function wrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]] {
   return backend(sandbox).wrap(sandbox, policy, command, args);
 }
@@ -79,7 +86,11 @@ function wrapBwrap(sandbox: Sandbox, policy: Policy, command: string, args: stri
     // A new session: the command cannot push input into the controller's terminal (TIOCSTI).
     '--new-session',
     // The controller's environment may hold tokens; the command gets a path, a home and a locale.
-    '--clearenv', '--setenv', 'PATH', process.env.PATH ?? '/usr/bin', '--setenv', 'HOME', policy.home ?? '/tmp', ...(lang ? ['--setenv', 'LANG', lang] : []),
+    // --setenv would put a secret's value in argv, so with secrets every other name is unset instead.
+    ...(policy.secrets
+      ? Object.keys(spawnEnv(policy)).filter((k) => !Object.hasOwn(policy.secrets!, k)).flatMap((k) => ['--unsetenv', k])
+      : ['--clearenv']),
+    '--setenv', 'PATH', process.env.PATH ?? '/usr/bin', '--setenv', 'HOME', policy.home ?? '/tmp', ...(lang ? ['--setenv', 'LANG', lang] : []),
     ...Object.entries(policy.env ?? {}).flatMap(([k, v]) => ['--setenv', k, v]),
     '--proc', '/proc', '--dev', '/dev', ...(policy.tmp ? ['--bind', policy.tmp, '/tmp'] : ['--tmpfs', '/tmp']),
     ...SYSTEM.flatMap(systemBind),

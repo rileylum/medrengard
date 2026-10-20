@@ -1,14 +1,14 @@
 // Ticket 10-b: a job's settings, from four layers (A-074, A-078). Every command in main.ts reads
 // its job through loadConfig, so the limits on each layer are enforced here and nowhere else.
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Job } from './developer.ts';
 import { git } from './git.ts';
 import { checkWorkflow, defaultWorkflow, fileArgs, type Workflow } from './lifecycle.ts';
 import { runtimes, type RuntimeEntry } from './runtime/registry.ts';
-import type { Sandbox } from './sandbox.ts';
+import { SYSTEM, type Sandbox } from './sandbox.ts';
 
 export interface JobFile extends Omit<Job, 'ticket'> {
   ticket?: string;
@@ -25,6 +25,14 @@ export interface JobFile extends Omit<Job, 'ticket'> {
   deadlineMs?: number;
   /** Where checks, the developer and the reviewers run. Default bwrap; `none` must be written out. `read` is relative to the file that sets it. */
   sandbox?: Sandbox;
+  /** By name, what a workflow's `grants` may ask for. `file` is relative to the file that sets it (10-e). */
+  grants?: Record<string, Grant>;
+}
+
+/** The value is `file`'s text with one trailing newline removed, read when the stage runs; the stage sees it as `variable`. */
+export interface Grant {
+  variable: string;
+  file: string;
 }
 
 export interface Config {
@@ -38,13 +46,15 @@ export interface Config {
   sandbox: Sandbox;
   /** The workflow file's folder, where a command's `{ file }` argument is found. Undefined for the default workflow. */
   workflowDir?: string;
+  /** Paths absolute; `{}` when no layer gives any. */
+  grants: Record<string, Grant>;
 }
 
 // The factory-defaults layer. `none` must be written out by the owner (08-a).
 const DEFAULTS = { runsDir: '/var/tmp/software_factory/runs', sandbox: { backend: 'bwrap' } };
 
 /** Merged one level down; every other key is replaced whole, arrays included (A-078 Q3). */
-const NESTED = ['runtime', 'runtimes', 'sandbox'];
+const NESTED = ['runtime', 'runtimes', 'sandbox', 'grants'];
 
 function merge(layers: Record<string, unknown>[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -80,6 +90,9 @@ function rooted(layer: Record<string, unknown>, dir: string, runsDir: boolean): 
   const runtimes = out.runtimes as Record<string, { module?: unknown }> | undefined;
   if (runtimes && typeof runtimes === 'object')
     out.runtimes = Object.fromEntries(Object.entries(runtimes).map(([name, e]) => [name, e && typeof e === 'object' ? { ...e, module: under(dir, e.module) } : e]));
+  const grants = out.grants as Record<string, { file?: unknown }> | undefined;
+  if (grants && typeof grants === 'object')
+    out.grants = Object.fromEntries(Object.entries(grants).map(([name, g]) => [name, g && typeof g === 'object' && 'file' in g ? { ...g, file: under(dir, g.file) } : g]));
   const sandbox = out.sandbox as Sandbox | undefined;
   if (Array.isArray(sandbox?.read)) out.sandbox = { ...sandbox, read: sandbox!.read!.map((p) => under(dir, p)) };
   return out;
@@ -99,7 +112,7 @@ const REPO_LAYER = '.factory/config.json';
  * show the sandbox `~/.ssh`.
  */
 const REPO_KEYS = ['checks', 'workflow', 'runtime'];
-const PERSONAL_KEYS = [...REPO_KEYS, 'runtimes', 'sandbox', 'deadlineMs', 'runsDir'];
+const PERSONAL_KEYS = [...REPO_KEYS, 'runtimes', 'sandbox', 'deadlineMs', 'runsDir', 'grants'];
 // Which work and where: one job's, never a default a later job would inherit. `model` is read by
 // proto/job.ts and ignored here; refusing it would stop proto/board.ts accept and cancel on its own job files.
 const JOB_KEYS = ['workId', 'ticket', 'ticketFile', 'repo', 'base', 'parentCycleId', 'model', ...PERSONAL_KEYS];
@@ -196,6 +209,14 @@ export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = proce
   const workflow = await loadWorkflow(spec.workflow);
   // Only the workflow file was copied; what its commands name beside it comes from the same commit.
   if (fromRepo) extractFiles(repo, base, repoLayer.workflow as string, workflow, runsDir);
+  // A personal grant applies to every repository, including one cloned from someone else (A-083 Q5).
+  if (fromRepo)
+    for (const [name, def] of Object.entries(workflow.stages))
+      if (def.kind === 'command' && def.grants !== undefined) throw new Error(`repository workflow ${repoLayer.workflow as string}: stage ${name} asks for grants; a repository workflow may not`);
+  // Every module path is absolute by now, so relativeTo is never used.
+  const registry = runtimes(spec.runtimes, '/');
+  // HOME as the adapters read it, through os.homedir; a relative one binds nothing they would find.
+  const home = env.HOME && isAbsolute(env.HOME) ? env.HOME : undefined;
   return {
     path,
     spec,
@@ -203,10 +224,35 @@ export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = proce
     runsDir,
     workflow,
     workflowDir: spec.workflow === undefined ? undefined : dirname(spec.workflow),
-    // Every module path is absolute by now, so relativeTo is never used.
-    registry: runtimes(spec.runtimes, '/'),
+    registry,
     sandbox: spec.sandbox!,
+    grants: checkGrants(spec.grants ?? {}, repo, [...SYSTEM, ...Object.values(registry).flatMap((r) => (home ? r.reads(home) : [])), ...(spec.sandbox?.read ?? [])]),
   };
+}
+
+// The controller sets these inside the sandbox; a grant of the same name would be overwritten or hide them.
+const RESERVED_VARIABLES = ['PATH', 'HOME', 'LANG', 'SF_REQUEST'];
+
+/**
+ * The merged grants, refused unless each is { variable, file } with a file outside the repository,
+ * which a commit could carry, and outside every root another sandbox binds: the system directories,
+ * sandbox.read, and what each runtime binds (its binary's folder, bind paths, config in the home).
+ * Compared by real path, so a symlink on either side cannot hide where the file is.
+ */
+function checkGrants(grants: Record<string, unknown>, repo: string, bound: unknown[]): Record<string, Grant> {
+  const real = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+  const inside = (file: string, root: string) => file === root || file.startsWith(root.endsWith('/') ? root : `${root}/`);
+  for (const [name, g] of Object.entries(grants)) {
+    if (!isObject(g) || Object.keys(g).sort().join() !== 'file,variable') throw new Error(`grant ${name}: must be { variable, file }`);
+    const { variable, file } = g as unknown as Grant;
+    if (typeof variable !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(variable) || RESERVED_VARIABLES.includes(variable))
+      throw new Error(`grant ${name}: variable ${JSON.stringify(variable)} must be an environment variable name other than ${RESERVED_VARIABLES.join(', ')}`);
+    if (typeof file === 'string' && inside(real(file), real(repo))) throw new Error(`grant ${name}: file ${file} is inside the repository`);
+    if (typeof file !== 'string' || !statSync(file, { throwIfNoEntry: false })?.isFile()) throw new Error(`grant ${name}: file ${String(file)} does not exist or is not a file`);
+    const root = bound.find((r) => typeof r === 'string' && inside(real(file), real(r)));
+    if (root !== undefined) throw new Error(`grant ${name}: file ${file} is under ${String(root)}, which sandboxes other than the grant stage's can read`);
+  }
+  return grants as Record<string, Grant>;
 }
 
 /** Where the job's store is. The repository layer may set neither, so this reads no Git and cannot fail on it. */

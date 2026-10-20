@@ -37,6 +37,30 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-086 — 2026-10-20 — 10-e: fix the adversarial findings, then merge
+
+Owner, after 10-e's adversarial FAIL on `79220e4` (one major: a grant file beside the claude or pi binary is readable by the agents' sandboxes; three minors: no test of the head gate's PASS-for-this-head rule, `head.stdout` redacted after JSON quoting, overlapping values partly left in clear) and the recommendation to fix all four tests first, trim `\r\n` from a grant value, add the child-argv and cwd-config warnings to the design note, then merge without another review, as for 10-b and 10-c (A-080, A-082): “fix and merge”.
+
+Effect: the fixes go on `feat/10-e-grants`, tests first, unreviewed. Then `git merge --no-ff` into main. On record: standard 1 FAIL on `231163d` (fixed at `818de56`), standard 2 FAIL on `818de56` (fixed at `79220e4`, A-085), adversarial FAIL on `79220e4`.
+
+### A-085 — 2026-10-20 — 10-e: fix the standard 2 findings, then the adversarial review
+
+Owner, after 10-e's standard 2 FAIL on `818de56` (one major: no test pins that `verify` keeps a grant's value out of bwrap's argv; three minors: overlapping values defeat redaction, a grant file under a system or runtime root is not refused, `tree.stdout` is not redacted) and the recommendation to fix all four tests first, also refuse `grants` on an agent stage and two grants with one variable in a stage, record the Q5 point against A-078's accepted risk, then run the adversarial review: “go as recommended”.
+
+Effect: the fixes go on `feat/10-e-grants`, tests first, with no further standard review (the budget is spent). The A-078 row in `work/accepted-risks.md` notes that a repository workflow, run at import, could read a grant file, which Q5's refusal does not prevent. Then the adversarial review runs on the fixed head.
+
+### A-084 — 2026-10-20 — 10-e: owner-run tests waived; run the reviews
+
+Owner, asked to run `npm test` on `231163d` or waive it, and to run or waive the reviews: “run the reviews, don't worry about the tests (though we should do a live run soon)”.
+
+Effect: 10-e carries no owner-run `npm test`; the implementer's run on `231163d` (374 tests, 350 pass, 0 fail) is labelled not independent in the review material. Standard review 1 runs on `231163d`, then the rest of the budget as `docs/workflow.md` sets it. A live run of the factory is wanted soon; not yet scheduled.
+
+### A-083 — 2026-10-20 — 10-e READY; grants design approved
+
+Owner, after reading the 10-e ticket and [design/2026-10-20-grants.md](design/2026-10-20-grants.md) with its five questions: “take all”.
+
+Effect: 10-e is READY, and the design note is approved with Q1 to Q5 as recommended. Q1: a grant is `{ variable, file }` in the personal or job layer; the value comes from the file only and reaches the stage as that variable, through the spawn environment, never bwrap's argv. Q2: a workflow with a grant stage is refused under `sandbox.backend: none`. Q3: a grant stage runs only when each stage's last verdict, verification and `accept` is for the current head and at least one PASS verdict is for it; otherwise the cycle escalates before anything runs. Q4: a grant stage needs `run` and `network: true`, its FAIL can only escalate, and a missing or wrong `output/head` is a reserved `head` check that FAILs. Q5: a repository workflow may not ask for grants. These refine A-074's grants bullet; "an environment variable or a file" is read as where the value comes from.
+
 ### A-082 — 2026-10-20 — 10-c: fix the adversarial findings and the standard 2 minors, then merge without another review
 
 Owner, after 10-c's adversarial FAIL on `69f402e` and the recommendation to fix on the branch and merge without another review, as for 10-b (A-080): “fix and merge without”, then, asked what “without” meant: “merge with out another review”.

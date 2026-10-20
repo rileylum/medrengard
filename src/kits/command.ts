@@ -11,7 +11,7 @@ import { createServer } from 'node:net';
 import { dirname, join, sep } from 'node:path';
 import type { Adapter } from '../adapter.ts';
 import { develop } from '../developer.ts';
-import type { StageDef, Workflow } from '../lifecycle.ts';
+import { HEAD_CHECK, type StageDef, type Workflow } from '../lifecycle.ts';
 import { restoreAccess, type Sandbox } from '../sandbox.ts';
 import { EventStore } from '../store.ts';
 import { verify } from '../verify.ts';
@@ -30,9 +30,12 @@ export interface CommandKitOptions {
   sandbox?: Sandbox;
   /** Per command. Default 60000. */
   deadlineMs?: number;
+  /** Fake values for the grants the stage asks for, each seen as `variable` (10-e). Never a real token. */
+  grants?: Record<string, { variable: string; value: string }>;
 }
 
 const STAGE = 'CHECK';
+const REVIEW = 'REVIEW';
 const TICKET = 'The command kit change.';
 
 /** Registers node:test cases for one command stage. Call it once per stage. */
@@ -58,14 +61,22 @@ export function commandKit(name: string, o: CommandKitOptions): void {
     const outside = join(root, 'outside');
     mkdirSync(outside);
     writeFileSync(join(outside, 'sentinel'), 'kit\n');
+    // A grant stage runs only on a reviewed head: a review stage before it takes the kit's PASS.
+    const gated = stage.grants !== undefined;
     const workflow: Workflow = {
       name: 'command-kit',
       start: 'DEV',
       stages: {
-        DEV: { kind: 'agent', role: 'developer', produces: 'commit', roleText: 'You are the developer for the command kit.', transitions: { PASS: STAGE } },
+        DEV: { kind: 'agent', role: 'developer', produces: 'commit', roleText: 'You are the developer for the command kit.', transitions: { PASS: gated ? REVIEW : STAGE } },
+        ...(gated ? { [REVIEW]: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'You are the reviewer for the change below.', transitions: { PASS: STAGE } } } : {}),
         [STAGE]: { ...stage, transitions: { PASS: 'ACCEPTED' } },
       },
     };
+    const grants = Object.fromEntries(Object.entries(o.grants ?? {}).map(([g, { variable, value }]) => {
+      const file = join(root, `grant-${g}`);
+      writeFileSync(file, value);
+      return [g, { variable, file }];
+    }));
     const developer: Adapter = {
       name: 'command-kit',
       async start(req) {
@@ -81,8 +92,9 @@ export function commandKit(name: string, o: CommandKitOptions): void {
       const job = { workId: 'kit', ticket: TICKET, repo };
       const deadlineMs = o.deadlineMs ?? 60_000;
       const dev = await develop(store, developer, job, { deadlineMs, runsDir });
-      assert.equal(dev.cycle.stage, STAGE, `the kit's developer did not reach the stage: ${dev.cycle.escalation}`);
-      const r = await verify(store, dev.cycle.cycleId, job, { deadlineMs, runsDir, isolation: 'process-group', sandbox: o.sandbox, workflowDir: o.workflowDir });
+      if (gated) store.append(dev.cycle.cycleId, { type: 'verdict', runId: 'kit-review', head: dev.cycle.candidate!.head, verdict: 'PASS' });
+      assert.equal(store.load(dev.cycle.cycleId)!.stage, STAGE, `the kit's developer did not reach the stage: ${dev.cycle.escalation}`);
+      const r = await verify(store, dev.cycle.cycleId, job, { deadlineMs, runsDir, isolation: 'process-group', sandbox: o.sandbox, workflowDir: o.workflowDir, grants });
       const event = r.cycle.history.at(-1)!.event;
       assert.equal(event.type, 'verification');
       const checks = event.type === 'verification' ? event.checks : [];
@@ -140,6 +152,13 @@ export function commandKit(name: string, o: CommandKitOptions): void {
     assert.deepEqual(readdirSync(r.outside), ['sentinel'], 'a file appeared outside the stage');
     assert.equal(readFileSync(join(r.outside, 'sentinel'), 'utf8'), 'kit\n', 'a file outside the stage changed');
     assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: r.repo, encoding: 'utf8' }), '', 'the repository changed');
+  });
+
+  test(`${name}: the stage writes the request's head to outputDir/head`, async (t) => {
+    if (o.stage.grants === undefined) return t.skip('the stage holds no grant');
+    const r = await runStage(o.passing);
+    const head = r.checks.find((c) => c.name === HEAD_CHECK);
+    assert.ok(!head, head && readFileSync(join(r.evidenceDir, `${HEAD_CHECK}.stdout`), 'utf8'));
   });
 
   test(`${name}: with network unset, a connection from the stage fails`, async (t) => {

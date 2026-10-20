@@ -14,10 +14,11 @@ import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
 import { bounded, git, stopped } from './git.ts';
 import type { CommandRequest } from './kits/request.ts';
-import { FILE_STEM, TREE_CHECK, fileArgs, type Command, type Cycle, type Event } from './lifecycle.ts';
+import type { Grant } from './config.ts';
+import { FILE_STEM, HEAD_CHECK, TREE_CHECK, fileArgs, type Command, type Cycle, type Event, type StageDef } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
-import { checkSandbox, executables, reachable, restoreAccess, wrap, type Policy, type Sandbox } from './sandbox.ts';
+import { checkSandbox, confines, executables, reachable, restoreAccess, spawnEnv, wrap, type Policy, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
 
 export interface Check {
@@ -42,6 +43,8 @@ export interface VerifyOptions {
   sandbox?: Sandbox;
   /** The workflow file's directory. A command's `{ file }` argument names a file there (10-c). */
   workflowDir?: string;
+  /** By name, what a grant stage may hold (Config.grants, 10-e). */
+  grants?: Record<string, Grant>;
 }
 
 export interface Verified {
@@ -58,6 +61,42 @@ const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
 
 /** A workflow passed as an object, not loaded from a file, has nowhere to find a file argument. */
 export const noWorkflowDir = (stage: string, file: string) => `stage ${stage} names file ${file}, but its workflow has no file of its own to find it beside`;
+
+/**
+ * The grants `def` asks for, from `grants`. Throws when one is not given, or when nothing confines
+ * the stage: under `none` the developer could read the file too (A-083 Q2).
+ */
+export function stageGrants(stage: string, def: StageDef | undefined, grants: Record<string, Grant> | undefined, sandbox: Sandbox | undefined): [string, Grant][] {
+  const names = def?.kind === 'command' ? (def.grants ?? []) : [];
+  const backend = sandbox ?? { backend: 'bwrap' };
+  if (names.length > 0 && !confines(backend)) throw new Error(`stage ${stage} holds a grant, which sandbox backend ${backend.backend} cannot confine`);
+  const given = names.map((name): [string, Grant] => {
+    if (!grants || !Object.hasOwn(grants, name)) throw new Error(`stage ${stage} asks for grant ${name}, which no personal or job file gives`);
+    return [name, grants[name]!];
+  });
+  // Both would be set in one variable, and the second value would silently win.
+  for (const [i, [name, g]] of given.entries()) {
+    const other = given.slice(0, i).find(([, o]) => o.variable === g.variable);
+    if (other) throw new Error(`stage ${stage}: grants ${other[0]} and ${name} both set ${g.variable}`);
+  }
+  return given;
+}
+
+/**
+ * A grant stage runs only on a reviewed head (A-074, A-083 Q3): each stage's last verdict,
+ * verification or accept names the candidate, and at least one PASS verdict does. A workflow can
+ * route a fix past its reviews, and one with no review at all has nothing to bind the head to.
+ */
+function headGate(cycle: Cycle): void {
+  const head = cycle.candidate!.head;
+  const last = new Map<string, string>();
+  for (const { event, from } of cycle.history)
+    if (event.type === 'verdict' || event.type === 'verification' || event.type === 'accept') last.set(from, event.head);
+  const stale = [...last].filter(([, h]) => h !== head).map(([stage, h]) => `${stage} (${h})`);
+  if (stale.length > 0) throw new Error(`stage ${cycle.stage} holds a grant, but the last outcome of ${stale.join(', ')} is not for the candidate ${head}`);
+  if (!cycle.history.some(({ event: e }) => e.type === 'verdict' && e.verdict === 'PASS' && e.head === head))
+    throw new Error(`stage ${cycle.stage} holds a grant, but no PASS verdict is for the candidate ${head}`);
+}
 
 /** Run every declared check on the cycle's candidate and record one verification event. */
 export async function verify(store: EventStore, cycleId: string, job: Job, opts: VerifyOptions): Promise<Verified> {
@@ -81,6 +120,17 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     if (opts.workflowDir === undefined) throw new Error(noWorkflowDir(cycle.stage, f));
     if (!statSync(join(opts.workflowDir, f), { throwIfNoEntry: false })?.isFile()) throw new Error(`stage ${cycle.stage} names file ${f}, which is not a file in ${opts.workflowDir}`);
   }
+  const grants = stageGrants(cycle.stage, def, opts.grants, opts.sandbox);
+  if (grants.length > 0) headGate(cycle);
+  // Read now, not at load, so the value lives in this process no longer than the stage runs; and
+  // before the stage folder is cleared, so a refusal leaves the last run's evidence whole.
+  const values = grants.map(([name, g]) => {
+    // CRLF too: a tool that trims the \r would print a value redaction does not match.
+    const value = readFileSync(g.file, 'utf8').replace(/\r?\n$/, '');
+    // An empty value would be redacted between every character of the evidence.
+    if (value === '') throw new Error(`grant ${name}: file ${g.file} is empty`);
+    return { name, variable: g.variable, value };
+  });
   checkDeadline(opts.deadlineMs);
   const isolation = opts.isolation ?? 'cgroup';
   if (isolation === 'cgroup') checkScopes();
@@ -130,6 +180,9 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // The stage directory is read-only inside, so a command cannot rewrite the evidence the reviewer
   // reads; output/ is bound writable over it. Another stage's directory is not bound at all.
   const policy: Policy = { cwd: worktree, write: [worktree, outputDir], read: [evidenceDir], network: def.network ?? false, env: { SF_REQUEST: requestFile } };
+  if (values.length > 0) policy.secrets = Object.fromEntries(values.map((v) => [v.variable, v.value]));
+  // The reviewer is shown stdout and stderr; a command that prints its token must not hand it on.
+  const redact = (text: string) => redactAll(text, values);
 
   const results: CheckResult[] = [];
   // In order, all of them: the evidence is for the owner and the reviewers, who want the whole
@@ -137,11 +190,20 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   for (const check of checks) {
     const argv = check.command.map((a) => (typeof a === 'string' ? a : join(evidenceDir, 'files', a.file)));
     const r = await runCheck(argv, policy, isolation, sandbox, opts);
-    writeFileSync(join(evidenceDir, `${check.name}.stdout`), r.stdout);
-    writeFileSync(join(evidenceDir, `${check.name}.stderr`), r.stderr);
+    writeFileSync(join(evidenceDir, `${check.name}.stdout`), redact(r.stdout));
+    writeFileSync(join(evidenceDir, `${check.name}.stderr`), redact(r.stderr));
     writeFileSync(join(evidenceDir, `${check.name}.exit`), `${r.exit}\n`);
     const named = fileArgs(check);
     results.push({ name: check.name, result: r.result, ...(named.length ? { files: Object.fromEntries(named.map((f) => [f, hashes.get(f)!])) } : {}) });
+  }
+  // The rule that makes a wrong merge visible: the stage says which head it acted on (A-074).
+  const wrongHead = grants.length > 0 ? headFile(join(outputDir, 'head'), head, redact) : '';
+  if (wrongHead) {
+    // It quotes what the command wrote, which may be the token itself.
+    writeFileSync(join(evidenceDir, `${HEAD_CHECK}.stdout`), redact(wrongHead));
+    writeFileSync(join(evidenceDir, `${HEAD_CHECK}.stderr`), '');
+    writeFileSync(join(evidenceDir, `${HEAD_CHECK}.exit`), 'wrong head\n');
+    results.push({ name: HEAD_CHECK, result: 'FAIL' });
   }
   let dirty = treeDiff(job.repo, worktree, head, opts.deadlineMs);
   // The reviewer reads this directory: a planted .git with its own config, or a symlink to the
@@ -155,12 +217,67 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // the reviewer would read; that is dirt with its reason, not a throw (08-b adversarial).
   try { dirty += removeUntracked(worktree, entries); } catch (err) { dirty += `cannot remove untracked entries: ${(err as Error).message}\n`; }
   if (dirty) {
-    writeFileSync(join(evidenceDir, `${TREE_CHECK}.stdout`), dirty);
+    // It names files a command left in a gitlink, and a file name can carry a token.
+    writeFileSync(join(evidenceDir, `${TREE_CHECK}.stdout`), redact(dirty));
     writeFileSync(join(evidenceDir, `${TREE_CHECK}.stderr`), '');
     writeFileSync(join(evidenceDir, `${TREE_CHECK}.exit`), 'dirty\n');
     results.push({ name: TREE_CHECK, result: 'FAIL' });
   }
-  return { cycle: store.append(cycleId, { type: 'verification', head, checks: results }), worktree, evidenceDir };
+  const held = grants.length > 0 ? { grants: grants.map(([name]) => name) } : {};
+  return { cycle: store.append(cycleId, { type: 'verification', head, checks: results, ...held }), worktree, evidenceDir };
+}
+
+/**
+ * `text` with every occurrence of each value replaced by `[grant <name>]`. Matches are found in the
+ * original text and overlapping ones merged, so no order of replacement can cut a value and leave
+ * part of it in clear (10-e adversarial). A merged span takes the name of its longest match.
+ */
+function redactAll(text: string, values: { name: string; value: string }[]): string {
+  const hits: { start: number; end: number; name: string }[] = [];
+  for (const { name, value } of values)
+    for (let i = text.indexOf(value); i !== -1; i = text.indexOf(value, i + 1)) hits.push({ start: i, end: i + value.length, name });
+  hits.sort((a, b) => a.start - b.start);
+  let out = '';
+  let at = 0;
+  for (let k = 0; k < hits.length; ) {
+    let { start, end, name } = hits[k]!;
+    let longest = end - start;
+    for (k++; k < hits.length && hits[k]!.start < end; k++) {
+      const h = hits[k]!;
+      if (h.end - h.start > longest) { name = h.name; longest = h.end - h.start; }
+      end = Math.max(end, h.end);
+    }
+    out += `${text.slice(at, start)}[grant ${name}]`;
+    at = end;
+  }
+  return out + text.slice(at);
+}
+
+/**
+ * Empty when `file` holds `head` and one optional newline; otherwise what was found, for the owner.
+ * The command wrote it: a symlink, a FIFO or a locked file must not make the controller read
+ * elsewhere, block or throw.
+ */
+function headFile(file: string, head: string, redact: (text: string) => string): string {
+  let st;
+  // A command may lock outputDir itself; the controller must still record what it found.
+  try {
+    restoreAccess(dirname(file));
+    st = lstatSync(file, { throwIfNoEntry: false });
+  } catch (err) {
+    return `cannot read outputDir/head: ${(err as Error).message}; candidate is ${head}\n`;
+  }
+  let found: string;
+  if (!st) found = 'no head file in outputDir';
+  else if (!st.isFile()) found = 'outputDir/head is not a regular file';
+  else if (st.size > 1024) found = `outputDir/head is ${st.size} bytes`;
+  else {
+    const text = readFileSync(file, 'utf8').replace(/\n$/, '');
+    if (text === head) return '';
+    // Before quoting: JSON escapes a `"` or `\` in a token, and the escaped form would not match.
+    found = `head file names ${JSON.stringify(redact(text))}`;
+  }
+  return `${found}; candidate is ${head}\n`;
 }
 
 /**
@@ -273,7 +390,7 @@ async function runCheck(argv: string[], policy: Policy, isolation: 'cgroup' | 'p
   const run = spawnRuntime({
     command: wrapped, args: wrappedArgs, prompt: '', cwd,
     // bwrap clears this and sets policy.env again inside; `none` runs in it as is.
-    env: { ...process.env, ...policy.env },
+    env: spawnEnv(policy),
     graceMs: opts.graceMs,
     maxOutputBytes: opts.maxOutputBytes,
     scope: isolation === 'cgroup' ? `sf-verify-${randomUUID()}` : undefined,

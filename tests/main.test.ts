@@ -282,6 +282,24 @@ export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: 
   assert.equal(readFileSync(join(runsDir, 'evidence', head, 'CHECK', 'lint.stdout'), 'utf8'), 'linted\n');
 });
 
+// Ticket 10-e: the job file's grants reach verify, so the grant stage holds the value.
+test('main.ts gives a grant stage the grant the job file names', () => {
+  const field = (k: string) => `$(sed -n 's/.*"${k}": "\\(.*\\)".*/\\1/p' "$SF_REQUEST")`;
+  const script = `out=${field('outputDir')}; echo ${field('head')} > "$out/head"; printf %s "$GH_TOKEN" > "$out/token"`;
+  const { root, bin, env, jobFile, runsDir, repo } = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};
+export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, REVIEW: { ...ownerCheck.stages.REVIEW, transitions: { PASS: 'MERGE', FAIL: 'ESCALATED' } },
+  MERGE: { kind: 'command', run: [{ name: 'merge', command: ['sh', '-c', ${JSON.stringify(script)}] }], network: true, grants: ['github'], transitions: { PASS: 'OWNER' } } } };\n`, { writer: 'claude', reviewer: 'claude' });
+  writeFileSync(join(root, 'gh-token'), 'main-grant-value\n');
+  const spec = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...spec, repo, grants: { github: { variable: 'GH_TOKEN', file: 'gh-token' } } }));
+  reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+  const r = sf([jobFile], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: OWNER$/m);
+  const head = /^Head: ([0-9a-f]{40})$/m.exec(r.stdout)![1]!;
+  assert.equal(readFileSync(join(runsDir, 'evidence', head, 'MERGE', 'output', 'token'), 'utf8'), 'main-grant-value');
+});
+
 test('main.ts refuses a workflow checkWorkflow refuses, before any run and before the store exists', () => {
   const { root, bin, env, jobFile, db } = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};\nexport const workflow = { ...ownerCheck, start: 'NOWHERE' };\n`, { writer: 'claude', reviewer: 'claude' });
   const marker = spawnMarker(bin, root);

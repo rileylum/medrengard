@@ -37,6 +37,8 @@ export type StageDef =
       run?: Command[];
       /** Default false. */
       network?: boolean;
+      /** Names the personal or job layer gives; each value reaches this stage's commands alone (10-e). */
+      grants?: string[];
     }
   | { kind: 'human'; transitions: Transitions; budget?: number };
 
@@ -119,7 +121,8 @@ export type Event = (
   | { type: 'claim'; runId: string; base: string; runtime: string }
   | ({ type: 'developer_result'; runId: string; head?: string; artifacts: string[] } & Partial<RunVersions>)
   /** `files`: each file argument a command ran, by its path beside the workflow, to the SHA-256 of what ran (10-c). */
-  | { type: 'verification'; head: string; checks: { name: string; result: 'PASS' | 'FAIL' | 'MISSING'; files?: Record<string, string> }[] }
+  /** `grants`: the names the stage held, never the values (10-e). */
+  | { type: 'verification'; head: string; checks: { name: string; result: 'PASS' | 'FAIL' | 'MISSING'; files?: Record<string, string> }[]; grants?: string[] }
   | ({ type: 'verdict'; runId: string; head: string; verdict: 'PASS' | 'FAIL'; findings?: string[] } & Partial<RunVersions>)
   | { type: 'head_changed'; head: string }
   | { type: 'base_changed'; base: string }
@@ -145,7 +148,7 @@ const isCheck = (v: unknown) => obj(v) && str(v.name) && ['PASS', 'FAIL', 'MISSI
 const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
   claim: (e) => str(e.runId) && str(e.base) && str(e.runtime),
   developer_result: (e) => str(e.runId) && arr(e.artifacts, str) && (e.head === undefined || typeof e.head === 'string') && versions(e),
-  verification: (e) => str(e.head) && arr(e.checks, isCheck),
+  verification: (e) => str(e.head) && arr(e.checks, isCheck) && (e.grants === undefined || arr(e.grants, str)),
   verdict: (e) => str(e.runId) && str(e.head) && (e.verdict === 'PASS' || e.verdict === 'FAIL') && versions(e),
   head_changed: (e) => str(e.head),
   base_changed: (e) => str(e.base),
@@ -203,6 +206,7 @@ export function checkWorkflow(w: Workflow): string[] {
     if (def.kind === 'agent' && def.produces !== 'commit' && def.produces !== 'verdict') reasons.push(`stage ${name} produces ${String(def.produces)}, not commit or verdict`);
     if (def.kind === 'agent') reasons.push(...roleTextReasons(name, def));
     if (def.kind === 'command') reasons.push(...commandReasons(name, def));
+    else if ((def as { grants?: unknown }).grants !== undefined) reasons.push(`stage ${name} asks for grants, which only a command stage can hold`);
     if (def.budget !== undefined && !(Number.isSafeInteger(def.budget) && def.budget > 0)) reasons.push(`stage ${name} budget must be a positive integer`);
     if (!obj(def.transitions) || !str(def.transitions.PASS)) reasons.push(`stage ${name} has no PASS transition`);
   }
@@ -275,6 +279,9 @@ export const FILE_STEM = /^(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/;
 // is not what was verified. Recording it escalates the cycle with evidence instead of leaving it
 // in the review stage with review refusing the dirty checkout on every call (06-c adversarial).
 export const TREE_CHECK = 'tree';
+// verify's check that a grant stage wrote the candidate head to output/head (10-e, A-083 Q4).
+export const HEAD_CHECK = 'head';
+const GRANT_NAME = /^[a-z0-9_-]+$/;
 
 // verify's rules for job.checks names, at load time for `run` (10-c), plus what a file argument may name.
 function commandReasons(name: Stage, def: Extract<StageDef, { kind: 'command' }>): string[] {
@@ -282,6 +289,7 @@ function commandReasons(name: Stage, def: Extract<StageDef, { kind: 'command' }>
   // The stage's evidence directory is evidence/<head>/<stage>/.
   if (!FILE_STEM.test(name)) reasons.push(`stage ${name}: a command stage name must be a file stem`);
   if (def.network !== undefined && typeof def.network !== 'boolean') reasons.push(`stage ${name} network must be true or false`);
+  if (def.grants !== undefined) reasons.push(...grantReasons(name, def));
   if (def.run === undefined) return reasons;
   if (!Array.isArray(def.run) || def.run.length === 0) return [...reasons, `stage ${name} run must be a non-empty array of { name, command }`];
   const seen = new Set<unknown>();
@@ -291,6 +299,7 @@ function commandReasons(name: Stage, def: Extract<StageDef, { kind: 'command' }>
     if (typeof c.name !== 'string' || !FILE_STEM.test(c.name)) reasons.push(`${label}: name is not a file stem`);
     else if (c.name === TREE_CHECK) reasons.push(`${label}: name ${TREE_CHECK} is reserved for the controller's tracked-tree check`);
     else if (seen.has(c.name)) reasons.push(`${label}: declared twice`);
+    else if (c.name === HEAD_CHECK && def.grants !== undefined) reasons.push(`${label}: name ${HEAD_CHECK} is reserved in a grant stage for the controller's head check`);
     seen.add(c.name);
     if (!Array.isArray(c.command) || c.command.length === 0) { reasons.push(`${label}: command must be a non-empty array`); continue; }
     for (const arg of c.command as unknown[]) {
@@ -301,6 +310,19 @@ function commandReasons(name: Stage, def: Extract<StageDef, { kind: 'command' }>
         reasons.push(`${label}: file ${JSON.stringify(arg.file)} must be a relative path beside the workflow, without ..`);
     }
   }
+  return reasons;
+}
+
+// A grant stage acted outward with the owner's credential: it runs only its own commands (job.checks
+// may come from the repository), with network, and a FAIL goes to the owner, never round again.
+function grantReasons(name: Stage, def: Extract<StageDef, { kind: 'command' }>): string[] {
+  const g: unknown = def.grants;
+  if (!Array.isArray(g) || g.length === 0 || !g.every((x) => typeof x === 'string' && GRANT_NAME.test(x)))
+    return [`stage ${name} grants must be a non-empty array of names matching ${GRANT_NAME.source}`];
+  const reasons = g.filter((x, i) => g.indexOf(x) !== i).map((x) => `stage ${name} grant ${x} is asked for twice`);
+  if (def.run === undefined) reasons.push(`stage ${name} holds a grant, so it needs its own run`);
+  if (def.network !== true) reasons.push(`stage ${name} holds a grant, so it must set network: true`);
+  if (obj(def.transitions) && def.transitions.FAIL !== undefined && def.transitions.FAIL !== 'ESCALATED') reasons.push(`stage ${name} holds a grant, so its FAIL must be ESCALATED or absent`);
   return reasons;
 }
 

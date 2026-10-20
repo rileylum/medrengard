@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { createServer, type AddressInfo } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { checkSandbox, wrap, type Policy, type Sandbox } from '../src/sandbox.ts';
+import { checkSandbox, spawnEnv, wrap, type Policy, type Sandbox } from '../src/sandbox.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-sandbox-');
@@ -101,6 +101,32 @@ test('bwrap: the controller environment is cleared to PATH, HOME=/tmp and LANG; 
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /^secret=unset home=\/tmp$/m);
   assert.match(r.stdout, /^0$/m);
+});
+
+test('bwrap: secrets reach the command through the spawn environment, never argv; the rest of the controller environment is still cleared (10-e)', async () => {
+  const { work } = scratch();
+  const policy: Policy = { cwd: work, write: [work], read: [], network: false, env: { SF_REQUEST: '/req' }, secrets: { GH_TOKEN: 'sf-secret-value' } };
+  process.env.SF_SANDBOX_OTHER = 'leaked';
+  try {
+    const [cmd, argv] = wrap(BWRAP, policy, 'sh', ['-c', 'echo "token=$GH_TOKEN other=${SF_SANDBOX_OTHER:-unset} req=$SF_REQUEST home=$HOME"; env | cut -d= -f1 | sort']);
+    // /proc/<pid>/cmdline is world-readable: no value may be in argv.
+    assert.ok(![cmd, ...argv].some((a) => a.includes('sf-secret-value')), 'the secret is not in argv');
+    const r = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
+      const child = spawn(cmd, argv, { cwd: work, env: spawnEnv(policy), stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.setEncoding('utf8').on('data', (d) => (stdout += d));
+      child.stderr.setEncoding('utf8').on('data', (d) => (stderr += d));
+      child.on('close', (code) => resolve({ code, stdout, stderr }));
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /^token=sf-secret-value other=unset req=\/req home=\/tmp$/m);
+    const names = r.stdout.split('\n').slice(1).filter(Boolean);
+    // sh adds PWD, SHLVL and _ itself.
+    assert.deepEqual(names.filter((k) => !['PWD', 'SHLVL', '_', 'OLDPWD'].includes(k)), ['GH_TOKEN', 'HOME', ...(process.env.LANG ? ['LANG'] : []), 'PATH', 'SF_REQUEST']);
+  } finally {
+    delete process.env.SF_SANDBOX_OTHER;
+  }
 });
 
 test('bwrap: the command runs in a session of its own, so it cannot push input into the controller terminal', async () => {

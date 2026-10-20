@@ -316,3 +316,91 @@ test('a repository workflow naming a file that is not committed at the base is r
   writeFileSync(join(repo, 'lint.sh'), 'echo untracked\n');
   await assert.rejects(loadConfig(jobFile, env), /lint\.sh.*not in the repository at [0-9a-f]{40}/);
 });
+
+// Ticket 10-e: grants come from the personal or job layer, as { variable, file } (A-083 Q1).
+test('the personal and job layers give grants, merged per name; a grant file resolves against the file that names it', async () => {
+  const { root, jobFile, personal, env } = scratch();
+  writeFileSync(join(root, 'npm-token'), 'n\n');
+  writeJson(personal, { grants: { github: { variable: 'GH_TOKEN', file: 'gh-token' }, npm: { variable: 'NPM_TOKEN', file: '../../npm-token' } } });
+  writeFileSync(join(dirname(personal), 'gh-token'), 'g\n');
+  assert.deepEqual((await loadConfig(jobFile, env)).grants, {
+    github: { variable: 'GH_TOKEN', file: join(dirname(personal), 'gh-token') },
+    npm: { variable: 'NPM_TOKEN', file: join(root, 'npm-token') },
+  });
+  writeFileSync(join(root, 'job-gh-token'), 'j\n');
+  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', runtime: { developer: 'claude' }, grants: { github: { variable: 'GITHUB_TOKEN', file: 'job-gh-token' } } });
+  assert.deepEqual((await loadConfig(jobFile, env)).grants, {
+    github: { variable: 'GITHUB_TOKEN', file: join(root, 'job-gh-token') },
+    npm: { variable: 'NPM_TOKEN', file: join(root, 'npm-token') },
+  });
+  assert.deepEqual((await loadConfig(scratch().jobFile, scratch().env)).grants, {});
+});
+
+test('a grant with a missing file, a file inside the repository, a bad or reserved variable, or another shape is refused, naming it', async () => {
+  const { root, repo, jobFile, env } = scratch();
+  writeFileSync(join(root, 'token'), 't\n');
+  writeFileSync(join(repo, 'token'), 't\n');
+  const given = async (grant: unknown, why: RegExp) => {
+    writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', runtime: { developer: 'claude' }, grants: { github: grant } });
+    await assert.rejects(loadConfig(jobFile, env), why, JSON.stringify(grant));
+  };
+  await given({ variable: 'GH_TOKEN', file: 'nope' }, /grant github: file .*nope does not exist/);
+  await given({ variable: 'GH_TOKEN', file: 'repo/token' }, /grant github: file .*repo\/token is inside the repository/);
+  await given({ variable: 'GH_TOKEN', file: 'repo' }, /grant github: file .*repo is inside the repository/);
+  // Through a symlink, either way round: the file a commit could carry is the same one.
+  symlinkSync(join(repo, 'token'), join(root, 'link-token'));
+  await given({ variable: 'GH_TOKEN', file: 'link-token' }, /grant github: file .*link-token is inside the repository/);
+  symlinkSync(repo, join(root, 'repo-link'));
+  await given({ variable: 'GH_TOKEN', file: 'repo-link/token' }, /grant github: file .*repo-link\/token is inside the repository/);
+  // A sandbox read root is bound into every sandbox, the developer's too.
+  mkdirSync(join(root, 'tools'));
+  writeFileSync(join(root, 'tools', 'token'), 't\n');
+  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', runtime: { developer: 'claude' }, sandbox: { backend: 'bwrap', read: ['tools'] }, grants: { github: { variable: 'GH_TOKEN', file: 'tools/token' } } });
+  await assert.rejects(loadConfig(jobFile, env), /grant github: file .*tools\/token is under .*tools, which sandboxes other than the grant stage's can read/);
+  // So is every system directory, and the owner's runtime config the developer's sandbox binds.
+  await given({ variable: 'GH_TOKEN', file: '/etc/hostname' }, /grant github: file \/etc\/hostname is under \/etc, which sandboxes other than the grant stage's can read/);
+  mkdirSync(join(env.HOME, '.claude'), { recursive: true });
+  writeFileSync(join(env.HOME, '.claude', 'token'), 't\n');
+  await given({ variable: 'GH_TOKEN', file: join(env.HOME, '.claude', 'token') }, /grant github: file .*\.claude\/token is under .*\.claude, which sandboxes other than the grant stage's can read/);
+  for (const variable of ['', '1X', 'A-B', 7, 'PATH', 'HOME', 'LANG', 'SF_REQUEST']) await given({ variable, file: 'token' }, /grant github: variable/);
+  for (const grant of ['token', null, { variable: 'GH_TOKEN' }, { variable: 'GH_TOKEN', file: 'token', value: 'x' }]) await given(grant, /grant github: must be \{ variable, file \}/);
+});
+
+test('a repository workflow that asks for a grant is refused, naming the stage (A-083 Q5)', async () => {
+  const { root, repo, jobFile, personal, env } = scratch();
+  writeFileSync(join(root, 'token'), 't\n');
+  writeJson(personal, { grants: { github: { variable: 'GH_TOKEN', file: join(root, 'token') } } });
+  writeFileSync(join(repo, 'flow.ts'), `export const workflow = ${JSON.stringify({
+    start: 'DEV',
+    stages: {
+      DEV: { kind: 'agent', role: 'developer', produces: 'commit', roleText: 'You are the developer for the ticket below.', transitions: { PASS: 'MERGE' } },
+      MERGE: { kind: 'command', run: [{ name: 'merge', command: ['true'] }], network: true, grants: ['github'], transitions: { PASS: 'ACCEPTED' } },
+    },
+  })};\n`);
+  const base = commitRepoLayer(repo, { workflow: 'flow.ts' });
+  writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', base, runsDir: join(root, 'runs'), runtime: { developer: 'claude' } });
+  await assert.rejects(loadConfig(jobFile, env), /repository workflow flow\.ts: stage MERGE asks for grants; a repository workflow may not/);
+});
+
+test('a grant file in a folder a runtime\'s sandbox binds is refused: the binary\'s folder, and an extension module\'s (10-e adversarial)', async () => {
+  const { root, jobFile, env } = scratch();
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  // A stand-in for the claude CLI: only its folder matters, it never runs.
+  writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(bin, 'claude'), 0o755);
+  writeFileSync(join(bin, 'gh-token'), 't\n');
+  mkdirSync(join(root, 'ext'));
+  writeFileSync(join(root, 'ext', 'runtime.ts'), 'process.stdout.write("{}");\n');
+  writeFileSync(join(root, 'ext', 'token'), 't\n');
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', runtime: { developer: 'claude' }, grants: { github: { variable: 'GH_TOKEN', file: 'bin/gh-token' } } });
+    await assert.rejects(loadConfig(jobFile, env), /grant github: file .*bin\/gh-token is under .*bin, which sandboxes other than the grant stage's can read/);
+    writeJson(jobFile, { workId: 'w', ticket: 'x', repo: 'repo', runtime: { developer: 'claude' }, runtimes: { ext: { module: 'ext/runtime.ts' } }, grants: { github: { variable: 'GH_TOKEN', file: 'ext/token' } } });
+    await assert.rejects(loadConfig(jobFile, env), /grant github: file .*ext\/token is under .*ext, which sandboxes other than the grant stage's can read/);
+  } finally {
+    process.env.PATH = path;
+  }
+});

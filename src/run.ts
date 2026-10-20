@@ -10,7 +10,7 @@ import { fileArgs, type Cycle, type Role, type Workflow } from './lifecycle.ts';
 import { review } from './review.ts';
 import { checkSandbox, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
-import { noWorkflowDir, verify, type VerifyOptions } from './verify.ts';
+import { noWorkflowDir, stageGrants, verify, type VerifyOptions } from './verify.ts';
 
 /** By role. A commit role may be a factory per worktree; a verdict role must be an Adapter. */
 export type Adapters = Record<Role, DeveloperAdapter>;
@@ -34,6 +34,8 @@ export interface RunOptions {
   sandbox?: Sandbox;
   /** Passed to verify: the workflow file's folder (Config.workflowDir). */
   workflowDir?: string;
+  /** Passed to verify: what a grant stage may hold (Config.grants). */
+  grants?: VerifyOptions['grants'];
 }
 
 export interface RunResult {
@@ -53,6 +55,7 @@ export async function run(store: EventStore, adapters: Adapters, job: Job, opts:
   if (opts.workflowDir === undefined)
     for (const [name, def] of Object.entries(store.workflow.stages))
       for (const file of def.kind === 'command' ? (def.run ?? []).flatMap(fileArgs) : []) throw new Error(noWorkflowDir(name, file));
+  for (const [name, def] of Object.entries(store.workflow.stages)) stageGrants(name, def, opts.grants, opts.sandbox);
   const roles = byRole(store.workflow, adapters);
   const start = store.workflow.stages[store.workflow.start];
   // checkWorkflow allows a start stage with no role; develop refuses it before using the adapter.
