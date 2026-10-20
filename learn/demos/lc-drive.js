@@ -2,7 +2,8 @@
 // and watch the cycle move. Raw JSON goes through isEvent first, as the store does: apply would
 // escalate on anything it cannot classify, and the store refuses to write it at all.
 import { apply, isEvent, newCycle, openChild } from '/src/lifecycle.ts';
-import { flow, LIFECYCLE } from '../diagram.js';
+import { defaultWorkflow } from '/src/lifecycle.ts';
+import { flow, layout } from '../diagram.js';
 import { esc, highlight } from '../live.js';
 
 export default function mount(el) {
@@ -29,7 +30,7 @@ export default function mount(el) {
     </div>
   </div>`;
   const $ = (s) => el.querySelector(s);
-  const d = flow($('.diagram'), LIFECYCLE);
+  const d = flow($('.diagram'), layout(defaultWorkflow));
   let cycle, n = 1;
   const v = (s) => $(s).value.trim();
   const BUILD = {

@@ -2,7 +2,8 @@
 // real apply. The expected stage and counters come from the same file the tests read.
 import { apply, newCycle } from '/src/lifecycle.ts';
 import { scenarios } from '/tests/scenarios.ts';
-import { flow, LIFECYCLE } from '../diagram.js';
+import { defaultWorkflow } from '/src/lifecycle.ts';
+import { flow, layout } from '../diagram.js';
 import { esc } from '../live.js';
 
 export default function mount(el) {
@@ -13,7 +14,7 @@ export default function mount(el) {
   <ol class="evs small mono"></ol>
   <p class="small muted">Run all of them: <button class="every">check every scenario</button> <span class="every-out small"></span></p>`;
   const $ = (s) => el.querySelector(s);
-  const d = flow($('.diagram'), LIFECYCLE);
+  const d = flow($('.diagram'), layout(defaultWorkflow));
   let sc, at;
   const replay = () => sc.events.slice(0, at).reduce(apply, newCycle('demo', 'w'));
   const render = () => {

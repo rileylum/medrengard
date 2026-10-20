@@ -1,6 +1,7 @@
 // The spec's state machine, clickable: pick a stage and see every transition out of it, with
 // the trigger and the guard, as docs/specs/core-lifecycle-v1.md lists them.
-import { flow, LIFECYCLE } from '../diagram.js';
+import { defaultWorkflow } from '/src/lifecycle.ts';
+import { flow, layout } from '../diagram.js';
 import { esc } from '../live.js';
 
 const ANY = ['QUEUED', 'DEVELOPING', 'VERIFYING', 'STANDARD_REVIEW', 'ADVERSARIAL_REVIEW', 'AWAITING_ACCEPTANCE'];
@@ -39,7 +40,7 @@ export default function mount(el) {
   el.innerHTML = `<div class="diagram"></div><h3 class="lc-title">Click a stage</h3><p class="small muted lc-about"></p><table class="small lc-rows" style="table-layout:fixed;width:100%">${HEAD}<tbody></tbody></table>
     <div class="lc-any"><h3>In any open stage</h3><p class="small muted">QUEUED to AWAITING_ACCEPTANCE. ESCALATED ignores these, except a cancel; ACCEPTED and CANCELLED ignore everything.</p>
     <table class="small" style="table-layout:fixed;width:100%">${HEAD}<tbody>${ROWS.filter(([from]) => from === 'any').map(row).join('')}</tbody></table></div>`;
-  const d = flow(el.querySelector('.diagram'), LIFECYCLE);
+  const d = flow(el.querySelector('.diagram'), layout(defaultWorkflow));
   d.svg.classList.add('labels');
   const show = (id) => {
     d.reset(); d.current(id); d.options(id);
