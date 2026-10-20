@@ -116,7 +116,7 @@ export function gitFor(repos) {
       return s;
     }
     if (cmd === 'cat-file') { if (!r.commits.has(pos[0])) throw fail(args, `fatal: Not a valid object name ${pos[0]}`); return 'commit'; }
-    if (cmd === 'ls-tree') { const [head, path] = [pos[0], pos.at(-1)]; return path in r.commits.get(head).tree ? `100644 blob ${sha(path)}\t${path}` : ''; }
+    if (cmd === 'ls-tree') { const [head, path] = [pos[0], pos.at(-1)]; const t = r.commits.get(head).tree; return path in t ? `100644 blob ${sha(t[path])}\t${path}` : ''; }
     if (cmd === 'show') { const [head, path] = pos[0].split(':'); const t = r.commits.get(r.resolve(head))?.tree; if (!t || !(path in t)) throw fail(args, `fatal: path '${path}' does not exist`); return t[path].trim(); }
     if (cmd === 'diff') {
       const [a, b] = pos.map((x) => r.resolve(x));

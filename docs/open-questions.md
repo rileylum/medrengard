@@ -60,6 +60,8 @@ Raised 2026-10-18, guide walkthrough.
 1. The initial prompt for each role: developer, fix run, standard reviewer, adversarial reviewer.
 2. The supplementary skills each role gets, and how a run records which prompt and skill versions it used.
 
+Constraint from A-100: any instructions, prompts or skills a repository supplies are read from the base, never the candidate, as AGENTS.md is for reviewers since sweep-reviewer-instructions. Otherwise a candidate rewrites the rules it is judged by.
+
 ## O-014 Survey: skills libraries, harnesses and other factories
 
 Raised 2026-10-18, guide walkthrough.

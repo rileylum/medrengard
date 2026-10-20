@@ -24,6 +24,10 @@ export interface ExecuteOptions {
 
 // setTimeout silently clamps anything outside this range to 1 ms, which would time every run out.
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+// How often a run in flight reloads its cycle to see whether another process settled it (an
+// owner's cancel). A reload replays the cycle's events in well under a millisecond, so the price of
+// a longer period is only a later abort of a paid run.
+const WATCH_MS = 1000;
 
 /** Throws for a deadline execute would refuse. Exported so a caller can fail before it opens anything. */
 export function checkDeadline(deadlineMs: number): void {
@@ -51,7 +55,12 @@ export async function execute(
   } else {
     requireStage(store, cycleId, req.role);
   }
-  const outcome = await bounded(adapter, { ...req, runId }, deadlineMs);
+  // A store that cannot be read is skipped for that tick: recording the outcome reads it again,
+  // and its error surfaces there, not as an uncaught throw from a timer.
+  const settled = () => {
+    try { const stage = store.load(cycleId)?.stage; return stage !== undefined && SETTLED.includes(stage); } catch { return false; }
+  };
+  const outcome = await bounded(adapter, { ...req, runId }, deadlineMs, settled);
   const versions: Partial<RunVersions> = { ...opts.versions, runtime: adapter.name, ...(adapter.moduleHash === undefined ? {} : { moduleHash: adapter.moduleHash }) };
   return receive(store, cycleId, runId, req.role, outcome, opts.accept, versions);
 }
@@ -156,21 +165,32 @@ function disputeReason(text: string): string {
   return r.length <= DISPUTE_MAX ? r : `${r.slice(0, DISPUTE_MAX)} [... ${r.length - DISPUTE_MAX} characters cut]`;
 }
 
-// The deadline resolves the race, then aborts the adapter; whatever the adapter does afterwards
-// (settle `cancelled`, settle late, reject, or nothing) lands on an already-settled promise and
-// is dropped. So the outcome is `timeout` for every adapter, including one that ignores abort.
-function bounded(adapter: Adapter, req: RunRequest, deadlineMs: number): Promise<RunOutcome> {
+// The deadline or a settled cycle resolves the race, then aborts the adapter;
+// whatever the adapter does afterwards (settle `cancelled`, settle late, reject, or nothing) lands
+// on an already-settled promise and is dropped. So the outcome is `timeout` or `cancelled` for
+// every adapter, including one that ignores abort. The adapter kills its process tree on abort.
+function bounded(adapter: Adapter, req: RunRequest, deadlineMs: number, settled: () => boolean): Promise<RunOutcome> {
   const ac = new AbortController();
   return new Promise<RunOutcome>((resolve) => {
-    const timer = setTimeout(() => {
-      resolve({ status: 'failed', reason: 'timeout' });
-      ac.abort();
-    }, deadlineMs);
+    let done = false;
+    // resolve runs before the clears: if anything here could still throw, the outcome is in.
+    const finish = (o: RunOutcome) => {
+      if (done) return;
+      done = true;
+      resolve(o);
+      clearTimeout(timer);
+      clearInterval(watch);
+    };
+    const stop = (o: RunOutcome) => { if (!done) { finish(o); ac.abort(); } };
+    const timer = setTimeout(() => stop({ status: 'failed', reason: 'timeout' }), deadlineMs);
+    // unref: the run, not the watch, is what this process waits for. `?.` because the guide runs
+    // this file in a browser, where a timer is a number.
+    const watch = setInterval(() => { if (settled()) stop({ status: 'cancelled' }); }, WATCH_MS);
+    watch.unref?.();
     // Wrapped in a Promise so a synchronous throw from start() is a rejection, not an escape.
-    // resolve runs before clearTimeout: if anything here could still throw, the timer would fire.
     new Promise<RunOutcome>((res) => res(adapter.start(req, ac.signal))).then(
-      (o) => { resolve(o); clearTimeout(timer); },
-      (err) => { resolve({ status: 'failed', reason: `adapter threw: ${describe(err)}` }); clearTimeout(timer); },
+      finish,
+      (err) => finish({ status: 'failed', reason: `adapter threw: ${describe(err)}` }),
     );
   });
 }

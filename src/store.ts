@@ -101,7 +101,8 @@ export class EventStore {
     this.workflow = workflow;
     this.record = { name: workflow.name ?? 'unnamed', hash: workflowHash(workflow) };
     this.db = new DatabaseSync(path);
-    // Every write here is one short statement, so a second process waits at most for one append.
+    // Every write here is one short statement or open's short transaction, so a second process
+    // waits at most for one append or open.
     // At 0 (SQLite's default) `main.ts cancel` during a run fails with `database is locked`.
     this.db.exec('PRAGMA busy_timeout = 5000');
     this.db.exec(`
@@ -123,27 +124,34 @@ export class EventStore {
   open(cycleId: string, workId: string, parentCycleId?: string, base?: string): Cycle {
     requireId(cycleId, 'cycle ID');
     requireId(workId, 'work ID');
-    if (this.exists(cycleId)) throw new Error(`cycle ${cycleId} already open`);
-    // Spec: one work item has at most one open cycle, and a new cycle names an ESCALATED parent
-    // (02-b adversarial; openChild checks the parent in memory, this is the store's copy).
-    if (parentCycleId !== undefined) {
-      const parent = this.load(parentCycleId);
-      if (!parent) throw new Error(`parent cycle ${parentCycleId} not found`);
-      if (parent.stage !== 'ESCALATED') throw new Error(`parent cycle ${parentCycleId} is ${parent.stage}, not ESCALATED`);
-      if (parent.workId !== workId) throw new Error(`parent cycle ${parentCycleId} belongs to work ${parent.workId}, not ${workId}`);
+    // The checks and the insert share one write lock, as in addPositions: otherwise two processes
+    // opening different cycle IDs for one work both pass the open-cycle check and both insert.
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (this.exists(cycleId)) throw new Error(`cycle ${cycleId} already open`);
+      // Spec: one work item has at most one open cycle, and a new cycle names an ESCALATED parent
+      // (02-b adversarial; openChild checks the parent in memory, this is the store's copy).
+      if (parentCycleId !== undefined) {
+        const parent = this.load(parentCycleId);
+        if (!parent) throw new Error(`parent cycle ${parentCycleId} not found`);
+        if (parent.stage !== 'ESCALATED') throw new Error(`parent cycle ${parentCycleId} is ${parent.stage}, not ESCALATED`);
+        if (parent.workId !== workId) throw new Error(`parent cycle ${parentCycleId} belongs to work ${parent.workId}, not ${workId}`);
+      }
+      const { open, escalated } = this.cyclesFor(workId);
+      if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
+      // Spec: a new cycle for the same work names its parent; an escalated cycle is waiting for one.
+      if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
+      const row: OpenRow = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow };
+      // Fixed seq 0, not MAX+1: an open row that landed mid-log would reach apply, which has no
+      // 'open' case.
+      this.db
+        .prepare(`INSERT INTO events (cycle_id, seq, type, run_id, body, pos, at) VALUES (?, 0, ?, NULL, ?, ${POS}, ${NOW})`)
+        .run(cycleId, row.type, JSON.stringify(row));
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
     }
-    const { open, escalated } = this.cyclesFor(workId);
-    if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
-    // Spec: a new cycle for the same work names its parent; an escalated cycle is waiting for one.
-    if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
-    const row: OpenRow = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow };
-    // Fixed seq 0, not MAX+1: a second open (racing the check above on another connection)
-    // must collide on the primary key and be ignored, otherwise it would land mid-log and reach
-    // apply, which has no 'open' case.
-    const result = this.db
-      .prepare(`INSERT OR IGNORE INTO events (cycle_id, seq, type, run_id, body, pos, at) VALUES (?, 0, ?, NULL, ?, ${POS}, ${NOW})`)
-      .run(cycleId, row.type, JSON.stringify(row));
-    if (result.changes !== 1) throw new Error(`cycle ${cycleId} already open`);
     return newCycle(cycleId, workId, parentCycleId);
   }
 

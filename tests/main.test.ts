@@ -282,6 +282,23 @@ export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: 
   assert.equal(readFileSync(join(runsDir, 'evidence', head, 'CHECK', 'lint.stdout'), 'utf8'), 'linted\n');
 });
 
+// sweep-terminal-escapes: `Error:` and the top-level stderr message print a thrown message, which can
+// quote a name with control characters in it. Here the names come from a workflow module.
+test('a run error and a refusal on stderr show control characters only as visible escapes', () => {
+  const missing = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};
+export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: { ...ownerCheck.stages.CHECK, run: [{ name: 'lint', command: ['sh', { file: '\\u001b[2J\\u009b.sh' }] }] } } };\n`, { writer: 'claude', reviewer: 'claude' });
+  reviewerStub(missing.bin, 'claude', 'nobody', join(missing.root, 'outside'));
+  const r = sf([missing.jobFile], missing.env);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Error: CHECK: stage CHECK names file \\u\{1b\}\[2J\\u\{9b\}\.sh/m);
+  assert.doesNotMatch(r.stdout + r.stderr, /[\u001b\u009b]/);
+  const refused = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};\nexport const workflow = { ...ownerCheck, start: '\\u001b[2J' };\n`, { writer: 'claude', reviewer: 'claude' });
+  const e = sf([refused.jobFile], refused.env);
+  assert.equal(e.status, 2, e.stdout + e.stderr);
+  assert.match(e.stderr, /^workflow refused.*\\u\{1b\}\[2J/m);
+  assert.doesNotMatch(e.stdout + e.stderr, /\u001b/);
+});
+
 // Ticket 10-e: the job file's grants reach verify, so the grant stage holds the value.
 test('main.ts gives a grant stage the grant the job file names', () => {
   const field = (k: string) => `$(sed -n 's/.*"${k}": "\\(.*\\)".*/\\1/p' "$SF_REQUEST")`;
@@ -354,6 +371,28 @@ test('a job naming an extension runtime runs from open to AWAITING_ACCEPTANCE, a
   }
 });
 
+// sweep-terminal-escapes: findings, heads and reasons are agent text; a raw ESC or BEL would let an
+// agent erase the owner's screen, print a fake stage or write the clipboard (OSC 52).
+test('agent text with terminal escapes reaches stdout and stderr only as visible escapes', () => {
+  for (const marker of ['EXT:esc-verdict', 'EXT:esc-head', 'EXT:esc-dispute']) {
+    const { root, jobFile } = scratch();
+    copyFileSync(join(import.meta.dirname, 'fixtures', 'ext-runtime.ts'), join(root, 'ext-runtime.ts'));
+    const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+    writeFileSync(jobFile, JSON.stringify({ ...job, ticket: marker, runtimes: { ext: { module: 'ext-runtime.ts' } }, runtime: { developer: 'ext', standard: 'ext', adversarial: 'ext' } }));
+    const r = sf([jobFile]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^Stage: ESCALATED$/m, marker);
+    assert.doesNotMatch(r.stdout + r.stderr, /[\u0007\u001b\u009b\u202e]/, marker);
+    // The one line break in the text is shown, not obeyed: no line of its own starts with "fake".
+    assert.doesNotMatch(r.stdout, /^fake/m, marker);
+    assert.match(r.stdout, /\\u\{1b\}\[2JStage: AWAITING_ACCEPTANCE\\u\{1b\}\]52;c;cm0gLXJmIH4=\\u\{7\}/, marker);
+    assert.equal(r.stdout.match(/^Stage: /gm)?.length, 1, marker);
+    if (marker === 'EXT:esc-verdict') assert.match(r.stdout, /^ {2}- \\u\{1b\}\[2J/m);
+    // 10,000 characters of claimed head, in a claim or a dispute, are cut to 64 before the escalation names them.
+    else assert.ok(r.stdout.length < 2_000, r.stdout);
+  }
+});
+
 // Ticket 10-b: a runtime the personal file adds resolves against the personal file, not the job file.
 test('a personal-layer extension runtime, relative to the personal file, runs a job to AWAITING_ACCEPTANCE', () => {
   const { root, jobFile } = scratch();
@@ -368,6 +407,63 @@ test('a personal-layer extension runtime, relative to the personal file, runs a 
   const r = sf([jobFile], { ...process.env, XDG_CONFIG_HOME: xdg });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+});
+
+// sweep-lazy-runtimes (A-075): a runtime's module is read when a role selects it, not when the config loads.
+/** A personal config naming runtime `old`, whose module is missing. */
+function brokenRuntime(root: string) {
+  const xdg = join(root, 'xdg');
+  mkdirSync(join(xdg, 'software_factory'), { recursive: true });
+  writeFileSync(join(xdg, 'software_factory', 'config.json'), JSON.stringify({ runtimes: { old: { module: 'gone.ts' } } }));
+  return { xdg, gone: join(xdg, 'software_factory', 'gone.ts') };
+}
+
+test('a personal runtime whose module is missing blocks neither a run nor cancel of a job that does not use it', () => {
+  const { root, jobFile } = scratch();
+  const { xdg } = brokenRuntime(root);
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+  const env = { ...process.env, XDG_CONFIG_HOME: xdg, PATH: `${bin}:${process.env.PATH}` };
+  const r = sf([jobFile], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+  const cancelled = sf(['cancel', jobFile], env);
+  assert.equal(cancelled.status, 0, cancelled.stdout + cancelled.stderr);
+  assert.match(cancelled.stdout, /^Stage: CANCELLED$/m);
+});
+
+test('a role whose runtime module is missing is refused before any cycle opens, naming runtimes.<name> and the path', () => {
+  const { root, jobFile, db } = scratch();
+  const { xdg, gone } = brokenRuntime(root);
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  const marker = spawnMarker(bin, root);
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...job, runtime: { developer: 'old', standard: 'claude', adversarial: 'claude' } }));
+  const r = sf([jobFile], { ...process.env, XDG_CONFIG_HOME: xdg, PATH: `${bin}:${process.env.PATH}` });
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, new RegExp(`^runtimes\\.old: cannot read module ${gone}: ENOENT`, 'm'));
+  assert.ok(!existsSync(marker), 'no runtime CLI was spawned');
+  assert.ok(!existsSync(db), 'no store was created');
+});
+
+test('accept, cancel and events work when a role selects a runtime whose module is missing: they build no adapter', () => {
+  const { root, jobFile, db } = scratch();
+  const { xdg } = brokenRuntime(root);
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...job, runtime: { developer: 'old', standard: 'claude', adversarial: 'claude' } }));
+  const env = { ...process.env, XDG_CONFIG_HOME: xdg };
+  seed(db, 'c1', TO_ACCEPTANCE);
+  const accepted = sf(['accept', jobFile, H], env);
+  assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+  assert.match(accepted.stdout, /^Stage: ACCEPTED$/m);
+  seed(db, 'c2', ESCALATE);
+  const cancelled = sf(['cancel', jobFile], env);
+  assert.equal(cancelled.status, 0, cancelled.stdout + cancelled.stderr);
+  assert.match(cancelled.stdout, /^Stage: CANCELLED$/m);
+  const events = sf(['events', jobFile], env);
+  assert.equal(events.status, 0, events.stdout + events.stderr);
 });
 
 // Ticket 10-b (A-078 Q4): accept reads the layers at the base the cycle opened at, not where the ref is now.
@@ -476,5 +572,60 @@ test('the developer starts from the SHA the layers were read at, though the base
     assert.equal((store.events(cycleId).find((e) => e.type === 'claim') as { base: string }).base, read);
   } finally {
     store.close();
+  }
+});
+
+// sweep-head-workflow (security finding 1): looking at a candidate with `git switch sf/<id>` must
+// not let its workflow run as the owner on the next command.
+test('cancel with a candidate branch checked out and no base in the job file refuses, and the candidate workflow never runs', () => {
+  const { root, repo, jobFile, db } = scratch();
+  const marker = join(root, 'PWNED');
+  git(repo, 'switch', '-q', '-c', 'sf/0000-candidate');
+  mkdirSync(join(repo, '.factory'));
+  writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ workflow: 'flow.ts' }));
+  writeFileSync(join(repo, 'flow.ts'), `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(marker)}, 'ran');\nexport { ownerCheck as workflow } from ${JSON.stringify(WORKFLOWS)};\n`);
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-q', '-m', 'candidate workflow');
+  const r = sf(['cancel', jobFile]);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /^base [0-9a-f]{40} is on no branch or tag outside sf\/\*/m);
+  assert.ok(!existsSync(marker), 'the candidate workflow did not run');
+  assert.ok(!existsSync(db), 'no store was created');
+});
+
+// sweep-head-workflow review: a feature branch squash-merged and deleted leaves the cycle's base
+// only on sf/<cycle>. The refusal names what to do; the tip's mismatched workflow would not.
+test('cancel on a cycle whose base only its sf/* branch now holds uses a matching tip, else reports the ref refusal, not a workflow mismatch', () => {
+  for (const tip of ['v1', 'v2']) {
+    const { root, repo, jobFile } = scratch();
+    const flow = (name: string) => `import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};\nexport const workflow = { ...ownerCheck, name: ${JSON.stringify(name)} };\n`;
+    git(repo, 'switch', '-q', '-c', 'feat');
+    mkdirSync(join(repo, '.factory'));
+    writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ workflow: 'flow.ts' }));
+    writeFileSync(join(repo, 'flow.ts'), flow('v1'));
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'factory workflow');
+    const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+    writeFileSync(jobFile, JSON.stringify({ ...job, runtime: { writer: 'claude', reviewer: 'claude' } }));
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+    const first = sf([jobFile], env);
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    git(repo, 'switch', '-q', 'main');
+    git(repo, 'merge', '-q', '--squash', 'feat');
+    git(repo, 'commit', '-q', '-m', 'squash feat');
+    git(repo, 'branch', '-q', '-D', 'feat');
+    writeFileSync(join(repo, 'flow.ts'), flow(tip));
+    git(repo, 'commit', '-q', '--allow-empty', '-am', `workflow ${tip}`);
+    const cancelled = sf(['cancel', jobFile], env);
+    if (tip === 'v1') {
+      assert.equal(cancelled.status, 0, cancelled.stdout + cancelled.stderr);
+      assert.match(cancelled.stdout, /^Stage: CANCELLED$/m);
+    } else {
+      assert.equal(cancelled.status, 2, cancelled.stdout + cancelled.stderr);
+      assert.match(cancelled.stderr, /^base [0-9a-f]{40} is on no branch or tag outside sf\/\*/m);
+    }
   }
 });

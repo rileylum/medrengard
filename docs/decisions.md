@@ -37,6 +37,60 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-103 — 2026-10-20 — sweep-stage-guards: merged after the owner's walkthrough
+
+Owner, after the walkthrough: “merge, good tests”.
+
+Effect: `feat/sweep-stage-guards` merges into main locally with `--no-ff`. Tests only: each event type sent to each stage kind that does not take it escalates "outside" and spends no budget, and the three ignore branches are pinned. The ticket's question, that `head_changed` and `base_changed` have no producer (warn at `accept`, or escalate when the base moves), is not decided; it stays open. One fresh in-session review covers the branch (PASS, 19 of 19 mutants caught); the `claude -p` reviews and the adversarial review did not run. The owner did not run `npm test`; the session's run on the branch with main merged in (449 tests, 425 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
+### A-102 — 2026-10-20 — sweep-lazy-runtimes: merged after the owner's walkthrough
+
+Owner, after the walkthrough: “Looks good to me, merge”.
+
+Effect: `feat/sweep-lazy-runtimes` merges into main locally with `--no-ff`. An extension runtime's module is read and hashed when its adapter is built (A-075), so an entry no role selects blocks nothing, and `accept`, `cancel` and `events` never read one; a read error names `runtimes.<name>`. One fresh in-session review covers the branch (PASS); the `claude -p` reviews and the adversarial review did not run. Merging main into the branch conflicted in the spec's Driver bullets; both sides kept. The owner did not run `npm test`; the session's run on the branch with main merged in (446 tests, 422 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
+### A-101 — 2026-10-20 — sweep-terminal-escapes: merged; the prototypes stay as they are
+
+Owner, after the walkthrough: “Looks good, we can leave the prototypes as is”. The owner runs the merge command.
+
+Effect: `feat/sweep-terminal-escapes` merges into main locally with `--no-ff`. `main.ts` passes every stored or agent string it prints through `printable`; the event log keeps the raw text. `proto/board.ts` and `proto/run.ts` stay unescaped, by the owner's choice. One fresh in-session review covers the branch (PASS); the `claude -p` reviews and the adversarial review did not run. The owner did not run `npm test`; the session's run on the branch with main merged in (443 tests, 419 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
+### A-100 — 2026-10-20 — sweep-reviewer-instructions: merged; reverses 06-b's "read from the candidate commit"
+
+Owner, after asking whether the planned role prompts and skills work (O-013) would overwrite this, and hearing that it changes the core's side (where instructions are read from, and a delimiter line), not the role's judgement text: “Okay merge”.
+
+Effect: `feat/sweep-reviewer-instructions` merges into main locally with `--no-ff`. Reviewers get each repository instruction file from the base; when the candidate changes one, the section header says so and points to CHANGED PATHS and the DIFF. This reverses 06-b's "read from the candidate commit", which gave no reason. The review contract hash changes. O-013 gains the constraint that repository-supplied instructions, prompts and skills are read from the base. The parked `CLAUDE.md` discovery by the claude reviewer (06-c note) is now the main way around this rule. One fresh in-session review covers the branch (PASS); the `claude -p` reviews and the adversarial review did not run. Merging main into the branch conflicted in the spec's verify and review bullets; both sides kept. The owner did not run `npm test`; the session's run on the branch with main merged in (441 tests, 417 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
+### A-099 — 2026-10-20 — sweep-git-hardening: merged; the stored-bytes trade-off logged
+
+Owner, after the walkthrough: “Okay this is good, but I'd want the tradeoff logged - probably as a limitation in the README if not elsewhere as well. It might be something we need to revisit”.
+
+Effect: `feat/sweep-git-hardening` merges into main locally with `--no-ff`. Verify's checkout reads no attributes and holds the commit's stored bytes; the trade-off (no `eol`, `ident` or LFS conversions; the `core.autocrlf` caveat) is logged in the README's "Known limitations" and as a row in `docs/work/accepted-risks.md`, with the event that reopens it. One fresh in-session review covers the branch (PASS, findings fixed); the `claude -p` reviews and the adversarial review did not run. The owner did not run `npm test`; the session's run on the branch with main merged in is not independent (result in the ticket log).
+
+### A-098 — 2026-10-20 — sweep-cancel-aborts: merged after the owner's walkthrough
+
+Owner, after the walkthrough: “Looks good, merge”.
+
+Effect: `feat/sweep-cancel-aborts` merges into main locally with `--no-ff`. A run in flight reloads its cycle once a second and aborts when the cycle has settled, recorded as `run_failed` with reason `cancelled`. `RunOptions.signal` is left to row 11. Reviews: two fresh in-session standard reviews (FAIL on guide text, then PASS); the `claude -p` reviews and the adversarial review did not run. Merging main into the branch conflicted only in `tests/run.test.ts` (two appended blocks; both kept). The owner did not run `npm test`; the session's run on the branch with main merged in (435 tests, 411 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
+### A-097 — 2026-10-20 — sweep-open-race: merged after the owner's walkthrough
+
+Owner, after the walkthrough: “Makes sense to me, lets merge as well”.
+
+Effect: `feat/sweep-open-race` merges into main locally with `--no-ff`. `EventStore.open` checks and inserts inside one `BEGIN IMMEDIATE` transaction, so two processes cannot open two cycles for one work item. One fresh in-session review covers the branch (PASS, two nits); the `claude -p` reviews and the adversarial review did not run. The owner did not run `npm test`; the session's run on the branch with main merged in (432 tests, 408 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
+### A-096 — 2026-10-20 — sweep-preflight: merged after the owner's walkthrough
+
+Owner, after the walkthrough: “Okay yes this is a good catch and a great implementation idea - 'pre-flight' checks are good and I think we could expand this to other uses in the future.” Then, asked for an explicit word: “Approved”.
+
+Effect: `feat/sweep-preflight` merges into main locally with `--no-ff`. The workflow shapes today's driver cannot run stay in `driverLimits` in the driver, not in `checkWorkflow` (the ticket's alternative 1). Owner's note for later, not a ticket: preflight could grow to other uses; the ticket's non-goals name two candidates (a missing `{ file }` argument, a job with no checks) and a known gap (a grant stage reached with no review PASS). Reviews: two fresh in-session standard reviews (FAIL, then PASS; findings fixed; the last round read by the session, not reviewed again); the `claude -p` reviews and the adversarial review did not run. The owner did not run `npm test`; the session's run on the branch with main merged in (431 tests, 407 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
+### A-095 — 2026-10-20 — sweep-head-workflow: merged after the owner's walkthrough
+
+Owner, after the plain-English walkthrough and a worked example of the attack: “Okay, makes sense. Merge and onto the next one”.
+
+Effect: `feat/sweep-head-workflow` merges into main locally with `--no-ff`. A repository workflow is imported only when a local branch or tag outside `sf/*` contains the base. "Merged" keeps the built meaning (any such branch or tag); the owner did not ask for the narrower "default branch only". Before the merge the session folded the two `if (fromRepo)` lines in `loadConfig` into one block (no behaviour change). One fresh in-session review covers the branch (PASS, its finding fixed); the `claude -p` reviews and the adversarial review did not run. The owner did not run `npm test`; the session's run on the final tip (423 tests, 399 pass, 0 fail) is not independent. A-078's accepted-risks row is updated to match.
+
 ### A-094 — 2026-10-20 — learn-refresh: merged after the owner's walkthrough
 
 Owner, after the report that all five batches were done: “Okay all good, merge”.

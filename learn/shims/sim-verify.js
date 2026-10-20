@@ -12,10 +12,12 @@ import { checkSandbox, confines, executables, reachable } from '/src/sandbox.ts'
 import { liveFunction } from '../live.js';
 import { RUNS, world } from './world.js';
 
-// src/run.ts calls both before the developer starts, so they are the real ones, cut out of
+// src/run.ts calls these before the developer starts, so they are the real ones, cut out of
 // src/verify.ts: this module stands in for that file and cannot import it.
 export const noWorkflowDir = await liveFunction('src/verify.ts', 'noWorkflowDir');
 export const stageGrants = await liveFunction('src/verify.ts', 'stageGrants', { confines });
+export const checkCommands = await liveFunction('src/verify.ts', 'checkCommands', { FILE_STEM, TREE_CHECK });
+export const missingProgram = await liveFunction('src/verify.ts', 'missingProgram', { executables, reachable });
 
 export async function verify(store, cycleId, job, opts) {
   const cycle = store.load(cycleId);
@@ -23,13 +25,7 @@ export async function verify(store, cycleId, job, opts) {
   const def = store.workflow.stages[cycle.stage];
   if (def?.kind !== 'command' || !cycle.candidate) throw new Error(`verify on a cycle in ${cycle.stage}, expected a command stage`);
   const checks = def.run ?? job.checks ?? [];
-  const seen = new Set();
-  for (const c of checks) {
-    if (typeof c.name !== 'string' || !FILE_STEM.test(c.name)) throw new Error(`check name ${JSON.stringify(c.name)} is not a file stem`);
-    if (c.name === TREE_CHECK) throw new Error(`check name ${TREE_CHECK} is reserved for the controller's own tracked-tree check`);
-    if (seen.has(c.name)) throw new Error(`check name ${c.name} is declared twice`);
-    seen.add(c.name);
-  }
+  checkCommands(checks, def.run !== undefined);
   stageGrants(cycle.stage, def, opts.grants, opts.sandbox);
   checkDeadline(opts.deadlineMs);
   const sandbox = opts.sandbox ?? { backend: 'bwrap' };
@@ -49,10 +45,8 @@ export async function verify(store, cycleId, job, opts) {
 
   const found = checks.map((check) => {
     const [command = ''] = check.command ?? [];
-    const paths = executables(command, worktree);
-    if (!paths.length) return { check, missing: `missing: ${command || '(empty command)'} not found` };
-    if (!paths.some((p) => reachable(sandbox, policy, p))) return { check, missing: `missing: ${command} resolves to ${paths[0]}, outside the sandbox; add its directory to sandbox.read` };
-    return { check, path: paths[0] };
+    const why = missingProgram(command, sandbox, policy);
+    return why ? { check, missing: `missing: ${why}` } : { check, path: executables(command, worktree)[0] };
   });
   world.ui.stage('verify', { cycleId, stage: cycle.stage, head, worktree, evidenceDir, found, policy, own: def.run !== undefined });
   const { results: plan, dirty } = await world.ui.checks(found, head, opts.deadlineMs, cycle.stage);
