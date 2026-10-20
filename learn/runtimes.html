@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Runtimes: claude and pi · Software Factory guide</title>
+<title>Runtimes and kits · Software Factory guide</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="boot.js"></script>
 <link rel="stylesheet" href="learn.css">
@@ -17,11 +17,24 @@
 <section class="slide" id="three" data-lv="1">
   <h2>Runtime, model and role are three different things</h2>
   <div class="cols3">
-    <div class="card cyan"><h3>Runtime</h3><p>The program that runs the agent: <code>claude</code> (Claude Code) or <code>pi</code>. The factory starts it as a child process.</p></div>
+    <div class="card cyan"><h3>Runtime</h3><p>The program that runs the agent: <code>claude</code> (Claude Code), <code>pi</code>, or one you add. The factory starts it as a child process.</p></div>
     <div class="card"><h3>Model</h3><p>The language model behind it. The runtime picks it; the core of the factory never names one.</p></div>
-    <div class="card amber"><h3>Role</h3><p>What the run is for: developer, standard reviewer or adversarial reviewer. It sets the prompt and the permissions.</p></div>
+    <div class="card amber"><h3>Role</h3><p>What the run is for. The workflow names the roles: the default has a developer, a standard reviewer and an adversarial reviewer. The role sets the prompt and the permissions.</p></div>
   </div>
-  <p style="margin-top:14px">The job file picks a <a class="w" href="words.html#runtime">runtime</a> per role. You can have claude develop and pi review adversarially. Nothing in the lifecycle knows which one ran: it sees an <a class="w" href="words.html#adapter">adapter</a> and its outcome.</p>
+  <p style="margin-top:14px">The job's <code>runtime</code> picks a <a class="w" href="words.html#runtime">runtime</a> per role: <code>{"developer": "claude", "adversarial": "pi"}</code>. <code>standard</code> and <code>adversarial</code> stand for the default workflow's reviewer roles. Nothing in the engine knows which one ran: it sees an <a class="w" href="words.html#adapter">adapter</a> and its outcome, and the outcome event records the runtime's name.</p>
+</section>
+
+<section class="slide" id="registry" data-lv="1">
+  <h2>Chosen by name</h2>
+  <p>Runtimes live in a registry, a map from name to entry. <code>claude</code> and <code>pi</code> are built in. A job or your personal file adds one more as a single TypeScript module:</p>
+<pre><code>"runtimes": { "local-llm": { "module": "runtimes/local-llm.ts" } },
+"runtime": { "developer": "local-llm" }</code></pre>
+  <ul>
+    <li>The module gets the whole run request as JSON on stdin and prints one outcome as JSON on stdout, under the controller's own <code>node</code>, in the sandbox, with only its own folder bound: it must be one bundled file.</li>
+    <li>Its SHA-256 is read before any run and recorded on every outcome event as <code>moduleHash</code>, so the log says which code answered.</li>
+    <li>A name may not reuse a built-in one: <code>claude</code> meaning someone's module would hide which runtime ran.</li>
+  </ul>
+  <p class="small">Sandbox backends are chosen by name too, <code>bwrap</code> or <code>none</code>, but only from the built-in ones: a backend you could add would decide what confines candidate code (A-074).</p>
 </section>
 
 <section class="slide" id="cli-spec" data-lv="1">
@@ -35,7 +48,7 @@
   <pre data-code="src/runtime/cli-adapter.ts#CliSpec"></pre>
 </section>
 
-<section class="slide" id="scan" data-lv="2">
+<section class="slide" id="scan" data-lv="1">
   <h2>Try it: finding the claim</h2>
   <p>The claim is the <b>last</b> fenced <code>json</code> block in the reply, or the whole reply if it is a JSON object. The fields are not checked here; the store does that. Write a reply, or pick a preset, and see what the real parser returns.</p>
   <div class="demo real" data-demo="rt-scan"></div>
@@ -75,35 +88,40 @@
       <ul class="small">
         <li><b>8 MiB</b> per stream. Past that the tree is killed and the run is <code>overflow</code>: no result can grow near V8's string limit.</li>
         <li>A <b>deadline</b> from the controller, which aborts the run.</li>
-        <li>Inside <a class="w" href="words.html#bwrap">bwrap</a> when the job names a sandbox. <a class="portal" href="sandbox.html">the sandbox</a></li>
+        <li>Inside <a class="w" href="words.html#bwrap">bwrap</a> unless the job writes out <code>none</code>. <a class="portal" href="sandbox.html">sandbox and secrets</a></li>
       </ul>
     </div>
   </div>
 </section>
 
-<section class="slide" id="code-scan" data-lv="3">
-  <h2>lastFencedJson and claimFrom</h2>
-  <pre data-code="src/runtime/cli-adapter.ts#lastFencedJson,claimFrom"></pre>
+<section class="slide" id="kits" data-lv="2">
+  <h2>Kits: the contract an extension must keep</h2>
+  <p>Each kind of extension has a kit: a function you call from your own test file, run with <code>node --test</code>. It registers test cases that drive your extension the way the controller would. Import it by path; the factory is not a package.</p>
+  <table class="small">
+    <thead><tr><th>Kit</th><th>For</th><th>It checks</th></tr></thead>
+    <tbody>
+      <tr><td><code>runtimeKit</code></td><td>a runtime adapter</td><td>it has a name; a request for each role settles, without rejecting, to a plain outcome; an aborted run settles within 10 s</td></tr>
+      <tr><td><code>commandKit</code></td><td>a command stage (<a href="verify.html#own">command stages</a>)</td><td>a passing change gives PASS and a failing one FAIL, through the real <code>verify</code>; the request names every field; nothing is written outside <code>output/</code> and the checkout; with network unset, a connection fails; a grant stage writes the head</td></tr>
+      <tr><td><code>observerKit</code></td><td>an observer (<a href="store.html#stream">the stream</a>)</td><td>your cases' actions, in order; an event type it does not know makes it neither throw nor act; a refused command does not make it throw</td></tr>
+    </tbody>
+  </table>
+<pre><code>// my-runtime.test.ts
+import { runtimeKit } from '../software_factory/src/kits/runtime.ts';
+import { myAdapter } from './my-adapter.ts';
+runtimeKit('my-runtime', () =&gt; myAdapter());</code></pre>
 </section>
 
-<section class="slide" id="code-specs" data-lv="3">
-  <h2>The claude and pi specs</h2>
-  <pre data-code="src/runtime/cli-adapter.ts#claude,pi"></pre>
-</section>
-
-<section class="slide" id="code-adapter" data-lv="3">
-  <h2>cliAdapter</h2>
-  <pre data-code="src/runtime/cli-adapter.ts#cliAdapter"></pre>
-</section>
-
-<section class="slide" id="code-spawn" data-lv="3">
-  <h2>spawn.ts</h2>
+<section class="slide" id="code" data-lv="3">
+  <h2>Read the code: src/runtime/</h2>
+  <p>The registry:</p>
+  <pre data-code="src/runtime/registry.ts#BUILT_IN,runtimes,runtimeFor"></pre>
+  <p>Finding the claim, and the two built-in specs:</p>
+  <pre data-code="src/runtime/cli-adapter.ts#lastFencedJson,claimFrom,claude,pi"></pre>
+  <p>An extension runtime, and the one function that makes any spec an adapter:</p>
+  <pre data-code="src/runtime/cli-adapter.ts#extensionSpec,cliAdapter"></pre>
   <pre data-code="src/runtime/spawn.ts#header,SpawnOptions"></pre>
-</section>
-
-<section class="slide" id="takeaway" data-lv="1">
-  <h2>Takeaway</h2>
-  <p class="lead">A runtime is a command, some flags and a parser. The factory treats its reply as text that may end in a claim. Everything else (sandbox, scope, byte cap, deadline) is the same for every runtime.</p>
+  <p>The runtime kit:</p>
+  <pre data-code="src/kits/runtime.ts#runtimeKit"></pre>
 </section>
 
 </main>

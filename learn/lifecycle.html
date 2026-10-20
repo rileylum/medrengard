@@ -37,7 +37,7 @@
     <div class="card red"><h3>Unclear means stop</h3><p class="small">An event that does not fit the stage escalates with its reason: a verdict outside a review stage, an accept for another SHA, an event type nobody knows, a step named for another stage. Nothing retries by itself.</p></div>
     <div class="card violet"><h3>Only the owner moves on</h3><p class="small">A cancel ends any open cycle. An ESCALATED cycle ignores everything else and waits for you to cancel it or open a <a class="w" href="words.html#child-cycle">child cycle</a>, which starts with every budget empty.</p></div>
   </div>
-  <p class="small" style="margin-top:12px">Two more: a role produces either commits or verdicts, never both, because the controller tells a claim from a verdict by the role alone. And role text is one line, so it cannot forge the contract's <code>Rules:</code> line below it (see the developer room).</p>
+  <p class="small" style="margin-top:12px">Two more: a role produces either commits or verdicts, never both, because the controller tells a claim from a verdict by the role alone. And role text is one line, so it cannot forge the contract's <code>Rules:</code> line below it (<a href="developer.html#versions">the developer</a>).</p>
 </section>
 
 <section class="slide" id="budgets" data-lv="2">
@@ -52,7 +52,7 @@
 
 <section class="slide" id="chosen" data-lv="2">
   <h2>One workflow per job, bound by its hash</h2>
-  <p>A job names a workflow with <code>"workflow": "path/to/module.ts"</code>; the module's named export <code>workflow</code> is the object. The job file, your personal file or the repository can set it (see the configuration room). A repository workflow is read from the base commit, never from the working tree.</p>
+  <p>A job names a workflow with <code>"workflow": "path/to/module.ts"</code>; the module's named export <code>workflow</code> is the object. The job file, your personal file or the repository can set it (<a href="config.html">configuration</a>). A repository workflow is read from the base commit, never from the working tree.</p>
   <p>When a cycle opens, the store writes the workflow's name, its hash and the whole definition into the cycle's first row. Every later load replays the cycle under the store's workflow, and refuses if the hashes differ: a cycle replayed under another workflow could land in a stage its log never had (A-059).</p>
   <p class="small">The hash is SHA-256 of the object's JSON, so reordering two keys makes a new workflow. That is safe: old cycles are refused, never misread. The editor above shows the hash as you type.</p>
 </section>

@@ -56,7 +56,7 @@
     <li><b>Names</b> are file stems, unique in the stage, because each names its evidence files. <code>tree</code> is reserved for the controller's own check, below.</li>
     <li><b>A file argument</b>, <code>{ "file": "scripts/notes.js" }</code>, names a file beside the workflow. The controller copies it into the stage's evidence, runs the copy, and records its SHA-256 on the event: what was hashed is what ran. The job's checks, which the repository may set, may not use one.</li>
     <li><b>The request</b>: <code>SF_REQUEST</code> names <code>request.json</code>, with the cycle, the stage, the head and base, the ticket, the diff (the checkout has no <code>.git</code> to work it out from) and <code>outputDir</code>, the one folder it may write besides the checkout.</li>
-    <li><b>Network</b> is off unless the stage sets <code>network: true</code>. A stage that holds a credential must, and has more rules (<a href="sandbox.html">grants</a>).</li>
+    <li><b>Network</b> is off unless the stage sets <code>network: true</code>. A stage that holds a credential must, and has more rules (<a href="sandbox.html#grant-rules">grants</a>).</li>
   </ul>
   <p class="small"><code>commandKit</code> in <code>src/kits/command.ts</code> checks a stage keeps this contract: it runs the stage through the real <code>verify</code> on a scratch repository, once on a change that should pass and once on one that should fail.</p>
 </section>

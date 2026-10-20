@@ -10,6 +10,7 @@ export const ROOMS = [
   { file: 'review.html', title: 'Reviews', blurb: 'Fresh eyes with nothing but the evidence. Every path through the budget, and a diff too big to send.' },
   { file: 'sandbox.html', title: 'Sandbox and secrets', blurb: 'Candidate code is untrusted. Build a bubblewrap policy, and follow a grant to the one place it may go.' },
   { file: 'runtimes.html', title: 'Runtimes and kits', blurb: 'A CLI becomes an adapter by name. How a claim is found in a reply, and the kits an extension must pass.' },
+  { file: 'config.html', title: 'Configuration', blurb: 'Four layers: defaults, yours, the repository\'s and the job\'s. Merge them, and see what a repository may not set.' },
   { file: 'process.html', title: 'How this repo is built', blurb: 'Plan rows, tickets, reviews and decisions, run by hand. Read live from docs/.' },
   { file: 'architecture.html', title: 'The map of the code', blurb: 'Every module in src/, who imports whom, and the seams the design turns on.' },
 ];
