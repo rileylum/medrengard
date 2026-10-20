@@ -19,11 +19,9 @@ import { ROLE_ALIASES, run, type Adapters } from './run.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
 import { EventStore, openings, SETTLED, workflowHash } from './store.ts';
-import { openStream } from './stream.ts';
+import { FOLLOW_MS, openStream } from './stream.ts';
 
 const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> [--source <name>] | cancel <job.json> [--source <name>] | events <job.json | runsDir> [--after <seq>] [--follow]';
-/** How often `events --follow` looks for new rows: SQLite cannot notify another process. */
-const FOLLOW_MS = 500;
 
 /** One adapter per agent role, from `runtime[role]` or the alias that names the role. */
 function adaptersFor(w: Workflow, registry: Record<string, RuntimeEntry>, runtime: JobFile['runtime'], sandbox: Sandbox): Adapters {

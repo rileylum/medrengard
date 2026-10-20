@@ -20,6 +20,9 @@ export interface Line {
   escalation: string | null;
 }
 
+/** How often a follower looks for new rows: SQLite cannot notify another process. */
+export const FOLLOW_MS = 500;
+
 /** The cycle's own recorded definition, the default, or the caller's, whichever hashes to the recorded workflow. */
 function workflowOf(open: OpenRow, given?: Workflow): Workflow | undefined {
   const { hash } = open.workflow ?? DEFAULT_RECORD;
@@ -66,7 +69,7 @@ export function openStream(path: string, opts: { workId?: string; after?: number
           warn(cycleId, `row ${String(r.seq)} is not an event this version can read`);
           c.cycle = undefined;
         }
-        if (last > (opts.after ?? 0)) out.push({ seq: last, at: (r.at as string | null) ?? null, cycleId, workId: c.workId, event: body, ...step });
+        if (last > (opts.after ?? 0)) out.push({ seq: last, at: r.at as string | null, cycleId, workId: c.workId, event: body, ...step });
       }
       return out;
     },

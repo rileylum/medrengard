@@ -11,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { storeOf } from '../config.ts';
 import type { Event } from '../lifecycle.ts';
 import { EventStore } from '../store.ts';
-import { openStream, type Line } from '../stream.ts';
+import { FOLLOW_MS, openStream, type Line } from '../stream.ts';
 
 /** The owner's commands, run as `node src/main.ts … --source <source>` against the job file. A refused command rejects. */
 export interface Owner {
@@ -21,8 +21,6 @@ export interface Owner {
 export type Observer = (line: Line, owner: Owner) => void | Promise<void>;
 
 const MAIN = join(import.meta.dirname, '..', 'main.ts');
-/** As `events --follow`. */
-const FOLLOW_MS = 500;
 
 function ownerFor(jobFile: string, source: string): Owner {
   const run = (args: string[]) =>
