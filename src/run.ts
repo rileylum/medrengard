@@ -110,12 +110,23 @@ function driverLimits(w: Workflow): string[] {
     return d?.kind === 'agent' ? d.produces : d?.kind;
   };
   const reasons: string[] = [];
+  // fix takes its findings from the last verdict, which must be a FAIL for the candidate. A new
+  // commit or a review's PASS leaves none; command and human stages pass that on unchanged, so
+  // mark every one they reach. A check's FAIL back to the developer needs fix to take the failed
+  // checks as findings first.
+  const noFail = new Set<Stage>();
+  const mark = (s: Stage): void => {
+    if (noFail.has(s) || (kind(s) !== 'command' && kind(s) !== 'human')) return;
+    noFail.add(s);
+    for (const to of Object.values(w.stages[s]!.transitions)) mark(to);
+  };
+  const leavesNoFail = (name: Stage, outcome: string) => kind(name) === 'commit' || (kind(name) === 'verdict' && outcome === 'PASS');
+  for (const [name, def] of Object.entries(w.stages))
+    for (const [outcome, to] of Object.entries(def.transitions)) if (leavesNoFail(name, outcome)) mark(to);
   for (const [name, def] of Object.entries(w.stages))
     for (const [outcome, to] of Object.entries(def.transitions))
-      // fix takes its findings from the last verdict, which must be a FAIL for the candidate.
-      // A check's FAIL back to the developer needs fix to take the failed checks as findings first.
-      if (kind(to) === 'commit' && !(outcome === 'FAIL' && kind(name) === 'verdict'))
-        reasons.push(`stage ${name} ${outcome} enters commit stage ${to}, but a fix run needs a review's FAIL findings`);
+      if (kind(to) === 'commit' && (leavesNoFail(name, outcome) || noFail.has(name)))
+        reasons.push(`stage ${name} ${outcome} enters commit stage ${to}, but the last verdict there may not be a review's FAIL for the candidate, which a fix run takes as its findings`);
   // review reads the checkout and evidence verify made of the candidate, so after each commit a
   // command stage must come before any review.
   for (const [from] of Object.entries(w.stages).filter(([s]) => kind(s) === 'commit')) {

@@ -91,6 +91,8 @@ export function checkCommands(checks: Command[], own: boolean): void {
     if (seen.has(c.name)) throw new Error(`check name ${c.name} is declared twice`);
     // The repository layer may set checks; a file argument is the workflow's, and only in run.
     if (!own && !(Array.isArray(c.command) && c.command.every((a) => typeof a === 'string'))) throw new Error(`check ${c.name}: every argument must be a string`);
+    // checkWorkflow refuses an empty run; a job's would be MISSING only after the developer run.
+    if (c.command.length === 0) throw new Error(`check ${c.name}: command is empty`);
     seen.add(c.name);
   }
 }

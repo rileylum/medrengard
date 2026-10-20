@@ -13,7 +13,7 @@ import type { DeveloperAdapter, Job } from '../src/developer.ts';
 import { run, type Adapters, type RunOptions } from '../src/run.ts';
 import { resume } from '../src/run.ts';
 import { develop } from '../src/developer.ts';
-import { checkWorkflow, type Workflow } from '../src/lifecycle.ts';
+import { checkWorkflow, defaultWorkflow, type Workflow } from '../src/lifecycle.ts';
 import { ownerCheck } from './workflows.ts';
 import { reviewerStub } from './stub-cli.ts';
 
@@ -520,6 +520,8 @@ const unrunnable: [string, Workflow, RegExp][] = [
     /stage REVIEW PASS enters commit stage DEV/],
   ['a review with no command stage before it', { ...ownerCheck, stages: { ...ownerCheck.stages, DEV: writer({ PASS: 'REVIEW' }) } },
     /review stage REVIEW follows commit stage DEV with no command stage between/],
+  ['a review two hops after the commit, past a human stage', { ...ownerCheck, stages: { ...ownerCheck.stages, DEV: writer({ PASS: 'OWNER' }), OWNER: { kind: 'human', transitions: { PASS: 'REVIEW' } }, REVIEW: { ...ownerCheck.stages.REVIEW, transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } } as Workflow['stages'][string] } },
+    /review stage REVIEW follows commit stage DEV with no command stage between/],
 ];
 
 test('run refuses a workflow shape the driver cannot run, before the developer starts, though checkWorkflow passes it', async () => {
@@ -543,6 +545,7 @@ test('run refuses a job check verify would refuse, before the developer starts',
     [[{ name: 'tree', command: ['true'] }], /check name tree is reserved/],
     [[{ name: 'a', command: ['true'] }, { name: 'a', command: ['true'] }], /check name a is declared twice/],
     [[{ name: 'a', command: ['true', 1 as unknown as string] }], /check a: every argument must be a string/],
+    [[{ name: 'a', command: [] }], /check a: command is empty/],
   ];
   for (const [checks, reason] of bad)
     await assert.rejects(run(store, adapters(developer, scripted('PASS'), scripted('PASS')), job(repo, { checks }), opts(runsDir)), reason);
@@ -595,4 +598,45 @@ test('resume refuses what run refuses before a step: a missing grant, no workflo
     assert.equal(store.events('c1').length, 1);
     store.close();
   }
+});
+
+// Standard review 1 of sweep-preflight: fix needs only that the last verdict is a FAIL for the
+// head, so a command or human stage between a review's FAIL and the fix runs today and must still.
+const afterFail = (between: Workflow['stages'][string]): Workflow => ({ ...defaultWorkflow, name: 'after-fail', stages: {
+  ...defaultWorkflow.stages,
+  STANDARD_REVIEW: { ...defaultWorkflow.stages.STANDARD_REVIEW, transitions: { PASS: 'ADVERSARIAL_REVIEW', FAIL: 'BETWEEN' } } as Workflow['stages'][string],
+  BETWEEN: between,
+} });
+
+test('a command stage between a review FAIL and the fix runs: the fix still has the FAIL verdict for the candidate', async () => {
+  const { root, repo, runsDir } = scratch();
+  const store = new EventStore(join(root, 'notes.sqlite'), afterFail({ kind: 'command', run: [{ name: 'notes', command: ['true'] }], transitions: { PASS: 'DEVELOPING' } }));
+  const r = await run(store, adapters(fake(claude), scripted('FAIL', 'PASS'), scripted('PASS')), job(repo), opts(runsDir));
+  assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation ?? r.error);
+  assert.equal(r.cycle.runs.length, 2);
+  store.close();
+});
+
+test('a human stage between a review FAIL and the fix: run stops there, and resume after accept runs the fix', async () => {
+  const { root, repo, runsDir } = scratch();
+  const store = new EventStore(join(root, 'triage.sqlite'), afterFail({ kind: 'human', transitions: { PASS: 'DEVELOPING' } }));
+  const roles = adapters(fake(claude), scripted('FAIL', 'PASS'), scripted('PASS'));
+  const first = await run(store, roles, job(repo), opts(runsDir));
+  assert.equal(first.cycle.stage, 'BETWEEN', first.cycle.escalation ?? first.error);
+  store.append(first.cycle.cycleId, { type: 'accept', head: first.cycle.candidate!.head });
+  const r = await resume(store, first.cycle.cycleId, roles, job(repo), opts(runsDir));
+  assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation ?? r.error);
+  assert.equal(r.cycle.runs.length, 2);
+  store.close();
+});
+
+test('the owner requesting changes after the last review PASS is refused: the last verdict is not a FAIL', async () => {
+  const { repo, runsDir, root } = scratch();
+  const w = { ...defaultWorkflow, stages: { ...defaultWorkflow.stages, AWAITING_ACCEPTANCE: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'DEVELOPING' } } } } as Workflow;
+  assert.deepEqual(checkWorkflow(w), []);
+  const store = new EventStore(join(root, 'request.sqlite'), w);
+  const developer = recording(fake(claude));
+  await assert.rejects(run(store, adapters(developer, scripted('PASS'), scripted('PASS')), job(repo), opts(runsDir)), /stage AWAITING_ACCEPTANCE FAIL enters commit stage DEVELOPING/);
+  assert.equal(developer.requests.length, 0);
+  store.close();
 });
