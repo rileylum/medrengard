@@ -3,7 +3,7 @@
 // cancel during a run, 07-d) waits for the write lock rather than failing.
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, type Cycle, type Event, type Stage, type Workflow } from './lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, outcomeRunId, SETTLED, type Cycle, type Event, type Stage, type Workflow } from './lifecycle.ts';
 
 // Row 0 of every cycle is the store's own "open" marker; it is not a lifecycle Event and never
 // reaches apply. Keeping it in the same table honours the one-table constraint.
@@ -83,9 +83,8 @@ function requireId(v: unknown, what: string): asserts v is string {
   if (!v.isWellFormed()) throw new Error(`${what} must be a well-formed string`);
 }
 
-const DEDUP: Event['type'][] = ['developer_result', 'verdict', 'run_failed', 'dispute'];
-/** Stages that hold no open cycle: escalated cycles wait for the owner and never move again. */
-export const SETTLED: Stage[] = ['ESCALATED', 'ACCEPTED', 'CANCELLED'];
+// main.ts and the guide's demos import it from here.
+export { SETTLED };
 
 /** append refused the event because apply could not classify its serialised form. */
 export class UnclassifiableEvent extends Error {}
@@ -161,8 +160,8 @@ export class EventStore {
    * Cycle and never apply the object they passed in: the object can read differently live than
    * its serialised form does (02-c finding). Throws before writing if apply could not classify
    * the serialised event: a bad row would make the whole log unloadable. A run has one outcome:
-   * a second result, verdict or run_failed for a run ID that already has one writes nothing and
-   * returns the current Cycle. Only those three carry run_id into the unique index; a redelivered
+   * a second outcome for a run ID that already has one writes nothing and returns the current
+   * Cycle. Only events `outcomeRunId` names carry run_id into the unique index; a redelivered
    * claim is stored and apply decides.
    */
   append(cycleId: string, event: Event): Cycle {
@@ -176,7 +175,8 @@ export class EventStore {
     if (!this.exists(cycleId)) throw new Error(`cycle ${cycleId} not open`);
     // The index key is the JSON-escaped run ID, not the raw string: SQLite would fold a lone
     // surrogate to U+FFFD and two distinct run IDs would collide.
-    const dedupKey = DEDUP.includes(parsed.type) ? JSON.stringify((parsed as { runId: string }).runId) : null;
+    const runId = outcomeRunId(parsed);
+    const dedupKey = runId === undefined ? null : JSON.stringify(runId);
     this.insert(cycleId, parsed.type, dedupKey, body);
     return this.load(cycleId)!;
   }

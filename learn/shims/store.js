@@ -5,15 +5,13 @@
 // cycle opened under another workflow and replays the log through the real apply. Keep it in step
 // with src/store.ts; learn/learn.test.ts checks that it exports what src/ imports from there.
 import { createHash } from 'node:crypto';
-import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle } from '/src/lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, outcomeRunId, SETTLED } from '/src/lifecycle.ts';
 
-export const SETTLED = ['ESCALATED', 'ACCEPTED', 'CANCELLED'];
+export { SETTLED };
 export class UnclassifiableEvent extends Error {}
 
 export const workflowHash = (w) => createHash('sha256').update(JSON.stringify(w)).digest('hex');
 export const DEFAULT_RECORD = { name: defaultWorkflow.name, hash: workflowHash(defaultWorkflow) };
-
-const DEDUP = ['developer_result', 'verdict', 'run_failed', 'dispute'];
 
 export class EventStore {
   constructor(path = ':memory:', workflow = defaultWorkflow, table = []) {
@@ -59,7 +57,8 @@ export class EventStore {
       throw new UnclassifiableEvent(`unclassifiable event: ${body}`);
     }
     if (!this.exists(cycleId)) throw new Error(`cycle ${cycleId} not open`);
-    const runId = DEDUP.includes(parsed.type) ? JSON.stringify(parsed.runId) : null;
+    const outcome = outcomeRunId(parsed);
+    const runId = outcome === undefined ? null : JSON.stringify(outcome);
     // The unique index on (cycle_id, run_id): INSERT OR IGNORE writes nothing for a second outcome.
     if (runId !== null && this.table.some((r) => r.cycle_id === cycleId && r.run_id === runId)) {
       this.emit({ kind: 'duplicate', cycleId, body });
