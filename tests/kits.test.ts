@@ -107,3 +107,35 @@ test('commandKit fails a grant stage that does not write the head: the head case
   assert.match(r.stdout, /no head file in outputDir/, r.stdout);
   assert.match(r.stdout, /# fail 2$/m, r.stdout);
 });
+
+// Ticket 10-d: the observer kit.
+
+test('observerKit passes the comment-only example on a comment-only change and on a code change', () => {
+  const r = kit('observe-good.kit.ts');
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^ok \d+ - comments: a comment-only change is accepted$/m);
+  assert.match(r.stdout, /^ok \d+ - comments: a code change is left for the owner$/m);
+  assert.match(r.stdout, /# fail 0/);
+});
+
+test('observerKit fails an observer that throws on an unknown event', () => {
+  const r = kit('observe-throws.kit.ts');
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /not ok \d+ - throws: an event of an unknown type, with unknown fields, makes the observer neither throw nor act/);
+  assert.match(r.stdout, /unknown event/);
+  assert.match(r.stdout, /# fail 1$/m);
+});
+
+test('observerKit fails an observer that acts on an unknown event', () => {
+  const r = kit('observe-acts.kit.ts');
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /not ok \d+ - acts: an event of an unknown type, with unknown fields, makes the observer neither throw nor act/);
+  assert.match(r.stdout, /# fail 1$/m);
+});
+
+test('observerKit fails an observer that throws when a command is refused', () => {
+  const r = kit('observe-unguarded.kit.ts');
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /not ok \d+ - unguarded: a refused command does not make the observer throw/);
+  assert.match(r.stdout, /# fail 1$/m);
+});
