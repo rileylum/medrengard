@@ -170,7 +170,7 @@ function refuse(repo: string, incoming: string, branch: string, base: string, pr
   if (head === base) return `commit ${head} is the base, not a new commit`;
   if (head === previous) return `commit ${head} is the previous candidate: the fix run made no new commit and gave no dispute`;
   if (head !== tip) {
-    return isCommit(repo, head) ? `commit ${head} is not the tip of ${branch} (${tip})` : `commit ${head} is not the full SHA of a commit on ${branch} (tip ${tip})`;
+    return isCommit(repo, head) ? `commit ${head} is not the tip of ${branch} (${tip})` : `commit ${cut(head)} is not the full SHA of a commit on ${branch} (tip ${tip})`;
   }
   if (gitStatus(repo, 'merge-base', '--is-ancestor', base, head) !== 0) return `commit ${head} is not descended from the base ${base}`;
   // --quiet answers in the exit code: 0 same, 1 different, anything else an error (a missing object is 128).
@@ -216,7 +216,7 @@ function land(repo: string, clone: string, branch: string, cycleId: string, base
   // 07-e: a dispute keeps the candidate, so nothing is fetched and no branch moves. On a first run
   // there is no candidate; apply escalates that case as outside a fix run.
   if ((claim as { dispute?: unknown }).dispute !== undefined) {
-    return previous === undefined || head === previous ? undefined : `a dispute must name the previous candidate ${previous}, not ${head}`;
+    return previous === undefined || head === previous ? undefined : `a dispute must name the previous candidate ${previous}, not ${cut(head)}`;
   }
   const incoming = `refs/sf/incoming/${cycleId}`;
   try {
@@ -237,6 +237,9 @@ function land(repo: string, clone: string, branch: string, cycleId: string, base
     spawnSync('git', ['update-ref', '-d', incoming], { cwd: repo, stdio: 'ignore' });
   }
 }
+
+// A claimed head that is not a commit is the developer's text, of any length; 64 holds a SHA-256.
+const cut = (head: string) => (head.length <= 64 ? head : `${head.slice(0, 64)} [... ${head.length - 64} characters cut]`);
 
 const shellQuote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 

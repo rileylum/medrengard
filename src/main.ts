@@ -14,6 +14,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { join, resolve } from 'node:path';
 import { loadConfig, storeOf, type JobFile } from './config.ts';
 import { oneLine, type Job } from './developer.ts';
+import { printable } from './prompt.ts';
 import { defaultWorkflow, isSource, type Workflow } from './lifecycle.ts';
 import { ROLE_ALIASES, run, type Adapters } from './run.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
@@ -200,12 +201,12 @@ async function main(argv: string[]): Promise<number> {
       if (e.type === 'verdict') {
         const def = workflow.stages[h.from];
         const role = def?.kind === 'agent' ? def.role : 'reviewer';
-        console.log(`${role} ${e.head.slice(0, 7)}: ${e.verdict}`);
-        for (const f of Array.isArray(e.findings) ? e.findings : []) console.log(`  - ${oneLine(f)}`);
+        console.log(`${role} ${printable(e.head.slice(0, 7))}: ${e.verdict}`);
+        for (const f of Array.isArray(e.findings) ? e.findings : []) console.log(`  - ${printable(oneLine(f))}`);
       }
     }
-    if (cycle.escalation) console.log(`Escalation: ${cycle.escalation}`);
-    if (r.error) console.log(`Error: ${r.error}`);
+    if (cycle.escalation) console.log(`Escalation: ${printable(cycle.escalation)}`);
+    if (r.error) console.log(`Error: ${printable(r.error)}`);
     if (humanStages(workflow).includes(cycle.stage)) {
       console.log('');
       console.log('To review, accept and merge:');
@@ -221,4 +222,4 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { console.error(err instanceof Error ? err.message : String(err)); process.exitCode = 2; });
+main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { console.error(printable(err instanceof Error ? err.message : err)); process.exitCode = 2; });

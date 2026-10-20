@@ -21,6 +21,17 @@ export function oneLine(finding: unknown): string {
   return String(finding).replace(/\s*(?:\r\n?|[\n\u2028\u2029\u0085])\s*/g, ' ');
 }
 
+/**
+ * Text that is safe to print to the owner's terminal: every control character but tab, and every
+ * bidi control, becomes a visible `\u{..}`. ESC and BEL would let an agent erase the screen, print
+ * a fake stage or write the clipboard (OSC 52); bidi controls reorder what the owner reads; a line
+ * break opens a line the owner would take for the controller's. Applied at print, never at storage:
+ * the event log keeps what the agent sent.
+ */
+export function printable(text: unknown): string {
+  return String(text).replace(/[^\P{Cc}\t]|[\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, (c) => `\\u{${c.codePointAt(0)!.toString(16)}}`);
+}
+
 type Fixing = { head: string; findings: unknown };
 
 // Two rules the developer cannot infer from the ticket, then the claim in the exact shape the
