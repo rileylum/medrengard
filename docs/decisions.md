@@ -37,6 +37,16 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-107 — 2026-10-20 — Owner-held tests (O-005): visible by default; the core keeps the primitives for a hidden holdout
+
+Asked, from the overnight research (`docs/research/2026-10-20/deep-research.md` proposal 4, `harnesses.md` finding 7, TRIAGE owner item 3): who writes acceptance tests, may the developer see them, and must they fail on base. The owner: “Okay at this stage, the workflow that I envisage doesn't hide tests. Though I think we should build the primitives to allow this”. The session found two of three primitives exist (a `{ file }` argument from a `workflowDir` outside the repository is copied into the stage's evidence and bound only for that check; a protected-path check is an ordinary check reading `diff.patch`), and that "must fail on base" needs the core (verify runs checks only on the candidate, and evidence binds to the candidate SHA). Owner: “Yes thats good, at some point I will start tuning the workflow and especially with the recording of logs and seeing where our failures are then we'll know if the develop stage is consistently writing bad tests or changing them etc.”
+
+Effect:
+1. The default workflow uses visible tests. Whether to hide them is a workflow choice, made later from run logs: whether developers write weak tests or edit them.
+2. Later, small: a sandbox test pinning that the developer cannot read `workflowDir` or any stage's evidence copies; an example protected-path check.
+3. Later, Design route: a "run on base" option for command stages, with the evidence rule extended to name the SHA each result is for.
+4. Known leak, accepted: a hidden test's failure output reaches reviewers, whose findings reach the fix prompt.
+
 ### A-106 — 2026-10-20 — Networked sandboxes get their own network namespace through pasta
 
 Asked, from the overnight research (`docs/research/2026-10-20/security.md` finding 3, TRIAGE owner item 2): a networked sandbox (`--share-net`) reaches every service on the host's 127.0.0.1 and its abstract Unix sockets (CUPS, PostgreSQL and Steam ports confirmed). Fix with `pasta` (Arch `passt`, a new system dependency) with host loopback unmapped, with a controller-run proxy, or leave it. The session recommended `pasta` now and the proxy later, for domain filtering (the parked 08-a note). Owner: “pasta now”.

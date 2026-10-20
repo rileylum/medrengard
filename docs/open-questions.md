@@ -28,6 +28,8 @@ Raised 2026-10-18, guide walkthrough.
 
 **Would settle it.** The design asks that each "done when" line name an independent verification method (source §04, "Definition of Ready is risk-aware") and that quality profiles set required checks per risk tier (source §09, "Quality profiles and independent gates"; defaults OPEN in §15). Decide whether owner-held acceptance tests become standard, prove the `sandbox.read` route with a test, and decide who writes those tests.
 
+**Partly settled (A-107).** Tests stay visible in the default workflow; hiding them is a workflow choice for later, made from run logs. The route is a `{ file }` argument from a `workflowDir` outside the repository, not `sandbox.read`. Still open: who writes acceptance tests, and the "run on base" primitive.
+
 ## O-011 What to do when a cycle runs out of review budget
 
 Raised 2026-10-18, guide walkthrough.
