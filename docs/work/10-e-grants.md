@@ -56,3 +56,4 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
   - A repository workflow runs unsandboxed at import (A-078 Q2), so it could read a grant file directly. Q5 stops it asking for a grant, not taking one.
   - `grants` on an agent stage is accepted and ignored.
   - Two grants with the same variable in one stage are not refused.
+- 2026-10-20 — owner: “go as recommended” (A-085). Fix the standard 2 findings and the two silent refusals, tests first; record Q5 against A-078; then the adversarial review.

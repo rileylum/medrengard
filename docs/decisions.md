@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-085 — 2026-10-20 — 10-e: fix the standard 2 findings, then the adversarial review
+
+Owner, after 10-e's standard 2 FAIL on `818de56` (one major: no test pins that `verify` keeps a grant's value out of bwrap's argv; three minors: overlapping values defeat redaction, a grant file under a system or runtime root is not refused, `tree.stdout` is not redacted) and the recommendation to fix all four tests first, also refuse `grants` on an agent stage and two grants with one variable in a stage, record the Q5 point against A-078's accepted risk, then run the adversarial review: “go as recommended”.
+
+Effect: the fixes go on `feat/10-e-grants`, tests first, with no further standard review (the budget is spent). The A-078 row in `work/accepted-risks.md` notes that a repository workflow, run at import, could read a grant file, which Q5's refusal does not prevent. Then the adversarial review runs on the fixed head.
+
 ### A-084 — 2026-10-20 — 10-e: owner-run tests waived; run the reviews
 
 Owner, asked to run `npm test` on `231163d` or waive it, and to run or waive the reviews: “run the reviews, don't worry about the tests (though we should do a live run soon)”.
