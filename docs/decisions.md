@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-095 — 2026-10-20 — sweep-head-workflow: merged after the owner's walkthrough
+
+Owner, after the plain-English walkthrough and a worked example of the attack: “Okay, makes sense. Merge and onto the next one”.
+
+Effect: `feat/sweep-head-workflow` merges into main locally with `--no-ff`. A repository workflow is imported only when a local branch or tag outside `sf/*` contains the base. "Merged" keeps the built meaning (any such branch or tag); the owner did not ask for the narrower "default branch only". Before the merge the session folded the two `if (fromRepo)` lines in `loadConfig` into one block (no behaviour change). One fresh in-session review covers the branch (PASS, its finding fixed); the `claude -p` reviews and the adversarial review did not run. The owner did not run `npm test`; the session's run on the final tip (423 tests, 399 pass, 0 fail) is not independent. A-078's accepted-risks row is updated to match.
+
 ### A-094 — 2026-10-20 — learn-refresh: merged after the owner's walkthrough
 
 Owner, after the report that all five batches were done: “Okay all good, merge”.

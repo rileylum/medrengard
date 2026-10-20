@@ -219,8 +219,10 @@ export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = proce
   const runsDir = resolve(spec.runsDir!);
   // The repository's path is relative to the repository; the job file's, already absolute, beats it.
   const fromRepo = repoLayer.workflow !== undefined && job.workflow === undefined;
-  if (fromRepo) checkMerged(repo, base, repoLayer.workflow as string);
-  if (fromRepo) spec.workflow = extractWorkflow(repo, base, repoLayer.workflow as string, runsDir);
+  if (fromRepo) {
+    checkMerged(repo, base, repoLayer.workflow as string);
+    spec.workflow = extractWorkflow(repo, base, repoLayer.workflow as string, runsDir);
+  }
   const workflow = await loadWorkflow(spec.workflow);
   // Only the workflow file was copied; what its commands name beside it comes from the same commit.
   if (fromRepo) extractFiles(repo, base, repoLayer.workflow as string, workflow, runsDir);
