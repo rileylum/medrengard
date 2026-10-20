@@ -26,7 +26,7 @@ export default function mount(el) {
     render();
   });
   $('.esc').addEventListener('click', () => { const id = $('.sel').value; if (id) { store.append(id, { type: 'reject_dispatch', reason: 'demo' }); say(`${id} escalated (reject_dispatch)`); render(); } });
-  $('.cancel').addEventListener('click', () => { const id = $('.sel').value; if (id) { store.append(id, { type: 'cancel' }); say(`${id} cancelled`); render(); } });
+  $('.cancel').addEventListener('click', () => { const id = $('.sel').value; if (id) { store.append(id, { type: 'cancel', source: 'owner' }); say(`${id} cancelled`); render(); } });
   $('.reset').addEventListener('click', reset);
   reset();
 }

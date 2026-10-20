@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>The developer run · Software Factory guide</title>
+<title>The developer · Software Factory guide</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="boot.js"></script>
 <link rel="stylesheet" href="learn.css">
@@ -23,30 +23,45 @@
       <h3>It gets</h3>
       <ul>
         <li>A Git clone of the repository of its own, on a branch named <code>sf/&lt;cycleId&gt;</code>, at the <a class="w" href="words.html#base">base</a> commit.</li>
-        <li>The <a class="w" href="words.html#ticket">ticket</a>, word for word.</li>
+        <li>A prompt: the stage's role text on line 1, then the <a class="w" href="words.html#ticket">ticket</a> word for word, then the core's rules.</li>
         <li>Two rules: commit on this branch and nowhere else; end the reply with a fenced json block naming the commit.</li>
       </ul>
-      <p class="small muted">It runs inside the <a class="w" href="words.html#sandbox">sandbox</a>: it can write its clone and nothing else of yours. <a class="portal" href="sandbox.html">the sandbox</a></p>
+      <p class="small muted">It runs inside the <a class="w" href="words.html#sandbox">sandbox</a>: it can write its clone and nothing else of yours.</p>
     </div>
     <div class="card amber">
       <h3>It gives back a claim</h3>
 <pre><code>{"head": "&lt;full commit sha&gt;", "artifacts": ["&lt;paths&gt;"]}</code></pre>
-      <p>That is all. Not "the tests pass", not "it works". The controller runs the tests itself, later, on a fresh checkout. <a class="portal" href="verify.html">verification</a></p>
-      <p class="small muted">And the controller checks the claimed commit before it believes it. That is the guard further down.</p>
+      <p>That is all. Not "the tests pass", not "it works". The controller runs the tests itself, later, on a fresh checkout. And it checks the claimed commit before it believes it: that is the guard below.</p>
+      <p class="small muted">On a fix run there is one more answer: keep the commit and say why the findings are wrong. That is a <a class="w" href="words.html#dispute">dispute</a>.</p>
     </div>
   </div>
 </section>
 
-<section class="slide" id="prompt" data-lv="1">
-  <h2>Try it: the prompt</h2>
-  <p>This is the real <code>prompt()</code> from <code>src/developer.ts</code>, read from the file and run here. Edit the ticket, then turn on the fix run.</p>
-  <div class="demo real" data-demo="dev-prompt"></div>
-  <p class="small muted">In a fix run the findings come from the reviewer, so they are untrusted text. Look at the second finding: it has a newline and a fake <code>Rules:</code> line inside. <code>oneLine</code> folds every line break into a space, so a finding cannot start a section of its own.</p>
+<section class="slide" id="versions" data-lv="1">
+  <h2>Try it: what changes a prompt's version</h2>
+  <p>A prompt has two parts, and each outcome event records a hash of each. The <b><a class="w" href="words.html#role-text">role text</a></b> is the workflow's: you may change it. The <b>contract</b> is the core's: the claim's shape, the SHAs and the rules the controller parses. Edit either input and watch which hash moves.</p>
+  <div class="demo real" data-demo="dev-versions"></div>
+  <p class="small muted">The ticket changes neither hash. The contract's hash is built once from placeholders, so it names the wording, not one run. That lets you ask the log which runs had which wording, after a reworded role or a new release (09-c).</p>
+</section>
+
+<section class="slide" id="guard" data-lv="2">
+  <h2>Try it: the claim guard</h2>
+  <p>The spec says a developer result must name a commit that exists on the branch, with a non-empty diff. <code>refuse</code> is that rule, in Git. Here the real <code>refuse</code> judges nine things a developer might leave behind, each on a fake repository of its own.</p>
+  <div class="demo real" data-demo="dev-guard"></div>
+  <table class="small">
+    <thead><tr><th>Rule</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Not the base, not the previous candidate</td><td>Nothing new was made; a review would judge a diff it has already judged.</td></tr>
+      <tr><td>The full SHA, at the branch tip</td><td>The tip is what the checks run on. A short SHA could name a different commit later.</td></tr>
+      <tr><td>Descended from the base</td><td>Otherwise <code>base..head</code>, the diff every reviewer reads, means nothing.</td></tr>
+      <tr><td>A changed tree</td><td>An empty commit changes nothing. On a fix run a new commit with the same tree is allowed only on top of the failed one: a new commit message can be the whole fix.</td></tr>
+    </tbody>
+  </table>
 </section>
 
 <section class="slide" id="landing" data-lv="2">
   <h2>How the branch comes back</h2>
-  <p>The clone is the developer's: it could hold anything, including Git config and hooks that would run if the controller's own Git read them. So the controller never runs Git inside it with the owner's rights.</p>
+  <p>The clone is the developer's: it could hold anything, including Git config and hooks that would run if the controller's own Git read them. So the controller never runs Git inside it with your rights.</p>
   <div class="demo" data-demo="dev-land"></div>
   <ol class="steps">
     <li>The repository fetches the clone's branch. The one process that reads the clone, <code>git upload-pack</code>, runs in <a class="w" href="words.html#bwrap">bwrap</a> with the clone read-only, under the stage deadline.</li>
@@ -55,25 +70,14 @@
   </ol>
 </section>
 
-<section class="slide" id="guard" data-lv="2">
-  <h2>Try it: the claim guard</h2>
-  <p>The spec says a developer result must name a commit that exists on the branch, with a non-empty diff. <code>refuse</code> is that rule, in Git. Pick what the developer did. The real <code>refuse</code> runs against a fake repository and says yes, or why not.</p>
-  <div class="demo real" data-demo="dev-guard"></div>
-  <table class="small">
-    <thead><tr><th>Rule</th><th>Why</th></tr></thead>
-    <tbody>
-      <tr><td>Not the base, not the previous candidate</td><td>Nothing new was made; a review would judge a diff it has already judged.</td></tr>
-      <tr><td>The full SHA, at the branch tip</td><td>The tip is what verify checks out. A short SHA could name a different commit later.</td></tr>
-      <tr><td>Descended from the base</td><td>Otherwise <code>base..head</code>, the diff every reviewer reads, means nothing.</td></tr>
-      <tr><td>A changed tree</td><td>An empty commit fixed nothing, and would spend the next review on the same diff.</td></tr>
-    </tbody>
-  </table>
-</section>
-
 <section class="slide" id="fix" data-lv="2">
-  <h2>The fix run</h2>
-  <p>After the first standard FAIL, <a class="w" href="words.html#apply">apply</a> sends the cycle back to DEVELOPING. <code>fix()</code> runs the same developer on the same clone, with the last verdict's findings in the prompt.</p>
-  <p>Before it starts, it checks that the clone is still on the branch and the branch is still at the candidate. Anything else is a head change outside a fix run, which goes to the owner. The guard then also needs a head that is new in SHA and in tree. <a class="portal" href="review.html">the review budget</a></p>
+  <h2>The fix run, and the dispute</h2>
+  <p>When a FAIL sends the cycle back to a commit stage, <code>fix()</code> runs the same developer on the same clone, with the last verdict's findings in the prompt and the stage's <code>fixRoleText</code> on line 1, or its <code>roleText</code> when it has none. Before it starts, it checks that the clone is on the branch and the branch is at the candidate. Anything else is a head change outside a fix run, which goes to you.</p>
+  <p>The findings are untrusted text from a reviewer. <code>oneLine</code> folds every line break in a finding into a space, so a finding cannot open a section of its own, such as a second <code>Rules:</code>.</p>
+  <h3>A dispute</h3>
+  <p>A developer may think a finding is wrong, or that it asks for a change the ticket rules out. Then it commits nothing and claims the previous candidate with a reason:</p>
+<pre><code>{"head": "&lt;the previous candidate&gt;", "artifacts": [], "dispute": "&lt;reason&gt;"}</code></pre>
+  <p>Nothing is fetched and no branch moves. The cycle escalates with the reason, folded to one line and cut at 2 KiB, and no budget is spent. Only you can weigh a dispute against a verdict: cancel, or open a <a class="w" href="words.html#child-cycle">child cycle</a> (07-e).</p>
 </section>
 
 <section class="slide" id="claude-allow" data-lv="2">
@@ -83,24 +87,12 @@
   <pre data-code="src/runtime/cli-adapter.ts#claudeDeveloper"></pre>
 </section>
 
-<section class="slide" id="code-develop" data-lv="3">
-  <h2>develop and fix</h2>
+<section class="slide" id="code" data-lv="3">
+  <h2>Read the code: src/developer.ts and src/prompt.ts</h2>
   <pre data-code="src/developer.ts#develop,fix"></pre>
-</section>
-
-<section class="slide" id="code-guard" data-lv="3">
-  <h2>refuse and land</h2>
   <pre data-code="src/developer.ts#refuse,land"></pre>
-</section>
-
-<section class="slide" id="code-prompt" data-lv="3">
-  <h2>prompt and oneLine</h2>
-  <pre data-code="src/developer.ts#prompt,oneLine"></pre>
-</section>
-
-<section class="slide" id="takeaway" data-lv="1">
-  <h2>Takeaway</h2>
-  <p class="lead">The developer gets a clone and a ticket, and returns one claim: "this commit". The controller fetches the branch itself, in a sandbox, and believes the claim only if the commit is new, at the tip, and changes something.</p>
+  <p>The prompt, its contract, and the hashes:</p>
+  <pre data-code="src/prompt.ts#header,oneLine,developerContract,CONTRACT,developerPrompt"></pre>
 </section>
 
 </main>

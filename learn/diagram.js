@@ -1,6 +1,6 @@
 // SVG flow diagrams: boxes and curved arrows, with a stage that can be lit, edges that can glow
-// as a cycle moves along them, and clicks. LIFECYCLE is the spec's state machine laid out once,
-// for every page that draws it.
+// as a cycle moves along them, and clicks. `layout` lays out any workflow, for every page that
+// draws one.
 const NS = 'http://www.w3.org/2000/svg';
 const el = (tag, attrs = {}, parent) => {
   const e = document.createElementNS(NS, tag);
@@ -18,13 +18,15 @@ function edgePoint(n, tx, ty) {
 
 /**
  * Draw `spec` into `host`. Nodes: { id, x, y, w, h, label ("\n" breaks), cls, title }. Edges:
- * { from, to, label, bend (pixels sideways, + is left of the direction of travel), dashed, cls }.
+ * { from, to, label, bend (pixels sideways, + is left of the direction of travel), dashed, cls, ax
+ * and fx (the x to aim at on the target box, or to leave from on the source), dx (a label offset sideways, set beside the line) }. A spec
+ * with `labels` shows every label; otherwise an escalation's label shows on hover or click.
  * Returns controls for the demos.
  */
 export function flow(host, spec) {
   const { width, height } = spec;
   const id = uid++;
-  const svg = el('svg', { viewBox: `0 0 ${width} ${height}`, class: 'flow', role: 'img' });
+  const svg = el('svg', { viewBox: `0 0 ${width} ${height}`, class: `flow ${spec.labels ? 'labels' : ''}`, role: 'img' });
   const defs = el('defs', {}, svg);
   for (const [name, cls] of [['arrow', 'ah'], ['arrow-hot', 'ah hot'], ['arrow-trail', 'ah trail']]) {
     const m = el('marker', { id: `${name}-${id}`, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, defs);
@@ -33,16 +35,20 @@ export function flow(host, spec) {
   const nodes = new Map(spec.nodes.map((n) => [n.id, { w: 120, h: 46, ...n }]));
   const edgeLayer = el('g', {}, svg), nodeLayer = el('g', {}, svg);
   const edges = spec.edges.map((e) => {
-    const a = nodes.get(e.from), b = nodes.get(e.to);
+    const from = nodes.get(e.from), to = nodes.get(e.to);
+    // `fx` and `ax`: leave from, or aim at, this x on the box, not its centre, so arrows into or out
+    // of a wide box drop straight.
+    const a = e.fx === undefined ? from : { ...from, x: e.fx, w: 4 };
+    const b = e.ax === undefined ? to : { ...to, x: e.ax, w: 4 };
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
     const cx = mx + ((b.y - a.y) / len) * (e.bend ?? 0), cy = my - ((b.x - a.x) / len) * (e.bend ?? 0);
     const [x1, y1] = edgePoint(a, cx, cy), [x2, y2] = edgePoint(b, cx, cy);
     const g = el('g', { class: `edge ${e.cls ?? ''} ${e.dashed ? 'dashed' : ''}` }, edgeLayer);
     const path = el('path', { d: `M${x1},${y1} Q${cx},${cy} ${x2},${y2}`, 'marker-end': `url(#arrow-${id})` }, g);
     if (e.label) {
-      const lx = 0.25 * x1 + 0.5 * cx + 0.25 * x2, ly = 0.25 * y1 + 0.5 * cy + 0.25 * y2 + (e.dy ?? -6);
+      const lx = 0.25 * x1 + 0.5 * cx + 0.25 * x2 + (e.dx ?? 0), ly = 0.25 * y1 + 0.5 * cy + 0.25 * y2 + (e.dy ?? -6);
       const lines = e.label.split('\n');
-      const t = el('text', { x: lx, y: ly - (lines.length - 1) * 6, class: 'elabel' }, g);
+      const t = el('text', { x: lx, y: ly - (lines.length - 1) * 6, class: 'elabel', style: e.dx ? 'text-anchor: start' : undefined }, g);
       lines.forEach((line, i) => { const s = el('tspan', { x: lx, dy: i ? 12 : 0 }, t); s.textContent = line; });
     }
     return { ...e, g, path };
@@ -94,36 +100,48 @@ export function flow(host, spec) {
 }
 let uid = 0;
 
-const X = (i) => 80 + i * 168;
-const W = 136;
-/** The spec's states and transitions (docs/specs/core-lifecycle-v1.md). */
-export const LIFECYCLE = {
-  width: 1180, height: 330,
-  nodes: [
+/**
+ * Any workflow laid out as a flow: QUEUED, then the stages in the order PASS visits them, then
+ * ACCEPTED along the top; ESCALATED as a bar underneath, so each stage's arrow into it drops
+ * straight down and no two labels meet; CANCELLED at the bottom right. Stages PASS never reaches
+ * come after the rest. A FAIL that goes back to an earlier stage arcs over the top.
+ */
+export function layout(w) {
+  const order = [];
+  for (let s = w.start; w.stages[s] && !order.includes(s); s = w.stages[s].transitions.PASS) order.push(s);
+  for (const s of Object.keys(w.stages)) if (!order.includes(s)) order.push(s);
+  const step = 168, W = 136;
+  const X = (i) => 80 + i * step;
+  const label = (s) => s.replace(/_/, '\n');
+  const nodes = [
     { id: 'QUEUED', x: X(0), y: 120, w: W, label: 'QUEUED' },
-    { id: 'DEVELOPING', x: X(1), y: 120, w: W, label: 'DEVELOPING' },
-    { id: 'VERIFYING', x: X(2), y: 120, w: W, label: 'VERIFYING' },
-    { id: 'STANDARD_REVIEW', x: X(3), y: 120, w: W, label: 'STANDARD\nREVIEW' },
-    { id: 'ADVERSARIAL_REVIEW', x: X(4), y: 120, w: W, label: 'ADVERSARIAL\nREVIEW' },
-    { id: 'AWAITING_ACCEPTANCE', x: X(5), y: 120, w: W, label: 'AWAITING\nACCEPTANCE' },
-    { id: 'ACCEPTED', x: X(6), y: 120, w: W - 20, label: 'ACCEPTED', cls: 'good' },
-    { id: 'ESCALATED', x: X(3), y: 280, w: W + 20, label: 'ESCALATED', cls: 'bad' },
-    { id: 'CANCELLED', x: X(6), y: 280, w: W - 20, label: 'CANCELLED', cls: 'grey' },
-  ],
-  edges: [
-    { from: 'QUEUED', to: 'DEVELOPING', label: 'claim' },
-    { from: 'DEVELOPING', to: 'VERIFYING', label: 'result' },
-    { from: 'VERIFYING', to: 'STANDARD_REVIEW', label: 'checks\nPASS' },
-    { from: 'STANDARD_REVIEW', to: 'ADVERSARIAL_REVIEW', label: 'PASS' },
-    { from: 'ADVERSARIAL_REVIEW', to: 'AWAITING_ACCEPTANCE', label: 'PASS' },
-    { from: 'AWAITING_ACCEPTANCE', to: 'ACCEPTED', label: 'accept\nSHA' },
-    { from: 'STANDARD_REVIEW', to: 'DEVELOPING', label: '1st FAIL: fix run on the findings', bend: -62, cls: 'fix', dy: -4 },
-    { from: 'DEVELOPING', to: 'ESCALATED', label: 'bad result,\ncrash, timeout', bend: 18, cls: 'esc' },
-    { from: 'VERIFYING', to: 'ESCALATED', label: 'check FAIL\nor MISSING', bend: 6, cls: 'esc' },
-    { from: 'STANDARD_REVIEW', to: 'ESCALATED', label: '2nd FAIL', cls: 'esc' },
-    { from: 'ADVERSARIAL_REVIEW', to: 'ESCALATED', label: 'FAIL', bend: -6, cls: 'esc' },
-    { from: 'AWAITING_ACCEPTANCE', to: 'ESCALATED', label: 'request\nchanges', bend: -18, cls: 'esc' },
-    { from: 'ESCALATED', to: 'CANCELLED', label: 'owner cancels\n(from any open stage too)', cls: 'grey', dy: 18 },
-    { from: 'ESCALATED', to: 'QUEUED', label: 'owner opens a child cycle (0,0)', bend: -40, dashed: true, cls: 'child', dy: 22 },
-  ],
-};
+    ...order.map((s, i) => ({ id: s, x: X(i + 1), y: 120, w: W, label: label(s), cls: `kind-${w.stages[s].kind}`, title: `${w.stages[s].kind} stage` })),
+    { id: 'ACCEPTED', x: X(order.length + 1), y: 120, w: W - 20, label: 'ACCEPTED', cls: 'good' },
+  ];
+  const left = X(1) - W / 2, right = X(order.length) + W / 2;
+  nodes.push({ id: 'ESCALATED', x: (left + right) / 2, y: 290, w: right - left, h: 40, label: 'ESCALATED', cls: 'bad' });
+  nodes.push({ id: 'CANCELLED', x: X(order.length + 1), y: 290, w: W - 20, h: 40, label: 'CANCELLED', cls: 'grey' });
+  const at = (s) => nodes.find((n) => n.id === s).x;
+  const passLabel = { agent: (d) => (d.produces === 'commit' ? 'result' : 'PASS'), command: () => 'checks\nPASS', human: () => 'accept\nSHA' };
+  const edges = [{ from: 'QUEUED', to: w.start, label: 'claim' }];
+  for (const s of order) {
+    const d = w.stages[s];
+    edges.push({ from: s, to: d.transitions.PASS, label: passLabel[d.kind](d) });
+    const fail = d.transitions.FAIL;
+    const back = fail !== undefined && fail !== 'ESCALATED' && w.stages[fail];
+    if (back) {
+      const span = Math.abs(order.indexOf(s) - order.indexOf(fail));
+      edges.push({ from: s, to: fail, label: `FAIL${d.budget ? ` (budget ${d.budget})` : ''}`, bend: -40 - 22 * span, cls: 'fix', dy: -4 });
+    } else if (fail === 'CANCELLED' || fail === 'ACCEPTED') {
+      edges.push({ from: s, to: fail, label: 'FAIL', cls: 'esc' });
+    }
+    // Every stage escalates on what it cannot classify; the label names the usual reason.
+    const why = d.kind === 'human' ? 'request\nchanges' : d.kind === 'command' ? 'FAIL or\nMISSING'
+      : d.produces === 'commit' ? 'no usable\nclaim' : back ? 'FAIL at\nlimit' : 'FAIL';
+    edges.push({ from: s, to: 'ESCALATED', ax: at(s), label: why, cls: 'esc', dy: 4, dx: 6 });
+  }
+  edges.push({ from: 'ESCALATED', to: 'CANCELLED', label: 'owner cancels\n(from any open stage too)', cls: 'grey', dy: 36 });
+  edges.push({ from: 'ESCALATED', to: 'QUEUED', fx: left + 8, label: 'owner opens\na child cycle', bend: 30, dashed: true, cls: 'child', dy: 10 });
+  // Every label shows: the arrows into ESCALATED drop straight, so their labels cannot meet.
+  return { width: X(order.length + 1) + 80, height: 350, nodes, edges, order, labels: true };
+}

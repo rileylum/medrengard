@@ -1,6 +1,6 @@
 // A Git repository small enough to hold in a page: commits are a parent, a tree (path to text)
 // and a message, refs are names to SHAs. `git` and `gitStatus` answer the handful of commands
-// the controller's guards run (src/developer.ts#refuse, src/review.ts#buildPrompt), with the
+// the controller's guards run (src/developer.ts#refuse, src/review.ts#gather), with the
 // same output and exit codes as real Git, so those functions can run here unchanged.
 
 // 40 hex characters from five FNV-1a passes with different seeds. Not SHA-1; just stable.
@@ -102,7 +102,7 @@ const fail = (args, msg, status = 128) => Object.assign(new Error(`git ${args.jo
 
 /**
  * src/git.ts#git over a Repo: output trimmed, a failure thrown. Answers rev-parse, cat-file -t,
- * ls-tree, show, diff and diff --name-status; anything else throws so a demo shows it plainly.
+ * ls-tree, show, diff, diff --name-status and log; anything else throws so a demo shows it plainly.
  */
 export function gitFor(repos) {
   const repo = (cwd) => repos[cwd] ?? Object.values(repos)[0];
@@ -122,6 +122,14 @@ export function gitFor(repos) {
       const [a, b] = pos.map((x) => r.resolve(x));
       if (!a || !b) throw fail(args, 'fatal: bad revision');
       return (rest.includes('--name-status') ? r.nameStatus(a, b) : r.diff(a, b)).trim();
+    }
+    if (cmd === 'log') {
+      // `log --reverse --format=... base..head`, in src/review.ts's COMMIT_FORMAT: SHA, author, indented message.
+      const [a, b] = pos[0].split('..').map((x) => r.resolve(x));
+      if (!a || !b) throw fail(args, 'fatal: bad revision');
+      const commits = r.log(b).filter((c) => !r.isAncestor(c.sha, a));
+      if (rest.includes('--reverse')) commits.reverse();
+      return commits.map((c) => `commit ${c.sha}\nAuthor: Developer <developer@example.com>\n\n    ${c.message}`).join('\n\n');
     }
     throw fail(args, 'not simulated in the guide');
   };

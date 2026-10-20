@@ -1,87 +1,92 @@
-// Every path through the review budget: two standard reviews and one adversarial per cycle. The
-// reader picks PASS or FAIL at each review; the events go through the real apply and openChild
-// from src/lifecycle.ts, which decide where the cycle goes and what the counters say.
-import { apply, newCycle, openChild } from '/src/lifecycle.ts';
-import { flow } from '../diagram.js';
+// Every path through a workflow's review budget, all at once. Each row is one way the verdicts
+// can fall, played through the real apply from src/lifecycle.ts: a commit stage gets a new head,
+// a command stage a passing verification, a review stage each verdict in turn, until the cycle
+// waits for the owner or stops. Below, the events that look like reviews but are counted
+// differently, played the same way under the default workflow.
+import { apply, defaultWorkflow, newCycle } from '/src/lifecycle.ts';
 import { esc } from '../live.js';
+import { WORKFLOWS } from '../shims/world.js';
 
-const TREE = {
-  width: 1000, height: 330,
-  nodes: [
-    { id: 's1', x: 90, y: 165, w: 120, label: 'standard\nreview 1' },
-    { id: 'a1', x: 290, y: 70, w: 120, label: 'adversarial\nreview' },
-    { id: 'fix', x: 290, y: 250, w: 130, label: 'fix run,\nverify again' },
-    { id: 'ok1', x: 500, y: 30, w: 160, label: 'AWAITING (1,1)', cls: 'good' },
-    { id: 'esc1', x: 500, y: 110, w: 160, label: 'ESCALATED (1,1)', cls: 'bad' },
-    { id: 's2', x: 500, y: 250, w: 120, label: 'standard\nreview 2' },
-    { id: 'a2', x: 700, y: 190, w: 120, label: 'adversarial\nreview' },
-    { id: 'esc3', x: 700, y: 300, w: 160, label: 'ESCALATED (2,0)', cls: 'bad' },
-    { id: 'ok2', x: 900, y: 140, w: 160, label: 'AWAITING (2,1)', cls: 'good' },
-    { id: 'esc2', x: 900, y: 240, w: 160, label: 'ESCALATED (2,1)', cls: 'bad' },
-  ],
-  edges: [
-    { from: 's1', to: 'a1', label: 'PASS' }, { from: 's1', to: 'fix', label: 'FAIL' },
-    { from: 'a1', to: 'ok1', label: 'PASS' }, { from: 'a1', to: 'esc1', label: 'FAIL' },
-    { from: 'fix', to: 's2', label: 'new SHA' },
-    { from: 's2', to: 'a2', label: 'PASS' }, { from: 's2', to: 'esc3', label: 'FAIL' },
-    { from: 'a2', to: 'ok2', label: 'PASS' }, { from: 'a2', to: 'esc2', label: 'FAIL' },
-  ],
-};
-const NEXT = { s1: { PASS: 'a1', FAIL: 'fix' }, a1: { PASS: 'ok1', FAIL: 'esc1' }, s2: { PASS: 'a2', FAIL: 'esc3' }, a2: { PASS: 'ok2', FAIL: 'esc2' } };
-const PASSING = [{ name: 'test', result: 'PASS' }];
+const BASE = 'b'.repeat(40);
+const head = (n) => String(n).repeat(40);
+
+/** Each sequence of verdicts the workflow allows, with the events it took and where it ended. */
+function paths(w) {
+  const out = [];
+  const walk = (cycle, events, verdicts, heads, runs) => {
+    // A new cycle is QUEUED; its first claim enters the start stage.
+    const def = w.stages[cycle.stage === 'QUEUED' ? w.start : cycle.stage];
+    const step = (e) => { const c = apply(cycle, e, w); return [c, [...events, e]]; };
+    if (!def || def.kind === 'human') return out.push({ cycle, events, verdicts });
+    if (def.kind === 'command') return walk(...step({ type: 'verification', head: head(heads), checks: [{ name: 'test', result: 'PASS' }] }), verdicts, heads, runs);
+    if (def.produces === 'commit') {
+      const runId = `dev${runs + 1}`;
+      const [c1, e1] = step({ type: 'claim', runId, base: BASE, runtime: 'claude' });
+      const c2 = apply(c1, { type: 'developer_result', runId, head: head(heads + 1), artifacts: ['src/todo.js'] }, w);
+      return walk(c2, [...e1, c2.history.at(-1).event], verdicts, heads + 1, runs + 1);
+    }
+    for (const verdict of ['PASS', 'FAIL']) {
+      const [c, e] = step({ type: 'verdict', runId: `${def.role}-${verdicts.length + 1}`, head: head(heads), verdict, ...(verdict === 'FAIL' ? { findings: ['src/todo.js:9 — a finding'] } : {}) });
+      walk(c, e, [...verdicts, [cycle.stage, verdict]], heads, runs);
+    }
+  };
+  walk(newCycle('c1', 'todo-01'), [], [], 0, 0);
+  return out;
+}
+
+// The events that land in a review stage but are not a fresh verdict on the candidate.
+const ODD = [
+  ['A verdict for the previous SHA, after a fix run', [['STANDARD_REVIEW', 'FAIL']], (h) => ({ type: 'verdict', runId: 'late', head: h.previous, verdict: 'PASS' })],
+  ['A reviewer that crashes or times out', [], () => ({ type: 'run_failed', runId: 'std-crash', reason: 'timeout' })],
+  ['The same verdict delivered twice', [['STANDARD_REVIEW', 'PASS', 'again']], () => null],
+];
 
 export default function mount(el) {
-  el.innerHTML = `<div class="tree"></div>
-    <div class="row"><span class="pill stage st"></span><span class="small">standard <b class="cs"></b>/2 · adversarial <b class="ca"></b>/1</span>
-      <span style="flex:1"></span><button class="good pass">PASS</button><button class="bad fail">FAIL</button><button class="extra" title="What if a verdict arrives after the cycle has stopped?">send one more verdict</button><button class="child owner">open a child cycle</button><button class="again">start over</button></div>
-    <p class="small say"></p>
+  el.innerHTML = `
+    <div class="row"><label>Workflow</label><select class="wf">${['default', 'light'].map((k) => `<option value="${k}">${esc(WORKFLOWS[k].label)}</option>`).join('')}</select></div>
+    <table class="small paths"><thead><tr><th>the verdicts, in order</th><th>ends at</th><th>budget used</th><th>why it stopped</th></tr></thead><tbody></tbody></table>
+    <h3>Counted differently <span class="dim small">(default workflow)</span></h3>
+    <table class="small odd"><thead><tr><th>what happens</th><th>ends at</th><th>budget used</th><th>apply's note</th></tr></thead><tbody></tbody></table>
+    <p class="small dim">Click a row for its events.</p>
     <pre class="small wrap events" style="max-height:220px"></pre>`;
   const $ = (s) => el.querySelector(s);
-  const d = flow($('.tree'), TREE);
-  let cycle, at, head, n;
+  let rows = [];
+  const used = (w, c) => Object.entries(w.stages).filter(([, d]) => d.budget).map(([s, d]) => `${s} ${c.budgets[s] ?? 0}/${d.budget}`).join(', ');
+  const pill = (stage) => `<span class="pill ${stage === 'ESCALATED' ? 'ESCALATED' : 'PASS'}">${esc(stage)}</span>`;
 
-  const push = (e) => { const before = cycle.stage; cycle = apply(cycle, e); log(e, before); };
-  const log = (e, before) => {
-    const h = cycle.history.at(-1);
-    $('.events').textContent += `${JSON.stringify(e)}\n    ${before} → ${cycle.stage}${h.note ? `   (${h.note})` : ''}\n`;
-  };
-  function start(parent) {
-    cycle = parent ? openChild(parent, `child-${Date.now() % 1000}`) : newCycle('c1', 'todo-01');
-    n = 0; head = 'H1'; at = 's1';
-    $('.events').textContent = parent ? `openChild(parent ${parent.cycleId}) → new cycle ${cycle.cycleId}, parent link kept, counters (${cycle.standard},${cycle.adversarial})\n` : '';
-    for (const e of [{ type: 'claim', runId: 'dev1', base: 'B', runtime: 'claude' }, { type: 'developer_result', runId: 'dev1', head, artifacts: ['src/todo.js'] }, { type: 'verification', head, checks: PASSING }]) push(e);
-    d.reset(); d.current('s1'); render();
-  }
-  function verdict(v) {
-    const role = cycle.stage === 'ADVERSARIAL_REVIEW' ? 'ar' : 'sr';
-    push({ type: 'verdict', runId: `${role}${++n}`, head, verdict: v, ...(v === 'FAIL' ? { findings: ['src/todo.js:10 — finding'] } : {}) });
-    const to = NEXT[at][v];
-    d.travel(at, to);
-    at = to;
-    if (at === 'fix') {
-      // The fix run: a new developer run, a new SHA, verified again. The counters are carried.
-      head = 'H2';
-      for (const e of [{ type: 'claim', runId: 'dev2', base: 'B', runtime: 'claude' }, { type: 'developer_result', runId: 'dev2', head, artifacts: ['src/todo.js'] }, { type: 'verification', head, checks: PASSING }]) push(e);
-      d.current('fix');
-      setTimeout(() => { d.travel('fix', 's2'); at = 's2'; d.current('s2'); render(); }, 700);
-    }
-    d.current(at); render();
-  }
   function render() {
-    const reviewing = cycle.stage === 'STANDARD_REVIEW' || cycle.stage === 'ADVERSARIAL_REVIEW';
-    $('.st').textContent = cycle.stage; $('.cs').textContent = cycle.standard; $('.ca').textContent = cycle.adversarial;
-    $('.pass').disabled = $('.fail').disabled = !reviewing || at === 'fix';
-    $('.child').disabled = cycle.stage !== 'ESCALATED';
-    $('.extra').disabled = reviewing;
-    $('.say').innerHTML = reviewing ? `The ${cycle.stage === 'STANDARD_REVIEW' ? 'standard' : 'adversarial'} reviewer is looking at <code>${head}</code>. Pick its verdict.`
-      : cycle.stage === 'AWAITING_ACCEPTANCE' ? 'Both kinds of review passed. The owner now accepts the exact SHA, or not. Nothing merges by itself.'
-      : cycle.stage === 'ESCALATED' ? `Stopped: <b>${esc(cycle.escalation)}</b>. No automatic retry. The owner can cancel, or open a child cycle, which starts its own budget at (0, 0); this cycle keeps its counters and stays ESCALATED.`
-      : cycle.stage === 'DEVELOPING' ? 'A fix run is starting on the findings…' : '';
+    const w = WORKFLOWS[$('.wf').value].workflow;
+    const all = paths(w);
+    rows = all.map((p) => ({ events: p.events, cycle: p.cycle, w }));
+    $('.paths tbody').innerHTML = all.map((p, i) => `<tr data-i="${i}" style="cursor:pointer"><td>${p.verdicts.map(([s, v]) => `${esc(s.toLowerCase().replace('_review', '').replaceAll('_', ' '))} <span class="pill ${v}">${v}</span>`).join(' → ')}</td>
+      <td>${pill(p.cycle.stage)}</td><td class="mono">${used(w, p.cycle)}</td><td>${esc(p.cycle.escalation ?? 'waits for the owner')}</td></tr>`).join('');
   }
-  $('.pass').addEventListener('click', () => verdict('PASS'));
-  $('.fail').addEventListener('click', () => verdict('FAIL'));
-  $('.extra').addEventListener('click', () => { push({ type: 'verdict', runId: `late${++n}`, head, verdict: 'PASS' }); render(); });
-  $('.child').addEventListener('click', () => start(cycle));
-  $('.again').addEventListener('click', () => start());
-  start();
+
+  // The odd cases, under the default workflow: the path up to the review, then the odd event.
+  const oddRows = [];
+  const odd = ODD.map(([label, before, make], i) => {
+    const w = defaultWorkflow;
+    let c = newCycle('c1', 'todo-01');
+    const events = [];
+    const push = (e) => { c = apply(c, e, w); events.push(e); };
+    const develop = (n) => { push({ type: 'claim', runId: `dev${n}`, base: BASE, runtime: 'claude' }); push({ type: 'developer_result', runId: `dev${n}`, head: head(n), artifacts: ['src/todo.js'] }); push({ type: 'verification', head: head(n), checks: [{ name: 'test', result: 'PASS' }] }); };
+    develop(1);
+    for (const [, v] of before) push({ type: 'verdict', runId: 'std-1', head: head(1), verdict: v });
+    if (before[0]?.[1] === 'FAIL') develop(2);
+    const e = make({ previous: head(1) }) ?? { type: 'verdict', runId: 'std-1', head: head(1), verdict: 'PASS' };
+    push(e);
+    oddRows.push({ events, cycle: c, w });
+    return `<tr data-i="odd-${i}" style="cursor:pointer"><td>${esc(label)}</td><td>${pill(c.stage)}</td><td class="mono">${used(w, c)}</td><td>${esc(c.history.at(-1).note ?? '')}</td></tr>`;
+  });
+  $('.odd tbody').innerHTML = odd.join('');
+
+  el.addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-i]');
+    if (!tr) return;
+    const r = tr.dataset.i.startsWith('odd-') ? oddRows[Number(tr.dataset.i.slice(4))] : rows[Number(tr.dataset.i)];
+    let c = newCycle('c1', 'todo-01');
+    $('.events').textContent = r.events.map((ev) => { const from = c.stage; c = apply(c, ev, r.w); const h = c.history.at(-1); return `${JSON.stringify(ev)}\n    ${from} → ${c.stage}${h.note ? `   (${h.note})` : ''}`; }).join('\n');
+  });
+  $('.wf').addEventListener('change', render);
+  render();
 }

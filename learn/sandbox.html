@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>The sandbox · Software Factory guide</title>
+<title>Sandbox and secrets · Software Factory guide</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="boot.js"></script>
 <link rel="stylesheet" href="learn.css">
@@ -21,17 +21,17 @@
     <div>
       <p class="lead">The factory runs code nobody has reviewed yet: the developer's commit, its tests, its build scripts. Any of it could be wrong, and some of it could be hostile.</p>
       <p>So everything that touches candidate code runs inside a <a class="w" href="words.html#sandbox">sandbox</a>: <a class="w" href="words.html#bwrap">bubblewrap</a>, a small Linux tool that starts a process in its own namespaces and shows it only the directories it is given.</p>
-      <p>The defences need not be airtight (A-037). What matters first is that a run cannot damage the owner's machine or leave its remit; malicious code comes second.</p>
+      <p>The defences need not be airtight (A-037). What matters first is that a run cannot damage your machine or leave its remit; malicious code comes second.</p>
     </div>
     <div class="card amber">
       <h3>Everyone gets</h3>
       <ul class="small">
         <li>The system directories (<code>/usr</code>, <code>/etc</code>, <code>/opt</code>…) read-only</li>
         <li>A private <code>/tmp</code></li>
-        <li>An empty environment: only PATH, HOME and LANG</li>
+        <li>A cleared environment: PATH, HOME and LANG, and what the stage sets, such as <code>SF_REQUEST</code></li>
         <li>No view of the owner's home, other runs, or the repository's <code>.git</code></li>
       </ul>
-      <p class="small muted">The owner can add read-only roots with <code>sandbox.read</code> in the job file, for a toolchain outside <code>/usr</code>.</p>
+      <p class="small muted">You can add read-only roots with <code>sandbox.read</code> in your personal or job file, for a toolchain outside <code>/usr</code>. A repository cannot: it may not set <code>sandbox</code> at all.</p>
     </div>
   </div>
 </section>
@@ -42,12 +42,13 @@
     <thead><tr><th>Who</th><th>Writes</th><th>Reads (beyond the system)</th><th>Network</th></tr></thead>
     <tbody>
       <tr><td><b>Developer</b></td><td>its own clone of the repository</td><td>its CLI's binary and config</td><td>yes: it talks to the model</td></tr>
-      <tr><td><b>Checks</b></td><td>the fresh checkout</td><td>nothing more</td><td><b>no</b></td></tr>
+      <tr><td><b>A command stage</b></td><td>the fresh checkout, and its <code>output/</code></td><td>its own evidence folder: the request, the diff, the file copies</td><td><b>no</b>, unless the stage sets <code>network: true</code></td></tr>
+      <tr><td><b>A grant stage</b></td><td>the same</td><td>the same, and its grants' values in its environment</td><td>yes: it must</td></tr>
       <tr><td><b>Reviewers</b></td><td>nothing</td><td>the checkout, its CLI's binary and config</td><td>yes: it talks to the model</td></tr>
       <tr><td><b>git upload-pack</b></td><td>nothing</td><td>the developer's clone</td><td>no</td></tr>
     </tbody>
   </table>
-  <p class="small muted">Runs keep their network and can read their own CLI's credentials. The owner accepted that when lifting the scratch-repositories-only limit (A-043).</p>
+  <p class="small muted">Runs keep their network and can read their own CLI's credentials. You accepted that when lifting the scratch-repositories-only limit (A-043).</p>
 </section>
 
 <section class="slide" id="builder" data-lv="2">
@@ -55,6 +56,24 @@
   <p>Each stage builds a <code>Policy</code> for what it spawns. The factory's <code>wrap</code> turns it into the bubblewrap command line. Pick who runs, then change anything: add a write root, turn the network on, switch the backend to <code>none</code>. The table on the right shows what the command can then see.</p>
   <p class="small muted">Put a relative path, or one that does not exist, into sandbox.read: <code>checkSandbox</code> refuses at setup rather than failing every check later.</p>
   <div class="demo real" data-demo="sb-policy"></div>
+</section>
+
+<section class="slide" id="grants" data-lv="1">
+  <h2>Try it: follow a secret</h2>
+  <p>A stage that acts outward, such as a merge, needs a credential. That is a <a class="w" href="words.html#grant">grant</a>: the workflow asks for it by name, and only your personal or job file gives it. Here a MERGE stage holds the grant <code>forge</code>. The table looks for the token in every place the factory writes or passes things.</p>
+  <div class="demo real" data-demo="sb-grant"></div>
+  <p class="small muted">Make the command print the token, or write it to <code>output/head</code>: the evidence shows <code>[grant forge]</code> instead. Tick the older verdict, or the <code>none</code> backend: the stage never runs.</p>
+</section>
+
+<section class="slide" id="grant-rules" data-lv="2">
+  <h2>The rules a grant keeps</h2>
+  <div class="cols">
+    <div class="card violet"><h3>Who gives it</h3><p class="small">Only your personal or job file, as <code>{ "variable": "FORGE_TOKEN", "file": "…" }</code>. A repository can neither give a grant nor, in its own workflow, ask for one. The file must be outside the repository, and outside every root another sandbox reads; the variable may not be PATH, HOME, LANG or SF_REQUEST.</p></div>
+    <div class="card amber"><h3>Which stage holds it</h3><p class="small">A command stage with its own <code>run</code> and <code>network: true</code>, whose FAIL goes to ESCALATED, never round again. Under the <code>none</code> backend no stage may hold one: the developer could read the file too. <code>run</code> checks all this before the developer starts.</p></div>
+    <div class="card red"><h3>When it may run</h3><p class="small">Only on a reviewed head: every stage's last verdict, verification and acceptance must name the candidate, and at least one PASS verdict must. A workflow could route a fix past its reviews; this gate stops the token acting on code nobody passed.</p></div>
+    <div class="card cyan"><h3>What it must report</h3><p class="small">The stage writes the head it acted on to <code>output/head</code>. A missing or different head records a FAIL <code>head</code> check, and the cycle escalates: a merge of the wrong commit shows.</p></div>
+  </div>
+  <p class="small" style="margin-top:12px">What a grant does not stop: a stage misusing the token it was given (A-074). The rules bound where the value goes and when the stage runs, not what its commands do.</p>
 </section>
 
 <section class="slide" id="rogues" data-lv="2">
@@ -68,7 +87,8 @@
     <div class="card red"><h3>Gitlinks and dangling links</h3><p>A committed submodule entry and a symlink to nowhere survived the clean-up before review.</p><p><b>Now:</b> gitlinks are emptied and checked, dangling symlinks removed.</p><a href="/docs/work/08-d-reviewer-sandbox.md" target="_blank">08-d</a></div>
     <div class="card red"><h3>A FIFO where a file should be</h3><p>A named pipe left where Git opens a file blocked the controller's Git forever, and with it every deadline.</p><p><b>Now:</b> every controller Git call over a tree a run wrote is killed at the stage deadline.</p><a href="/docs/work/08-e-reviewer-sandbox-tests.md" target="_blank">08-e</a> · <a href="/docs/work/08-f-controller-git-timeout.md" target="_blank">08-f</a></div>
     <div class="card red"><h3>Typing into the owner's terminal</h3><p>A process sharing the controller's terminal can push keystrokes into it with the TIOCSTI ioctl.</p><p><b>Now:</b> <code>--new-session</code>.</p><a href="/docs/work/08-a-findings.md" target="_blank">08-a findings</a></div>
-    <div class="card red"><h3>Tokens in the environment</h3><p>The controller's environment may hold API tokens and the owner's settings.</p><p><b>Now:</b> <code>--clearenv</code>, then only PATH, HOME and LANG.</p><a href="/docs/work/08-a-sandboxed-checks.md" target="_blank">08-a</a></div>
+    <div class="card red"><h3>Tokens in the environment</h3><p>The controller's environment may hold API tokens and your settings.</p><p><b>Now:</b> <code>--clearenv</code>, then only PATH, HOME, LANG and what the stage sets.</p><a href="/docs/work/08-a-sandboxed-checks.md" target="_blank">08-a</a></div>
+    <div class="card red"><h3>A token in argv</h3><p><code>--setenv</code> would put a grant's value in bwrap's argv, which any process can read in <code>/proc</code>. A review found no test would catch a change that moved it there.</p><p><b>Now:</b> secrets reach the command only through the spawn environment, and every other name is unset.</p><a href="/docs/work/10-e-grants.md" target="_blank">10-e</a></div>
   </div>
   <p class="small muted" style="margin-top:12px">What is still open is listed in <a href="/docs/work/parked.md" target="_blank">parked.md</a> and <a href="/docs/work/accepted-risks.md" target="_blank">accepted-risks.md</a>.</p>
 </section>
@@ -79,24 +99,13 @@
   <p>Before the paid developer run starts, the loop calls <code>checkSandbox</code>. It starts a trivial command in bubblewrap. If that fails (no bubblewrap, no unprivileged user namespaces), the run stops at setup instead of failing every check as if the candidate were wrong.</p>
 </section>
 
-<section class="slide" id="code-types" data-lv="3">
-  <h2>src/sandbox.ts: Sandbox and Policy</h2>
-  <pre data-code="src/sandbox.ts#Sandbox,Policy"></pre>
-</section>
-
-<section class="slide" id="code-wrap" data-lv="3">
-  <h2>src/sandbox.ts: wrap and binds</h2>
-  <pre data-code="src/sandbox.ts#wrap,binds"></pre>
-</section>
-
-<section class="slide" id="code-check" data-lv="3">
-  <h2>src/sandbox.ts: reachable and checkSandbox</h2>
+<section class="slide" id="code" data-lv="3">
+  <h2>Read the code: src/sandbox.ts, and grants in src/verify.ts</h2>
+  <pre data-code="src/sandbox.ts#Sandbox,Policy,spawnEnv"></pre>
+  <pre data-code="src/sandbox.ts#wrap,wrapBwrap,binds"></pre>
   <pre data-code="src/sandbox.ts#reachable,checkSandbox"></pre>
-</section>
-
-<section class="slide" id="takeaway" data-lv="1">
-  <h2>Takeaway</h2>
-  <p class="lead">Every process that runs candidate code gets a box built for its job: write only what it must, read only what it needs, no network for checks, no environment, no terminal. The box is one function, so it can change backend without touching the rest.</p>
+  <p>Where a grant is checked, gated and redacted:</p>
+  <pre data-code="src/verify.ts#stageGrants,headGate,redactAll,headFile"></pre>
 </section>
 
 </main>

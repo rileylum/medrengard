@@ -1,28 +1,37 @@
 // src/store.ts for the browser. Same API and the same rules, with the SQLite table replaced by an
-// array of rows: row 0 of a cycle is the open marker, every append is checked as serialised bytes
-// with the real isEvent, a second outcome for a run ID writes nothing, and load replays the log
-// through the real apply. Keep it in step with src/store.ts; learn/learn.test.ts checks that it
-// exports what src/ imports from there.
-import { apply, isEvent, newCycle } from '/src/lifecycle.ts';
+// array of rows: row 0 of a cycle is the open marker with the workflow's name, hash and
+// definition; every append is checked as serialised bytes with the real isEvent; a second outcome
+// for a run ID writes nothing; each row gets a store-wide `pos` and a time `at`; load refuses a
+// cycle opened under another workflow and replays the log through the real apply. Keep it in step
+// with src/store.ts; learn/learn.test.ts checks that it exports what src/ imports from there.
+import { createHash } from 'node:crypto';
+import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle } from '/src/lifecycle.ts';
 
 export const SETTLED = ['ESCALATED', 'ACCEPTED', 'CANCELLED'];
 export class UnclassifiableEvent extends Error {}
 
-const DEDUP = ['developer_result', 'verdict', 'run_failed'];
+export const workflowHash = (w) => createHash('sha256').update(JSON.stringify(w)).digest('hex');
+export const DEFAULT_RECORD = { name: defaultWorkflow.name, hash: workflowHash(defaultWorkflow) };
+
+const DEDUP = ['developer_result', 'verdict', 'run_failed', 'dispute'];
 
 export class EventStore {
-  constructor(path = ':memory:') {
+  constructor(path = ':memory:', workflow = defaultWorkflow, table = []) {
+    const refused = checkWorkflow(workflow);
+    if (refused.length > 0) throw new Error(`workflow refused: ${refused.join('; ')}`);
     this.path = path;
-    /** { cycle_id, seq, type, run_id, body } — the columns of the real table. */
-    this.table = [];
+    this.workflow = workflow;
+    this.record = { name: workflow.name ?? 'unnamed', hash: workflowHash(workflow) };
+    /** { cycle_id, seq, type, run_id, body, pos, at }: the columns of the real table. Two stores may share one. */
+    this.table = table;
     this.listeners = new Set();
   }
 
-  /** Called after every row that was written, and after every write that was ignored. */
+  /** Called after every row that was written, and after every write that was ignored. Not in src/store.ts: the demos draw from it. */
   subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   emit(change) { for (const fn of this.listeners) fn(change); }
 
-  open(cycleId, workId, parentCycleId) {
+  open(cycleId, workId, parentCycleId, base) {
     requireId(cycleId, 'cycle ID');
     requireId(workId, 'work ID');
     if (this.exists(cycleId)) throw new Error(`cycle ${cycleId} already open`);
@@ -35,8 +44,8 @@ export class EventStore {
     const { open, escalated } = this.cyclesFor(workId);
     if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
     if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
-    const row = { type: 'open', workId, parentCycleId };
-    this.table.push({ cycle_id: cycleId, seq: 0, type: 'open', run_id: null, body: JSON.stringify(row) });
+    const row = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow };
+    this.insert(cycleId, 0, 'open', null, JSON.stringify(row));
     this.emit({ kind: 'open', cycleId });
     return newCycle(cycleId, workId, parentCycleId);
   }
@@ -57,9 +66,9 @@ export class EventStore {
       return this.load(cycleId);
     }
     const seq = Math.max(...this.table.filter((r) => r.cycle_id === cycleId).map((r) => r.seq)) + 1;
-    this.table.push({ cycle_id: cycleId, seq, type: parsed.type, run_id: runId, body });
+    const row = this.insert(cycleId, seq, parsed.type, runId, body);
     const cycle = this.load(cycleId);
-    this.emit({ kind: 'append', cycleId, seq, event: parsed, cycle });
+    this.emit({ kind: 'append', cycleId, seq, pos: row.pos, event: parsed, cycle });
     return cycle;
   }
 
@@ -69,7 +78,10 @@ export class EventStore {
     const [first, ...rest] = this.rows(cycleId);
     if (!first) return undefined;
     if (first.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(first.type)}, not the open marker`);
-    return rest.reduce(apply, newCycle(cycleId, first.workId, first.parentCycleId));
+    const opened = first.workflow ?? DEFAULT_RECORD;
+    if (opened.hash !== this.record.hash)
+      throw new Error(`cycle ${cycleId} was opened under workflow ${opened.name} (${opened.hash.slice(0, 12)}), this store runs ${this.record.name} (${this.record.hash.slice(0, 12)})`);
+    return rest.reduce((c, e) => apply(c, e, this.workflow), newCycle(cycleId, first.workId, first.parentCycleId));
   }
 
   close() {}
@@ -88,6 +100,13 @@ export class EventStore {
   }
 
   exists(cycleId) { return this.table.some((r) => r.cycle_id === cycleId && r.seq === 0); }
+
+  // pos and at are set in the real insert statement; here, one row at a time is the whole lock.
+  insert(cycleId, seq, type, runId, body) {
+    const row = { cycle_id: cycleId, seq, type, run_id: runId, body, pos: this.table.length + 1, at: new Date().toISOString() };
+    this.table.push(row);
+    return row;
+  }
 
   rows(cycleId) {
     return this.table.filter((r) => r.cycle_id === cycleId).sort((a, b) => a.seq - b.seq).map((r) => JSON.parse(r.body));

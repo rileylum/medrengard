@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>The state machine · Software Factory guide</title>
+<title>Workflows · Software Factory guide</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="boot.js"></script>
 <link rel="stylesheet" href="learn.css">
@@ -10,72 +10,61 @@
 <body>
 <main class="deck">
 
-<section class="slide" id="stages" data-lv="1">
-  <h2>Nine stages, one function</h2>
-  <p class="lead">Every piece of work moves through a <a class="w" href="words.html#cycle">cycle</a>. A cycle is always in exactly one of nine stages. Seven are the happy path, from QUEUED to ACCEPTED. Two are where a cycle stops: ESCALATED and CANCELLED.</p>
-  <p>Only one thing moves a cycle: the function <code>apply</code>. It takes the cycle and one <a class="w" href="words.html#event">event</a> and returns the next cycle. It reads no files, starts no processes and asks no model. So the same events always give the same cycle.</p>
-  <p>Click a stage to see the spec's rules for leaving it.</p>
-  <div class="demo" data-demo="lc-map"></div>
-  <p class="small muted">The table is the spec, <code>docs/specs/core-lifecycle-v1.md</code>. <a class="deeper" href="#drive">drive it yourself</a></p>
-</section>
-
-<section class="slide" id="drive" data-lv="1">
-  <h2>Drive it yourself</h2>
-  <p>This is the real <code>apply</code> from <code>src/lifecycle.ts</code>. Press <b>claim</b>, then <b>developer_result</b>, <b>verification</b> and two <b>verdict</b>s to walk the happy path. Then break it: send a verdict for the wrong head, the same run ID twice, or an <b>accept</b> for a SHA that is not the candidate.</p>
-  <div class="demo real" data-demo="lc-drive"></div>
-  <p class="small muted">An event that does not fit is never silently dropped. Either <code>apply</code> records it with a note and leaves the stage alone, or it <a class="w" href="words.html#escalation">escalates</a>.</p>
-</section>
-
-<section class="slide" id="guards" data-lv="2">
-  <h2>The guards, and why each one is there</h2>
-  <div class="cols">
-    <div class="card amber"><h3>A stale verdict counts, but cannot move the cycle</h3>
-      <p class="small">A <a class="w" href="words.html#verdict">verdict</a> must name the <a class="w" href="words.html#sha">SHA</a> it reviewed. If that SHA is not the current <a class="w" href="words.html#candidate">candidate</a>, the review was of other code. <code>apply</code> still adds one to the <a class="w" href="words.html#budget">budget</a>, because the review ran and was spent, and then escalates. Counting it stops a stale reviewer being retried for free.</p></div>
-    <div class="card cyan"><h3>One outcome per run</h3>
-      <p class="small">Every result and verdict carries the <a class="w" href="words.html#run">run</a> ID that made it. Once a run's outcome is consumed, a second one with the same ID is noted as a duplicate and changes nothing. A redelivered message must never count twice.</p></div>
-    <div class="card red"><h3>Escalated and terminal cycles ignore everything</h3>
-      <p class="small">After ACCEPTED or CANCELLED every event is ignored. After ESCALATED every event except a cancel is ignored. Only the <a class="w" href="words.html#owner">owner</a> moves on, by cancelling or by opening a <a class="w" href="words.html#child-cycle">child cycle</a>.</p></div>
-    <div class="card violet"><h3>Counters never reset</h3>
-      <p class="small">A <a class="w" href="words.html#fix-run">fix run</a> makes a new candidate and runs verification again, but <code>standard</code> and <code>adversarial</code> carry forward. Only a child cycle starts at (0, 0), and only the owner can open one.</p></div>
+<section class="slide" id="data" data-lv="1">
+  <h2>Stages are data</h2>
+  <p class="lead">A <a class="w" href="words.html#workflow">workflow</a> is a plain object: a start stage, and for each stage its kind, where PASS and FAIL lead, and an optional budget. Nothing in it runs. That is what lets the factory check it, and record which one a cycle used, before any agent starts.</p>
+  <div class="cols3">
+    <div class="card cyan"><h3>agent</h3><p class="small">A run of the role it names. A role <b>produces</b> a commit (a developer) or a verdict (a reviewer). The stage's <code>roleText</code> is the first line of the prompt.</p></div>
+    <div class="card amber"><h3>command</h3><p class="small">The controller runs commands on the candidate: the job's checks, or the stage's own <code>run</code>. <a href="verify.html">Checks and command stages</a></p></div>
+    <div class="card violet"><h3>human</h3><p class="small">The cycle waits for you. <code>accept</code> with the candidate's SHA takes the PASS transition.</p></div>
   </div>
-  <p class="small" style="margin-top:12px">Two more: an infrastructure failure (<a class="w" href="words.html#run-failed">run_failed</a>) escalates without touching the counters, since it was not a review. And an event type <code>apply</code> does not know escalates as "unclassifiable", because types are stripped at runtime and events arrive as JSON.</p>
+  <p class="small" style="margin-top:12px">Four more stages belong to the engine, and no workflow may define them: QUEUED, where every cycle starts, and ESCALATED, CANCELLED and ACCEPTED, where it stops. The v1 lifecycle is one workflow among many: <code>defaultWorkflow</code>, used when a job names none.</p>
 </section>
 
-<section class="slide" id="scenarios" data-lv="2">
-  <h2>The scenarios the tests check</h2>
-  <p>The spec's acceptance tests keep their old names, SC-01 to SC-19, plus a few added later (RF for run failures, RT for runtimes). Each is a list of events and the stage and counters it must end at. This player reads <code>tests/scenarios.ts</code>, the same file the tests read, and steps through it with the real <code>apply</code>.</p>
-  <div class="demo real" data-demo="lc-scenarios"></div>
+<section class="slide" id="editor" data-lv="1">
+  <h2>Try it: judge a workflow</h2>
+  <p>Pick a workflow, or edit the JSON. The factory's own <code>checkWorkflow</code> judges it on every keystroke. A workflow it refuses never reaches a store, so no job can start under it. Click a stage in the picture for what happens there.</p>
+  <div class="demo real" data-demo="lc-editor"></div>
+  <p class="small muted">Try deleting <code>"budget": 2</code> from STANDARD_REVIEW, or pointing a FAIL at a stage that does not exist.</p>
 </section>
 
-<section class="slide" id="code-event" data-lv="3">
-  <h2>The events, and how they are checked</h2>
-  <p>Eleven event types. <code>isEvent</code> checks only what <code>apply</code> reads. Extra fields are allowed, so an older controller can read a newer log.</p>
-  <pre data-code="src/lifecycle.ts#Event"></pre>
-  <pre data-code="src/lifecycle.ts#SHAPE,isEvent"></pre>
+<section class="slide" id="rules" data-lv="2">
+  <h2>What no workflow can switch off</h2>
+  <p>You may change every stage. These rules sit in the engine, in <code>checkWorkflow</code> and <code>apply</code>, and hold under any workflow.</p>
+  <div class="cols">
+    <div class="card amber"><h3>Every loop spends a budget</h3><p class="small">Take away the stages with a budget and the stages left must have no loop. So a cycle cannot go round forever: each pass round a loop counts against a stage, and a FAIL at the limit <a class="w" href="words.html#escalation">escalates</a>.</p></div>
+    <div class="card amber"><h3>Every stage can finish</h3><p class="small">Each stage needs a path to ESCALATED, CANCELLED or ACCEPTED. A FAIL with no transition escalates.</p></div>
+    <div class="card red"><h3>Unclear means stop</h3><p class="small">An event that does not fit the stage escalates with its reason: a verdict outside a review stage, an accept for another SHA, an event type nobody knows, a step named for another stage. Nothing retries by itself.</p></div>
+    <div class="card violet"><h3>Only the owner moves on</h3><p class="small">A cancel ends any open cycle. An ESCALATED cycle ignores everything else and waits for you to cancel it or open a <a class="w" href="words.html#child-cycle">child cycle</a>, which starts with every budget empty.</p></div>
+  </div>
+  <p class="small" style="margin-top:12px">Two more: a role produces either commits or verdicts, never both, because the controller tells a claim from a verdict by the role alone. And role text is one line, so it cannot forge the contract's <code>Rules:</code> line below it (<a href="developer.html#versions">the developer</a>).</p>
 </section>
 
-<section class="slide" id="code-cycle" data-lv="3">
-  <h2>The Cycle value</h2>
-  <pre data-code="src/lifecycle.ts#Cycle,newCycle"></pre>
+<section class="slide" id="budgets" data-lv="2">
+  <h2>How a budget counts</h2>
+  <p>A stage with a <code>budget</code> counts every outcome recorded while the cycle is in it: a developer's result, a verification, a verdict or an acceptance. Two things are checked against the count:</p>
+  <ul>
+    <li><b>A FAIL at the limit escalates</b> rather than following the FAIL transition. In the default workflow, STANDARD_REVIEW has a budget of 2: the first FAIL goes back to DEVELOPING for a fix run, the second escalates.</li>
+    <li><b>A spent stage cannot be entered again.</b> A transition into a stage whose budget is used up escalates with "budget exhausted".</li>
+  </ul>
+  <p>Counts never go down inside a cycle. A fix run makes a new candidate and the checks run again, but the review counts carry on. A failed run (<a class="w" href="words.html#run-failed">run_failed</a>) counts nothing: it was not a review. A verdict for a stale SHA counts, and escalates: the review ran, so a stale reviewer cannot be retried for free.</p>
 </section>
 
-<section class="slide" id="code-apply" data-lv="3">
-  <h2>apply</h2>
-  <p>Read it top to bottom: terminal first, then cancel, then escalated, then one case per event type. Each case returns early, so every path ends in exactly one <code>record</code> or <code>escalate</code>.</p>
-  <pre data-code="src/lifecycle.ts#record,escalate,apply"></pre>
+<section class="slide" id="chosen" data-lv="2">
+  <h2>One workflow per job, bound by its hash</h2>
+  <p>A job names a workflow with <code>"workflow": "path/to/module.ts"</code>; the module's named export <code>workflow</code> is the object. The job file, your personal file or the repository can set it (<a href="config.html">configuration</a>). A repository workflow is read from the base commit, never from the working tree.</p>
+  <p>When a cycle opens, the store writes the workflow's name, its hash and the whole definition into the cycle's first row. Every later load replays the cycle under the store's workflow, and refuses if the hashes differ: a cycle replayed under another workflow could land in a stage its log never had (A-059).</p>
+  <p class="small">The hash is SHA-256 of the object's JSON, so reordering two keys makes a new workflow. That is safe: old cycles are refused, never misread. The editor above shows the hash as you type.</p>
 </section>
 
-<section class="slide" id="code-child" data-lv="3">
-  <h2>Opening a child cycle</h2>
-  <pre data-code="src/lifecycle.ts#openChild"></pre>
-  <p>And one of the tests, so you can see the shape:</p>
-  <pre data-code="tests/lifecycle.test.ts#L82-L92"></pre>
-</section>
-
-<section class="slide" id="takeaway" data-lv="1">
-  <h2>Takeaway</h2>
-  <p class="lead">The controller's rules fit in one pure function. Agents can say anything; only events that <code>apply</code> accepts move a cycle, and anything it cannot place stops the cycle for the owner.</p>
-  <p>Next, where those events are kept: <a class="portal" href="store.html">the event log</a></p>
+<section class="slide" id="code" data-lv="3">
+  <h2>Read the code: src/lifecycle.ts</h2>
+  <p>The types first: a workflow, a stage and an event. Then <code>checkWorkflow</code>, then <code>apply</code>: terminal first, then cancel, then escalated, then one case per event type. Each case returns early, so every path ends in one <code>record</code> or <code>escalate</code>.</p>
+  <pre data-code="src/lifecycle.ts#StageDef,Workflow,defaultWorkflow"></pre>
+  <pre data-code="src/lifecycle.ts#checkWorkflow"></pre>
+  <pre data-code="src/lifecycle.ts#counted,enter,advance,apply"></pre>
+  <p>And where the hash is checked, in <code>src/store.ts</code>:</p>
+  <pre data-code="src/store.ts#workflowHash,load"></pre>
 </section>
 
 </main>

@@ -1,5 +1,6 @@
-// An idea's way to a PR, one step at a time, across the three lanes: the owner, the controller
-// and the agents. Pictures only; the simulator (sim.html) runs the real thing.
+// An idea's way to a PR under the default workflow, in one picture with three lanes: the owner,
+// the controller and the agents. Point at a box for who acts there. Pictures only; the simulator
+// (sim.html) runs the real thing, so nothing here steps.
 import { flow } from '../diagram.js';
 
 const N = (id, x, lane, label, cls) => ({ id, x, y: [64, 180, 296][lane], w: 116, h: 50, label, cls });
@@ -15,49 +16,34 @@ const SPEC = {
   ],
   edges: [
     { from: 'studio', to: 'ticket', dashed: true }, { from: 'ticket', to: 'open', label: 'main.ts' }, { from: 'open', to: 'dev', label: 'prompt' },
-    { from: 'dev', to: 'land', label: 'claim' }, { from: 'land', to: 'verify', label: 'VERIFYING' },
+    { from: 'dev', to: 'land', label: 'claim' }, { from: 'land', to: 'verify', label: 'candidate' },
     { from: 'verify', to: 'std', label: 'PASS' }, { from: 'std', to: 'adv', label: 'PASS' },
     { from: 'adv', to: 'accept', label: 'PASS' }, { from: 'accept', to: 'merge' },
-    { from: 'std', to: 'dev', label: 'first FAIL: one fix run', bend: -50, dashed: true, cls: 'fix', dy: 16 },
+    { from: 'std', to: 'dev', label: 'FAIL: a fix run', bend: -50, dashed: true, cls: 'fix', dy: 16 },
   ],
 };
 
-const STEPS = [
-  ['studio', null, '<b class="violet-t">Not built yet.</b> In the design, a <a href="/docs/architecture/source-v0.3.md">Design Studio</a> (source §03) comes first: you and agents frame the problem, explore, prototype if needed, approve a spec and split it into tickets. No plan step builds it. Today you write each ticket by hand, as <a href="workflow.html">the workflow</a> describes.'],
-  ['ticket', 'studio', '<b class="violet-t">Owner.</b> You write a ticket: a goal, a "done when" list, constraints. A small job file names the repository, the checks to run and which runtime plays each role. Then <code>node src/main.ts job.json</code>.'],
-  ['open', 'ticket', '<b class="amber-t">Controller.</b> It resolves the base commit to a full SHA, opens a <a class="w" href="words.html#cycle">cycle</a> in its event log, and makes a private clone on a new branch <code>sf/&lt;cycle&gt;</code>.'],
-  ['dev', 'open', '<b class="cyan-t">Developer agent.</b> Claude Code or pi, inside a sandbox, with only the clone writable. It reads the ticket, changes the code, commits, and ends its reply with a <a class="w" href="words.html#claim">claim</a>: the commit SHA and the files it changed.'],
-  ['land', 'dev', '<b class="amber-t">Controller.</b> A claim is not a fact. It fetches the branch and checks: is that SHA the branch tip, does it descend from the base, does it change anything? Only then is it the <a class="w" href="words.html#candidate">candidate</a>.'],
-  ['verify', 'land', '<b class="amber-t">Controller.</b> It checks out the candidate fresh, with no <code>.git</code>, and runs the repository\'s declared checks itself, in a sandbox with no network. Output and exit code are stored against the SHA. Any FAIL or MISSING check stops the cycle.'],
-  ['std', 'verify', '<b class="cyan-t">Standard reviewer.</b> A fresh agent with read-only access. It gets the ticket, the diff, the instructions and the evidence, never the developer\'s conversation. It returns PASS or FAIL with findings.'],
-  ['dev', 'std', '<b class="cyan-t">Fix run.</b> On the first standard FAIL, the developer runs once more on the same branch, given the findings. New commit, new checks, new standard review. A second FAIL stops the cycle and asks you.'],
-  ['adv', 'std', '<b class="cyan-t">Adversarial reviewer.</b> Told to break it: bad inputs, odd sequences, states the ticket did not think of. One FAIL here stops the cycle at once.'],
-  ['accept', 'adv', '<b class="violet-t">Owner.</b> The cycle waits in AWAITING_ACCEPTANCE. You read the diff and accept the exact SHA the reviews were bound to.'],
-  ['merge', 'accept', '<b class="violet-t">Owner.</b> You merge. The factory never merges or deploys by itself.'],
-];
+const TIPS = {
+  studio: '<b class="violet-t">Not built.</b> The design puts a <a href="/docs/architecture/source-v0.3.md">Design Studio</a> first (source §03), where ideas become approved tickets. No plan row builds it; today you write each ticket by hand.',
+  ticket: '<b class="violet-t">You</b> write a ticket and a small job file, then run <code>node src/main.ts job.json</code>. The job may name another workflow; this picture is the default one.',
+  open: '<b class="amber-t">The controller</b> resolves the base to a full SHA, opens a <a class="w" href="words.html#cycle">cycle</a> in its event log, and makes a private clone on the branch <code>sf/&lt;cycle&gt;</code>.',
+  dev: '<b class="cyan-t">A developer agent</b>, in a sandbox where only its clone is writable, changes the code, commits, and ends its reply with a <a class="w" href="words.html#claim">claim</a>. It never runs the official checks.',
+  land: '<b class="amber-t">The controller</b> fetches the branch and judges the claim itself. Only a new commit at the branch tip becomes the <a class="w" href="words.html#candidate">candidate</a>.',
+  verify: '<b class="amber-t">The controller</b> runs the checks on a fresh checkout of the candidate and stores the output against its SHA. It never takes the developer\'s word for a test run.',
+  std: '<b class="cyan-t">A standard reviewer</b> reads the ticket, the diff and the evidence, never the developer\'s conversation, and returns PASS or FAIL. Its first FAIL sends the findings back for a fix run; a second stops the cycle.',
+  adv: '<b class="cyan-t">An adversarial reviewer</b> is told to break the change. Its FAIL stops the cycle and asks you.',
+  accept: '<b class="violet-t">You</b> read the diff and accept the exact SHA the reviews were bound to. The default workflow ends at this human stage.',
+  merge: '<b class="violet-t">You</b> merge. The factory prints the merge line; it does not run it.',
+};
 
 export default function mount(el) {
   el.innerHTML = `<div class="row small"><span class="violet-t">■ owner</span><span class="amber-t">■ controller</span><span class="cyan-t">■ agents</span></div>
-    <div class="fig"></div><p class="caption lead" style="min-height:5.5em"></p>
-    <div class="row"><button class="back">◀ back</button><button class="primary play">▶ play</button><button class="next">next ▶</button><span class="small dim count"></span></div>`;
+    <div class="fig"></div><p class="caption lead" style="min-height:4.2em"><span class="dim">Point at a box.</span></p>`;
   const d = flow(el.querySelector('.fig'), SPEC);
-  let i = 0, timer;
-  const show = () => {
-    const [node, from, text] = STEPS[i];
-    if (i === 0) d.reset();
-    d.current(node);
-    if (from) d.travel(from, node);
-    el.querySelector('.caption').innerHTML = text;
-    el.querySelector('.count').textContent = `step ${i + 1} of ${STEPS.length}`;
-  };
-  const stop = () => { clearInterval(timer); timer = undefined; el.querySelector('.play').textContent = '▶ play'; };
-  el.querySelector('.next').addEventListener('click', () => { stop(); i = (i + 1) % STEPS.length; show(); });
-  el.querySelector('.back').addEventListener('click', () => { stop(); i = (i + STEPS.length - 1) % STEPS.length; d.reset(); for (let k = 0; k <= i; k++) d.current(STEPS[k][0]); show(); });
-  el.querySelector('.play').addEventListener('click', () => {
-    if (timer) return stop();
-    el.querySelector('.play').textContent = '❚❚ pause';
-    timer = setInterval(() => { i = (i + 1) % STEPS.length; show(); }, 3200);
-  });
-  d.onClick((id) => { const k = STEPS.findIndex((s) => s[0] === id); if (k >= 0) { stop(); i = k; show(); } });
-  show();
+  const show = (id) => { d.current(id); el.querySelector('.caption').innerHTML = TIPS[id]; };
+  for (const n of d.nodes.values()) {
+    n.g.addEventListener('mouseenter', () => show(n.id));
+    n.g.addEventListener('focus', () => show(n.id));
+  }
+  d.onClick(show);
 }

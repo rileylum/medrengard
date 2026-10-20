@@ -34,6 +34,8 @@ Open questions moved to their own file (A-049), merged as `5959506`.
 
 Experimental guide (A-050), outside the ticket workflow, merged to main as `596f620`: `learn/` is an interactive guide to the factory, modelled on the Cube Crawler learning guide. `npm run learn` serves it at http://127.0.0.1:8077/learn/. Twelve rooms with three detail levels, live code and docs read from the repository, and demos that run `src/` in the browser through an import map of stand-ins; the simulator runs the real `run`, `execute` and `apply` on a ticket the reader edits. `npm run test:learn` keeps it in step with `src/`, outside `npm test`. The owner walked through it on 2026-10-18; how to change it is in [learn/README.md](../learn/README.md).
 
+Guide refresh (ticket [learn-refresh](work/learn-refresh.md), A-092, A-093), on `feat/learn-refresh`, not merged: `npm run test:learn` passes again, and the guide covers the factory at `d48c8d9`. Thirteen rooms, one new (configuration); the lifecycle room is now Workflows, and the process room is `process.html`. Only the simulator steps through a cycle; each other room has a demo form of its own. No reviews: the owner walks through the finished guide.
+
 ## Checks run
 
 2026-10-15: `npm test` and `RUNTIME_SPIKE=1 npm test` on `d8a9d21`, owner-run — 51 tests, 36 pass offline (10 live tests skipped with reason), 46 pass live, 5 todo, 0 fail.
@@ -96,6 +98,7 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 
 2026-10-19: `npm test` on `e7eb056` (06-d, `feat/06-d-reviewer-commit-messages`), implementer-run, not independent — 276 tests, 252 pass, 19 skipped, 5 todo, 0 fail. Mutation checks: 5 of 5 caught.
 2026-10-19: `npm test` on `8362c1e` (07-e, `feat/07-e-fix-without-tree-change`), implementer-run, not independent — 283 tests, 259 pass, 19 skipped, 5 todo, 0 fail. Mutation checks: 9 of 9 caught.
+2026-10-20: `npm test` on `31fddb2` (`feat/learn-refresh`, no `src/` change), implementer-run, not independent — 419 tests, 395 pass, 19 skipped, 5 todo, 0 fail. `npm run test:learn` — 6 tests, 6 pass. Every room checked in Chrome at level 3; every simulator preset run.
 
 ## Next action
 
@@ -162,3 +165,6 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
 57. Done: 10-d built on `feat/10-d-observation-stream` at `05b550a` ([ticket](work/10-d-observation-stream.md)). The store numbers and times each row; `events <job.json | runsDir> [--after] [--follow]` prints JSON lines with each event's stage; `accept` and `cancel` take `--source`; `src/kits/observe.ts` holds `observe` and `observerKit`, with the comment-only example in `tests/fixtures/comment-observer.ts`. Implementer's `npm test`: 412 tests, 388 pass, 0 fail. Next: the owner runs `npm test` on `05b550a` or waives it, and runs or waives the reviews.
 58. Done: 10-d reviewed (A-089). Standard 1 PASS on `05b550a`, with two minors; adversarial PASS on `05b550a`, with one minor and two notes. None is fixed yet. Next: the owner decides on the findings and the merge.
 59. Done: 10-d's review findings fixed at `0a1b1c5`, unreviewed (A-090). Implementer's `npm test`: 419 tests, 395 pass, 0 fail. Merged into main. Row 10 is complete. Next: the owner chooses what follows: row 11 (recovery), or the open points in `HANDOFF.md`.
+60. Done: the owner chose the guide (`learn/`) next: fix it, and expand it to the architecture and features since 09-a (A-091). Branch `feat/learn-refresh` made from main at `d48c8d9`. Next: in a new session, ask the owner whether this goes through the ticket workflow or stays experimental (A-050), then plan the rooms. No changes to `learn/` before that.
+61. Done: the guide refresh, batches 0 to 4, on `feat/learn-refresh` at `31fddb2` and the docs commit after it (A-092, A-093). Implementer's `npm run test:learn`: 6 of 6 pass; `npm test`: 419 tests, 395 pass, 0 fail. Next: the owner walks through the guide (`npm run learn`, http://127.0.0.1:8077/learn/), then decides on the merge. Then row 11 (recovery).
+62. Done: the owner walked through the guide and merged `feat/learn-refresh` into main (A-094). Next: draft row 11's tickets (recovery); the owner says go before each is READY.

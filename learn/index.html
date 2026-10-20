@@ -12,19 +12,21 @@
   <div>
     <p class="kicker">A GUIDED TOUR OF</p>
     <h1>The Software Factory</h1>
-    <p class="lead">You write a ticket. A <a class="w" href="words.html#controller">controller</a> takes it to a pull request: an agent writes the code, the controller runs the checks itself, two kinds of reviewer read the result, and you decide.</p>
+    <p class="lead">You write a ticket. A <a class="w" href="words.html#controller">controller</a> takes it through a <a class="w" href="words.html#workflow">workflow</a> to a pull request: an agent writes the code, the controller runs the checks itself, reviewers read the result, and you decide.</p>
     <p>This guide shows how that works, from the big ideas down to the real code. The code on these pages is read from the repository when you open them, and most demos run the factory's own modules in your browser.</p>
     <p><a class="portal" href="start.html">Start with the big idea</a> <a class="portal" href="sim.html">Go straight to the simulator</a></p>
   </div>
   <div class="card amber">
-    <h3>The five rules</h3>
+    <h3>The rules every workflow keeps</h3>
     <ol class="steps small">
-      <li>Only the controller changes state. Agents return claims.</li>
+      <li>The controller decides. Agents return claims.</li>
       <li>Every piece of evidence is bound to one commit SHA.</li>
-      <li>Two standard reviews and one adversarial review per cycle. Then it stops.</li>
+      <li>Every loop spends a budget, and stops at the limit.</li>
       <li>Anything the controller cannot classify goes to the owner.</li>
-      <li>Humans accept and merge. Nothing merges itself.</li>
+      <li>Candidate code runs in a sandbox.</li>
+      <li>Only the owner hands out a credential.</li>
     </ol>
+    <p class="small"><a href="start.html#rules">Each one, and its room</a></p>
   </div>
 </div>
 <div class="page">

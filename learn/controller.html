@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Controller and adapters · Software Factory guide</title>
+<title>Controller and owner · Software Factory guide</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="boot.js"></script>
 <link rel="stylesheet" href="learn.css">
@@ -15,27 +15,26 @@
   <div class="cols">
     <div>
       <p class="lead">The <a class="w" href="words.html#controller">controller</a> is ordinary code, not a language model. It starts each <a class="w" href="words.html#run">run</a>, waits for it, and writes down what happened.</p>
-      <p>An agent can say anything: "I committed abc123", "the tests pass", "PASS". Each of those is a <a class="w" href="words.html#claim">claim</a>. The controller checks what it can, and only then turns the claim into an <a class="w" href="words.html#event">event</a> in the log.</p>
-      <p>From there, <a class="w" href="words.html#apply">apply</a> decides the next stage. No agent ever changes a stage itself.</p>
+      <p>An agent can say anything: "I committed abc123", "the tests pass", "PASS". Each of those is a <a class="w" href="words.html#claim">claim</a>. The controller checks what it can, and only then turns the claim into an <a class="w" href="words.html#event">event</a>. What the event means is <a href="lifecycle.html">the engine's</a> to decide.</p>
     </div>
     <div class="card amber">
       <h3>What the controller does for every run</h3>
       <ol class="steps">
-        <li>Mints a run ID. For a developer, records a <code>claim</code> event first.</li>
+        <li>Mints a run ID. For a role that commits, records a <code>claim</code> event first.</li>
         <li>Starts the <a class="w" href="words.html#adapter">adapter</a> with a <a class="w" href="words.html#deadline">deadline</a>.</li>
         <li>Takes whatever comes back, and makes it plain data.</li>
-        <li>Writes exactly one event: a result, a verdict, or <a class="w" href="words.html#run-failed">run_failed</a>.</li>
+        <li>Writes exactly one event: a result, a dispute, a verdict, or <a class="w" href="words.html#run-failed">run_failed</a>.</li>
       </ol>
-      <p class="small muted">"Exactly one" holds even when the adapter crashes, hangs, lies or returns rubbish. The lab below tries all of those.</p>
+      <p class="small muted">"Exactly one" holds even when the adapter crashes, hangs, lies or returns rubbish.</p>
     </div>
   </div>
 </section>
 
 <section class="slide" id="lab" data-lv="1">
-  <h2>Try it: the outcome lab</h2>
-  <p>This runs the real <code>execute()</code> from <code>src/controller.ts</code> against an adapter you control. Pick how the adapter behaves and press run. Then look at the event it left behind.</p>
+  <h2>Try it: attack the controller</h2>
+  <p>This runs the real <code>execute()</code> from <code>src/controller.ts</code> against an adapter you control. Pick how the adapter misbehaves and press run. Then read the one event it left behind.</p>
   <div class="demo real" data-demo="ctl-outcomes"></div>
-  <p class="small muted">Try a claim with no <code>head</code>, or <code>"artifacts": []</code>. A reviewer verdict of <code>"MAYBE"</code>. The hanging adapter: the controller gives up at the deadline and records <code>timeout</code>. Then press <b>Redeliver</b>: the same run ID never gets a second outcome.</p>
+  <p class="small muted">Try a claim with no <code>head</code>, or <code>"artifacts": []</code>. A reviewer verdict of <code>"MAYBE"</code>. The hanging adapter: the controller gives up at the deadline. Press <b>Redeliver</b>: the same run ID never gets a second outcome. Last, pick <b>an observer</b> and give it a name with a newline in it.</p>
 </section>
 
 <section class="slide" id="seam" data-lv="2">
@@ -43,8 +42,8 @@
   <div class="cols">
     <div>
       <p>An adapter has one job: start one run and settle with an outcome. It knows nothing about cycles, stages or events.</p>
-      <p>There are only three outcomes: <code>completed</code> with a claim, <code>failed</code> with a reason, or <code>cancelled</code>. The claim is unchecked JSON. The controller classifies it.</p>
-      <p>That is why the factory can swap <code>claude</code> for <code>pi</code>, or for a test double, without touching the lifecycle. <a class="portal" href="runtimes.html#cli-spec">how a CLI becomes an adapter</a></p>
+      <p>There are three outcomes: <code>completed</code> with a claim, <code>failed</code> with a reason, or <code>cancelled</code>. The claim is unchecked JSON. The controller classifies it, by the role alone: a role whose stage commits gives a result or a dispute, any other a verdict.</p>
+      <p>That is why the factory can swap <code>claude</code> for <code>pi</code>, an extension, or a test double, without touching the engine. <a class="portal" href="runtimes.html">Runtimes and kits</a></p>
     </div>
     <pre data-code="src/adapter.ts#RunOutcome,Adapter"></pre>
   </div>
@@ -55,39 +54,39 @@
   <p>A runtime can simply never answer. The 03-a spike saw <code>claude -p</code> fail to return for a one-turn prompt in four runs of ten. So <code>execute</code> refuses to start a run without a deadline.</p>
   <p><code>bounded</code> races the adapter against a timer. When the timer wins, the outcome is <code>failed: timeout</code>, and only then is the adapter told to abort. Whatever the adapter does afterwards lands on a promise that has already settled, and is dropped. So even an adapter that ignores the abort cannot hold a cycle.</p>
   <div class="note"><b>Why not just await the adapter?</b> Because a throw inside <code>start()</code>, a rejection, a late answer and no answer must all become one well-formed event. <code>bounded</code> turns all four into an outcome.</div>
-  <a class="deeper" href="#code-execute">the code</a>
 </section>
 
 <section class="slide" id="plain" data-lv="2">
   <h2>Hostile values become plain data</h2>
   <p>An adapter's outcome is JavaScript, so it can hold things a log cannot: a getter that throws, a <code>BigInt</code>, a cycle, a Proxy. The 04-b and 04-c reviews found each of these could strand a cycle.</p>
   <ol class="steps">
-    <li><b>plain</b>: a JSON round trip, inside a <code>try</code>. Every getter and trap runs once, here. What comes out is plain. If it cannot be serialised, the run failed: "adapter outcome is not plain data".</li>
+    <li><b>plain</b>: a JSON round trip, inside a <code>try</code>. Every getter and trap runs once, here. If the outcome cannot be serialised, the run failed: "adapter outcome is not plain data".</li>
     <li><b>normalise</b>: anything outside the three outcomes is a failed run. An empty reason becomes "failed with no reason".</li>
-    <li><b>toEvent</b>: picks the named fields from the claim. The store's <code>isEvent</code> decides if they are well formed. If not, the run failed: "malformed result".</li>
+    <li><b>accept</b>, when the caller gives one: a check the engine cannot do itself, such as "is this commit the tip of the branch?" (<a href="developer.html#guard">the developer's guard</a>). A refusal is a failed run.</li>
+    <li><b>toEvent</b>: picks the named fields from the claim, and the store's <code>isEvent</code> decides if they are well formed. If not, the run failed: "malformed result".</li>
   </ol>
-  <p>A caller can also pass <code>accept</code>: a check the lifecycle cannot do itself, such as "is this commit the tip of the branch?". The developer stage uses it. <a class="portal" href="developer.html#guard">the claim guard</a></p>
+  <p>Every outcome event also records what ran it: the runtime's name, an extension's module hash, and the hashes of the prompt's wording (<a href="developer.html#versions">prompt versions</a>). A second outcome for the same run ID writes nothing (<a href="store.html#break">the event log</a>).</p>
 </section>
 
-<section class="slide" id="once" data-lv="2">
-  <h2>One run, one outcome</h2>
-  <p><code>receive</code> can be called twice for the same run, for example after a restart. The store keeps one outcome per run ID: a second result, verdict or <code>run_failed</code> for that run writes nothing and returns the cycle as it is. <a class="portal" href="store.html">the event log</a></p>
-  <p>Reviewer runs also check the stage before they start. A verdict is counted against whatever review stage the cycle is in, so a reviewer run in the wrong stage would be miscounted. That is a controller bug, so it throws instead of escalating.</p>
+<section class="slide" id="owner" data-lv="2">
+  <h2>What your commands record</h2>
+  <p>You decide with two commands. Both read the job's configuration as its cycles were opened, and both refuse, writing nothing, rather than send an event the engine would escalate on.</p>
+  <table>
+    <thead><tr><th>Command</th><th>Records</th><th>Refuses when</th></tr></thead>
+    <tbody>
+      <tr><td><code>accept job.json &lt;sha&gt;</code></td><td><code>accept</code> with the candidate's head</td><td>no open cycle; the cycle is not at a human stage; the SHA is not the full candidate head</td></tr>
+      <tr><td><code>cancel job.json</code></td><td><code>cancel</code> on the open cycle, or on every ESCALATED one when none is open</td><td>nothing to cancel</td></tr>
+    </tbody>
+  </table>
+  <p>Each takes <code>--source &lt;name&gt;</code>, recorded in the event; without it the source is <code>owner</code>. An <a href="store.html#stream">observer</a> passes its own name, so the log shows who decided. A source is a label, not an identity: anyone who can run the command can write any name. It must be one line of printable text, because the CLI and the stream print it.</p>
 </section>
 
-<section class="slide" id="code-execute" data-lv="3">
-  <h2>execute and receive</h2>
-  <pre data-code="src/controller.ts#execute,receive"></pre>
-</section>
-
-<section class="slide" id="code-bounded" data-lv="3">
-  <h2>bounded, plain, normalise, toEvent</h2>
-  <pre data-code="src/controller.ts#bounded,plain,normalise,toEvent"></pre>
-</section>
-
-<section class="slide" id="takeaway" data-lv="1">
-  <h2>Takeaway</h2>
-  <p class="lead">Whatever an agent does, the controller writes exactly one well-formed event for its run. Only then does the state machine decide what that event means.</p>
+<section class="slide" id="code" data-lv="3">
+  <h2>Read the code: src/controller.ts and src/main.ts</h2>
+  <pre data-code="src/controller.ts#execute,receive,requireStage"></pre>
+  <pre data-code="src/controller.ts#plain,normalise,toEvent,bounded"></pre>
+  <p>Your two commands, and how <code>--source</code> is read:</p>
+  <pre data-code="src/main.ts#withSource,accept,cancel"></pre>
 </section>
 
 </main>

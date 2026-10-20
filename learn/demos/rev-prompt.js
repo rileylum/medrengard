@@ -1,6 +1,9 @@
-// The reviewer's prompt, built by the real buildPrompt from src/review.ts (cut out of the file by
-// live.js and run here) over the guide's fake Git: a branch with the correct change from the
-// simulator's repository, and evidence files written where verify would write them.
+// The reviewer's prompt: gathered by the real gather from src/review.ts (cut out of the file by
+// live.js and run here) over the guide's fake Git, and worded by the real reviewPrompt from
+// src/prompt.ts. The candidate is a branch with the correct change from the simulator's
+// repository, with evidence files written where verify would write them.
+import { defaultWorkflow } from '/src/lifecycle.ts';
+import { reviewPrompt } from '/src/prompt.ts';
 import { CHANGES, TICKET, world } from '../shims/world.js';
 import { vfs } from '../shims/node/fs.js';
 import { esc } from '../live.js';
@@ -15,16 +18,16 @@ function candidate() {
   const base = repo.resolve('main');
   repo.branch('sf/review-demo', base);
   const head = repo.commit('sf/review-demo', CHANGES.good.files, CHANGES.good.message);
-  const dir = `${EVIDENCE}/${head}`;
+  const dir = `${EVIDENCE}/${head}/VERIFYING`;
   vfs.file(`${dir}/test.exit`, 'exit 0\n').file(`${dir}/test.stdout`, '✔ add appends an open item\n✔ done marks item n, counted from 1\n✔ done refuses a number outside the list\nℹ tests 3\nℹ pass 3\nℹ fail 0\n').file(`${dir}/test.stderr`, '');
   vfs.file(`${dir}/syntax.exit`, 'exit 0\n').file(`${dir}/syntax.stdout`, '').file(`${dir}/syntax.stderr`, '');
-  setup = { base, head, dir, verification: { type: 'verification', head, checks: [{ name: 'test', result: 'PASS' }, { name: 'syntax', result: 'PASS' }] } };
+  setup = { base, head, stages: [{ stage: 'VERIFYING', dir, verification: { type: 'verification', head, checks: [{ name: 'test', result: 'PASS' }, { name: 'syntax', result: 'PASS' }] } }] };
   return setup;
 }
 
 export default async function mount(el) {
   el.innerHTML = `
-    <div class="row"><label>Role</label><select class="role"><option value="standard_reviewer">standard reviewer</option><option value="adversarial_reviewer">adversarial reviewer</option></select>
+    <div class="row"><label>Role</label><select class="role"><option value="STANDARD_REVIEW">standard reviewer</option><option value="ADVERSARIAL_REVIEW">adversarial reviewer</option></select>
       <button class="inject">Hide a fake section in the ticket</button><button class="rebuild">Build again (new nonce)</button>
       <span class="small">nonce <code class="nonce">…</code> · <span class="len"></span></span></div>
     <label>Ticket <span class="dim">(the owner's text; anything in it reaches the reviewer quoted)</span></label>
@@ -33,11 +36,11 @@ export default async function mount(el) {
     <pre class="prompt wrap small" style="max-height:520px"></pre>`;
   const $ = (s) => el.querySelector(s);
   $('.ticket').value = TICKET;
-  const build = await world.live.buildPrompt();
-  const { base, head, dir, verification } = candidate();
+  const gather = await world.live.gather();
+  const { base, head, stages } = candidate();
   function render() {
     let text;
-    try { text = build($('.role').value, $('.ticket').value, head, base, world.repo.path, ['AGENTS.md'], verification, dir); }
+    try { ({ text } = reviewPrompt(defaultWorkflow.stages[$('.role').value].roleText, gather($('.ticket').value, head, base, world.repo.path, ['AGENTS.md'], stages))); }
     catch (err) { $('.prompt').innerHTML = `<span class="err">${esc(err.message)}</span>`; return; }
     const nonce = text.match(/beginning with `==== ([0-9a-f]+):/)?.[1] ?? '?';
     $('.nonce').textContent = nonce;

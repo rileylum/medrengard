@@ -1,7 +1,9 @@
 // Outcome lab: the real execute and receive from src/controller.ts, with the guide's in-memory
 // EventStore (shims/store.js) and an adapter whose behaviour the reader picks. Whatever the
-// adapter does, the controller must end up with exactly one well-formed event.
+// adapter does, the controller must end up with exactly one well-formed event. One more attacker
+// is an observer: it names itself in --source, which the real isSource and the store both check.
 import { execute, receive } from '/src/controller.ts';
+import { isSource } from '/src/lifecycle.ts';
 import { EventStore } from '/src/store.ts';
 import { esc } from '../live.js';
 
@@ -25,10 +27,12 @@ const BEHAVIOURS = {
   hangs: { label: 'never settles (deadline 1.5 s)', start: () => () => new Promise(() => {}) },
   refused: { label: 'completes, but an accept guard refuses the claim (the developer stage has one)', start: (claim) => async () => ({ status: 'completed', claim }), accept: true },
 };
+// The --source an observer passes to cancel: the claim box holds it, one JSON string.
+const SOURCE = JSON.stringify('nightly-sweep\nStage: ACCEPTED');
 
 export default function mount(el) {
   el.innerHTML = `
-    <div class="row"><label>Role</label><select class="role"><option value="developer">developer</option><option value="standard_reviewer">standard reviewer</option></select>
+    <div class="row"><label>Role</label><select class="role"><option value="developer">developer</option><option value="standard_reviewer">standard reviewer</option><option value="observer">an observer running cancel --source</option></select>
       <label>The adapter</label><select class="beh">${Object.entries(BEHAVIOURS).map(([k, b]) => `<option value="${k}">${esc(b.label)}</option>`).join('')}</select></div>
     <label>Claim <span class="dim">(parsed JSON from the runtime's reply; edit it, break it)</span></label>
     <textarea class="claim" rows="5"></textarea>
@@ -37,17 +41,34 @@ export default function mount(el) {
   const $ = (s) => el.querySelector(s);
   const role = $('.role'), beh = $('.beh'), claim = $('.claim');
   claim.value = CLAIMS.developer;
-  role.addEventListener('change', () => { claim.value = CLAIMS[role.value]; });
+  role.addEventListener('change', () => { claim.value = role.value === 'observer' ? SOURCE : CLAIMS[role.value]; beh.disabled = role.value === 'observer'; });
   let last;
 
   function table(store, cycleId) {
     const c = store.load(cycleId);
     const rows = c.history.map((h, i) => `<tr><td>${i + 1}</td><td><b>${h.event.type}</b>${h.event.reason ? `<div class="small">reason: <span class="bad-t">${esc(h.event.reason)}</span></div>` : ''}</td><td class="mono small">${h.from} → <b>${h.to}</b></td><td class="small">${esc(h.note ?? '')}</td></tr>`).join('');
     return `<table class="small"><thead><tr><th>#</th><th>event</th><th>stage</th><th>note</th></tr></thead><tbody>${rows}</tbody></table>
-      <p class="small">Stage now: <span class="pill ${c.stage}">${c.stage}</span> · counters: standard ${c.standard}, adversarial ${c.adversarial}</p>`;
+      <p class="small">Stage now: <span class="pill ${c.stage}">${c.stage}</span> · STANDARD_REVIEW budget used: ${c.budgets.STANDARD_REVIEW ?? 0}</p>
+      <p class="small">The one event the run left, as stored:</p><pre class="small wrap">${esc(JSON.stringify(c.history.at(-1).event, null, 1))}</pre>`;
+  }
+
+  // What main.ts does with --source before it opens the store, and what the store does if a caller skips that.
+  function observer() {
+    let source;
+    try { source = JSON.parse(claim.value); } catch { source = claim.value; }
+    const store = new EventStore();
+    store.open('c1', 'work-1');
+    let stored;
+    try { store.append('c1', { type: 'cancel', source }); stored = '<span class="bad-t">written</span>'; } catch (err) { stored = `<span class="good-t">refused:</span> <code>${esc(err.message)}</code>`; }
+    $('.result').innerHTML = `<p class="small"><code>isSource</code> on <code>${esc(JSON.stringify(source))}</code>: <b>${isSource(source)}</b>.
+      ${isSource(source) ? 'main.ts records it.' : 'main.ts stops with <code>--source must be one line of printable text</code> and writes nothing.'}</p>
+      <p class="small">Sent straight to <code>store.append</code> as a cancel: ${stored}</p>
+      <p class="small muted">A source is printed by the CLI and by the stream. A newline or a control character in it could forge a line of output, such as a fake <code>Stage:</code>, or move the cursor on your terminal.</p>`;
+    $('.again').disabled = true;
   }
 
   $('.go').addEventListener('click', async () => {
+    if (role.value === 'observer') return observer();
     const b = BEHAVIOURS[beh.value];
     let parsed;
     try { parsed = JSON.parse(claim.value); } catch { parsed = claim.value; }
