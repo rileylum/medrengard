@@ -33,7 +33,7 @@ const PRESETS = {
     developer: [{ change: 'failingTest' }], checks: [{ test: 'fail' }] },
   formatter: { label: 'A check rewrites a file', about: 'Every check exits 0, but one rewrote a tracked file. The controller adds its own tree check, which FAILs: the reviewers must read the commit, not what a check left behind.',
     developer: [{ change: 'good' }], checks: [{ dirty: true }] },
-  missing: { label: 'A check is not installed', about: 'The job declares eslint, which this machine does not have. Missing evidence is never PASS: the check is MISSING and the cycle escalates.',
+  missing: { label: 'A check is not installed', about: 'The job declares eslint, which this machine does not have. run looks each check program up before the developer starts, so it refuses the job and exits 2: no cycle opens and no run is paid for.',
     checksJson: [...DEFAULT_CHECKS, { name: 'lint', command: ['eslint', '.'] }], developer: [{ change: 'good' }] },
   timeout: { label: 'The developer hangs', about: 'The developer commits and then says nothing. At the deadline (5 s here) the controller stops waiting, records run_failed: timeout, and escalates.',
     deadline: 5, developer: [{ change: 'good', hang: true }] },
