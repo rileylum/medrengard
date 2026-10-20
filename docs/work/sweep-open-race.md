@@ -38,3 +38,4 @@ Owner's instruction (2026-10-20): "Once all this research comes back, triage it 
 - lazy-review: an extracted `checkOpen` helper (one caller) was inlined back into `open`.
 - `npm test`: 420 tests, 396 pass, 0 fail, 19 skipped, 5 todo (implementer's run, not independent). `npm run test:learn`: 6 tests, 6 pass.
 - Next: owner review of the branch.
+- 2026-10-20 — owner: “Makes sense to me, lets merge as well” (A-097). Main merged into the branch (clean); session's run, not independent: `npm test` 432 tests, 408 pass, 0 fail; `test:learn` 6 pass. Merged into main with `--no-ff`.
