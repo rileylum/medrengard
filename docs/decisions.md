@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-091 — 2026-10-20 — Next: fix and expand the guide
+
+Owner, after 10-d merged and row 10 was complete, asked what comes next: “Okay, the next thing I'd like to do is fix the learn page - both by actually fixing but expanding it to the new architecture and features”.
+
+Effect: the next work is `learn/`, ahead of row 11. Make `npm run test:learn` pass again, and add what the guide does not yet cover. That is everything since 09-a: the workflow engine, prompt versions, registries, configuration layers, command stages, grants and the observation stream. Branch `feat/learn-refresh` is made from main at `d48c8d9`. A-050 keeps `learn/` outside the ticket workflow. Whether this work gets a ticket and reviews is not yet decided.
+
 ### A-090 — 2026-10-20 — 10-d: fix the review findings, then merge
 
 Owner, after standard 1 and the adversarial review both passed on `05b550a` with three minors and two notes, offered a fix of all five tests first, the busy timeout on `openings()`, and a merge without another review: “fix and merge”.
