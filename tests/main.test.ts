@@ -354,6 +354,28 @@ test('a job naming an extension runtime runs from open to AWAITING_ACCEPTANCE, a
   }
 });
 
+// sweep-terminal-escapes: findings, heads and reasons are agent text; a raw ESC or BEL would let an
+// agent erase the owner's screen, print a fake stage or write the clipboard (OSC 52).
+test('agent text with terminal escapes reaches stdout and stderr only as visible escapes', () => {
+  for (const marker of ['EXT:esc-verdict', 'EXT:esc-head']) {
+    const { root, jobFile } = scratch();
+    copyFileSync(join(import.meta.dirname, 'fixtures', 'ext-runtime.ts'), join(root, 'ext-runtime.ts'));
+    const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+    writeFileSync(jobFile, JSON.stringify({ ...job, ticket: marker, runtimes: { ext: { module: 'ext-runtime.ts' } }, runtime: { developer: 'ext', standard: 'ext', adversarial: 'ext' } }));
+    const r = sf([jobFile]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^Stage: ESCALATED$/m, marker);
+    assert.doesNotMatch(r.stdout + r.stderr, /[\u0007\u001b\u202e]/, marker);
+    // The one line break in the text is shown, not obeyed: no line of its own starts with "fake".
+    assert.doesNotMatch(r.stdout, /^fake/m, marker);
+    assert.match(r.stdout, /\\u\{1b\}\[2JStage: AWAITING_ACCEPTANCE\\u\{1b\}\]52;c;cm0gLXJmIH4=\\u\{7\}/, marker);
+    assert.equal(r.stdout.match(/^Stage: /gm)?.length, 1, marker);
+    if (marker === 'EXT:esc-verdict') assert.match(r.stdout, /^ {2}- \\u\{1b\}\[2J/m);
+    // 10,000 characters of claimed head are cut to 64 before the escalation names them.
+    else assert.ok(r.stdout.length < 2_000, r.stdout);
+  }
+});
+
 // Ticket 10-b: a runtime the personal file adds resolves against the personal file, not the job file.
 test('a personal-layer extension runtime, relative to the personal file, runs a job to AWAITING_ACCEPTANCE', () => {
   const { root, jobFile } = scratch();
