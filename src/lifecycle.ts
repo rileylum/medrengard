@@ -11,7 +11,7 @@ export type Outcome = 'PASS' | 'FAIL';
 /** Stages the engine owns. A workflow may target the last three; it may define none of them. */
 export const ENGINE_STAGES = ['QUEUED', 'ESCALATED', 'CANCELLED', 'ACCEPTED'];
 /** Stages that hold no open cycle: escalated cycles wait for the owner and never move again. */
-export const SETTLED: Stage[] = ENGINE_STAGES.slice(1);
+export const SETTLED: readonly Stage[] = Object.freeze(ENGINE_STAGES.slice(1));
 
 export interface Transitions {
   PASS: Stage;

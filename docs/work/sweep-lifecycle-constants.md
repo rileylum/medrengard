@@ -43,3 +43,5 @@ Verification: `npm test` and `npm run test:learn`, run by the owner on the final
 - Implementer's run, not independent: `npm test` 420 tests, 396 pass, 0 fail, 19 skipped, 5 todo (baseline 419/395; the one new test accounts for the difference). `npm run test:learn` 6 pass, 0 fail.
 - lazy-review on `git diff main...HEAD`: nothing to cut.
 - Next: owner reads "For the owner", runs `npm test` and `npm run test:learn` on the final SHA, then a standard review. After merge, update HANDOFF's lesson on new event types.
+- 2026-10-20 — standard review 1 at a65cc7d: PASS (store and shim dedup byte-identical to base). Three small items, all fixed: the `append` doc comment in `src/store.ts` names `outcomeRunId` instead of "those three" (minor); `docs/design/2026-10-20-observation-stream.md` no longer names the removed `DEDUP` (nit); `SETTLED` is `readonly Stage[]` and frozen, since two modules export one shared array (nit).
+- After the fixes, implementer's run, not independent: `npm test` 420 tests, 396 pass, 0 fail, 19 skipped, 5 todo. `npm run test:learn` 6 pass, 0 fail. No test changed.

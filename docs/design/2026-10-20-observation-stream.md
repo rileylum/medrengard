@@ -19,7 +19,7 @@ Facts the design must respect:
 
 **The store** (`src/store.ts`). Two columns join the events table:
 
-- `pos INTEGER`: a position across the whole store. It is allocated in the same `INSERT … SELECT` as `seq` (`COALESCE(MAX(pos), 0) + 1` over the table), and a unique index guards it. It increases with commit order. It is not dense: an insert that `DEDUP` ignores uses no position, and open rows take one but print no line.
+- `pos INTEGER`: a position across the whole store. It is allocated in the same `INSERT … SELECT` as `seq` (`COALESCE(MAX(pos), 0) + 1` over the table), and a unique index guards it. It increases with commit order. It is not dense: an insert the unique index ignores uses no position, and open rows take one but print no line.
 - `at TEXT`: `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`, set by SQLite in the same statement. The `Event` body is unchanged, so replay is unchanged.
 
 The constructor adds both columns when they are missing, inside `BEGIN IMMEDIATE`, and checks again under the lock, so two processes opening one old store cannot both add them. Old rows get a `pos` in `(cycle_id, seq)` order, before every new row, and `at` stays null. Their real order across cycles is lost, and the stream says so by giving no time rather than a false one.

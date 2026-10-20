@@ -152,8 +152,8 @@ export class EventStore {
    * Cycle and never apply the object they passed in: the object can read differently live than
    * its serialised form does (02-c finding). Throws before writing if apply could not classify
    * the serialised event: a bad row would make the whole log unloadable. A run has one outcome:
-   * a second result, verdict or run_failed for a run ID that already has one writes nothing and
-   * returns the current Cycle. Only those three carry run_id into the unique index; a redelivered
+   * a second outcome for a run ID that already has one writes nothing and returns the current
+   * Cycle. Only events `outcomeRunId` names carry run_id into the unique index; a redelivered
    * claim is stored and apply decides.
    */
   append(cycleId: string, event: Event): Cycle {
