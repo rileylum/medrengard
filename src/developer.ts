@@ -174,11 +174,12 @@ function refuse(repo: string, incoming: string, branch: string, base: string, pr
   }
   if (gitStatus(repo, 'merge-base', '--is-ancestor', base, head) !== 0) return `commit ${head} is not descended from the base ${base}`;
   // --quiet answers in the exit code: 0 same, 1 different, anything else an error (a missing object is 128).
-  const diff = gitStatus(repo, 'diff', '--quiet', base, head);
+  // --no-textconv: an owner's textconv driver that renders two versions alike makes them "same".
+  const diff = gitStatus(repo, 'diff', '--quiet', '--no-ext-diff', '--no-textconv', base, head);
   if (diff === 0) return `commit ${head} has no changes against the base ${base}`;
   if (diff !== 1) return `commit ${head}: git diff ${base} ${head} failed with exit ${diff}`;
   if (previous !== undefined) {
-    const same = gitStatus(repo, 'diff', '--quiet', previous, head);
+    const same = gitStatus(repo, 'diff', '--quiet', '--no-ext-diff', '--no-textconv', previous, head);
     if (same === 0 && gitStatus(repo, 'merge-base', '--is-ancestor', previous, head) !== 0) {
       return `commit ${head} has the previous candidate's tree but does not descend from ${previous}; rewriting commits is not allowed`;
     }
