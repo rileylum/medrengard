@@ -57,3 +57,12 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
   - `grants` on an agent stage is accepted and ignored.
   - Two grants with the same variable in one stage are not refused.
 - 2026-10-20 — owner: “go as recommended” (A-085). Fix the standard 2 findings and the two silent refusals, tests first; record Q5 against A-078; then the adversarial review.
+- 2026-10-20 — standard 2 findings fixed at `79220e4`, tests first, with no further standard review (A-085):
+  - A test now scans every process's `/proc/<pid>/cmdline` while a grant stage runs. It fails standard 2's mutant (token via `policy.env`).
+  - Redaction replaces the longest value first.
+  - `tree.stdout` is redacted.
+  - A grant file under a system root (`SYSTEM`, now exported from `src/sandbox.ts`) or under the built-in runtimes' home config is refused.
+  - `grants` on a stage that is not a command stage is refused.
+  - Two grants with one variable in a stage are refused.
+
+  The A-078 row in `accepted-risks.md` now names the grant-file exposure. Known limit: an extension runtime's binary folder and `bind` paths are not checked against grant files. Implementer's `npm test` on `79220e4`: 380 tests, 356 pass, 0 fail. Seven more mutants were all caught (`10-e/mutants3.py`). Adversarial started on `79220e4`.
