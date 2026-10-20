@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-087 — 2026-10-20 — Live run findings recorded in the plan; merge
+
+Owner, after live runs 1 and 2 escalated (a reviewer misread a silent check's `exit 0`; a developer could not commit, likely through a denied `$(cat …)`), on recording the gaps: “lets capture this in the plan - we already have two sections that are relevant, skills and montioring and self improvement”. After run 3 reached AWAITING_ACCEPTANCE with the MERGE grant stage passing: “accpepted and merged, merge live-run-fidnings into main”.
+
+Effect: `docs/plan.md`'s rows for role prompts and skills and for the improvement loop name the three gaps: the developer contract does not list the allowed git commands; the reviewer prompt does not show a check's command; a run keeps none of the runtime's raw output. `docs/live-run-findings` merges into main with `--no-ff`. Live run 3's cycle is accepted, and its head merged into the scratch repository by the owner.
+
 ### A-086 — 2026-10-20 — 10-e: fix the adversarial findings, then merge
 
 Owner, after 10-e's adversarial FAIL on `79220e4` (one major: a grant file beside the claude or pi binary is readable by the agents' sandboxes; three minors: no test of the head gate's PASS-for-this-head rule, `head.stdout` redacted after JSON quoting, overlapping values partly left in clear) and the recommendation to fix all four tests first, trim `\r\n` from a grant value, add the child-argv and cwd-config warnings to the design note, then merge without another review, as for 10-b and 10-c (A-080, A-082): “fix and merge”.
