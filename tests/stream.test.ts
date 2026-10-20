@@ -410,7 +410,7 @@ test('the store refuses a source that is not one line of printable text (10-d st
   const db = join(fresh('source-shape'), 'events.sqlite');
   const store = new EventStore(db);
   store.open('c1', 'w1');
-  for (const bad of ['a\nb', 'a\rb', 'a b', 'a b', 'a\u0085b', 'a\vb', 'a\fb', 'a\u001bb', 'a\u007fb', 'a\tb'])
+  for (const bad of ['a\nb', 'a\rb', 'a\u2028b', 'a\u2029b', 'a\u0085b', 'a\vb', 'a\fb', 'a\u001bb', 'a\u007fb', 'a\tb'])
     assert.throws(() => store.append('c1', { type: 'cancel', source: bad }), /unclassifiable/, JSON.stringify(bad));
   assert.equal(store.append('c1', { type: 'cancel', source: 'observer:é ü' }).stage, 'CANCELLED');
   store.close();
@@ -420,9 +420,13 @@ test('accept and cancel refuse a --source with any control character or line sep
   const j = job('w');
   seed(j.db, 'c1', 'w', TO_ACCEPTANCE);
   const before = rows(j.db).length;
-  for (const bad of ['a b', 'a b', 'a\u0085b', 'a\u001bb', 'a\vb']) {
-    assert.equal(sf(['accept', j.jobFile, H, '--source', bad]).status, 2, JSON.stringify(bad));
-    assert.equal(sf(['cancel', j.jobFile, '--source', bad]).status, 2, JSON.stringify(bad));
+  for (const bad of ['a\u2028b', 'a\u2029b', 'a\u0085b', 'a\u001bb', 'a\vb']) {
+    for (const args of [['accept', j.jobFile, H], ['cancel', j.jobFile]]) {
+      const r = sf([...args, '--source', bad]);
+      assert.equal(r.status, 2, JSON.stringify(bad));
+      // The CLI's own refusal, not the store's: it names the flag.
+      assert.match(r.stderr, /^--source must be one line of printable text$/m, JSON.stringify(bad));
+    }
   }
   assert.equal(rows(j.db).length, before);
 });
