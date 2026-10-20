@@ -32,7 +32,7 @@ Verification: `npm test`, run by the owner.
 1. `checkoutGit` (`src/verify.ts`) takes attributes from the empty tree, sets `core.attributesFile=/dev/null` and `GIT_ATTR_NOSYSTEM=1`. Git then reads no attributes from the candidate, from your global attributes file or from the system one. The checkout holds the commit's bytes as stored.
 2. `review`'s diff gets `--no-ext-diff --no-textconv --no-color`, the same flags as verify's.
 3. `develop`'s two `git diff --quiet` calls get `--no-ext-diff --no-textconv`.
-4. `verify` deletes the private index and its lock together with the old checkout. `read-tree` rebuilds the index anyway.
+4. `verify` deletes the private index's lock together with the old checkout. The index itself stays: git replaces it only by renaming a finished lock, so it is never half-written, and `read-tree` rebuilds it anyway.
 
 **Why this approach.** The research suggested `GIT_CONFIG_NOSYSTEM=1`. That variable skips the system *config*, but a filter only runs when an *attribute* selects it, and the system *attributes* file is controlled by `GIT_ATTR_NOSYSTEM`. So the change sets `GIT_ATTR_NOSYSTEM` and leaves the system config alone. The empty tree, not "no `--attr-source`": without the flag git reads `.gitattributes` from the checkout, which a check can rewrite (08-a chose `--attr-source=<head>` to stop that, and the empty tree keeps it stopped).
 

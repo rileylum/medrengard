@@ -152,9 +152,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // and rmSync cannot clear a directory it cannot read (08-b standard review 1).
   if (existsSync(worktree)) restoreAccess(worktree);
   rmSync(worktree, { recursive: true, force: true });
-  // read-tree rebuilds the index; a lock beside it is a crashed or interrupted verify's, and would
-  // fail every later verify of this cycle with "File exists".
-  rmSync(`${worktree}.index`, { force: true });
+  // A lock beside the private index is a crashed or interrupted verify's, and would fail every
+  // later verify of this cycle with "File exists". The index itself can stay: read-tree rebuilds it.
   rmSync(`${worktree}.index.lock`, { force: true });
   // Before 08-a the checkout was a registered worktree; prune drops a registration left behind.
   git(job.repo, 'worktree', 'prune');

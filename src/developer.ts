@@ -174,7 +174,8 @@ function refuse(repo: string, incoming: string, branch: string, base: string, pr
   }
   if (gitStatus(repo, 'merge-base', '--is-ancestor', base, head) !== 0) return `commit ${head} is not descended from the base ${base}`;
   // --quiet answers in the exit code: 0 same, 1 different, anything else an error (a missing object is 128).
-  // --no-textconv: an owner's textconv driver that renders two versions alike makes them "same".
+  // The flags: otherwise git compares what the owner's diff drivers print, and a textconv driver that
+  // renders two versions alike makes them "same". Either flag alone does it on git 2.56; both are kept.
   const diff = gitStatus(repo, 'diff', '--quiet', '--no-ext-diff', '--no-textconv', base, head);
   if (diff === 0) return `commit ${head} has no changes against the base ${base}`;
   if (diff !== 1) return `commit ${head}: git diff ${base} ${head} failed with exit ${diff}`;
