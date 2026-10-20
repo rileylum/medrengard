@@ -36,6 +36,7 @@ Rows 9 and 10 are built with the later rows and open questions in view (A-055), 
 | Protocol version (A-111, soon) | `protocol: 1` on RunRequest, `request.json` and events |
 | Extension extras (A-112, after the protocol version) | `runtimes.<name>.network`, default `true`; `src/kits/` bound read-only at `/sf/kits` in every command and runtime sandbox, with a `serve()` helper; the path versioned with the protocol |
 | Owner tools (A-111) | A `doctor` command (sandbox, runtimes, programs, and which layer set each config key); a `status` command; job-file errors that name each bad field; a warning at `accept` when the base moved |
+| Guide stand-ins (A-112, low priority) | One dedicated ticket: `replayRow` (stream.ts), `fixInput` (developer.ts) and `openRefusal` (store.ts) split out without I/O, and `learn/` imports them instead of copying. The guide is experimental; core tickets do not carry this |
 | Housekeeping (A-111) | Clone and checkout cleanup after `accept` or `cancel` (562 MB per cycle on a 508 MB repository); faster tests (split `developer.test.ts`, the runtime kit's fixed wait) |
 | Release tracking and deployment (O-009) | Command stages after acceptance, with grants |
 | Design Studio (O-012) | Stages with no candidate yet. The SHA guarantee applies to steps that produce evidence about code |
