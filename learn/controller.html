@@ -75,10 +75,11 @@
   <table>
     <thead><tr><th>Command</th><th>Records</th><th>Refuses when</th></tr></thead>
     <tbody>
-      <tr><td><code>accept job.json &lt;sha&gt;</code></td><td><code>accept</code> with the candidate's head</td><td>no open cycle; the cycle is not at a human stage; the SHA is not the full candidate head</td></tr>
+      <tr><td><code>accept job.json &lt;sha&gt;</code></td><td><code>accept</code> with the candidate's head, then runs the stages after it, if the workflow has any</td><td>no open cycle; the cycle is not at a human stage; the SHA is not the full candidate head; the stage after it would fail the checks <code>run</code> makes before a paid step, such as a grant nobody gave</td></tr>
       <tr><td><code>cancel job.json</code></td><td><code>cancel</code> on the open cycle, or on every ESCALATED one when none is open</td><td>nothing to cancel</td></tr>
     </tbody>
   </table>
+  <p>With the default workflow, accept leads to ACCEPTED, and nothing runs after it. A workflow may put a stage after the human one, such as a grant stage that merges. Then accept checks that stage as <code>run</code> would, before it writes anything, records the accept, and drives the cycle on in the same command (<a href="/docs/decisions.md">A-129</a>).</p>
   <p>Each takes <code>--source &lt;name&gt;</code>, recorded in the event; without it the source is <code>owner</code>. An <a href="store.html#stream">observer</a> passes its own name, so the log shows who decided. A source is a label, not an identity: anyone who can run the command can write any name. It must be one line of printable text, because the CLI and the stream print it.</p>
 </section>
 
@@ -88,6 +89,8 @@
   <pre data-code="src/controller.ts#plain,normalise,toEvent,bounded"></pre>
   <p>Your two decisions, as functions any caller can use:</p>
   <pre data-code="src/decide.ts#acceptCycle,cancelWork"></pre>
+  <p>An owner's event, then the loop: what accept calls when a stage follows the human one.</p>
+  <pre data-code="src/run.ts#decideAndDrive"></pre>
   <p>The commands that call them, and how <code>--source</code> is read:</p>
   <pre data-code="src/main.ts#withSource,accept,cancel"></pre>
 </section>
