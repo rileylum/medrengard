@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-104 — 2026-10-20 — sweep-lifecycle-constants: merged after the owner's walkthrough
+
+Owner, after the walkthrough: “Yep this is a good change, merge”.
+
+Effect: `feat/sweep-lifecycle-constants` merges into main locally with `--no-ff`. `SETTLED`, `outcomeRunId` and `EVENT_TYPES` are defined once in `src/lifecycle.ts`; the store, the controller (including the cancel watch from A-098) and the guide's shim use them. A new event type needs three edits, not four. One fresh in-session review covers the branch (PASS; dedup byte-identical); the `claude -p` reviews and the adversarial review did not run. Merging main into the branch conflicted in the spec's head, base and duplicate rows; both sides combined. The owner did not run `npm test`; the session's run on the branch with main merged in (450 tests, 426 pass, 0 fail; `test:learn` 6 of 6, the same as the overnight trial merge of all ten) is not independent. This is the last of the ten overnight branches.
+
 ### A-103 — 2026-10-20 — sweep-stage-guards: merged after the owner's walkthrough
 
 Owner, after the walkthrough: “merge, good tests”.
