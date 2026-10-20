@@ -32,3 +32,4 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
   - `observe` passes no workflow to the reader, so a pre-10-d custom-workflow cycle gives it null stages. `events <job.json>` does pass one.
   - A pre-10-d controller writing to an upgraded store would leave `pos` null, and the reader would skip that row. One controller version runs on this machine, so this is noted, not handled.
   - `observe` does not catch: an observer that throws stops it, and it rejects with the error.
+- 2026-10-20 — owner: “run the reviews” (A-089). Standard 1 started on `05b550a`.

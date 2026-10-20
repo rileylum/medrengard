@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-089 — 2026-10-20 — 10-d: run the reviews
+
+Owner, after 10-d was built at `05b550a` and asked to run `npm test` or waive it, and to run or waive the reviews: “run the reviews”.
+
+Effect: standard 1 starts on `05b550a`. The owner gave no answer on running `npm test`; no owner-run result is recorded, and the reviewers' own runs are the independent ones.
+
 ### A-088 — 2026-10-20 — 10-d READY; observation stream design approved
 
 Owner, after reading the 10-d ticket and [design/2026-10-20-observation-stream.md](design/2026-10-20-observation-stream.md) with its six questions: “take all”.
