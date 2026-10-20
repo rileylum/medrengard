@@ -37,6 +37,26 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-127 — 2026-10-21 — Smaller items: ticket provenance, per-repository sections, secret references, workflow tooling; codex and ACP parked
+
+Owner, on foundations theme T14 (`docs/research/2026-10-20-foundations/security.md` P9; `extend-config.md` proposals 9, 10; `engine.md` P7; `runtime-process.md` proposal 8), with the session's placement: “a to e as recommende”.
+
+Effect (`docs/plan.md`):
+1. Row 12: ticket provenance (listed authors only by default, hidden characters stripped, tracker text labelled untrusted; the allow list in the dispatch extension point) and secret references for grants. Widens A-083 Q1.
+2. With Repository trust: personal per-repository sections and profiles, the home of A-119's per-repository friction. Widens A-074's layers.
+3. After JSON workflows: checker warnings, a Mermaid view, and a kit that reports a workflow's worst-case paid runs.
+4. Parked until the owner wants a third vendor: codex as a built-in runtime, and ACP as an extension runtime (after A-116's progress lines). Widens D-007 then.
+
+This closes the foundations walkthrough: themes T1 to T14 are decided in A-114 to A-127.
+
+### A-126 — 2026-10-21 — Workspaces: shared clones against a base-only mirror; overlay checkouts with pools
+
+Owner, on foundations theme T13 (`docs/research/2026-10-20-foundations/runtime-process.md` proposal 5), with the session's timing (the mirror beside row 11's `layout` ticket; the overlay with pools): “Yes adopt both”.
+
+Effect (`docs/plan.md`):
+1. Beside row 11's `layout` ticket: each cycle's clone is `git clone --shared` against a bare mirror the controller owns. The mirror holds only what a developer may see, matching A-121 (d). Widens A-038: no hardlinks stays; a full copy per cycle goes. Shrinks A-111's housekeeping.
+2. With pools (row 13): an overlay checkout per base SHA, after a probe with the real CLIs. Lower layers are immutable.
+
 ### A-125 — 2026-10-21 — Process and record: contradictions fixed, review tiers, a pre-merge test hook, a threat model, a private remote, dogfooding
 
 Owner, on foundations theme T12 (`docs/research/2026-10-20-foundations/design-audit.md` P5, P6, P10, P11, section 6.1; `security.md` P12), with the session's recommendations (fix the contradictions now; spec up to row 10 as a docs ticket that becomes the current-rules page; merge records stay in this file; review tiers and a pre-merge hook; a private remote the owner creates; a threat model page; dogfooding after row 11): “Yes, but make sure when we rewrite anything we come back to the core goals - strong core, sane defaults but control and customizability to the user, extensibility and observability (plus anything else I'm missing).”
