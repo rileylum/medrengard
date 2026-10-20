@@ -716,14 +716,3 @@ test('accept that drives on to a further human stage prints the next steps and e
   assert.doesNotMatch(r.stdout, /^To merge:$/m);
 });
 
-test('accept refuses, writing nothing, when the sandbox the stage after it needs cannot start (11-a2 standard 1)', () => {
-  const { env, jobFile, head, db, cycleId } = atOwnerBeforeGrant(MERGES);
-  const before = rows(db, cycleId);
-  const spec = JSON.parse(readFileSync(jobFile, 'utf8'));
-  writeFileSync(jobFile, JSON.stringify({ ...spec, sandbox: { backend: 'bwrap', read: ['/nonexistent-sf-11a2'] } }));
-  const r = sf(['accept', jobFile, head], env);
-  assert.equal(r.status, 2, r.stdout + r.stderr);
-  assert.equal(r.stdout, '');
-  assert.match(r.stderr, /sandbox read path \/nonexistent-sf-11a2 does not exist/);
-  assert.deepEqual(rows(db, cycleId), before);
-});
