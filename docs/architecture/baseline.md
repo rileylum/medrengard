@@ -6,7 +6,17 @@ The full design is [source-v0.3.md](source-v0.3.md), a Markdown conversion of th
 
 Owner attention goes upstream (discovery, design, acceptance of specifications) and downstream (reviewing demonstrated outcomes, release decisions). Between those points a deterministic controller moves small, verifiable tickets through portable agents, independent verification and bounded review. The controller is not another LLM.
 
-Core goals, which every rewrite comes back to (A-125): a strong core; sane defaults, with control and customisation left to the owner; extensibility; observability.
+Core goals, which every rewrite comes back to (A-125):
+
+- A strong core.
+- Sane defaults, with control and customisation left to the owner.
+- Extensibility.
+- Observability.
+- Vendor neutral: runtime, model and role are independent; no vendor in the core (D-002).
+- Local first: runs on the owner's machine, under the owner's control (A-001).
+- The controller decides: agents only claim, and evidence binds to a SHA (D-001).
+- Safe by default: candidate code is sandboxed, and nothing outward-facing or irreversible happens without the owner's configuration (D-019, D-023).
+- Durable and recoverable: the event log is the record, and a crash never loses paid work (row 11, A-122).
 
 First measurable outcome: one READY issue reaches a human-reviewable PR with no manual stage advancement, with a safe failure path.
 
