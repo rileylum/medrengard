@@ -91,7 +91,7 @@ One driver, `run` in `src/run.ts`, runs any workflow that passes the check. It o
 
 - The job file may name a workflow module, and `runtime` picks a CLI per role [main: main.ts runs the workflow the job file names]. `ROLE_ALIASES` keeps the old keys `standard` and `adversarial` working.
 - A role with no adapter is refused before any cycle opens [run: a role with no adapter].
-- An extension runtime's module is read and hashed only when a role selects that runtime, so a broken entry no role selects blocks neither a run nor `cancel` [main: a personal runtime whose module is missing]. A role that selects it is refused before any cycle opens, naming `runtimes.<name>` and the path [main: a role whose runtime module is missing].
+- An extension runtime's module is read and hashed only when a role selects that runtime, so a broken entry no role selects blocks neither a run nor `cancel` [main: a personal runtime whose module is missing]. `accept`, `cancel` and `events` build no adapter, so a broken module never blocks them, whichever role selects it. A run whose role selects it is refused before any cycle opens, naming `runtimes.<name>` and the path [main: a role whose runtime module is missing].
 - A step that throws escalates the cycle with `reject_dispatch` naming the stage [run: a stage that throws].
 - `resume` continues a cycle from its stored stage [run: resume on a cycle left at VERIFYING].
 
