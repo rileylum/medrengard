@@ -44,7 +44,7 @@ Each stage has a `PASS` transition and may have a `FAIL` one. A stage with a `bu
 | Dispute | run ID, the previous candidate's SHA, reason, `contractHash`, `roleTextHash` |
 | Decision | `accept` with the exact SHA, `request_changes`, `cancel`; a child cycle names its parent |
 
-One work item has at most one open cycle, and a new cycle for the same work must name an `ESCALATED` parent [store: open enforces one open cycle]. **Proposal:** a contract version on Work, and the model on Run.
+One work item has at most one open cycle, and a new cycle for the same work must name an `ESCALATED` parent [store: open enforces one open cycle; open enforces one open cycle per work item when two processes race]. **Proposal:** a contract version on Work, and the model on Run.
 
 ## Default workflow
 
