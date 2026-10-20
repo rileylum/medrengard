@@ -81,3 +81,12 @@ Verification: `npm test`, run by the owner on the reviewed SHA.
   The reviewer's independent `npm test` matched: 380 tests, 356 pass, 0 fail. The two leftover `sf-grants-*` folders were from the implementer's red run of the locked-`outputDir` test; they are deleted.
 - 2026-10-20 — owner: “fix and merge” (A-086). Fix the adversarial findings tests first, trim `
 `, add the two warnings to the design note, then merge without another review.
+- 2026-10-20 — adversarial findings fixed at `9e3e5ac`, tests first, unreviewed (A-086):
+  - The major: a grant file under any folder a runtime's sandbox binds is refused. That covers the binary's real folder, `bind` paths and home config, for built-in and extension runtimes. `hostReads` in `src/runtime/cli-adapter.ts` lists those paths, and `RuntimeEntry.reads` exposes them. This also closes the extension-runtime known limit.
+  - The PASS-for-this-head rule is pinned by a test that kills the reviewer's mutant.
+  - Redaction finds every match in the original text and masks the merged ranges.
+  - `head.stdout` redacts before JSON quoting.
+  - A grant value drops a trailing `\r\n`.
+  - The design note's risks now warn about a token in a child's argv, and about tools that read config from the checkout.
+
+  Implementer's `npm test` on `9e3e5ac`: 384 tests, 360 pass, 0 fail. Six more mutants were all caught (`10-e/mutants4.py`). Review record: 2 standard (FAIL, FAIL) and 1 adversarial (FAIL). Confirmed findings: 1 major and 3 minors from standard 1, 1 major and 3 minors from standard 2, 1 major and 3 minors from the adversarial review. Owner interventions: 3 (A-084, A-085, A-086). Merged into main with `--no-ff`.
