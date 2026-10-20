@@ -155,3 +155,4 @@ Experimental guide (A-050), outside the ticket workflow, merged to main as `596f
     - Run 2: escalated on a missing commit. The developer could not commit, likely because of a denied `$(cat …)` in its commit command.
     - The owner chose to record both gaps, and a third (runs keep no raw output), in `docs/plan.md`: the prompts-and-skills and improvement-loop rows. Run 3 uses checks that print what they observed, and a ticket line naming the allowed git commands.
     - Next: the owner runs run 3.
+53. Done: live run 3 reached AWAITING_ACCEPTANCE at `fc05999`. Every stage passed, and the MERGE grant stage printed `token: [grant github]` and wrote the right head. The owner accepted it and merged it into the scratch repository. `docs/live-run-findings` merged into main (A-087). Next: the owner chooses 10-d (observation stream), or tickets for the three live-run gaps.
