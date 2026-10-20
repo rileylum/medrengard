@@ -14,10 +14,11 @@ import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
 import { bounded, git, stopped } from './git.ts';
 import type { CommandRequest } from './kits/request.ts';
-import { FILE_STEM, TREE_CHECK, fileArgs, type Command, type Cycle, type Event } from './lifecycle.ts';
+import type { Grant } from './config.ts';
+import { FILE_STEM, TREE_CHECK, fileArgs, type Command, type Cycle, type Event, type StageDef } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
-import { checkSandbox, executables, reachable, restoreAccess, spawnEnv, wrap, type Policy, type Sandbox } from './sandbox.ts';
+import { checkSandbox, confines, executables, reachable, restoreAccess, spawnEnv, wrap, type Policy, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
 
 export interface Check {
@@ -42,6 +43,8 @@ export interface VerifyOptions {
   sandbox?: Sandbox;
   /** The workflow file's directory. A command's `{ file }` argument names a file there (10-c). */
   workflowDir?: string;
+  /** By name, what a grant stage may hold (Config.grants, 10-e). */
+  grants?: Record<string, Grant>;
 }
 
 export interface Verified {
@@ -58,6 +61,20 @@ const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
 
 /** A workflow passed as an object, not loaded from a file, has nowhere to find a file argument. */
 export const noWorkflowDir = (stage: string, file: string) => `stage ${stage} names file ${file}, but its workflow has no file of its own to find it beside`;
+
+/**
+ * The grants `def` asks for, from `grants`. Throws when one is not given, or when nothing confines
+ * the stage: under `none` the developer could read the file too (A-083 Q2).
+ */
+export function stageGrants(stage: string, def: StageDef | undefined, grants: Record<string, Grant> | undefined, sandbox: Sandbox | undefined): [string, Grant][] {
+  const names = def?.kind === 'command' ? (def.grants ?? []) : [];
+  const backend = sandbox ?? { backend: 'bwrap' };
+  if (names.length > 0 && !confines(backend)) throw new Error(`stage ${stage} holds a grant, which sandbox backend ${backend.backend} cannot confine`);
+  return names.map((name) => {
+    if (!grants || !Object.hasOwn(grants, name)) throw new Error(`stage ${stage} asks for grant ${name}, which no personal or job file gives`);
+    return [name, grants[name]!];
+  });
+}
 
 /** Run every declared check on the cycle's candidate and record one verification event. */
 export async function verify(store: EventStore, cycleId: string, job: Job, opts: VerifyOptions): Promise<Verified> {
@@ -81,6 +98,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     if (opts.workflowDir === undefined) throw new Error(noWorkflowDir(cycle.stage, f));
     if (!statSync(join(opts.workflowDir, f), { throwIfNoEntry: false })?.isFile()) throw new Error(`stage ${cycle.stage} names file ${f}, which is not a file in ${opts.workflowDir}`);
   }
+  const grants = stageGrants(cycle.stage, def, opts.grants, opts.sandbox);
   checkDeadline(opts.deadlineMs);
   const isolation = opts.isolation ?? 'cgroup';
   if (isolation === 'cgroup') checkScopes();
@@ -130,6 +148,16 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // The stage directory is read-only inside, so a command cannot rewrite the evidence the reviewer
   // reads; output/ is bound writable over it. Another stage's directory is not bound at all.
   const policy: Policy = { cwd: worktree, write: [worktree, outputDir], read: [evidenceDir], network: def.network ?? false, env: { SF_REQUEST: requestFile } };
+  // Read now, not at load: the value lives in this process no longer than the stage runs.
+  const values = grants.map(([name, g]) => {
+    const value = readFileSync(g.file, 'utf8').replace(/\n$/, '');
+    // An empty value would be redacted between every character of the evidence.
+    if (value === '') throw new Error(`grant ${name}: file ${g.file} is empty`);
+    return { name, variable: g.variable, value };
+  });
+  if (values.length > 0) policy.secrets = Object.fromEntries(values.map((v) => [v.variable, v.value]));
+  // The reviewer is shown stdout and stderr; a command that prints its token must not hand it on.
+  const redact = (text: string) => values.reduce((t, v) => t.replaceAll(v.value, `[grant ${v.name}]`), text);
 
   const results: CheckResult[] = [];
   // In order, all of them: the evidence is for the owner and the reviewers, who want the whole
@@ -137,8 +165,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   for (const check of checks) {
     const argv = check.command.map((a) => (typeof a === 'string' ? a : join(evidenceDir, 'files', a.file)));
     const r = await runCheck(argv, policy, isolation, sandbox, opts);
-    writeFileSync(join(evidenceDir, `${check.name}.stdout`), r.stdout);
-    writeFileSync(join(evidenceDir, `${check.name}.stderr`), r.stderr);
+    writeFileSync(join(evidenceDir, `${check.name}.stdout`), redact(r.stdout));
+    writeFileSync(join(evidenceDir, `${check.name}.stderr`), redact(r.stderr));
     writeFileSync(join(evidenceDir, `${check.name}.exit`), `${r.exit}\n`);
     const named = fileArgs(check);
     results.push({ name: check.name, result: r.result, ...(named.length ? { files: Object.fromEntries(named.map((f) => [f, hashes.get(f)!])) } : {}) });
@@ -160,7 +188,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
     writeFileSync(join(evidenceDir, `${TREE_CHECK}.exit`), 'dirty\n');
     results.push({ name: TREE_CHECK, result: 'FAIL' });
   }
-  return { cycle: store.append(cycleId, { type: 'verification', head, checks: results }), worktree, evidenceDir };
+  const held = grants.length > 0 ? { grants: grants.map(([name]) => name) } : {};
+  return { cycle: store.append(cycleId, { type: 'verification', head, checks: results, ...held }), worktree, evidenceDir };
 }
 
 /**
