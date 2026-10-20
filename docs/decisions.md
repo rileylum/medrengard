@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-131 — 2026-10-21 — 11-a2's design approved; READY at Trust tier
+
+Asked: approve the design note for 11-a2 (`docs/design/2026-10-21-owner-drives.md`): `decideAndDrive` in `src/run.ts` works out with `apply` the stage an owner's event leads to; only when the loop runs that stage does it build adapters and run `preflight`, before the event is recorded; the default workflow's `accept` loads no runtime. Rejected: a separate `resume` command, recording before `preflight`, and `preflight` inside `acceptCycle`. Tier Trust (2+1 through `claude -p`). Owner: “go approved”.
+
+Effect: 11-a2 is READY at Trust tier.
+
 ### A-130 — 2026-10-21 — 11-a's review minor accepted: cancel prints after every cancel is recorded
 
 Asked, from 11-a's Light review (PASS on `df2af87`, one minor): `cancel` now prints its lines after every cancel is recorded, not after each one, so a store write that fails part way through a cancel of several cycles prints nothing for the cycles already cancelled; the store keeps each cancel, and the error still prints. The session recommended accepting it, because restoring the order would add a print callback to `cancelWork` for that one failure. Owner: “accept”.

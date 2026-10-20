@@ -21,3 +21,4 @@ Verification: `npm test` and `npm run test:learn`; the owner's pre-merge hook ru
 
 ## Log
 - 2026-10-21 — drafted on `feat/11-a2-owner-drives` (A-129). Not READY until the owner approves the design note and says go.
+- 2026-10-21 — owner: “go approved” on the design note and the ticket (A-131). READY at Trust tier.
