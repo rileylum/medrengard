@@ -71,7 +71,7 @@ These hold under every workflow [lifecycle: evidence for a non-candidate SHA esc
 | any non-terminal | verification or `accept` for a SHA that is not the candidate | ESCALATED [lifecycle: SC-08; accept must name] |
 | outside a commit stage | candidate head changes | ESCALATED [lifecycle: SC-16] |
 | any non-terminal | target base changes | ESCALATED [lifecycle: SC-17] |
-| any non-terminal | duplicate result, verdict or run failure (same run ID) | no change [lifecycle: SC-06; store: a duplicate event] |
+| any non-terminal | duplicate result, verdict, dispute or run failure (same run ID) | no change [lifecycle: SC-06; lifecycle: outcomeRunId names the run; store: a duplicate event] |
 | any non-terminal | event tagged for another stage | ESCALATED, nothing counted [lifecycle: an event with a step] |
 | any non-terminal | event the stage's kind does not take | ESCALATED. **Proposal** for a test: only a late claim is tested [store: store dedup matches apply] |
 | any non-terminal | entering a budgeted stage whose budget is spent | ESCALATED [lifecycle: entering a budgeted stage] |

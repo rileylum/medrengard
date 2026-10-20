@@ -36,3 +36,10 @@ Verification: `npm test` and `npm run test:learn`, run by the owner on the final
 **Decision for the owner.** None beyond merge or not.
 
 ## Log
+- 2026-10-20 — feat/sweep-lifecycle-constants. Ticket committed at 2a48d1e.
+- Red: the new test failed on the unchanged code because the export did not exist: `SyntaxError: The requested module '../src/lifecycle.ts' does not provide an export named 'EVENT_TYPES'`.
+- Green at 27559e3. Mutant: with `case 'dispute'` removed from `outcomeRunId`, the new test fails (`actual: undefined, expected: 'r'`). `tests/store.test.ts` passes under that mutant: no store test sends a duplicate dispute. The new lifecycle test is now what guards it.
+- Spec row "duplicate result, verdict, dispute or run failure" names the new test and adds the missing word "dispute".
+- Implementer's run, not independent: `npm test` 420 tests, 396 pass, 0 fail, 19 skipped, 5 todo (baseline 419/395; the one new test accounts for the difference). `npm run test:learn` 6 pass, 0 fail.
+- lazy-review on `git diff main...HEAD`: nothing to cut.
+- Next: owner reads "For the owner", runs `npm test` and `npm run test:learn` on the final SHA, then a standard review. After merge, update HANDOFF's lesson on new event types.
