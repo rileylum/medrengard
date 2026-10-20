@@ -34,6 +34,7 @@ Rows 9 and 10 are built with the later rows and open questions in view (A-055), 
 | Run records (A-111, soon) | `run_failed` records a cause (infra, limit, output); each run records cost, tokens, model and CLI version; `claude` gets turn and budget caps. Also each run's raw runtime output, kept under `runsDir` (the Improvement loop row's gap; A-112). The data for tuning the workflow from logs, and what a later relaunch would key on (A-105) |
 | JSON workflows (A-111, soon) | A workflow loads from JSON; a repository's workflow must be data, so no repository code runs in the controller (closes A-078) |
 | Protocol version (A-111, soon) | `protocol: 1` on RunRequest, `request.json` and events |
+| Extension extras (A-112, after the protocol version) | `runtimes.<name>.network`, default `true`; `src/kits/` bound read-only at `/sf/kits` in every command and runtime sandbox, with a `serve()` helper; the path versioned with the protocol |
 | Owner tools (A-111) | A `doctor` command (sandbox, runtimes, programs, and which layer set each config key); a `status` command; job-file errors that name each bad field; a warning at `accept` when the base moved |
 | Housekeeping (A-111) | Clone and checkout cleanup after `accept` or `cancel` (562 MB per cycle on a 508 MB repository); faster tests (split `developer.test.ts`, the runtime kit's fixed wait) |
 | Release tracking and deployment (O-009) | Command stages after acceptance, with grants |
