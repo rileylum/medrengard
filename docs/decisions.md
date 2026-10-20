@@ -21,7 +21,7 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 | P-002 | DECIDED (A-001, A-016) | TypeScript core, SQLite state. Node 24 built-ins only; no dependencies until a test needs one |
 | P-005 | DECIDED (A-001) | Run locally; corporate execution separately authorised |
 | D-007 | DECIDED (A-001) | First runtimes: Pi and Claude Code |
-| D-016 | DECIDED (A-016) | [Core lifecycle v1](specs/core-lifecycle-v1.md) is the implementation baseline. One recovery rule: anything unclassified escalates; owner chooses child cycle or cancel. Edge-case semantics are added only when a test or a real incident requires them |
+| D-016 | DECIDED (A-016) | [Core lifecycle v1](specs/core-lifecycle-v1.md) is the implementation baseline. One recovery rule: anything unclassified escalates; owner chooses child cycle or cancel. Widened by A-114: an escalated cycle waits for the owner, who may also retry, overrule, fix, accept with risk or route. Edge-case semantics are added only when a test or a real incident requires them. Read with A-037 and A-042 (A-125): an edge case found only by an adversarial probe, with no incident and no damage by mistake, is parked or accepted, not fixed |
 | D-017 | DECIDED (A-016) | Design documents are not put through adversarial review on their own. The 2+1 rule applies to code with executable tests |
 | D-018 | DECIDED (A-017) | Plan steps are broken into Fast or Design tickets and delivered per [workflow.md](workflow.md) |
 | D-019 | DECIDED (A-035) | Candidate code runs inside a sandbox chosen by backend name. Bubblewrap first; Docker, VMs and cloud later behind the same interface. No VM or cloud backend for now; the tool stays agnostic |
@@ -36,6 +36,147 @@ DECIDED = source direction or a recorded owner reply. PROPOSED = recommendation.
 Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
+
+### A-127 — 2026-10-21 — Smaller items: ticket provenance, per-repository sections, secret references, workflow tooling; codex and ACP parked
+
+Owner, on foundations theme T14 (`docs/research/2026-10-20-foundations/security.md` P9; `extend-config.md` proposals 9, 10; `engine.md` P7; `runtime-process.md` proposal 8), with the session's placement: “a to e as recommende”.
+
+Effect (`docs/plan.md`):
+1. Row 12: ticket provenance (listed authors only by default, hidden characters stripped, tracker text labelled untrusted; the allow list in the dispatch extension point) and secret references for grants. Widens A-083 Q1.
+2. With Repository trust: personal per-repository sections and profiles, the home of A-119's per-repository friction. Widens A-074's layers.
+3. After JSON workflows: checker warnings, a Mermaid view, and a kit that reports a workflow's worst-case paid runs.
+4. Parked until the owner wants a third vendor: codex as a built-in runtime, and ACP as an extension runtime (after A-116's progress lines). Widens D-007 then.
+
+This closes the foundations walkthrough: themes T1 to T14 are decided in A-114 to A-127.
+
+### A-126 — 2026-10-21 — Workspaces: shared clones against a base-only mirror; overlay checkouts with pools
+
+Owner, on foundations theme T13 (`docs/research/2026-10-20-foundations/runtime-process.md` proposal 5), with the session's timing (the mirror beside row 11's `layout` ticket; the overlay with pools): “Yes adopt both”.
+
+Effect (`docs/plan.md`):
+1. Beside row 11's `layout` ticket: each cycle's clone is `git clone --shared` against a bare mirror the controller owns. The mirror holds only what a developer may see, matching A-121 (d). Widens A-038: no hardlinks stays; a full copy per cycle goes. Shrinks A-111's housekeeping.
+2. With pools (row 13): an overlay checkout per base SHA, after a probe with the real CLIs. Lower layers are immutable.
+
+### A-125 — 2026-10-21 — Process and record: contradictions fixed, review tiers, a pre-merge test hook, a threat model, a private remote, dogfooding
+
+Owner, on foundations theme T12 (`docs/research/2026-10-20-foundations/design-audit.md` P5, P6, P10, P11, section 6.1; `security.md` P12), with the session's recommendations (fix the contradictions now; spec up to row 10 as a docs ticket that becomes the current-rules page; merge records stay in this file; review tiers and a pre-merge hook; a private remote the owner creates; a threat model page; dogfooding after row 11): “Yes, but make sure when we rewrite anything we come back to the core goals - strong core, sane defaults but control and customizability to the user, extensibility and observability (plus anything else I'm missing).”
+
+Effect:
+1. Core goals, in `docs/architecture/baseline.md`, which every rewrite comes back to: a strong core; sane defaults, with control and customisation left to the owner; extensibility; observability. The session proposed five more (vendor neutral, D-002; local first, A-001; the controller decides, D-001; safe by default, D-019 and D-023; durable and recoverable, row 11 and A-122). Owner: “Yes please”. All nine are in `baseline.md`.
+2. Contradictions fixed in this branch: the spec's core rules 2 and 3 note what A-114 and A-108 change when built; `baseline.md` marks 2+1 reviews and no automatic merge as default policy (D-023); plan row 11 follows A-105 and A-122, not source §06's retry; D-016 reads with A-037 and A-042 (a probe-only edge case with no incident and no damage by mistake is parked or accepted); A-054's "the controller itself never merges" reads as "a merge happens only through a grant the owner gave". O-001 (answered by row 3, A-019) and O-014 (answered by both research passes) are closed; `parked.md`'s "pending review" lines for 08-d say merged. A-118 already reversed A-030 and gave both runtimes the same developer powers (D-002); A-120 makes the model selectable.
+3. Review tiers in `docs/workflow.md` and `AGENTS.md`: Trust (store, controller and engine, sandbox, grants, git over candidate trees) keeps 2+1 through `claude -p`; Light (refactors, docs, the guide) gets one review. A missing test for correct code is a minor finding.
+4. Independent verification is `scripts/pre-merge-commit`, a git hook the owner installs once; it runs `npm test` on an export of the merge result's index. The session ran it on this branch: 450 tests, 426 pass, 0 fail, about 30 s.
+5. `docs/security/threat-model.md`: one page of concerns, the trifecta rule, assets, actors and boundaries.
+6. A private remote for this repository, push only, no CI: the owner creates it.
+7. Plan rows: "Spec up to date" (docs ticket) and 11a "Dogfooding", after row 11.
+8. Merge and waiver records stay in this file.
+
+### A-124 — 2026-10-21 — Extension points on demand; a decision shape for dispatch; observer verbs; manifest and lock later
+
+Owner, on foundations theme T11 (`docs/research/2026-10-20-foundations/extend-config.md` proposals 6, 7, 8; `design-audit.md` P7): “As recommended”.
+
+Effect:
+1. A-113 gains a counterweight, also in `AGENTS.md`: build an extension point when a workflow or extension the owner runs needs it; until then, plain code. The same rule as "zero dependencies until a test needs one". A-117's step-type registry already follows it.
+2. Dispatch (row 12) uses a decision shape: a pure, sandboxed JSON function whose answer is recorded as an event. The default stays a number in config. Widens D-024 from two shapes to three.
+3. With `stop-run` in the Run records row: observers may also send `note`, and the store keeps a cursor per observer. An `sf observe` supervisor waits with O-006.
+4. An extension manifest and lock file, pinned by content hash, is a plan row built before the first workflow or extension is shared outside this repository.
+5. `learn/` is unchanged from A-112.
+
+### A-123 — 2026-10-21 — Engine correctness: owner events bound to a SHA and deduplicated; replay divergence detected; linear replay; checker gaps
+
+Owner, on foundations theme T10 (`docs/research/2026-10-20-foundations/engine.md` P2, P6, P9, G14; each defect reproduced by a probe), with the session's placement: “Adopt as suggested”.
+
+Effect (`docs/plan.md`):
+1. With row 11's fourth ticket (A-114): `request_changes` carries `head`; every event from outside a run carries a `commandId` the store deduplicates. Extends spec principle 2 to the owner's verdicts; widens A-074 Q6a and 10-d's observer contract. Before row 12 in any case.
+2. With row 11's third ticket: a stage checksum per row, an engine version on the open row, and a light replay check for recorded workflows, so a tightened `checkWorkflow` never makes an old cycle unloadable. Partly reverses 10-d's rejection of alternative 3 (the column is a checksum; `apply` stays the one source); refines A-112 item 6.
+3. With the progress rows (A-116): history appended without copying, so replay stays linear.
+4. With JSON workflows (A-120): `checkWorkflow` refuses a PASS edge to `ESCALATED`, an unreachable stage, and a grant stage not after a PASS verdict.
+
+### A-122 — 2026-10-21 — No daemon now; runs outlive the controller, and recovery adopts finished runs
+
+Owner, on foundations theme T9 (`docs/research/2026-10-20-foundations/runtime-process.md` proposals 4 and 7; `design-audit.md` P4), asked: no daemon now, with three triggers recorded on O-006; and runs that outlive the controller in row 11, finished runs adopted by default: “Yep this all sounds good, a daemon is probably the long term goal (especially one that could run on a VM and then serve to another computer for example)”.
+
+Effect:
+1. O-006 stays open with the long-term goal and the triggers in `docs/open-questions.md`. The factory stays one-shot commands over SQLite; `recover` and later `dispatch` are commands the owner or a systemd user timer runs. A later daemon calls the same commands.
+2. Row 11's fifth ticket, before `recover`: runs outlive the controller. Output and exit code go to files kept by a supervisor that is not the controller. `recover` watches or stops a running run, receives a finished one under its original run ID, and escalates one that left nothing. Widens A-105: a run that finished while the controller was down is received, not escalated; this is not a relaunch. A "never adopt" setting keeps A-105 exactly. Unverified: whether a systemd transient unit keeps its exit status after it ends.
+
+### A-121 — 2026-10-21 — Sandbox hardening without friction; subordinate UID parked
+
+Owner, on foundations theme T8 (`docs/research/2026-10-20-foundations/security.md` P5, P6, P7, P10, P11; `runtime-process.md` pi MCP note), asked to adopt items a to f and park g: “Yes”.
+
+Effect (`docs/plan.md`, Sandbox hardening row, with or before A-106): resource limits and a disk floor; a `stop` command; the clone's `.git/hooks` and `.git/config` reset after each run, with a warning on the printed path; the developer's clone holds only the base's history; `--disable-userns` after a probe, seccomp later; `--no-mcp` for the pi reviewer. Running agents under a subordinate UID is parked as a backend option, off by default. Confirms D-019 (bwrap first).
+
+### A-120 — 2026-10-21 — Strict configuration: one schema, provenance, canonical workflow hash, runtime entries as data
+
+Owner, on foundations theme T7 (`docs/research/2026-10-20-foundations/extend-config.md` proposals 1, 2, 4 and 5; probe: typos such as `sandbox.reed`, `grnats` and `model` accepted silently), with the session's order: “Adopt”.
+
+Effect (`docs/plan.md`):
+1. With JSON workflows: one declared schema for every file the owner writes; unknown keys refused at every depth with "did you mean", naming file, pointer and layer; a generated JSON Schema; values checked at load. A canonical workflow hash and a format version in the same ticket. Widens A-078 Q3 (merge rule per key) and A-056.
+2. With `doctor`, before `recover`: provenance per value, a `config --show-origin` command, and a hash of the effective config on the open row that `resume` checks. Widens A-105 item 2.
+3. With the Role prompts row: runtime entries carry model, effort and arguments; the repository layer may pick a runtime per role but not define one. Widens A-074 Q7 and A-113 item 3.
+
+### A-119 — 2026-10-21 — Repository trust: capabilities without friction by default; friction opt-in per repository
+
+Owner, on foundations theme T6 (`docs/research/2026-10-20-foundations/security.md` P3, P4; `extend-config.md` proposal 3), asked first: “Okay, some of these just sound like making it harder to use and not trusting the user. Is that the correct reading?” The session agreed for three of the five (trust by hash on the owner's own repositories, a default protected-paths FAIL, a human gate before grants) and revised them. Owner: “Yes let's take the revised version, allowing friction to be optionally added on a per repo basis.”
+
+Effect (`docs/plan.md`: JSON workflows, Repository trust, row 12):
+1. Repository workflows load as JSON data only; first of A-111's soon items. Closes A-078 when built.
+2. An owner floor: a personal `require` block (checks that always run, a human stage, a minimum review budget), empty by default. A repository workflow below it is refused; a repository's checks add to the floor's, never remove them.
+3. Trust by content hash, by default only for repositories whose base the owner does not control. The owner's own repositories keep A-095's check and no extra step.
+4. A `protected-paths` check ships as an optional stage, not in the default workflow; after A-109 it may raise a needs-owner finding instead of a FAIL.
+5. Grant stages run with `checkout: false` by default. An owner `accept` before a grant is released is an option, off by default.
+6. Each piece of friction (2, trust by hash, protected paths, the grant gate) can be turned on per repository in the owner's personal config.
+7. A-113, qualified: policy lives in workflows, but a floor the owner sets binds every workflow a repository supplies. Security keys (sandbox, egress lists, grants, the floor) are set only in the owner's layers. Widens D-024's rule for `sandbox` and `grants`. Reopens A-078 Q1 and Q2; widens A-095; A-074's repository layer may set checks, workflow and runtimes only above the owner's floor.
+
+### A-118 — 2026-10-21 — Defaults set before the sandbox: developer runs the checks; the adversarial reviewer may run commands
+
+Owner, on foundations theme T5 (`docs/research/2026-10-20-foundations/design-audit.md` P2, P3), with the session's recommendations (1: the developer runs the checks by default, after A-106; 2: reviewers may run commands in a sandbox with no network and a read-only checkout, on by default for the adversarial reviewer; 3: keep A-108 item 2 and tune from run logs): “Yes, though we've already captured point 2 I think. These are all good suggestions”.
+
+Effect (`docs/plan.md`):
+1. The "developer runs the checks" option is on by default once A-106 lands. Reverses A-112 item 11's "off by default". The claude developer can already run code through `.git/hooks` and `git commit`, and pi's developer has a shell, so the sandbox bounds the run; both runtimes get the same powers (D-002).
+2. Point 2 is close to A-112 item 10 (the controller runs a reviewer's script at the SHA), which is already on the Acceptance evidence row. The new part, added to that row: a reviewer may also run commands itself, with no network and a read-only checkout, on by default for the adversarial reviewer. Reverses A-030, which dated from reviewers running unsandboxed. The security review's "reviewers with no network tools" still holds, because the reviewer gets no network.
+3. Unchanged: the default workflow keeps `VERIFYING: FAIL → ESCALATED` (A-108 item 2); a fix round on a red check is tuned from run logs (A-116).
+
+### A-117 — 2026-10-21 — Named outcomes and declared step inputs and outputs, before A-108 and A-109; step-type registry on demand
+
+Owner, on foundations theme T4 (`docs/research/2026-10-20-foundations/engine.md` P3, P4): “Yes to both recommendations, keeping in mind  our principles around the core, extensibility etc this seems to be on the right track”.
+
+Effect (`docs/plan.md`, Structured findings row):
+1. Named outcomes and declared inputs and outputs are the design A-108 and A-109 are built on. A stage declares its outcomes (default `PASS`/`FAIL`, so today's workflows are unchanged) and its inputs by name and source; a step type declares its outputs. Outputs are SHA-bound files with a hash in the outcome event, never interpolated into prompts or argv. `checkWorkflow` checks the dataflow, which replaces `driverLimits` (A-096). Answers A-074 Q8; widens A-056 and A-057. A-109 A's routes become workflow edges, not core rules.
+2. Step-type registry: a design note now (the engine keeps three effects: candidate change, evidence about a head, wait for a decision; step types register and never set stage or budget). It is built when the second new step kind needs it, likely acceptance evidence. Revisits D-024 then.
+
+### A-116 — 2026-10-21 — Stream, keep and parse run output; progress lines; claims through the CLI's schema
+
+Owner, on foundations theme T3 (`docs/research/2026-10-20-foundations/runtime-process.md` proposals 1, 2, 3 and 6), with the session's order (1 and 6 as the Run records ticket; 2 after `protocol: 1`; 3 with structured findings): “Yes accept”.
+
+Effect (`docs/plan.md`):
+1. Run records: claude runs with `--output-format stream-json --verbose`, pi's JSONL is read line by line, and every run's output is written to `runsDir/runs/<runId>/` as it arrives. The parser records model, tool list, usage, cost and stop reason. Reverses 04-d's "no streaming" (A-024). Cancel stops claude with SIGINT first, so a stopped run keeps its cost.
+2. After `protocol: 1`: adapters report progress; the controller keeps rate-limited `run_progress` rows outside the event log; extension runtimes may print progress lines before their outcome. Widens D-024 and A-074. This gives A-113's watchdog its heartbeat.
+3. With structured findings: claims through each CLI's schema option, the fenced block as fallback, `apply` still validating.
+4. No SDK: both vendor SDKs spawn the same CLI over stdio, so the CLI adapters stay (D-002, P-002 confirmed).
+
+### A-115 — 2026-10-21 — Egress proxy joins the parked domain-filtering line; own credential later; threat model restated
+
+Owner, on foundations theme T2 (`docs/research/2026-10-20-foundations/security.md` P1, P2 and "Challenged decisions"): “Okay we already have domain filtering on the plan right? So p1 should go with that.” “P2 is worth looking at in the future, it sounds like it has the potential to degrade the experience, so I would want to be careful.” “Can restate 037”.
+
+Effect:
+1. Egress proxy (P1): the controller runs a proxy per run, and the sandbox has no network of its own. The proxy allows hosts from a list set only in the owner's personal or job layer, resolves names itself, refuses loopback, link-local, private, Docker-bridge and host addresses, and logs each connection. It joins the parked 08-a domain-filtering line, which A-106 kept parked, and gets a row in `docs/plan.md`.
+2. Factory credential (P2): looked at later, not scheduled. The factory would run on its own revocable credential instead of the owner's CLI logins, injected by the proxy or passed through the environment. The owner's condition: it must not degrade the experience of using the CLIs.
+3. Threat model, restating A-037: an agent that has read third-party content (dependencies, documentation, issue text) may act as if hostile, though nobody wrote malicious code. Defences need not be airtight (D-020 stays), but no run should hold private data, untrusted input and an open network together. The owner's first concern from A-037 stands: an agent going outside its remit, or a mistake that causes damage.
+
+Owner, asked whether to build the pasta ticket (A-106) as planned with the Docker-bridge and LAN gap recorded as an accepted risk until the proxy lands, or skip to the proxy; and whether T1's in-place moves go in row 11 after the three refactors and before `recover`: “Yes to both recommendations”.
+
+Effect: the A-106 ticket stays as planned; its record notes that host services on Docker-bridge addresses (172.17.0.1, 172.18.0.1 probed) and LAN hosts (192.168.1.1 probed) stay reachable until the egress proxy, and `docs/work/accepted-risks.md` lists it. T1 (A-114) is row 11's fourth ticket, before `recover`, with A-109 B folded in.
+
+### A-114 — 2026-10-21 — An escalated cycle waits for the owner; it is no longer a dead end
+
+Owner, on foundations research theme T1 (`docs/research/2026-10-20-foundations/TRIAGE.md`; `engine.md` P1, `design-audit.md` P1): “Yes this is a good change, an escalation shouldn't always be an abandon and we need to have flexibility in how we treat it.”
+
+Effect:
+1. ESCALATED becomes a stage that waits for the owner. The owner answers with an `owner_decision` event carrying the action, a quoted reason, its source and the head SHA. Moves: `retry` the stage that escalated (spent budget stays spent); `overrule` a FAIL (A-109 B: refund one unit of that stage's budget, rerun the stage); `fix` chosen findings, verify, then continue at a named stage; `accept with risk` (the findings go to accepted risks); `route` to a stage the checker allows; `cancel`. A child cycle stays for "start over", with an option to start from the parent's candidate instead of the base.
+2. Widens D-016 and A-072: anything unclassified still escalates, and the owner has the moves above as well as child cycle and cancel. ESCALATED leaves `SETTLED`; the one-open-cycle rule treats it as open and waiting.
+3. Spec core rules 2 and 3 change with the ticket that builds this: spent budget stays spent unless the owner overrules, and the owner's choices are the moves above.
+4. A-113: the core holds the moves; whether a workflow offers one is policy. An observer may send `retry` with its own source, which gives opt-in automatic relaunch without changing A-105's default.
 
 ### A-113 — 2026-10-20 — Principle: capabilities and extension points in the core; defaults are sane, not enforced
 
@@ -444,7 +585,7 @@ Offered: keep "the factory never merges" as a guarantee. Reply: “I think the f
 
 Effect (D-023):
 - The core: the event log (`src/store.ts`); an engine that applies events to a cycle under a workflow definition (today mixed with the default workflow in `src/lifecycle.ts`); the controller, the only writer (`src/controller.ts`); run supervision with deadlines, cancel and recovery; candidate and evidence binding to a Git SHA; an observation stream that observers read and react to through claims or commands; an extension host with the seam contracts, loader, contract test kits and version records.
-- Engine guarantees, which no workflow can switch off: only the controller changes state, and every change is a recorded event; evidence and verdicts bind to a SHA, and a new commit makes old evidence invalid; anything the controller cannot classify escalates; every agent loop has a finite budget; extensions return claims and never write state; every run records the versions of the workflow, prompts and extensions it used; the controller itself never merges or deploys.
+- Engine guarantees, which no workflow can switch off: only the controller changes state, and every change is a recorded event; evidence and verdicts bind to a SHA, and a new commit makes old evidence invalid; anything the controller cannot classify escalates; every agent loop has a finite budget; extensions return claims and never write state; every run records the versions of the workflow, prompts and extensions it used; the controller itself never merges or deploys. (A-125: in practice, a merge happens only through a grant the owner gave in personal or job configuration; an observer `accept` followed by a merge grant stage is an owner-configured automatic merge.)
 - Default policy, which a workflow may change: today's stages and order, two standard reviews and one adversarial review, controller-run checks, fresh-context reviewers, human acceptance, and no merge step.
 - User extensions: stages and steps built from step kinds (agent run, controller command, human decision, extension step), roles, prompts, adapters, observers, and merge or deploy steps.
 - Extensions run as separate processes over JSON on stdin and stdout, inside the sandbox; TypeScript is the first-class option.

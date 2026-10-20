@@ -1,6 +1,6 @@
 # Core delivery lifecycle — v1
 
-Status: describes the code after plan rows 1 to 9 (A-016; rewritten by 09-d, A-054 to A-063). Source: architecture v0.3 §§6–8, 12–13, Appendix A–B. Edge-case semantics are added only when a test or a real incident demands them.
+Status: describes the code after plan rows 1 to 9 (A-016; rewritten by 09-d, A-054 to A-063). Source: architecture v0.3 §§6–8, 12–13, Appendix A–B. Edge-case semantics are added only when a test or a real incident demands them. Not yet described: row 10's grants, command `run` entries, `network` and the observation stream; a docs ticket brings the spec up to date (A-125).
 
 Brackets name the test that holds a rule: the file under `tests/`, then the opening words of the test's name. A rule marked **proposal** has no test.
 
@@ -9,8 +9,8 @@ Brackets name the test that holds a rule: the file under `tests/`, then the open
 Core rules, which no workflow can switch off:
 
 1. The controller alone changes state and spends budget. Agents return claims; the controller checks each claim before it counts.
-2. Every verdict and every piece of evidence binds to an exact commit SHA. A new commit invalidates evidence for the old one. Budget already spent stays spent.
-3. Anything the controller cannot classify stops the cycle and asks the owner. There is no automatic retry of a quality gate and no silent recovery path. The owner chooses: a new cycle, or cancel.
+2. Every verdict and every piece of evidence binds to an exact commit SHA. A new commit invalidates evidence for the old one. Budget already spent stays spent. (A-114, when built: unless the owner overrules a FAIL, recorded with a reason.)
+3. Anything the controller cannot classify stops the cycle and asks the owner. There is no automatic retry of a quality gate and no silent recovery path. The owner chooses: a new cycle, or cancel. (A-114, when built: the owner may also retry, overrule, fix, accept with risk or route, in place. A-108, when built: a workflow may send a failed check to a fix run, so "no automatic retry of a quality gate" becomes default policy.)
 
 Default policy, which another workflow may change (D-023):
 
