@@ -37,6 +37,14 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-128 — 2026-10-21 — The factory is named Medrengard; a private remote
+
+Owner, after A-125's private remote: “Okay, I have gh installed so create the private repo. This is probably a good time to name the factory though - medrengard”.
+
+Effect: the session created the private GitHub repository `rileylum/medrengard` and added it as `origin`. Before creating it, the session scanned every commit on main for key and token patterns and found none. The owner pushes main. `README.md`'s title and `package.json`'s name say Medrengard. Not yet renamed: the personal config path `~/.config/software_factory/`, the default `runsDir` `/var/tmp/software_factory/runs`, the guide's titles, and the local checkout's folder. Renaming the paths moves the owner's config and runs, so it is a ticket of its own, with the old paths read as a fallback.
+
+The first real merge through `scripts/pre-merge-commit` (A-125) failed one test on a good merge: git sets `GIT_INDEX_FILE` for the hook, and it leaked into the tests' own git calls. The hook now unsets git's local environment variables before `npm test`. The session ran the fixed hook with `GIT_INDEX_FILE` set: 450 tests, 426 pass, 0 fail.
+
 ### A-127 — 2026-10-21 — Smaller items: ticket provenance, per-repository sections, secret references, workflow tooling; codex and ACP parked
 
 Owner, on foundations theme T14 (`docs/research/2026-10-20-foundations/security.md` P9; `extend-config.md` proposals 9, 10; `engine.md` P7; `runtime-process.md` proposal 8), with the session's placement: “a to e as recommende”.
