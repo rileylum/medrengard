@@ -36,8 +36,6 @@ export interface RunOptions {
   workflowDir?: string;
   /** Passed to verify: what a grant stage may hold (Config.grants). */
   grants?: VerifyOptions['grants'];
-  /** Passed to each agent run: aborting it ends the run in flight as `cancelled` (ExecuteOptions.signal). */
-  signal?: AbortSignal;
 }
 
 export interface RunResult {

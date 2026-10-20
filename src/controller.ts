@@ -20,11 +20,6 @@ export interface ExecuteOptions {
   accept?: (claim: unknown) => string | undefined;
   /** Recorded on the run's outcome event. develop, fix and review always pass it; optional for tests that drive execute directly. */
   versions?: PromptVersions;
-  /**
-   * Aborting it ends the run in flight as `cancelled` (one run_failed), which escalates a cycle
-   * that is not settled. For a caller's own stop, such as a Ctrl-C handler (row 11).
-   */
-  signal?: AbortSignal;
 }
 
 // setTimeout silently clamps anything outside this range to 1 ms, which would time every run out.
@@ -65,7 +60,7 @@ export async function execute(
   const settled = () => {
     try { const stage = store.load(cycleId)?.stage; return stage !== undefined && SETTLED.includes(stage); } catch { return false; }
   };
-  const outcome = await bounded(adapter, { ...req, runId }, deadlineMs, settled, opts.signal);
+  const outcome = await bounded(adapter, { ...req, runId }, deadlineMs, settled);
   const versions: Partial<RunVersions> = { ...opts.versions, runtime: adapter.name, ...(adapter.moduleHash === undefined ? {} : { moduleHash: adapter.moduleHash }) };
   return receive(store, cycleId, runId, req.role, outcome, opts.accept, versions);
 }
@@ -172,11 +167,11 @@ function disputeReason(text: string): string {
   return r.length <= DISPUTE_MAX ? r : `${r.slice(0, DISPUTE_MAX)} [... ${r.length - DISPUTE_MAX} characters cut]`;
 }
 
-// The deadline, a settled cycle or the caller's signal resolves the race, then aborts the adapter;
+// The deadline or a settled cycle resolves the race, then aborts the adapter;
 // whatever the adapter does afterwards (settle `cancelled`, settle late, reject, or nothing) lands
 // on an already-settled promise and is dropped. So the outcome is `timeout` or `cancelled` for
 // every adapter, including one that ignores abort. The adapter kills its process tree on abort.
-function bounded(adapter: Adapter, req: RunRequest, deadlineMs: number, settled: () => boolean, signal?: AbortSignal): Promise<RunOutcome> {
+function bounded(adapter: Adapter, req: RunRequest, deadlineMs: number, settled: () => boolean): Promise<RunOutcome> {
   const ac = new AbortController();
   return new Promise<RunOutcome>((resolve) => {
     let done = false;
@@ -187,19 +182,13 @@ function bounded(adapter: Adapter, req: RunRequest, deadlineMs: number, settled:
       resolve(o);
       clearTimeout(timer);
       clearInterval(watch);
-      // One signal may span every run of a job (run passes it to each); without this it would
-      // collect a listener per run.
-      signal?.removeEventListener('abort', cancel);
     };
     const stop = (o: RunOutcome) => { if (!done) { finish(o); ac.abort(); } };
-    const cancel = () => stop({ status: 'cancelled' });
     const timer = setTimeout(() => stop({ status: 'failed', reason: 'timeout' }), deadlineMs);
     // unref: the run, not the watch, is what this process waits for. `?.` because the guide runs
     // this file in a browser, where a timer is a number.
-    const watch = setInterval(() => { if (settled()) cancel(); }, WATCH_MS);
+    const watch = setInterval(() => { if (settled()) stop({ status: 'cancelled' }); }, WATCH_MS);
     watch.unref?.();
-    signal?.addEventListener('abort', cancel, { once: true });
-    if (signal?.aborted) return cancel();
     // Wrapped in a Promise so a synchronous throw from start() is a rejection, not an escape.
     new Promise<RunOutcome>((res) => res(adapter.start(req, ac.signal))).then(
       finish,

@@ -538,30 +538,3 @@ for (const role of ['developer', 'standard reviewer'] as const) {
     store.close();
   });
 }
-
-/** Starts a run that never ends on its own, and aborts the run's signal 50 ms later, as a Ctrl-C handler would. */
-function stopping(ac: AbortController): Adapter & { aborted: number } {
-  const inner = fakeAdapter('hang');
-  return { name: 'stopping', get aborted() { return inner.aborted; }, start(req, signal) { setTimeout(() => ac.abort(), 50); return inner.start(req, signal); } };
-}
-
-for (const where of ['developer', 'fix', 'standard reviewer'] as const) {
-  test(`RunOptions.signal aborts the ${where} run in flight: one run_failed cancelled, which escalates a cycle that is not settled`, async () => {
-    const { repo, store, runsDir } = scratch();
-    const ac = new AbortController();
-    const stop = stopping(ac);
-    const first = fake(claude);
-    let devRuns = 0;
-    // For the fix case the first developer run commits, the standard reviewer FAILs, and the fix run is stopped.
-    const dev: Adapter = where === 'developer' ? stop : where === 'fix' ? { name: 'dev', start: (req, signal) => (devRuns++ === 0 ? first : stop).start(req, signal) } : first;
-    const standard = where === 'standard reviewer' ? stop : scripted('FAIL');
-    const t0 = Date.now();
-    const { cycle } = await run(store, adapters(dev, standard, scripted()), job(repo), opts(runsDir, { signal: ac.signal }));
-    assert.ok(Date.now() - t0 < 5000, 'run waited for the deadline');
-    assert.equal(stop.aborted, 1);
-    assert.equal(cycle.stage, 'ESCALATED');
-    assert.equal(types(store, cycle.cycleId).at(-1), 'run_failed');
-    assert.equal((store.events(cycle.cycleId).at(-1) as { reason: string }).reason, 'cancelled');
-    store.close();
-  });
-}
