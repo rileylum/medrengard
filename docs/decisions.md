@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-090 — 2026-10-20 — 10-d: fix the review findings, then merge
+
+Owner, after standard 1 and the adversarial review both passed on `05b550a` with three minors and two notes, offered a fix of all five tests first, the busy timeout on `openings()`, and a merge without another review: “fix and merge”.
+
+Effect: the reader waits for the events table, not only the file; `source` is one single-line rule, checked by `SHAPE` and the CLI; the kit sends its unknown row after each case's events too; the reader skips an open row that is not an object; `openings()` sets a busy timeout. Tests first. Then `feat/10-d-observation-stream` merges into main with `--no-ff`, unreviewed after the fixes.
+
 ### A-089 — 2026-10-20 — 10-d: run the reviews
 
 Owner, after 10-d was built at `05b550a` and asked to run `npm test` or waive it, and to run or waive the reviews: “run the reviews”.
