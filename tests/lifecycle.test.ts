@@ -3,7 +3,7 @@
 // todo where v1 has no corresponding model yet.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, openChild, type Cycle, type Event, type StageDef, type Workflow } from '../src/lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, EVENT_TYPES, isEvent, newCycle, openChild, outcomeRunId, type Cycle, type Event, type StageDef, type Workflow } from '../src/lifecycle.ts';
 import { PASS_CHECKS, sc, scenarios, toStandardReview as TO_STANDARD_REVIEW } from './scenarios.ts';
 import { counters, noHuman, ownerCheck } from './workflows.ts';
 
@@ -24,6 +24,32 @@ test('every shared scenario ends at its declared stage and counters', () => {
 test('isEvent rejects arrays, primitives and objects with no handled type', () => {
   for (const v of [[], Object.assign([], { type: 'cancel' }), 'cancel', 1, null, undefined, {}, { type: 'bogus' }]) assert.equal(isEvent(v), false, JSON.stringify(v));
   assert.equal(isEvent({ type: 'cancel' }), true);
+});
+
+test('outcomeRunId names the run of every outcome event', () => {
+  // One valid event per type. A new event type fails the first check until it is listed here.
+  const samples: Record<Event['type'], Event> = {
+    claim: { type: 'claim', runId: 'r', base: 'B1', runtime: 'fake' },
+    developer_result: { type: 'developer_result', runId: 'r', artifacts: [] },
+    verification: { type: 'verification', head: 'H1', checks: [] },
+    verdict: { type: 'verdict', runId: 'r', head: 'H1', verdict: 'PASS' },
+    head_changed: { type: 'head_changed', head: 'H1' },
+    base_changed: { type: 'base_changed', base: 'B1' },
+    accept: { type: 'accept', head: 'H1' },
+    request_changes: { type: 'request_changes' },
+    cancel: { type: 'cancel' },
+    reject_dispatch: { type: 'reject_dispatch', reason: 'x' },
+    dispute: { type: 'dispute', runId: 'r', head: 'H1', reason: 'x' },
+    run_failed: { type: 'run_failed', runId: 'r', reason: 'x' },
+  };
+  assert.deepEqual(Object.keys(samples).sort(), [...EVENT_TYPES].sort());
+  for (const e of Object.values(samples)) {
+    assert.equal(isEvent(e), true, e.type);
+    // An event whose shape requires a run ID is that run's outcome; the store keeps one per run.
+    // The claim is the exception: apply decides a redelivered claim.
+    const outcome = e.type !== 'claim' && !isEvent({ ...e, runId: undefined });
+    assert.equal(outcomeRunId(e), outcome ? 'r' : undefined, e.type);
+  }
 });
 
 test('an event of unknown type escalates instead of returning undefined', () => {

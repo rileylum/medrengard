@@ -2,7 +2,7 @@
 // bounds it with a deadline, and turns the outcome into exactly one lifecycle event.
 import { randomUUID } from 'node:crypto';
 import type { Adapter, RunOutcome, RunRequest } from './adapter.ts';
-import { producedBy, type Cycle, type Event, type PromptVersions, type Role, type RunVersions, type Stage } from './lifecycle.ts';
+import { producedBy, SETTLED, type Cycle, type Event, type PromptVersions, type Role, type RunVersions } from './lifecycle.ts';
 import { oneLine } from './prompt.ts';
 import { UnclassifiableEvent, type EventStore } from './store.ts';
 
@@ -79,8 +79,6 @@ export function receive(store: EventStore, cycleId: string, runId: string, role:
     return store.append(cycleId, { type: 'run_failed', runId, reason: 'malformed result', ...versions });
   }
 }
-
-const SETTLED: Stage[] = ['ESCALATED', 'ACCEPTED', 'CANCELLED'];
 
 // accept runs Git over a claim the runtime wrote; a throw (or an empty reason) must still end as
 // one well-formed run_failed, never as an exception out of receive.

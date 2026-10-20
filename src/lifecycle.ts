@@ -10,7 +10,8 @@ export type Outcome = 'PASS' | 'FAIL';
 
 /** Stages the engine owns. A workflow may target the last three; it may define none of them. */
 export const ENGINE_STAGES = ['QUEUED', 'ESCALATED', 'CANCELLED', 'ACCEPTED'];
-const SETTLED_TARGETS = ENGINE_STAGES.slice(1);
+/** Stages that hold no open cycle: escalated cycles wait for the owner and never move again. */
+export const SETTLED: Stage[] = ENGINE_STAGES.slice(1);
 
 export interface Transitions {
   PASS: Stage;
@@ -164,6 +165,23 @@ const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
   dispute: (e) => str(e.runId) && str(e.head) && str(e.reason) && versions(e),
 };
 
+export const EVENT_TYPES = Object.keys(SHAPE) as Event['type'][];
+
+/**
+ * The run ID when `e` is a run's outcome, else undefined. A run has one outcome: the store keeps
+ * the first and writes nothing for a second, and apply ignores a second. A claim is not an
+ * outcome: apply decides a redelivered claim. A new event that ends a run belongs here.
+ */
+export function outcomeRunId(e: Event): string | undefined {
+  switch (e.type) {
+    case 'developer_result':
+    case 'verdict':
+    case 'run_failed':
+    case 'dispute':
+      return e.runId;
+  }
+}
+
 /** True when apply can classify the value. Use at every boundary where events arrive as data. */
 export function isEvent(v: unknown): v is Event {
   if (!obj(v)) return false;
@@ -231,7 +249,7 @@ export function checkWorkflow(w: Workflow): string[] {
   const targets = (name: Stage) => Object.values(w.stages[name]!.transitions);
   for (const [name] of entries)
     for (const [outcome, to] of Object.entries(w.stages[name]!.transitions))
-      if (!known(to) && !SETTLED_TARGETS.includes(to)) reasons.push(`stage ${name} ${outcome} names unknown stage ${String(to)}`);
+      if (!known(to) && !SETTLED.includes(to)) reasons.push(`stage ${name} ${outcome} names unknown stage ${String(to)}`);
 
   // Every loop must spend a budget (A-054): with budgeted stages removed, the graph must be acyclic.
   const unbudgeted = entries.filter(([, d]) => d.budget === undefined).map(([n]) => n);
@@ -252,12 +270,12 @@ export function checkWorkflow(w: Workflow): string[] {
   for (let grew = true; grew; ) {
     grew = false;
     for (const [name] of entries)
-      if (!settles.has(name) && targets(name).some((to) => SETTLED_TARGETS.includes(to) || settles.has(to))) {
+      if (!settles.has(name) && targets(name).some((to) => SETTLED.includes(to) || settles.has(to))) {
         settles.add(name);
         grew = true;
       }
   }
-  for (const [name] of entries) if (!settles.has(name)) reasons.push(`stage ${name} has no path to ${SETTLED_TARGETS.join(', ')}`);
+  for (const [name] of entries) if (!settles.has(name)) reasons.push(`stage ${name} has no path to ${SETTLED.join(', ')}`);
   return reasons;
 }
 
