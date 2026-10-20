@@ -642,10 +642,11 @@ test('importing main.ts runs nothing; main(argv) is exported and refuses bad arg
 // Ticket 11-a2 (A-129, A-131): accept drives the cycle on, so a grant stage after the human stage
 // runs in the same command, and a refusal writes nothing.
 /** ownerCheck with a grant stage MERGE after OWNER, run by main.ts to OWNER. */
-function atOwnerBeforeGrant(script: string) {
+function atOwnerBeforeGrant(script: string, afterMerge = `'ACCEPTED'`) {
   const s = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};
 export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, OWNER: { kind: 'human', transitions: { PASS: 'MERGE', FAIL: 'ESCALATED' } },
-  MERGE: { kind: 'command', run: [{ name: 'merge', command: ['sh', '-c', ${JSON.stringify(script)}] }], network: true, grants: ['github'], transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } } } };\n`, { writer: 'claude', reviewer: 'claude' });
+  FINAL: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
+  MERGE: { kind: 'command', run: [{ name: 'merge', command: ['sh', '-c', ${JSON.stringify(script)}] }], network: true, grants: ['github'], transitions: { PASS: ${afterMerge}, FAIL: 'ESCALATED' } } } };\n`, { writer: 'claude', reviewer: 'claude' });
   writeFileSync(join(s.root, 'gh-token'), 'main-grant-value\n');
   const spec = JSON.parse(readFileSync(s.jobFile, 'utf8'));
   writeFileSync(s.jobFile, JSON.stringify({ ...spec, grants: { github: { variable: 'GH_TOKEN', file: 'gh-token' } } }));
@@ -704,4 +705,25 @@ test('accept under the default workflow builds no adapter: a runtime nobody regi
   const r = sf(['accept', jobFile, H]);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.equal(r.stdout, `Cycle: c1\nStage: ACCEPTED\n\nTo merge:\n  git -C ${spec.repo} merge --no-ff ${H}\n`);
+});
+
+test('accept that drives on to a further human stage prints the next steps and exits 0 (11-a2 standard 1)', () => {
+  const { env, jobFile, head } = atOwnerBeforeGrant(MERGES, `'FINAL'`);
+  const r = sf(['accept', jobFile, head], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: FINAL$/m);
+  assert.ok(r.stdout.includes(`accept ${jobFile} ${head}`), r.stdout);
+  assert.doesNotMatch(r.stdout, /^To merge:$/m);
+});
+
+test('accept refuses, writing nothing, when the sandbox the stage after it needs cannot start (11-a2 standard 1)', () => {
+  const { env, jobFile, head, db, cycleId } = atOwnerBeforeGrant(MERGES);
+  const before = rows(db, cycleId);
+  const spec = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...spec, sandbox: { backend: 'bwrap', read: ['/nonexistent-sf-11a2'] } }));
+  const r = sf(['accept', jobFile, head], env);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /sandbox read path \/nonexistent-sf-11a2 does not exist/);
+  assert.deepEqual(rows(db, cycleId), before);
 });
