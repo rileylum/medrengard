@@ -77,3 +77,11 @@ Each batch ends with `npm run test:learn` green and a commit. The owner walks th
 ## Log
 - 2026-10-20 — drafted on `feat/learn-refresh` (A-092). Not READY until the owner says go; no change to `learn/` before that.
 - 2026-10-20 — owner: “go ahead and do this work by yourself” (A-093). READY; all five batches are built before the owner's walkthrough.
+- 2026-10-20 — built on `feat/learn-refresh` in five commits: batch 0 `bfe3350` and `be39161`, batch 1 `bf34e4d`, batch 2 `9bb92da`, batch 3 `4d8ed35`, batch 4 `31fddb2`. `npm run test:learn` passed after each batch (6 of 6). Implementer's `npm test` on `31fddb2` (not independent): 419 tests, 395 pass, 0 fail; no file in `src/` changed. Every room was checked in Chrome at level 3, and every simulator preset was run to its end. Slides whose claims were checked against `src/` at the tip: every slide of start, sim, lifecycle (Workflows), store, controller, developer, verify, review, sandbox, runtimes, config and architecture; process is live docs and was not re-read. Decisions the note left to the build, for the owner's walkthrough:
+  - Batch 1's frame (no per-room takeaway, one "Read the code" slide) was applied to each room as it was rebuilt, not to every room in batch 1.
+  - The simulator drops "Request changes": no command sends `request_changes`. The Workflows editor says so for human stages.
+  - `process.html` was renamed in batch 1, not batch 4, so the new rooms could link to it.
+  - `node:crypto`'s stand-in has a SHA-256 written out: `src/` hashes synchronously. Its hashes were compared with Node's, and the developer room's prompt hashes match a Node run.
+  - `lines.js` mirrors `src/stream.ts#openStream` over the store stand-in, as the design note said; `shims/store.js` gained the workflow on open, `pos`, `at`, and `dispute` in its one-outcome rule.
+  - Old demos removed: `lc-drive`, `lc-scenarios`, `lc-map`, `store-travel`, `dev-prompt`. `tests/scenarios.ts` is still read by `store-dedup`.
+  - Not done: the README's known gaps (the regex review badges, the untested sandbox table) stay open, as the ticket's non-goals say.
