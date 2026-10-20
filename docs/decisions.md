@@ -37,6 +37,15 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-105 — 2026-10-20 — Row 11 (recovery): always escalate a crashed run; resume refuses a changed job
+
+Asked, from the overnight research (`docs/research/2026-10-20/`, TRIAGE owner item 1): after an agent run whose controller died, relaunch it once or always escalate; and should a resume refuse when the job file changed since the cycle opened. The session recommended always escalate for now, and yes to the refusal. Owner: “Yes to both recommendations”.
+
+Effect, for row 11's tickets (none built yet):
+1. A run whose controller died without an outcome is recorded as `run_failed` and escalates, as D-016's plain rule says. No relaunch. The spec's "may relaunch a failed run once per cycle" proposal and the plan's "relaunch budget per cycle" are withdrawn for row 11; they may return once `run_failed` records a cause (research item `run_failed.cause`), with a cap and only for a crash, as every surveyed system that relaunches does.
+2. The open row records a hash of the job's ticket and checks; `resume` refuses a cycle whose job no longer matches.
+3. The rest of row 11 follows the research's restart rules (`harnesses.md` finding 1, `deep-research.md` proposal 1): every run, reviewers included, records `run_started`; recovery leaves a cycle parked at a human stage or ESCALATED, reruns a command stage, and for an agent stage with a started run and no outcome pins the clone's branch tip under a recovery ref, then records `run_failed`; a lock is taken before recovery. These are design inputs; each ticket still needs the owner's go.
+
 ### A-104 — 2026-10-20 — sweep-lifecycle-constants: merged after the owner's walkthrough
 
 Owner, after the walkthrough: “Yep this is a good change, merge”.

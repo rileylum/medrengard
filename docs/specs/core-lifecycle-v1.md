@@ -119,7 +119,7 @@ Every `developer_result`, `verdict`, `dispute` and `run_failed` records `contrac
 
 A failed run escalates and spends no budget [lifecycle: run_failed escalates]. `resume` exists, but no command calls it yet.
 
-**Proposal (row 11):** on restart, the controller reloads every open cycle and reconciles its runs. It observes a live run, and treats a run that died without a result as an infrastructure failure. It may relaunch a failed run once per cycle; a second failure escalates.
+**Proposal (row 11, A-105):** on restart, the controller reloads every open cycle and reconciles its runs. It observes a live run. A run that died without a result is recorded as `run_failed` and escalates; it is not relaunched. Before that, the clone's branch tip is kept under a recovery ref. `resume` refuses a cycle whose job ticket or checks changed since it opened.
 
 ## Release handoff
 
