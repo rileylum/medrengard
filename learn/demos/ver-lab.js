@@ -97,6 +97,7 @@ export default function mount(el) {
       const named = Array.isArray(c.command) && c.command.some((a) => typeof a !== 'string');
       // verify refuses this before anything runs: the repository layer may set checks, but a file argument is the workflow's.
       if (!own && named) return { c, argv: [], refused: `check ${c.name}: every argument must be a string` };
+      if (Array.isArray(c.command) && c.command.length === 0) return { c, argv: [], refused: `check ${c.name}: command is empty` };
       const argv = (c.command ?? []).map((a) => (typeof a === 'string' ? a : `${evidenceDir}/files/${a.file}`));
       const [command = ''] = argv;
       const found = executables(command, CHECKOUT);

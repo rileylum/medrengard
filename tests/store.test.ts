@@ -259,6 +259,34 @@ test('open enforces one open cycle per work item and an ESCALATED parent (05-a, 
   store.close();
 });
 
+test('open enforces one open cycle per work item when two processes race (sweep-open-race)', async () => {
+  const path = dbPath('race-open');
+  new EventStore(path).close();
+  const src = JSON.stringify(join(import.meta.dirname, '..', 'src', 'store.ts'));
+  // Hold the write lock so both children run open's checks before either can write; node's
+  // startup alone spaces two children too far apart to race.
+  const lock = new DatabaseSync(path);
+  lock.exec('BEGIN IMMEDIATE');
+  const open = (cycleId: string) => new Promise<string>((done) => {
+    const script = `import { EventStore } from ${src}; const s = new EventStore(${JSON.stringify(path)});
+      try { s.open('${cycleId}', 'w1'); console.log('opened'); } catch (e) { console.log(e.message); }`;
+    const child = spawn(process.execPath, ['--no-warnings', '--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'inherit'] });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.on('close', () => done(out.trim()));
+  });
+  const both = Promise.all([open('c-a'), open('c-b')]);
+  await new Promise((r) => setTimeout(r, 1500));
+  lock.exec('COMMIT');
+  lock.close();
+  const results = await both;
+  assert.equal(results.filter((r) => r === 'opened').length, 1, results.join(' | '));
+  assert.equal(results.filter((r) => /w1 already has an open cycle c-[ab]/.test(r)).length, 1, results.join(' | '));
+  const store = new EventStore(path);
+  assert.equal(store.cycles('w1').length, 1);
+  store.close();
+});
+
 test('a cycle whose row 0 is not the open marker fails to load, naming the cycle (07-d, parked 02-a)', async () => {
   const path = dbPath('row0');
   new EventStore(path).close();
