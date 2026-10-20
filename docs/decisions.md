@@ -37,6 +37,20 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-093 — 2026-10-20 — learn-refresh is READY; build all five batches without stopping
+
+Owner, after reading the learn-refresh ticket: “Okay, go ahead and do this work by yourself this is an experimental feature not really important to the core. So you don't need my input as you go through the process. Report back to me when you've completed the 5 batches.”
+
+Effect: [work/learn-refresh.md](work/learn-refresh.md) is READY. The implementer builds batches 0 to 4 without a walkthrough between them, and reports when all five are done. The owner's walkthrough happens after that. It replaces the walkthrough after each batch in A-092.
+
+### A-092 — 2026-10-20 — The guide gets a ticket; the owner walks through it instead of reviews
+
+Owner, asked whether the guide goes through the ticket workflow and whether reviews apply: “Yes ticket, I don't think we necessraily need a review - I can just do a manual walk through. Lets walk through the decisions needed for the design doc. One small critique of the original was that it did feel quite repetitive across the pages”.
+
+Then, on the seven design questions (what felt repetitive, the room list, the naming clash, demos for the new code, the simulator's scope, the order of work, what is out of scope): “1. Yeah its both, but also that we have the step through the workflow format in lots of them, that might be the best way but its a bit samey so either swapping up the method for how we showcase the features or making sure they are hyper focused when its not the generic whole picture page would help. 2. Yep keep the number small, as much as practical 3. Go with your recommendation 4. sure 5. Yep I think thats probably fine 6. Sure 7. Yep”.
+
+Effect: the work is the Design ticket [work/learn-refresh.md](work/learn-refresh.md). It replaces A-050's "outside the ticket workflow" for this work. It has no standard or adversarial reviews; the owner walks through each batch in a browser. The design note follows the answers: only the simulator steps through a cycle, each room shows one feature in its own way, each rule is said once, and the guide keeps few rooms. The process room is renamed so that "workflow" names the engine. The ticket is not READY until the owner has read it and said go.
+
 ### A-091 — 2026-10-20 — Next: fix and expand the guide
 
 Owner, after 10-d merged and row 10 was complete, asked what comes next: “Okay, the next thing I'd like to do is fix the learn page - both by actually fixing but expanding it to the new architecture and features”.
