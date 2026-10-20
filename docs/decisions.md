@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-097 — 2026-10-20 — sweep-open-race: merged after the owner's walkthrough
+
+Owner, after the walkthrough: “Makes sense to me, lets merge as well”.
+
+Effect: `feat/sweep-open-race` merges into main locally with `--no-ff`. `EventStore.open` checks and inserts inside one `BEGIN IMMEDIATE` transaction, so two processes cannot open two cycles for one work item. One fresh in-session review covers the branch (PASS, two nits); the `claude -p` reviews and the adversarial review did not run. The owner did not run `npm test`; the session's run on the branch with main merged in (432 tests, 408 pass, 0 fail; `test:learn` 6 of 6) is not independent.
+
 ### A-096 — 2026-10-20 — sweep-preflight: merged after the owner's walkthrough
 
 Owner, after the walkthrough: “Okay yes this is a good catch and a great implementation idea - 'pre-flight' checks are good and I think we could expand this to other uses in the future.” Then, asked for an explicit word: “Approved”.
