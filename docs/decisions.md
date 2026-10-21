@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-142 — 2026-10-21 — 11-d: standard 3's test findings fixed on the branch; on to the adversarial review
+
+Asked, after 11-d's standard 3 FAIL on `7ab24ab` (the two-delivery test asserts on timing and fails on correct behaviour; no test reaches `request-changes`'s duplicate path): fix both tests on the branch and go to the adversarial review, or a fourth standard review, or a new ticket naming 11-d. The session recommended the first; no product code changes. Owner: “fix both and go to the adversarial.”
+
+Effect: both tests are fixed on `feat/11-d-owner-events-bound` without a further standard review; the adversarial review reads that head.
+
 ### A-141 — 2026-10-21 — 11-d: standard 2's FAIL fixed on the branch, then a third standard review, then the adversarial
 
 Asked, after 11-d's standard 2 FAIL on `47c3e7b` (two overlapping deliveries of one command ID both drive the cycle; no test drives the loop after `request-changes`), with the standard budget spent: fix on the branch tests-first and go to the adversarial review; or a third standard review first; or a new ticket naming 11-d. The session recommended the first: the store reports whether an append wrote, and `decideAndDrive` drives only when it did. Owner: “go with your recommendation, and go through an additonal standard review.”
