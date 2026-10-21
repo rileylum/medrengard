@@ -24,4 +24,5 @@ Non-goals: `fix` with chosen findings and "continue at" (A-108's ticket); a `mov
 Verification: `npm test` and `npm run test:learn`; the owner's pre-merge hook runs `npm test` on the merge result.
 
 ## Log
-- 2026-10-21 — drafted on `feat/11-d-owner-moves` with 11-d. Not READY until the owner answers the design note's questions and says go.
+- 2026-10-21 — drafted on `feat/11-d-owner-events-bound` (then named `feat/11-d-owner-moves`) with 11-d. Not READY until the owner answers the design note's questions and says go.
+- 2026-10-21 — owner: “Go with your recommendations” (A-139). READY at Trust tier; starts after 11-d's reviews, on `feat/11-d2-owner-moves` stacked on `feat/11-d-owner-events-bound`.

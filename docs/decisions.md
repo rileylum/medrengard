@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-139 — 2026-10-21 — 11-d's design approved with the session's recommendations; 11-d and 11-d2 READY at Trust tier
+
+Asked, with `docs/design/2026-10-21-owner-moves.md`, `docs/work/11-d-owner-events-bound.md` and `docs/work/11-d2-owner-moves.md`, nine questions. The session recommended: (1) two tickets, 11-d then 11-d2 stacked on it; (2) no `ENGINE_VERSION` bump, with a fixture replay test as evidence; (3) the command ID kept in the existing `run_id` unique index under an object-shaped key; (4) `cancel` without the stale-load check; (5) a `request-changes` command in 11-d; (6) 11-d2 builds `retry`, `overrule` and `route`, with accept-with-risk as `route` to the human stage, `fix` with chosen findings goes with A-108's ticket, and the child-from-candidate option is probed, not built; (7) no cap on overrules now; (8) the reviewer-run window parked against 11-e; (9) today's `SETTLED` renamed `STOPPED`, and `SETTLED` becomes ACCEPTED and CANCELLED. Owner: “Go with your recommendations”.
+
+Effect: 11-d is READY at Trust tier on `feat/11-d-owner-events-bound`; 11-d2 is READY at Trust tier and starts after 11-d's reviews, stacked on its branch. The design note stands as drafted.
+
 ### A-138 — 2026-10-21 — The parked 10-b `decisionConfig` row moves to 11-f
 
 Asked: the 10-b row in `docs/work/parked.md` names "the next ticket that touches `decisionConfig` in `src/main.ts`". 11-c changed only that function's comment and left the row. Should it stay pinned that way, or move to 11-f? Owner: “Start on 11-d. 10-b can go to 11-f”.

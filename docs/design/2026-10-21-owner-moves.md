@@ -1,4 +1,4 @@
-Branch: feat/11-d-owner-moves
+Branch: feat/11-d-owner-events-bound (11-d); feat/11-d2-owner-moves (11-d2)
 
 # An escalated cycle waits for the owner; owner events bound to a SHA and deduplicated (tickets 11-d, 11-d2)
 

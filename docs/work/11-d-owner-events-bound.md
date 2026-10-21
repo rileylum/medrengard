@@ -22,4 +22,5 @@ Non-goals: `owner_decision` and the moves (11-d2); `run_started` for reviewers (
 Verification: `npm test` and `npm run test:learn`; the owner's pre-merge hook runs `npm test` on the merge result.
 
 ## Log
-- 2026-10-21 — drafted on `feat/11-d-owner-moves` off main at `f3f2a25`. Not READY until the owner answers the design note's questions and says go.
+- 2026-10-21 — drafted on `feat/11-d-owner-events-bound` (then named `feat/11-d-owner-moves`) off main at `f3f2a25`. Not READY until the owner answers the design note's questions and says go.
+- 2026-10-21 — owner: “Go with your recommendations” (A-139). READY at Trust tier. The branch is renamed `feat/11-d-owner-events-bound`.
