@@ -125,15 +125,20 @@ export class EventStore {
   readonly workflow: Workflow;
   private record: { name: string; hash: string };
 
-  /** Every load replays under `workflow`. Throws, before touching `path`, if checkWorkflow refuses it. */
+  /**
+   * `workflow` opens new cycles and is the only one the stage functions drive (`drivable`); a load
+   * replays each cycle under the workflow it recorded. Throws, before touching `path`, if
+   * checkWorkflow refuses it.
+   */
   constructor(path: string, workflow: Workflow = defaultWorkflow) {
     const refused = checkWorkflow(workflow);
     if (refused.length > 0) throw new Error(`workflow refused: ${refused.join('; ')}`);
     this.workflow = workflow;
     this.record = { name: workflow.name ?? 'unnamed', hash: workflowHash(workflow) };
     this.db = new DatabaseSync(path);
-    // Every write here is one short statement or open's short transaction, so a second process
-    // waits at most for one append or open.
+    // Every write here is one statement, or a transaction that replays one cycle (append, open), so
+    // a second process waits at most for one append or open: milliseconds for a cycle of hundreds of
+    // events (11-c probe: 3.4 ms at 1,000).
     // At 0 (SQLite's default) `main.ts cancel` during a run fails with `database is locked`.
     this.db.exec('PRAGMA busy_timeout = 5000');
     this.db.exec(`
@@ -254,7 +259,7 @@ export class EventStore {
     if (rows.length === 0) return undefined;
     const head = rows[0]!.body;
     // workId and parent come from this row; any other type would replay as a cycle of no work.
-    if (head.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(head.type)}, not the open marker`);
+    if (head?.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(head?.type)}, not the open marker`);
     const opened = head.workflow ?? DEFAULT_RECORD;
     // A cycle replayed under another workflow than it was opened with can reach a stage it never
     // had, so it replays only under one that hashes to its record; with none, refuse (A-059, A-112).
@@ -300,9 +305,13 @@ export class EventStore {
     const out: { cycleId: string; workId: string; stage?: Stage; refused?: string }[] = [];
     for (const r of this.db.prepare('SELECT cycle_id, body FROM events WHERE seq = 0 ORDER BY cycle_id').all()) {
       const cycleId = r.cycle_id as string;
-      const { workId } = JSON.parse(r.body as string) as OpenRow;
+      // Only a raw write makes row 0 anything but an open marker; it is listed, not thrown.
+      let workId = '';
       let stage: Stage;
       try {
+        let open: Partial<OpenRow> | null;
+        try { open = JSON.parse(r.body as string); } catch { throw new Error(`cycle ${cycleId}: row 0 is not JSON`); }
+        if (typeof open?.workId === 'string') workId = open.workId;
         stage = this.load(cycleId)!.stage;
       } catch (err) {
         out.push({ cycleId, workId, refused: (err as Error).message });

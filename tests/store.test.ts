@@ -394,7 +394,12 @@ test('a store running another workflow loads a cycle under its recorded definiti
   // DEV is a stage only ownerCheck has; the default workflow would read the claim as DEVELOPING.
   assert.equal(b.load('c1')!.stage, 'DEV');
   assert.deepEqual(b.cycles('w1'), [{ cycleId: 'c1', stage: 'DEV' }]);
+  // An append applies the cycle's own table too: under the default's, the result would reach VERIFYING.
+  assert.equal(b.append('c1', { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] }).stage, 'CHECK');
   b.close();
+  const c = new EventStore(path);
+  assert.equal(c.load('c1')!.stage, 'CHECK');
+  c.close();
 });
 
 test('a cycle whose recorded workflow neither its definition, the default nor the store matches is refused, naming both', () => {
@@ -515,6 +520,10 @@ test('a store written before 11-c gains the stage column and still loads and app
   before.close();
   // Written before 10-d, its owner-check cycles carry no definition: only a store running owner-check reads them.
   const stores = [new EventStore(path), new EventStore(path, ownerCheck)];
+  // The old rows stay unchecked: a backfill from today's apply would vouch for whatever it says.
+  const check = new DatabaseSync(path, { readOnly: true });
+  assert.equal(check.prepare('SELECT COUNT(stage) AS staged FROM events').get()!.staged, 0);
+  check.close();
   for (const id of ids) {
     const store = stores[id.startsWith('o') ? 1 : 0]!;
     const stage = store.load(id)!.stage;
@@ -551,5 +560,20 @@ test('unsettled lists every cycle not settled across work IDs, and a cycle it ca
     { cycleId: 'c5', workId: 'w5', refused: 'cycle c5 row 1 (claim) was recorded at ACCEPTED, but replays to DEVELOPING under engine 1 (opened under engine 1); the cycle is not driven' },
     { cycleId: 'c6', workId: 'w6', refused: `cycle c6 was opened under workflow gone (abababababab), this store runs default (${workflowHash(defaultWorkflow).slice(0, 12)})` },
   ]);
+  store.close();
+});
+
+test('unsettled lists a cycle whose row 0 cannot be read, and still lists the rest', () => {
+  const path = dbPath('unsettled-raw');
+  const store = new EventStore(path);
+  store.open('c2', 'w2');
+  const raw = new DatabaseSync(path);
+  raw.prepare("INSERT INTO events (cycle_id, seq, type, run_id, body, pos) VALUES ('c1', 0, 'open', NULL, 'null', 10)").run();
+  raw.prepare("INSERT INTO events (cycle_id, seq, type, run_id, body, pos) VALUES ('c3', 0, 'open', NULL, 'not json', 11)").run();
+  raw.close();
+  const listed = store.unsettled();
+  assert.deepEqual(listed.map((u) => [u.cycleId, u.stage ?? 'refused']), [['c1', 'refused'], ['c2', 'QUEUED'], ['c3', 'refused']]);
+  assert.match(listed[0]!.refused!, /^cycle c1: row 0 is /);
+  assert.match(listed[2]!.refused!, /^cycle c3: row 0 is not JSON/);
   store.close();
 });
