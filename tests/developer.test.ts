@@ -3,14 +3,14 @@
 // plays the developer; live (RUNTIME_SPIKE=1) the real claude and pi do, once each.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { RunRequest } from '../src/adapter.ts';
 import { mirrorPath } from '../src/layout.ts';
 import { EventStore } from '../src/store.ts';
 import { claude, claudeDeveloper, cliAdapter, pi, piDeveloper, type CliSpec } from '../src/runtime/cli-adapter.ts';
-import { develop, fix, oneLine, type DeveloperAdapter, type Job } from '../src/developer.ts';
+import { develop, fix, mirrorBase, oneLine, type DeveloperAdapter, type Job } from '../src/developer.ts';
 import { verify } from '../src/verify.ts';
 import { review } from '../src/review.ts';
 import { fakeAdapter } from './fake-adapter.ts';
@@ -861,5 +861,52 @@ test('fix binds the mirror the layout names, never what the clone\'s alternates 
     await fix(store, adapter, cycleId, j, { deadlineMs: 20_000, runsDir });
     assert.deepEqual(reads, [old ? [] : [join(mirrorPath(runsDir, repo), 'objects')]], old ? 'old clone' : 'shared clone');
     store.close();
+  }
+});
+
+test('cycles on one repository that set up its mirror at the same moment all succeed, on a new mirror and an existing one (11-b2, adversarial minor)', { timeout: 120_000 }, async () => {
+  const { repo, runsDir, base } = scratch();
+  const mirror = mirrorPath(runsDir, repo);
+  const developer = join(import.meta.dirname, '..', 'src', 'developer.ts');
+  // Separate processes, released together: mirrorBase is synchronous, so in one process two calls never overlap.
+  const round = async (go: string) => {
+    const script = `import { existsSync } from 'node:fs'; import { mirrorBase } from ${JSON.stringify(developer)};
+      while (!existsSync(${JSON.stringify(go)})) await new Promise((r) => setTimeout(r, 1));
+      mirrorBase(${JSON.stringify(repo)}, ${JSON.stringify(mirror)}, ${JSON.stringify(base)});`;
+    const runs = Array.from({ length: 6 }, () => new Promise<{ code: number | null; err: string }>((done) => {
+      const c = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = '';
+      c.stderr.on('data', (d) => { err += d; });
+      c.on('close', (code) => done({ code, err }));
+    }));
+    await new Promise((r) => setTimeout(r, 300));
+    writeFileSync(go, '');
+    return Promise.all(runs);
+  };
+  for (let i = 0; i < 8; i++) {
+    const fresh = i % 2 === 0;
+    if (fresh) rmSync(join(runsDir, 'mirrors'), { recursive: true, force: true });
+    const results = await round(join(dirname(runsDir), `go-${i}`));
+    assert.deepEqual(results.filter((r) => r.code !== 0), [], `round ${i} (${fresh ? 'new' : 'existing'} mirror)`);
+    assert.deepEqual(refs(mirror), [`refs/bases/${base}`]);
+    assert.deepEqual(readdirSync(join(runsDir, 'mirrors')), [mirror.split('/').at(-1)], 'no temporary mirror left beside it');
+  }
+});
+
+test('the mirror takes the repository\'s object format, not git\'s default (11-b2, adversarial minor)', async () => {
+  const runsDir = join(dir, `formats-${n++}`, 'runs');
+  for (const format of ['sha256', 'sha1']) {
+    const repo = join(dirname(runsDir), format);
+    mkdirSync(repo, { recursive: true });
+    git(repo, 'init', '-q', `--object-format=${format}`, '-b', 'main');
+    writeFileSync(join(repo, 'README.md'), '# scratch\n');
+    git(repo, 'add', 'README.md');
+    git(repo, 'commit', '-q', '-m', 'initial');
+    const base = git(repo, 'rev-parse', 'HEAD');
+    const mirror = mirrorPath(runsDir, repo);
+    // An owner whose default is the other format must still get a mirror the repository can fill.
+    await withGitConfig({ 'init.defaultObjectFormat': format === 'sha1' ? 'sha256' : 'sha1' }, async () => mirrorBase(repo, mirror, base));
+    assert.equal(git(mirror, 'rev-parse', '--show-object-format'), format);
+    assert.deepEqual(refs(mirror), [`refs/bases/${base}`]);
   }
 });

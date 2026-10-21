@@ -6,7 +6,7 @@
 // controller fetches the branch back into the repository and judges the head there.
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { checkDeadline, execute } from './controller.ts';
@@ -199,16 +199,34 @@ function refuse(repo: string, incoming: string, branch: string, base: string, pr
  * branch does, for every later cycle on the repository (A-133). Never pruned: a pruned object
  * corrupts every clone that borrows it, so gc stays off.
  */
-function mirrorBase(repo: string, mirror: string, base: string): void {
-  mkdirSync(dirname(mirror), { recursive: true });
-  // Safe on an existing mirror, and settles the config even if an earlier run stopped after init.
-  git(dirname(mirror), 'init', '-q', '--bare', mirror);
-  git(mirror, 'config', 'gc.auto', '0');
-  git(mirror, 'config', 'gc.pruneExpire', 'never');
-  // By SHA, for a branch tip or any other commit, with no change to the owner's config (11-b2 probe
-  // 1, which v0 passed too). The version is named so an owner config naming another one cannot
-  // change what was probed.
-  git(mirror, '-c', 'protocol.version=2', 'fetch', '-q', '--no-tags', '--no-write-fetch-head', repo, `${base}:refs/bases/${base}`);
+export function mirrorBase(repo: string, mirror: string, base: string): void {
+  if (!existsSync(mirror)) {
+    mkdirSync(dirname(mirror), { recursive: true });
+    // Made beside it and renamed into place, so a mirror that exists is whole: two cycles starting
+    // at once each make one, the first rename wins and the other copy goes (11-b2 adversarial).
+    // In the repository's object format: git's default, or the owner's, may be the other one.
+    const made = mkdtempSync(`${mirror}.new-`);
+    try {
+      git(made, 'init', '-q', '--bare', `--object-format=${git(repo, 'rev-parse', '--show-object-format')}`, made);
+      git(made, 'config', 'gc.auto', '0');
+      git(made, 'config', 'gc.pruneExpire', 'never');
+      try { renameSync(made, mirror); } catch (err) { if (!existsSync(mirror)) throw err; }
+    } finally {
+      rmSync(made, { recursive: true, force: true });
+    }
+  }
+  // The ref is written after its objects, so a base with a ref is whole. A fetch that fails
+  // because another cycle wrote the same ref at the same moment has the base all the same.
+  const has = () => gitStatus(mirror, 'rev-parse', '--verify', '--quiet', `refs/bases/${base}`) === 0;
+  if (has()) return;
+  try {
+    // By SHA, for a branch tip or any other commit, with no change to the owner's config (11-b2
+    // probe 1, which v0 passed too). The version is named so an owner config naming another one
+    // cannot change what was probed.
+    git(mirror, '-c', 'protocol.version=2', 'fetch', '-q', '--no-tags', '--no-write-fetch-head', repo, `${base}:refs/bases/${base}`);
+  } catch (err) {
+    if (!has()) throw err;
+  }
 }
 
 /**
