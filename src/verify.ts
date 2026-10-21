@@ -152,8 +152,7 @@ export function headGate(cycle: Cycle): void {
 
 /** Run every declared check on the cycle's candidate and record one verification event. */
 export async function verify(store: EventStore, cycleId: string, job: Job, opts: VerifyOptions): Promise<Verified> {
-  const cycle = store.load(cycleId);
-  if (!cycle) throw new Error(`cycle ${cycleId} not open`);
+  const cycle = store.drivable(cycleId);
   const def = store.workflow.stages[cycle.stage];
   if (def?.kind !== 'command' || !cycle.candidate) throw new Error(`verify on a cycle in ${cycle.stage}, expected a command stage`);
   const checks: Command[] = def.run ?? job.checks ?? [];

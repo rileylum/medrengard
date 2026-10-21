@@ -28,6 +28,13 @@ export function workflowHash(w: Workflow): string {
 }
 export const DEFAULT_RECORD = { name: defaultWorkflow.name!, hash: workflowHash(defaultWorkflow) };
 
+/** The recorded definition, then defaultWorkflow, then `given`: the first that passes the check and hashes to the recorded workflow. */
+export function recordedWorkflow(open: OpenRow, given?: Workflow): Workflow | undefined {
+  const { hash } = open.workflow ?? DEFAULT_RECORD;
+  // apply trusts its workflow, so a definition read back as data is checked like any other.
+  return [open.definition, defaultWorkflow, given].find((w) => w !== undefined && checkWorkflow(w).length === 0 && workflowHash(w) === hash);
+}
+
 // Each row's position across the store and the time it was written (10-d), both set inside the
 // one insert statement: SQLite holds the write lock for the statement, so positions follow commit
 // order and a reader never sees N+1 before N. The time stays out of the Event body, so replay is
@@ -186,23 +193,41 @@ export class EventStore {
     return this.rows(cycleId).filter((r) => r.type !== 'open') as Event[];
   }
 
-  /** Replay the cycle through apply. Undefined if the cycle was never opened. */
+  /** Replay the cycle through apply, under the workflow it was opened with. Undefined if the cycle was never opened. */
   load(cycleId: string): Cycle | undefined {
-    const [first, ...rest] = this.rows(cycleId);
-    if (!first) return undefined;
-    // workId and parent come from this row; any other type would replay as a cycle of no work.
-    if (first.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(first.type)}, not the open marker`);
-    const head = first;
-    // A cycle replayed under another workflow than it was opened with can reach a stage it never
-    // had, so a resume would act on a stage the log does not support. Refuse instead (A-059).
-    const opened = head.workflow ?? DEFAULT_RECORD;
-    if (opened.hash !== this.record.hash)
-      throw new Error(`cycle ${cycleId} was opened under workflow ${opened.name} (${opened.hash.slice(0, 12)}), this store runs ${this.record.name} (${this.record.hash.slice(0, 12)})`);
-    return (rest as Event[]).reduce((c, e) => apply(c, e, this.workflow), newCycle(cycleId, head.workId, head.parentCycleId));
+    return this.replay(cycleId)?.cycle;
+  }
+
+  /**
+   * Load a cycle to act on it. The stage functions read their stage table from `this.workflow`,
+   * so a cycle opened under another workflow is refused here, though `load` reads it (A-136).
+   */
+  drivable(cycleId: string): Cycle {
+    const r = this.replay(cycleId);
+    if (!r) throw new Error(`cycle ${cycleId} not open`);
+    if (r.opened.hash !== this.record.hash) throw this.mismatch(cycleId, r.opened);
+    return r.cycle;
   }
 
   close(): void {
     this.db.close();
+  }
+
+  private replay(cycleId: string): { cycle: Cycle; opened: { name: string; hash: string } } | undefined {
+    const [first, ...rest] = this.rows(cycleId);
+    if (!first) return undefined;
+    // workId and parent come from this row; any other type would replay as a cycle of no work.
+    if (first.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(first.type)}, not the open marker`);
+    const opened = first.workflow ?? DEFAULT_RECORD;
+    // A cycle replayed under another workflow than it was opened with can reach a stage it never
+    // had, so it replays only under one that hashes to its record; with none, refuse (A-059, A-112).
+    const w = recordedWorkflow(first, this.workflow);
+    if (!w) throw this.mismatch(cycleId, opened);
+    return { cycle: (rest as Event[]).reduce((c, e) => apply(c, e, w), newCycle(cycleId, first.workId, first.parentCycleId)), opened };
+  }
+
+  private mismatch(cycleId: string, opened: { name: string; hash: string }): Error {
+    return new Error(`cycle ${cycleId} was opened under workflow ${opened.name} (${opened.hash.slice(0, 12)}), this store runs ${this.record.name} (${this.record.hash.slice(0, 12)})`);
   }
 
   // Single statement so seq allocation and the insert cannot interleave with another append on

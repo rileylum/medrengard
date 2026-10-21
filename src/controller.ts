@@ -108,8 +108,7 @@ function refusal(accept: NonNullable<ExecuteOptions['accept']>, claim: unknown):
 // its outcome (redelivery is a no-op), and a cycle that is escalated or terminal (apply ignores
 // everything, so nothing can be miscounted and a cancel mid-review must not throw).
 function requireStage(store: EventStore, cycleId: string, role: Role, runId?: string): void {
-  const cycle = store.load(cycleId);
-  if (!cycle) throw new Error(`cycle ${cycleId} not open`);
+  const cycle = store.drivable(cycleId);
   if (runId !== undefined && (cycle.consumed.includes(runId) || SETTLED.includes(cycle.stage))) return;
   const def = store.workflow.stages[cycle.stage];
   if (def?.kind === 'agent' && def.role === role) return;

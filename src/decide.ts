@@ -23,7 +23,7 @@ export function acceptCycle(store: EventStore | undefined, workId: string, sha: 
 export function acceptEvent(store: EventStore | undefined, workId: string, sha: string, source: string, where: Where): { cycleId: string; event: Event } {
   const open = store?.cycles(workId).find((c) => !SETTLED.includes(c.stage));
   if (!store || !open) throw new Error(`no open cycle for work ${workId} in ${where.runsDir}`);
-  const cycle = store.load(open.cycleId)!;
+  const cycle = store.drivable(open.cycleId);
   const human = humanStages(store.workflow);
   if (!human.includes(cycle.stage)) throw new Error(`cycle ${cycle.cycleId} is ${cycle.stage}, not ${human.join(' or ') || 'at a human stage'}`);
   // The full SHA only: the owner accepts the exact commit the reviews were bound to.

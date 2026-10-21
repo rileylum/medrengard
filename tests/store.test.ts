@@ -348,25 +348,29 @@ test('open records the workflow name and hash, and the cycle reloads under the s
   reopened.close();
 });
 
-test('a cycle opened under one workflow is refused by a store running another, naming both', () => {
+// A-136 changed these two from A-059's refusal on load: the cycle loads under its own workflow,
+// and only driving it with this store's stage table is refused.
+test('a cycle opened under one workflow loads in a store running another, which refuses to drive it, naming both', () => {
   const path = dbPath('mismatch');
   const store = new EventStore(path);
   store.open('c1', 'w1');
   store.close();
   const other = new EventStore(path, ownerCheck);
-  assert.throws(() => other.load('c1'), /c1 was opened under workflow default \([0-9a-f]{12}\).*owner-check \([0-9a-f]{12}\)/);
-  // open's one-open-cycle guard loads the work's cycles, so it refuses too rather than miscount.
-  assert.throws(() => other.open('c2', 'w1'), /opened under workflow default/);
+  assert.equal(other.load('c1')!.stage, 'QUEUED');
+  assert.throws(() => other.drivable('c1'), /c1 was opened under workflow default \([0-9a-f]{12}\).*owner-check \([0-9a-f]{12}\)/);
+  // open's one-open-cycle guard now counts c1 as open, under its own workflow.
+  assert.throws(() => other.open('c2', 'w1'), /w1 already has an open cycle c1/);
   other.close();
 });
 
-test('a store written before 09-b loads under the default workflow only', () => {
+test('a store written before 09-b loads under the default workflow, and a store running another refuses to drive it', () => {
   const path = dbPath('v1-other');
   copyFileSync(join(import.meta.dirname, 'fixtures', 'v1-store.sqlite'), path);
   const [first] = scenarios;
   assert.equal(openRow(path, first!.name).workflow, undefined);
   const store = new EventStore(path, ownerCheck);
-  assert.throws(() => store.load(first!.name), /opened under workflow default/);
+  assert.deepEqual(stage(store.load(first!.name)!), [first!.stage, ...first!.counters]);
+  assert.throws(() => store.drivable(first!.name), /opened under workflow default/);
   store.close();
 });
 
@@ -375,4 +379,33 @@ test('a store written before 09-b loads under the default workflow only', () => 
 // make this pass.
 test('the default workflow hash is the one recorded before 10-c', () => {
   assert.equal(workflowHash(defaultWorkflow), '9ea6cdafca9addd7db5e8eec4bac8226b307546a4d88900d08775858f6de06c7');
+});
+
+// Ticket 11-c: a cycle replays under the workflow it was opened with (A-112 item 6, A-136).
+
+test('a store running another workflow loads a cycle under its recorded definition', () => {
+  const path = dbPath('recorded');
+  const a = new EventStore(path, ownerCheck);
+  a.open('c1', 'w1');
+  a.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
+  a.close();
+  const b = new EventStore(path);
+  // DEV is a stage only ownerCheck has; the default workflow would read the claim as DEVELOPING.
+  assert.equal(b.load('c1')!.stage, 'DEV');
+  assert.deepEqual(b.cycles('w1'), [{ cycleId: 'c1', stage: 'DEV' }]);
+  b.close();
+});
+
+test('a cycle whose recorded workflow neither its definition, the default nor the store matches is refused, naming both', () => {
+  const path = dbPath('nothing-matches');
+  new EventStore(path).close();
+  const raw = new DatabaseSync(path);
+  // A store written between 09-b and 10-d records the hash but not the definition.
+  raw.prepare("INSERT INTO events (cycle_id, seq, type, run_id, body, pos) VALUES ('c1', 0, 'open', NULL, ?, 1)")
+    .run(JSON.stringify({ type: 'open', workId: 'w1', workflow: { name: 'gone', hash: 'ab'.repeat(32) } }));
+  raw.close();
+  const store = new EventStore(path, ownerCheck);
+  assert.throws(() => store.load('c1'), /c1 was opened under workflow gone \(abababababab\), this store runs owner-check/);
+  assert.throws(() => store.drivable('c1'), /opened under workflow gone/);
+  store.close();
 });

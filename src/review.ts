@@ -42,8 +42,7 @@ const EVIDENCE_EXTS = ['exit', 'stdout', 'stderr'] as const;
 /** One reviewer run for whichever review stage the cycle is in. Returns the replayed Cycle. */
 export async function review(store: EventStore, adapter: Adapter, cycleId: string, job: Job, opts: ReviewOptions): Promise<Cycle> {
   checkDeadline(opts.deadlineMs);
-  const cycle = store.load(cycleId);
-  if (!cycle) throw new Error(`cycle ${cycleId} not open`);
+  const cycle = store.drivable(cycleId);
   const def = store.workflow.stages[cycle.stage];
   if (def?.kind !== 'agent' || def.produces !== 'verdict' || !cycle.candidate) throw new Error(`review on a cycle in ${cycle.stage}, expected a review stage`);
   const { role } = def;

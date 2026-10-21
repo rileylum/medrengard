@@ -61,8 +61,7 @@ export async function run(store: EventStore, adapters: Adapters, job: Job, opts:
 
 /** Continue a cycle from its stored stage, as run would after develop. Settled cycles come back unchanged. */
 export async function drive(store: EventStore, cycleId: string, adapters: Adapters, job: Job, opts: RunOptions): Promise<RunResult> {
-  const cycle = store.load(cycleId);
-  if (!cycle) throw new Error(`cycle ${cycleId} not open`);
+  const cycle = store.drivable(cycleId);
   // Nothing has run, so there is no clone to continue from; recovery (row 11) owns this case.
   if (cycle.stage === 'QUEUED') throw new Error(`cycle ${cycleId} is QUEUED: no run started; cancel it and run the job again`);
   const roles = preflight(store.workflow, adapters, job, opts);
@@ -83,8 +82,7 @@ export interface Drivable {
  * event is recorded and `ready` is never called, so the default workflow's accept loads no runtime.
  */
 export async function decideAndDrive(store: EventStore, cycleId: string, event: Event, ready: () => Promise<Drivable>): Promise<{ cycle: Cycle; driven?: RunResult }> {
-  const now = store.load(cycleId);
-  if (!now) throw new Error(`cycle ${cycleId} not open`);
+  const now = store.drivable(cycleId);
   const w = store.workflow;
   // apply is pure, so this is the cycle the event leads to, before anything is written.
   const next = apply(now, event, w);
