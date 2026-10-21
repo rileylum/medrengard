@@ -423,6 +423,9 @@ test('a workflow whose command names a file runs it from workflowDir, and withou
   assert.equal(developer.requests.length, 0);
   const workflowDir = join(root, 'flow');
   mkdirSync(workflowDir);
+  // 11-a2 (A-132): a file missing from workflowDir is refused before the developer starts too.
+  await assert.rejects(run(store, roles, job(repo), opts(runsDir, { workflowDir })), new RegExp(`LINT names file lint\\.sh, which is not a file in ${workflowDir}`));
+  assert.equal(developer.requests.length, 0);
   writeFileSync(join(workflowDir, 'lint.sh'), 'test -f done.txt\n');
   const r = await run(store, roles, job(repo), opts(runsDir, { workflowDir }));
   assert.equal(r.cycle.stage, 'ACCEPTED', r.cycle.escalation);

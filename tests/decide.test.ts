@@ -2,7 +2,7 @@
 // still checks the commands end to end; these check the rules without spawning a process.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Event, Workflow } from '../src/lifecycle.ts';
 import type { Job } from '../src/developer.ts';
@@ -188,6 +188,66 @@ test('decideAndDrive prepares the loop for an agent stage after the human one, a
     await assert.rejects(decideAndDrive(store, 'c1', ACCEPT, ready), /^Error: no adapter for role writer \(stage DEV\)$/);
     assert.ok(called);
     assert.equal(store.events('c1').length, AT_OWNER.length);
+  } finally {
+    store.close();
+  }
+});
+
+// 11-a2 adversarial minor (A-132): what verify would refuse at the stage the event leads to is
+// refused before the event is written, so a setup slip does not escalate an accepted cycle.
+const roles = { writer: {}, reviewer: {} } as unknown as Adapters;
+function grantFlow(run: unknown[], reviewed = true) {
+  const stages: Record<string, unknown> = {
+    ...ownerCheck.stages,
+    REVIEW: { ...ownerCheck.stages.REVIEW },
+    OWNER: { kind: 'human', transitions: { PASS: 'MERGE', FAIL: 'ESCALATED' } },
+    MERGE: { kind: 'command', run, network: true, grants: ['github'], transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
+  };
+  if (!reviewed) {
+    delete stages.REVIEW;
+    stages.CHECK = { kind: 'command', transitions: { PASS: 'OWNER' } };
+  }
+  return { ...ownerCheck, stages } as Workflow;
+}
+function grantFile(text: string) {
+  const file = join(dir, `grant-${n++}`);
+  writeFileSync(file, text);
+  return { github: { variable: 'GH_TOKEN', file } };
+}
+
+test('decideAndDrive refuses an empty grant file at the stage the event leads to, writing nothing', async () => {
+  const store = fresh(grantFlow([{ name: 'merge', command: ['true'] }]));
+  try {
+    seed(store, 'c1', AT_OWNER);
+    const grants = grantFile('\n');
+    const ready = async () => ({ adapters: roles, job, opts: { deadlineMs: 1000, runsDir: dir, grants } });
+    await assert.rejects(decideAndDrive(store, 'c1', ACCEPT, ready), new RegExp(`^Error: grant github: file ${grants.github.file} is empty$`));
+    assert.equal(store.events('c1').length, AT_OWNER.length);
+  } finally {
+    store.close();
+  }
+});
+
+test('decideAndDrive refuses a file argument missing from workflowDir, writing nothing', async () => {
+  const store = fresh(grantFlow([{ name: 'merge', command: ['sh', { file: 'merge.sh' }] }]));
+  try {
+    seed(store, 'c1', AT_OWNER);
+    const workflowDir = mkdtempSync(join(dir, 'flow-'));
+    const ready = async () => ({ adapters: roles, job, opts: { deadlineMs: 1000, runsDir: dir, workflowDir, grants: grantFile('t\n') } });
+    await assert.rejects(decideAndDrive(store, 'c1', ACCEPT, ready), new RegExp(`^Error: stage MERGE names file merge\\.sh, which is not a file in ${workflowDir}$`));
+    assert.equal(store.events('c1').length, AT_OWNER.length);
+  } finally {
+    store.close();
+  }
+});
+
+test('decideAndDrive refuses a grant stage the head gate would refuse after the event, writing nothing', async () => {
+  const store = fresh(grantFlow([{ name: 'merge', command: ['true'] }], false));
+  try {
+    seed(store, 'c1', AT_OWNER.slice(0, 3));
+    const ready = async () => ({ adapters: roles, job, opts: { deadlineMs: 1000, runsDir: dir, grants: grantFile('t\n') } });
+    await assert.rejects(decideAndDrive(store, 'c1', ACCEPT, ready), new RegExp(`^Error: stage MERGE holds a grant, but no PASS verdict is for the candidate ${H}$`));
+    assert.equal(store.events('c1').length, 3);
   } finally {
     store.close();
   }

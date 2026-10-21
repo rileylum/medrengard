@@ -284,13 +284,15 @@ export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: 
 
 // sweep-terminal-escapes: `Error:` and the top-level stderr message print a thrown message, which can
 // quote a name with control characters in it. Here the names come from a workflow module.
-test('a run error and a refusal on stderr show control characters only as visible escapes', () => {
+test('refusals on stderr show control characters only as visible escapes', () => {
   const missing = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};
 export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: { ...ownerCheck.stages.CHECK, run: [{ name: 'lint', command: ['sh', { file: '\\u001b[2J\\u009b.sh' }] }] } } };\n`, { writer: 'claude', reviewer: 'claude' });
   reviewerStub(missing.bin, 'claude', 'nobody', join(missing.root, 'outside'));
   const r = sf([missing.jobFile], missing.env);
-  assert.equal(r.status, 1, r.stdout + r.stderr);
-  assert.match(r.stdout, /^Error: CHECK: stage CHECK names file \\u\{1b\}\[2J\\u\{9b\}\.sh/m);
+  // 11-a2 (A-132): preflight refuses the missing file before the developer run, so the message
+  // reaches stderr, not the run's `Error:` line.
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /^stage CHECK names file \\u\{1b\}\[2J\\u\{9b\}\.sh/m);
   assert.doesNotMatch(r.stdout + r.stderr, /[\u001b\u009b]/);
   const refused = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};\nexport const workflow = { ...ownerCheck, start: '\\u001b[2J' };\n`, { writer: 'claude', reviewer: 'claude' });
   const e = sf([refused.jobFile], refused.env);

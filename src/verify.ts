@@ -85,6 +85,27 @@ export function stageGrants(stage: string, def: StageDef | undefined, grants: Re
   return given;
 }
 
+/** The `{ file }` arguments of `checks`, once each. Throws for one that is not a file in `workflowDir`. */
+export function stageFiles(stage: string, checks: Command[], workflowDir: string | undefined): string[] {
+  const files = [...new Set(checks.flatMap(fileArgs))];
+  for (const f of files) {
+    if (workflowDir === undefined) throw new Error(noWorkflowDir(stage, f));
+    if (!statSync(join(workflowDir, f), { throwIfNoEntry: false })?.isFile()) throw new Error(`stage ${stage} names file ${f}, which is not a file in ${workflowDir}`);
+  }
+  return files;
+}
+
+/** Each grant's value, read from its file. Throws for an empty one. */
+export function grantValues(grants: [string, Grant][]): { name: string; variable: string; value: string }[] {
+  return grants.map(([name, g]) => {
+    // CRLF too: a tool that trims the \r would print a value redaction does not match.
+    const value = readFileSync(g.file, 'utf8').replace(/\r?\n$/, '');
+    // An empty value would be redacted between every character of the evidence.
+    if (value === '') throw new Error(`grant ${name}: file ${g.file} is empty`);
+    return { name, variable: g.variable, value };
+  });
+}
+
 /** Throws for a check list verify cannot write evidence for. `own`: a stage's run, which may hold `{ file }` arguments. */
 export function checkCommands(checks: Command[], own: boolean): void {
   const seen = new Set<string>();
@@ -118,7 +139,7 @@ export function missingProgram(command: string, sandbox: Sandbox, policy: Policy
  * verification or accept names the candidate, and at least one PASS verdict does. A workflow can
  * route a fix past its reviews, and one with no review at all has nothing to bind the head to.
  */
-function headGate(cycle: Cycle): void {
+export function headGate(cycle: Cycle): void {
   const head = cycle.candidate!.head;
   const last = new Map<string, string>();
   for (const { event, from } of cycle.history)
@@ -139,22 +160,12 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // run's preflight made this check too; the job is the caller's object and may have changed since.
   checkCommands(checks, def.run !== undefined);
   // Before anything is written: a missing file is the owner's setup, not a FAIL of the candidate.
-  const files = [...new Set(checks.flatMap(fileArgs))];
-  for (const f of files) {
-    if (opts.workflowDir === undefined) throw new Error(noWorkflowDir(cycle.stage, f));
-    if (!statSync(join(opts.workflowDir, f), { throwIfNoEntry: false })?.isFile()) throw new Error(`stage ${cycle.stage} names file ${f}, which is not a file in ${opts.workflowDir}`);
-  }
+  const files = stageFiles(cycle.stage, checks, opts.workflowDir);
   const grants = stageGrants(cycle.stage, def, opts.grants, opts.sandbox);
   if (grants.length > 0) headGate(cycle);
   // Read now, not at load, so the value lives in this process no longer than the stage runs; and
   // before the stage folder is cleared, so a refusal leaves the last run's evidence whole.
-  const values = grants.map(([name, g]) => {
-    // CRLF too: a tool that trims the \r would print a value redaction does not match.
-    const value = readFileSync(g.file, 'utf8').replace(/\r?\n$/, '');
-    // An empty value would be redacted between every character of the evidence.
-    if (value === '') throw new Error(`grant ${name}: file ${g.file} is empty`);
-    return { name, variable: g.variable, value };
-  });
+  const values = grantValues(grants);
   checkDeadline(opts.deadlineMs);
   const isolation = opts.isolation ?? 'cgroup';
   if (isolation === 'cgroup') checkScopes();
