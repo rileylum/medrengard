@@ -11,11 +11,13 @@
 // `accept` and `cancel` record who ran them (`--source`, default `owner`).
 // Ticket 11-a: the decisions' rules live in src/decide.ts, and `main` runs only as a program.
 // Ticket 11-a2: `accept` drives the cycle on when the workflow has a stage after the human one.
+// Ticket 11-d: `request-changes <job.json> <sha>` records the owner's FAIL for that SHA; every owner
+// command takes `--command-id`, which the store records once per cycle.
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { join, resolve } from 'node:path';
 import { loadConfig, storeOf, type Config, type JobFile } from './config.ts';
-import { acceptEvent, cancelWork, humanStages } from './decide.ts';
+import { acceptEvent, cancelWork, humanStages, requestChangesEvent, type Decided } from './decide.ts';
 import { oneLine, type Job } from './developer.ts';
 import { printable } from './prompt.ts';
 import { storeFile } from './layout.ts';
@@ -23,10 +25,10 @@ import { defaultWorkflow, isSource, type Workflow } from './lifecycle.ts';
 import { decideAndDrive, ROLE_ALIASES, run, type Adapters, type RunOptions, type RunResult } from './run.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
-import { EventStore, openings, workflowHash } from './store.ts';
+import { EventStore, openings, StaleLoad, workflowHash } from './store.ts';
 import { FOLLOW_MS, openStream, storeReady } from './stream.ts';
 
-const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> [--source <name>] | cancel <job.json> [--source <name>] | events <job.json | runsDir> [--after <seq>] [--follow]';
+const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> [--source <name>] [--command-id <id>] | request-changes <job.json> <sha> [--source <name>] [--command-id <id>] | cancel <job.json> [--source <name>] [--command-id <id>] | events <job.json | runsDir> [--after <seq>] [--follow]';
 
 /** One adapter per agent role, from `runtime[role]` or the alias that names the role. */
 function adaptersFor(w: Workflow, registry: Record<string, RuntimeEntry>, runtime: JobFile['runtime'], sandbox: Sandbox): Adapters {
@@ -73,15 +75,37 @@ async function decisionConfig(file: string) {
   return now;
 }
 
-/** `--source <name>` at the end of `rest`, after `positional` words; the source is `owner` without it. */
-function withSource(rest: string[], positional: number): { args: string[]; source: string } {
+/** An owner command's flags. */
+interface From {
+  source: string;
+  commandId?: string;
+}
+
+/**
+ * `--source <name>` and `--command-id <id>`, each at most once, after `positional` words. The
+ * source is `owner` without it. No command ID is minted: a fresh one would deduplicate nothing.
+ */
+function withFlags(rest: string[], positional: number): { args: string[]; from: From } {
   const args = rest.slice(0, positional);
-  const flag = rest.slice(positional);
-  if (args.length !== positional) throw new Error(USAGE);
-  if (flag.length === 0) return { args, source: 'owner' };
-  if (flag.length !== 2 || flag[0] !== '--source') throw new Error(USAGE);
-  if (!isSource(flag[1])) throw new Error('--source must be one line of printable text');
-  return { args, source: flag[1]! };
+  const flags = rest.slice(positional);
+  if (args.length !== positional || flags.length % 2 !== 0) throw new Error(USAGE);
+  const given = new Map<string, string>();
+  for (let i = 0; i < flags.length; i += 2) {
+    if (!['--source', '--command-id'].includes(flags[i]!) || given.has(flags[i]!)) throw new Error(USAGE);
+    given.set(flags[i]!, flags[i + 1]!);
+  }
+  const source = given.get('--source') ?? 'owner';
+  if (!isSource(source)) throw new Error('--source must be one line of printable text');
+  const commandId = given.get('--command-id');
+  // The same rule as --source: the stream prints it.
+  if (commandId !== undefined && !(isSource(commandId) && commandId.isWellFormed())) throw new Error('--command-id must be one line of printable text');
+  return { args, from: { source, ...(commandId === undefined ? {} : { commandId }) } };
+}
+
+/** The store's StaleLoad, with what the owner does about it. */
+function again(err: unknown): never {
+  if (err instanceof StaleLoad) throw new Error(`${err.message}; run the command again`);
+  throw err;
 }
 
 async function events(rest: string[]): Promise<number> {
@@ -159,41 +183,58 @@ function report(r: RunResult, { path, repo, workflow, sandbox }: Config): number
   return 1;
 }
 
-async function accept(file: string, sha: string, source: string): Promise<number> {
+/** Record a decision at a human stage and drive on (11-a2); `decide` holds its refusals. */
+async function decideAt(file: string, decide: (store: EventStore | undefined, workId: string, where: { runsDir: string; file: string }) => Decided) {
   const config = await decisionConfig(file);
-  const { path, spec, repo, runsDir, workflow, registry, sandbox } = config;
+  const { path, spec, runsDir, workflow, registry, sandbox } = config;
   const store = existingStore(runsDir, workflow);
   try {
-    const { cycleId, event } = acceptEvent(store, spec.workId, sha, source, { runsDir, file: path });
-    const { cycle: after, driven } = await decideAndDrive(store!, cycleId, event, async () =>
-      ({ adapters: adaptersFor(workflow, registry, spec.runtime, sandbox), job: jobOf(config), opts: optionsOf(config) }));
-    if (driven) {
-      // A further human stage prints its own next steps; ACCEPTED gets the merge lines below.
-      const code = report(driven, config);
-      if (driven.cycle.stage !== 'ACCEPTED') return code;
-      console.log('');
-      console.log('To merge:');
-      console.log(`  git -C ${repo} merge --no-ff ${driven.cycle.candidate!.head}`);
-      return 0;
-    }
-    console.log(`Cycle: ${after.cycleId}`);
-    console.log(`Stage: ${after.stage}`);
-    if (after.stage !== 'ACCEPTED') return 1;
-    console.log('');
-    console.log('To merge:');
-    console.log(`  git -C ${repo} merge --no-ff ${after.candidate!.head}`);
-    return 0;
+    const { cycleId, event, after } = decide(store, spec.workId, { runsDir, file: path });
+    const r = await decideAndDrive(store!, cycleId, event, async () =>
+      ({ adapters: adaptersFor(workflow, registry, spec.runtime, sandbox), job: jobOf(config), opts: optionsOf(config) }), after).catch(again);
+    return { config, ...r };
   } finally {
     store?.close();
   }
 }
 
-async function cancel(file: string, source: string): Promise<number> {
+async function accept(file: string, sha: string, { source, commandId }: From): Promise<number> {
+  const { config, cycle: after, driven } = await decideAt(file, (store, workId, where) => acceptEvent(store, workId, sha, source, where, commandId));
+  const { repo } = config;
+  if (driven) {
+    // A further human stage prints its own next steps; ACCEPTED gets the merge lines below.
+    const code = report(driven, config);
+    if (driven.cycle.stage !== 'ACCEPTED') return code;
+    console.log('');
+    console.log('To merge:');
+    console.log(`  git -C ${repo} merge --no-ff ${driven.cycle.candidate!.head}`);
+    return 0;
+  }
+  console.log(`Cycle: ${after.cycleId}`);
+  console.log(`Stage: ${after.stage}`);
+  if (after.stage !== 'ACCEPTED') return 1;
+  console.log('');
+  console.log('To merge:');
+  console.log(`  git -C ${repo} merge --no-ff ${after.candidate!.head}`);
+  return 0;
+}
+
+/** The owner's FAIL: exit 0 once it is recorded, or what the driven loop's report says. */
+async function requestChanges(file: string, sha: string, { source, commandId }: From): Promise<number> {
+  const { config, cycle, driven } = await decideAt(file, (store, workId, where) => requestChangesEvent(store, workId, sha, source, where, commandId));
+  if (driven) return report(driven, config);
+  console.log(`Cycle: ${cycle.cycleId}`);
+  console.log(`Stage: ${cycle.stage}`);
+  if (cycle.escalation) console.log(`Escalation: ${printable(cycle.escalation)}`);
+  return 0;
+}
+
+async function cancel(file: string, { source, commandId }: From): Promise<number> {
   const { path, spec, runsDir, workflow } = await decisionConfig(file);
   const store = existingStore(runsDir, workflow);
   try {
     let code = 0;
-    for (const after of cancelWork(store, spec.workId, source, { runsDir, file: path })) {
+    for (const after of cancelWork(store, spec.workId, source, { runsDir, file: path }, commandId)) {
       console.log(`Cycle: ${after.cycleId}`);
       console.log(`Stage: ${after.stage}`);
       if (after.stage !== 'CANCELLED') code = 1;
@@ -207,13 +248,13 @@ async function cancel(file: string, source: string): Promise<number> {
 /** Runs one command; returns its exit code, or throws a message for the owner. */
 export async function main(argv: string[]): Promise<number> {
   const [first, ...rest] = argv;
-  if (first === 'accept') {
-    const { args, source } = withSource(rest, 2);
-    return accept(args[0]!, args[1]!, source);
+  if (first === 'accept' || first === 'request-changes') {
+    const { args, from } = withFlags(rest, 2);
+    return (first === 'accept' ? accept : requestChanges)(args[0]!, args[1]!, from);
   }
   if (first === 'cancel') {
-    const { args, source } = withSource(rest, 1);
-    return cancel(args[0]!, source);
+    const { args, from } = withFlags(rest, 1);
+    return cancel(args[0]!, from);
   }
   if (first === 'events') return events(rest);
   // Extra words are refused, not ignored: `job.json cancel` would otherwise start a paid run.

@@ -8,8 +8,8 @@ import type { Event, Workflow } from '../src/lifecycle.ts';
 import type { Job } from '../src/developer.ts';
 import { decideAndDrive, type Adapters } from '../src/run.ts';
 import { ownerCheck } from './workflows.ts';
-import { EventStore } from '../src/store.ts';
-import { acceptCycle, cancelWork } from '../src/decide.ts';
+import { EventStore, StaleLoad } from '../src/store.ts';
+import { acceptCycle, cancelWork, requestChangesEvent } from '../src/decide.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-decide-');
@@ -248,6 +248,69 @@ test('decideAndDrive refuses a grant stage the head gate would refuse after the 
     const ready = async () => ({ adapters: roles, job, opts: { deadlineMs: 1000, runsDir: dir, grants: grantFile('t\n') } });
     await assert.rejects(decideAndDrive(store, 'c1', ACCEPT, ready), new RegExp(`^Error: stage MERGE holds a grant, but no PASS verdict is for the candidate ${H}$`));
     assert.equal(store.events('c1').length, 3);
+  } finally {
+    store.close();
+  }
+});
+
+// Ticket 11-d (A-123 item 1, A-132).
+test('requestChangesEvent refuses as acceptEvent does, and returns request_changes for the head with the load it decided on', () => {
+  assert.throws(() => requestChangesEvent(undefined, 'w', H, 'owner', where), /^Error: no open cycle for work w in \/runs$/);
+  const store = fresh();
+  try {
+    seed(store, 'c1', TO_ACCEPTANCE.slice(0, 3));
+    assert.throws(() => requestChangesEvent(store, 'w', H, 'owner', where), /^Error: cycle c1 is STANDARD_REVIEW, not AWAITING_ACCEPTANCE$/);
+    for (const e of TO_ACCEPTANCE.slice(3)) store.append('c1', e);
+    assert.throws(() => requestChangesEvent(store, 'w', 'c'.repeat(40), 'owner', where), new RegExp(`is not the candidate head ${H} of cycle c1`));
+    assert.deepEqual(requestChangesEvent(store, 'w', H, 'tracker', where, 'gh:42'), {
+      cycleId: 'c1', event: { type: 'request_changes', head: H, source: 'tracker', commandId: 'gh:42' }, after: TO_ACCEPTANCE.length,
+    });
+    assert.equal(store.events('c1').length, TO_ACCEPTANCE.length);
+  } finally {
+    store.close();
+  }
+});
+
+test('acceptCycle and cancelWork record the command ID they are given', () => {
+  const store = fresh();
+  try {
+    seed(store, 'c1', TO_ACCEPTANCE);
+    acceptCycle(store, 'w', H, 'owner', where, 'cli:1');
+    assert.deepEqual(store.events('c1').at(-1), { type: 'accept', head: H, source: 'owner', commandId: 'cli:1' });
+    seed(store, 'c2', ESCALATE.slice(0, 1));
+    cancelWork(store, 'w', 'owner', where, 'cli:2');
+    assert.deepEqual(store.events('c2').at(-1), { type: 'cancel', source: 'owner', commandId: 'cli:2' });
+  } finally {
+    store.close();
+  }
+});
+
+test('decideAndDrive refuses with StaleLoad, writing nothing, when another accept lands while it prepares the loop (A-132)', async () => {
+  const flow = grantFlow([{ name: 'merge', command: ['true'] }]);
+  const path = join(dir, `${n++}.sqlite`);
+  const store = new EventStore(path, flow);
+  const other = new EventStore(path, flow);
+  try {
+    seed(store, 'c1', AT_OWNER);
+    const grants = grantFile('t\n');
+    // The second command records its accept while the first is between its load and its append.
+    const ready = async () => { acceptCycle(other, 'w', H, 'second', where); return { adapters: roles, job, opts: { deadlineMs: 1000, runsDir: dir, grants } }; };
+    await assert.rejects(decideAndDrive(store, 'c1', ACCEPT, ready), (err: Error) => err instanceof StaleLoad && /^cycle c1 moved since it was loaded/.test(err.message));
+    assert.deepEqual(store.events('c1').filter((e) => e.type === 'accept'), [{ type: 'accept', head: H, source: 'second' }]);
+    assert.equal(store.load('c1')!.stage, 'MERGE');
+  } finally {
+    store.close();
+    other.close();
+  }
+});
+
+test('decideAndDrive appends with the load it is given, also when no loop stage follows', async () => {
+  const store = fresh(ownerCheck);
+  try {
+    seed(store, 'c1', AT_OWNER);
+    await assert.rejects(decideAndDrive(store, 'c1', ACCEPT, async () => { throw new Error('ready called'); }, AT_OWNER.length - 1), StaleLoad);
+    assert.equal(store.events('c1').length, AT_OWNER.length);
+    assert.equal((await decideAndDrive(store, 'c1', ACCEPT, async () => { throw new Error('ready called'); }, AT_OWNER.length)).cycle.stage, 'ACCEPTED');
   } finally {
     store.close();
   }

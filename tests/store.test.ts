@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { apply, defaultWorkflow, newCycle, type Cycle, type Event } from '../src/lifecycle.ts';
-import { EventStore, ReplayDiverged, SETTLED, UnclassifiableEvent, workflowHash } from '../src/store.ts';
+import { EventStore, ReplayDiverged, SETTLED, StaleLoad, UnclassifiableEvent, workflowHash } from '../src/store.ts';
 import type { Workflow } from '../src/lifecycle.ts';
 import { PASS_CHECKS, scenarios, toStandardReview } from './scenarios.ts';
 import { counters, noHuman, ownerCheck } from './workflows.ts';
@@ -630,4 +630,123 @@ test('several processes opening one store written before 11-c at once all succee
   lock.exec('COMMIT');
   lock.close();
   assert.deepEqual(await all, ['opened', 'opened', 'opened', 'opened']);
+});
+
+// Ticket 11-d (A-123 item 1, A-132): events from outside a run are deduplicated by command ID,
+// and a writer that decided on a loaded cycle is refused when the cycle has moved since.
+test('a second event with the same command ID on one cycle writes nothing; on another cycle it is recorded (11-d)', () => {
+  const store = new EventStore(dbPath('command-id'));
+  store.open('c1', 'w1');
+  store.open('c2', 'w2');
+  for (const e of toStandardReview) store.append('c1', e);
+  const before = store.append('c1', { type: 'head_changed', head: 'H1', commandId: 'obs:7' });
+  assert.equal(store.events('c1').length, toStandardReview.length + 1);
+  // A redelivery with another head would escalate the cycle; deduplicated, it returns the cycle as it was.
+  assert.deepEqual(store.append('c1', { type: 'head_changed', head: 'H9', commandId: 'obs:7' }), before);
+  assert.deepEqual(store.load('c1'), before);
+  assert.equal(store.events('c1').length, toStandardReview.length + 1);
+  // One command may cancel several cycles under one ID.
+  assert.equal(store.append('c2', { type: 'cancel', commandId: 'obs:7' }).stage, 'CANCELLED');
+  // Without an ID nothing is deduplicated.
+  store.append('c1', { type: 'head_changed', head: 'H1' });
+  store.append('c1', { type: 'head_changed', head: 'H1' });
+  assert.equal(store.events('c1').length, toStandardReview.length + 3);
+  store.close();
+});
+
+test('a command ID and a run ID with the same text are two keys, not a duplicate (11-d)', () => {
+  const store = new EventStore(dbPath('command-run-keys'));
+  store.open('c1', 'w1');
+  for (const e of toStandardReview) store.append('c1', e);
+  for (const id of ['sr1', '{"commandId":"sr1"}']) store.append('c1', { type: 'head_changed', head: 'H1', commandId: id });
+  assert.equal(store.append('c1', { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' }).stage, 'ADVERSARIAL_REVIEW');
+  assert.equal(store.append('c1', { type: 'verdict', runId: '{"commandId":"sr1"}', head: 'H1', verdict: 'PASS' }).stage, 'AWAITING_ACCEPTANCE');
+  assert.equal(store.events('c1').length, toStandardReview.length + 4);
+  store.close();
+});
+
+test('a redelivered rejection under its command ID never reaches a candidate nobody has read (11-d, engine.md G7)', () => {
+  const backToDev = { ...ownerCheck, stages: { ...ownerCheck.stages, REVIEW: { ...ownerCheck.stages.REVIEW, budget: 2 }, OWNER: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'DEV' } } } } as Workflow;
+  const store = new EventStore(dbPath('g7'), backToDev);
+  store.open('c1', 'w1');
+  const reach = (n: number, head: string): Event[] => [
+    { type: 'claim', runId: `dev${n}`, base: 'B1', runtime: 'fake' },
+    { type: 'developer_result', runId: `dev${n}`, head, artifacts: ['r'] },
+    { type: 'verification', head, checks: PASS_CHECKS },
+    { type: 'verdict', runId: `rev${n}`, head, verdict: 'PASS' },
+  ];
+  for (const e of reach(1, 'H1')) store.append('c1', e);
+  assert.equal(store.append('c1', { type: 'request_changes', head: 'H1', commandId: 'tracker:1' }).stage, 'DEV');
+  const second = reach(2, 'H2').slice(0, 3);
+  for (const e of second) store.append('c1', e);
+  const reviewing = store.load('c1')!;
+  assert.equal(reviewing.stage, 'REVIEW');
+  // The tracker redelivers its rejection of H1: the same ID writes nothing.
+  assert.deepEqual(store.append('c1', { type: 'request_changes', head: 'H1', commandId: 'tracker:1' }), reviewing);
+  store.close();
+});
+
+test('append refuses with StaleLoad, writing nothing, when the cycle has moved since the writer loaded it (11-d)', () => {
+  const store = new EventStore(dbPath('stale'));
+  store.open('c1', 'w1');
+  const loaded = store.load('c1')!;
+  store.append('c1', toStandardReview[0]!, { after: loaded.history.length });
+  assert.throws(() => store.append('c1', toStandardReview[1]!, { after: loaded.history.length }), (err: Error) =>
+    err instanceof StaleLoad && err.message === 'cycle c1 moved since it was loaded: 1 events, not 0; nothing was written');
+  assert.equal(store.events('c1').length, 1);
+  // Without `after`, as for run outcomes and cancel, nothing is compared.
+  store.append('c1', toStandardReview[1]!);
+  assert.equal(store.events('c1').length, 2);
+  store.close();
+});
+
+test('two processes deciding on one load: one appends, the other gets StaleLoad and writes nothing (11-d, A-132)', async () => {
+  const src = JSON.stringify(join(import.meta.dirname, '..', 'src', 'store.ts'));
+  for (let round = 0; round < 3; round++) {
+    const path = dbPath(`race-stale-${round}`);
+    const store = new EventStore(path);
+    store.open('c1', 'w1');
+    for (const e of [...toStandardReview, { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' }, { type: 'verdict', runId: 'ar1', head: 'H1', verdict: 'PASS' }] as Event[]) store.append('c1', e);
+    store.close();
+    // Both load under the held lock and block at append's write; released together.
+    const lock = new DatabaseSync(path);
+    lock.exec('BEGIN IMMEDIATE');
+    const accept = () => new Promise<string>((done) => {
+      const script = `import { EventStore } from ${src}; const s = new EventStore(${JSON.stringify(path)});
+        const after = s.drivable('c1').history.length;
+        try { s.append('c1', { type: 'accept', head: 'H1' }, { after }); console.log('appended'); } catch (e) { console.log(e.constructor.name); }`;
+      const child = spawn(process.execPath, ['--no-warnings', '--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'inherit'] });
+      let out = '';
+      child.stdout.on('data', (d) => (out += d));
+      child.on('close', () => done(out.trim()));
+    });
+    const both = Promise.all([accept(), accept()]);
+    await new Promise((r) => setTimeout(r, 1500));
+    lock.exec('COMMIT');
+    lock.close();
+    assert.deepEqual((await both).sort(), ['StaleLoad', 'appended']);
+    const after = new EventStore(path);
+    assert.equal(after.load('c1')!.stage, 'ACCEPTED');
+    assert.equal(after.events('c1').filter((e) => e.type === 'accept').length, 1);
+    after.close();
+  }
+});
+
+test('every v1 and v2 fixture cycle replays to the stage it had before 11-d', () => {
+  // Taken from the engine at f3f2a25 (main before 11-d). ENGINE_VERSION's rule: a change here needs a bump.
+  const expected: Record<string, Record<string, string>> = {
+    v1: { 'RF-01': 'ESCALATED', 'RF-02': 'ESCALATED', 'RT-01': 'ESCALATED', 'SC-01': 'ACCEPTED', 'SC-02': 'AWAITING_ACCEPTANCE', 'SC-03': 'ESCALATED', 'SC-04': 'ESCALATED', 'SC-05': 'ESCALATED', 'SC-06': 'ADVERSARIAL_REVIEW', 'SC-07': 'ESCALATED', 'SC-08': 'ESCALATED', 'SC-11': 'ESCALATED', 'SC-13': 'ESCALATED', 'SC-16': 'ESCALATED', 'SC-17': 'ESCALATED', 'SC-17b': 'ESCALATED', 'SC-18': 'ESCALATED', 'SC-19': 'ACCEPTED' },
+    v2: { d1: 'DEVELOPING', o1: 'OWNER' },
+  };
+  for (const [name, stages] of Object.entries(expected)) {
+    const path = dbPath(`${name}-engine`);
+    copyFileSync(join(import.meta.dirname, 'fixtures', `${name}-store.sqlite`), path);
+    const raw = new DatabaseSync(path, { readOnly: true });
+    const ids = raw.prepare('SELECT cycle_id FROM events WHERE seq = 0 ORDER BY cycle_id').all().map((r) => r.cycle_id as string);
+    raw.close();
+    assert.deepEqual(ids, Object.keys(stages).sort(), name);
+    const stores = [new EventStore(path), new EventStore(path, ownerCheck)];
+    for (const id of ids) assert.equal(stores[name === 'v2' && id.startsWith('o') ? 1 : 0]!.load(id)!.stage, stages[id], `${name} ${id}`);
+    for (const s of stores) s.close();
+  }
 });

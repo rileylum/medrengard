@@ -39,7 +39,9 @@ test('observe runs a real accept for the comment-only example, recorded with the
   await running;
   const s = new EventStore(j.db);
   assert.equal(s.load('c1')!.stage, 'ACCEPTED');
-  assert.deepEqual(s.events('c1').at(-1), { type: 'accept', head: comment, source: 'observer:comments' });
+  // The command ID names the line handled (11-d): pos 1 is the open marker, then the events in order.
+  const pos = toAcceptance(comment).length + 1;
+  assert.deepEqual(s.events('c1').at(-1), { type: 'accept', head: comment, source: 'observer:comments', commandId: `observer:comments:${pos}:accept` });
   s.close();
   assert.equal(execFileSync('git', ['-C', repo, 'rev-parse', comment], { encoding: 'utf8' }).trim(), comment);
 });

@@ -121,6 +121,21 @@ export class UnclassifiableEvent extends Error {}
 /** The replay disagrees with a stage stored on a row: the engine reads this log differently from the one that wrote it. */
 export class ReplayDiverged extends Error {}
 
+/** The cycle has rows the writer had not loaded when it decided; nothing was written (11-d, A-132). */
+export class StaleLoad extends Error {}
+
+/**
+ * The run_id column's key: a run's outcome by its JSON-escaped run ID, an event from outside a
+ * run by its command ID (11-d). One unique index then keeps the first of each. A run key is a
+ * JSON string and starts with `"`, a command key with `{`, so the two never collide.
+ */
+function dedupKey(e: Event): string | null {
+  const runId = outcomeRunId(e);
+  if (runId !== undefined) return JSON.stringify(runId);
+  const commandId = (e as { commandId?: unknown }).commandId;
+  return typeof commandId === 'string' ? JSON.stringify({ commandId }) : null;
+}
+
 export class EventStore {
   private db: DatabaseSync;
   readonly workflow: Workflow;
@@ -199,11 +214,14 @@ export class EventStore {
    * its serialised form does (02-c finding). Throws before writing if apply could not classify
    * the serialised event: a bad row would make the whole log unloadable. A run has one outcome:
    * a second outcome for a run ID that already has one writes nothing and returns the current
-   * Cycle. Only events `outcomeRunId` names carry run_id into the unique index; a redelivered
-   * claim is stored and apply decides. The load, the apply and the insert share one write lock,
-   * so the stage stored on the row is the one the rows before it lead to.
+   * Cycle; so does a second event with a command ID the cycle has already recorded. Only those
+   * carry a key into the unique index (`dedupKey`); a redelivered claim is stored and apply decides.
+   * The load, the apply and the insert share one write lock, so the stage stored on the row is the
+   * one the rows before it lead to. `after`: the history length of the cycle the writer decided
+   * on; a longer history throws StaleLoad, so two owner commands decided on one load cannot both
+   * land (A-132). Run outcomes and cancel pass none: they must land whatever came between.
    */
-  append(cycleId: string, event: Event): Cycle {
+  append(cycleId: string, event: Event, opts: { after?: number } = {}): Cycle {
     requireId(cycleId, 'cycle ID');
     // Validate the serialised body, not the object: sparse arrays, toJSON, array-with-props and
     // inherited fields all pass a check on the object yet serialise to something apply reads
@@ -211,17 +229,19 @@ export class EventStore {
     const body = JSON.stringify(event);
     const parsed: unknown = body === undefined ? undefined : JSON.parse(body);
     if (!isEvent(parsed)) throw new UnclassifiableEvent(`unclassifiable event: ${body}`);
-    // The index key is the JSON-escaped run ID, not the raw string: SQLite would fold a lone
-    // surrogate to U+FFFD and two distinct run IDs would collide.
-    const runId = outcomeRunId(parsed);
-    const dedupKey = runId === undefined ? null : JSON.stringify(runId);
+    // The index key is JSON-escaped, not the raw string: SQLite would fold a lone surrogate to
+    // U+FFFD and two distinct IDs would collide.
+    const key = dedupKey(parsed);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const now = this.replay(cycleId);
       if (!now) throw new Error(`cycle ${cycleId} not open`);
+      const length = now.cycle.history.length;
+      if (opts.after !== undefined && length !== opts.after)
+        throw new StaleLoad(`cycle ${cycleId} moved since it was loaded: ${length} events, not ${opts.after}; nothing was written`);
       // The parsed body, not `event`: the cycle a later load replays from the row (02-c).
       const next = apply(now.cycle, parsed, now.workflow);
-      const written = this.insert(cycleId, parsed.type, dedupKey, body, next.stage);
+      const written = this.insert(cycleId, parsed.type, key, body, next.stage);
       this.db.exec('COMMIT');
       return written ? next : now.cycle;
     } catch (err) {
