@@ -102,7 +102,8 @@ export class EventStore {
   moveAllowed(cycleId, workId) {
     const child = this.table.filter((r) => r.seq === 0 && JSON.parse(r.body).parentCycleId === cycleId).map((r) => r.cycle_id).sort()[0];
     if (child) throw new Error(`cycle ${cycleId} is the parent of cycle ${child}; a move on it would give work ${workId} two live cycles; nothing was written`);
-    const { open } = this.cyclesFor(workId);
+    // The cycle itself is not a sibling: a move on it while open reaches apply, which escalates it.
+    const open = this.cycles(workId).find((c) => c.cycleId !== cycleId && !STOPPED.includes(c.stage))?.cycleId;
     if (open !== undefined) throw new Error(`work ${workId} has an open cycle ${open}; a move on cycle ${cycleId} would give it two live cycles; nothing was written`);
   }
 
