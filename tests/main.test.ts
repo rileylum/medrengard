@@ -835,9 +835,17 @@ test('two overlapping deliveries of one command ID: the accept is recorded once 
   lock.exec('COMMIT');
   lock.close();
   const results = await both;
+  const all = results.map((r) => r.out).join('\n---\n');
   for (const r of results) assert.equal(r.code, 0, r.out);
-  assert.equal(results.filter((r) => /^Stage: ACCEPTED$/m.test(r.out)).length, 1, results.map((r) => r.out).join('\n---\n'));
-  assert.equal(results.filter((r) => /^Already recorded: command same$/m.test(r.out)).length, 1, results.map((r) => r.out).join('\n---\n'));
+  // The duplicate may write before or after the first has driven the cycle, so its own Stage line
+  // can say MERGE or ACCEPTED; only the writer drives on and prints the merge lines.
+  const dup = results.filter((r) => /^Already recorded: command same$/m.test(r.out));
+  const writer = results.filter((r) => !/^Already recorded:/m.test(r.out));
+  assert.equal(dup.length, 1, all);
+  assert.equal(writer.length, 1, all);
+  assert.match(writer[0]!.out, /^Stage: ACCEPTED$/m);
+  assert.match(writer[0]!.out, /^To merge:$/m);
+  assert.doesNotMatch(dup[0]!.out, /^To merge:$/m);
   assert.deepEqual(rows(db, cycleId).slice(-3), ['verdict', 'accept', 'verification']);
   assert.equal(look(db, cycleId).stage, 'ACCEPTED');
 });
@@ -849,4 +857,28 @@ test('request-changes drives on into the stage the owner\'s FAIL leads to, as ac
   assert.match(r.stdout, /^Stage: ACCEPTED$/m);
   assert.deepEqual(rows(db, cycleId).slice(-2), ['request_changes', 'verification']);
   assert.equal(readFileSync(join(runsDir, 'evidence', head, 'MERGE', 'output', 'token'), 'utf8'), 'main-grant-value');
+});
+
+test('two overlapping deliveries of one request-changes command ID: the FAIL is recorded once (11-d standard 3)', async () => {
+  const { jobFile, db } = scratch();
+  seed(db, 'c1', TO_ACCEPTANCE);
+  const lock = new DatabaseSync(db);
+  lock.exec('BEGIN IMMEDIATE');
+  const send = () => new Promise<{ code: number | null; out: string }>((done) => {
+    const child = spawn(process.execPath, [MAIN, 'request-changes', jobFile, H, '--command-id', 'same'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (out += d));
+    child.on('close', (code) => done({ code, out }));
+  });
+  const both = Promise.all([send(), send()]);
+  await new Promise((r) => setTimeout(r, 2500));
+  lock.exec('COMMIT');
+  lock.close();
+  const results = await both;
+  const all = results.map((r) => r.out).join('\n---\n');
+  for (const r of results) assert.equal(r.code, 0, r.out);
+  assert.equal(results.filter((r) => /^Already recorded: command same$/m.test(r.out)).length, 1, all);
+  assert.equal(results.filter((r) => /^Escalation: AWAITING_ACCEPTANCE FAIL: owner requested changes$/m.test(r.out)).length, 1, all);
+  assert.deepEqual(look(db, 'c1'), { stage: 'ESCALATED', events: 6 });
 });
