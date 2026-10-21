@@ -564,7 +564,8 @@ export default function mount(el) {
     } else if (c.stage === 'ESCALATED') {
       if (c.candidate?.head && state.job) {
         btn(`Retry ${c.history.findLast((h) => h.to === 'ESCALATED' && h.from !== 'ESCALATED')?.from ?? ''}`, 'owner primary', () => move('retry', 'the owner retries the stage in place'));
-        btn('Overrule the last FAIL', 'owner', () => move('overrule', 'the owner agrees with the developer: undo is a non-goal'));
+        const verdict = c.history.findLast((h) => h.event.type === 'verdict')?.event;
+        if (verdict?.verdict === 'FAIL' && verdict.head === c.candidate.head) btn('Overrule the last FAIL', 'owner', () => move('overrule', 'the owner agrees with the developer: undo is a non-goal'));
       }
       btn('Open a child cycle (run again)', 'owner', () => { state.parent = c.cycleId; showJob(); say(`\n# parentCycleId: ${c.cycleId} added to job.json`); go(); });
       btn('Cancel', 'owner', () => decide('cancel'));

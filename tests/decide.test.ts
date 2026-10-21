@@ -417,6 +417,11 @@ test('moveEvent refuses a stage the driver cannot run: a commit stage without a 
     seed(store, 'c1', [...TO_ACCEPTANCE.slice(0, 4), { type: 'run_failed', runId: 'adv1', reason: 'timeout' }]);
     assert.throws(() => moveEvent(store, 'w', mv('route', { stage: 'DEVELOPING' }), where), new RegExp(`^Error: cycle c1: commit stage DEVELOPING runs a fix, which needs a FAIL for the candidate ${H}; the last verdict is a PASS for ${H}$`));
     assert.doesNotThrow(() => moveEvent(store, 'w', mv('route', { stage: 'AWAITING_ACCEPTANCE' }), where));
+    // SC-17b: a FAIL for a stale SHA, counted and escalated; a fix run would take another head's findings.
+    const stale = fresh();
+    seed(stale, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'verdict', runId: 'std1', head: 'e'.repeat(40), verdict: 'FAIL', findings: ['f'] }]);
+    assert.throws(() => moveEvent(stale, 'w', mv('route', { stage: 'DEVELOPING' }), where), new RegExp(`the last verdict is a FAIL for ${'e'.repeat(40)}$`));
+    stale.close();
     // The fix's checks never ran: verify threw after the new commit.
     const H2 = 'd'.repeat(40);
     const unverified = fresh();

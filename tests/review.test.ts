@@ -476,6 +476,9 @@ test('ownerRuling is the reason of the latest overrule, only in the stage it ent
   const fixed = play(...failed, overrule('first'), { type: 'verdict', runId: 'sr2', head: H1, verdict: 'FAIL' }, { type: 'claim', runId: 'dev3', base: 'b'.repeat(40), runtime: 'fake' },
     { type: 'developer_result', runId: 'dev3', head: H2, artifacts: ['x'] }, { type: 'verification', head: H2, checks: [{ name: 'ok', result: 'PASS' }] });
   assert.deepEqual([fixed.stage, ownerRuling(fixed)], ['STANDARD_REVIEW', undefined]);
-  // A refused overrule rules nothing.
+  // A refused overrule rules nothing, and does not hide the ruling the owner already gave.
   assert.equal(ownerRuling(play(...failed, overrule('wrong head', H2))), undefined);
+  const standing = play(...failed, overrule('first'), { type: 'run_failed', runId: 'sr2', reason: 'timeout' }, overrule('again'),
+    { type: 'owner_decision', action: 'route', head: H1, reason: 'run it again', stage: 'STANDARD_REVIEW' });
+  assert.deepEqual([standing.stage, ownerRuling(standing)], ['STANDARD_REVIEW', 'first']);
 });
