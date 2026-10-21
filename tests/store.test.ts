@@ -750,3 +750,24 @@ test('every v1 and v2 fixture cycle replays to the stage it had before 11-d', ()
     for (const s of stores) s.close();
   }
 });
+
+test('only events from outside a run are deduplicated by command ID (11-d standard 1)', () => {
+  const store = new EventStore(dbPath('command-id-types'));
+  store.open('c1', 'w1');
+  store.append('c1', { type: 'head_changed', head: 'H1', commandId: 'k' });
+  // The controller's own events carry no command ID; one that does is not suppressed by it.
+  const c = store.append('c1', { type: 'reject_dispatch', reason: 'x', commandId: 'k' } as Event);
+  assert.equal(c.stage, 'ESCALATED');
+  assert.equal(store.events('c1').length, 2);
+  store.close();
+});
+
+test('a redelivered command is a no-op even when its load is stale (11-d standard 1)', () => {
+  const store = new EventStore(dbPath('command-id-stale'));
+  store.open('c1', 'w1');
+  for (const e of toStandardReview) store.append('c1', e);
+  const first = store.append('c1', { type: 'head_changed', head: 'H1', commandId: 'k' }, { after: toStandardReview.length });
+  assert.deepEqual(store.append('c1', { type: 'head_changed', head: 'H1', commandId: 'k' }, { after: toStandardReview.length }), first);
+  assert.equal(store.events('c1').length, toStandardReview.length + 1);
+  store.close();
+});

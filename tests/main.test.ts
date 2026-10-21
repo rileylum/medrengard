@@ -801,3 +801,19 @@ test('two overlapping accepts before a grant stage: one runs the grant stage onc
     assert.equal(look(db, cycleId).stage, 'ACCEPTED');
   }
 });
+
+test('decideAt appends with the load its refusals checked, not a later one (11-d standard 1)', async () => {
+  const { decideAt } = await import('../src/main.ts');
+  const { acceptEvent } = await import('../src/decide.ts');
+  const { jobFile, db } = scratch();
+  seed(db, 'c1', TO_ACCEPTANCE);
+  // Another writer lands between the decision's load and decideAndDrive's own load.
+  await assert.rejects(decideAt(jobFile, (store, workId, where) => {
+    const decided = acceptEvent(store, workId, H, 'owner', where);
+    const other = new EventStore(db);
+    other.append('c1', { type: 'head_changed', head: H });
+    other.close();
+    return decided;
+  }), /^Error: cycle c1 moved since it was loaded: 6 events, not 5; nothing was written; run the command again$/);
+  assert.deepEqual(look(db, 'c1'), { stage: 'AWAITING_ACCEPTANCE', events: 6 });
+});

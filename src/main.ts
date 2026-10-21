@@ -183,8 +183,12 @@ function report(r: RunResult, { path, repo, workflow, sandbox }: Config): number
   return 1;
 }
 
-/** Record a decision at a human stage and drive on (11-a2); `decide` holds its refusals. */
-async function decideAt(file: string, decide: (store: EventStore | undefined, workId: string, where: { runsDir: string; file: string }) => Decided) {
+/**
+ * Record a decision at a human stage and drive on (11-a2); `decide` holds its refusals. The
+ * append carries the load `decide` checked, so a write between it and decideAndDrive's own load
+ * is refused. Exported for that test.
+ */
+export async function decideAt(file: string, decide: (store: EventStore | undefined, workId: string, where: { runsDir: string; file: string }) => Decided) {
   const config = await decisionConfig(file);
   const { path, spec, runsDir, workflow, registry, sandbox } = config;
   const store = existingStore(runsDir, workflow);

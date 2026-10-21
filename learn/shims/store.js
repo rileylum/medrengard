@@ -16,10 +16,11 @@ export class ReplayDiverged extends Error {}
 export class StaleLoad extends Error {}
 
 // A run key is a JSON string, a command key a JSON object, so the two never collide.
+const COMMANDS = ['accept', 'request_changes', 'cancel', 'head_changed', 'base_changed'];
 function dedupKey(e) {
   const runId = outcomeRunId(e);
   if (runId !== undefined) return JSON.stringify(runId);
-  return typeof e.commandId === 'string' ? JSON.stringify({ commandId: e.commandId }) : null;
+  return COMMANDS.includes(e.type) && typeof e.commandId === 'string' ? JSON.stringify({ commandId: e.commandId }) : null;
 }
 
 export const workflowHash = (w) => createHash('sha256').update(JSON.stringify(w)).digest('hex');
@@ -77,14 +78,14 @@ export class EventStore {
     // One write at a time is the whole lock here: the replay, the check, the apply and the insert.
     const now = this.replay(cycleId);
     if (!now) throw new Error(`cycle ${cycleId} not open`);
-    const length = now.cycle.history.length;
-    if (opts.after !== undefined && length !== opts.after)
-      throw new StaleLoad(`cycle ${cycleId} moved since it was loaded: ${length} events, not ${opts.after}; nothing was written`);
-    // The unique index on (cycle_id, run_id): INSERT OR IGNORE writes nothing for a second outcome or command.
+    // The unique index on (cycle_id, run_id): a second outcome or command writes nothing, whatever its load.
     if (runId !== null && this.table.some((r) => r.cycle_id === cycleId && r.run_id === runId)) {
       this.emit({ kind: 'duplicate', cycleId, body });
       return now.cycle;
     }
+    const length = now.cycle.history.length;
+    if (opts.after !== undefined && length !== opts.after)
+      throw new StaleLoad(`cycle ${cycleId} moved since it was loaded: ${length} events, not ${opts.after}; nothing was written`);
     const cycle = apply(now.cycle, parsed, now.workflow);
     const seq = Math.max(...this.table.filter((r) => r.cycle_id === cycleId).map((r) => r.seq)) + 1;
     const row = this.insert(cycleId, seq, parsed.type, runId, body, cycle.stage);

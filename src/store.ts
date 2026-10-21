@@ -124,6 +124,10 @@ export class ReplayDiverged extends Error {}
 /** The cycle has rows the writer had not loaded when it decided; nothing was written (11-d, A-132). */
 export class StaleLoad extends Error {}
 
+// The events from outside a run, which may carry a command ID. isEvent tolerates extra fields, so
+// a commandId on any other event is ignored: it must not suppress a controller or run event.
+const COMMANDS: readonly Event['type'][] = ['accept', 'request_changes', 'cancel', 'head_changed', 'base_changed'];
+
 /**
  * The run_id column's key: a run's outcome by its JSON-escaped run ID, an event from outside a
  * run by its command ID (11-d). One unique index then keeps the first of each. A run key is a
@@ -133,7 +137,7 @@ function dedupKey(e: Event): string | null {
   const runId = outcomeRunId(e);
   if (runId !== undefined) return JSON.stringify(runId);
   const commandId = (e as { commandId?: unknown }).commandId;
-  return typeof commandId === 'string' ? JSON.stringify({ commandId }) : null;
+  return COMMANDS.includes(e.type) && typeof commandId === 'string' ? JSON.stringify({ commandId }) : null;
 }
 
 export class EventStore {
@@ -214,7 +218,8 @@ export class EventStore {
    * its serialised form does (02-c finding). Throws before writing if apply could not classify
    * the serialised event: a bad row would make the whole log unloadable. A run has one outcome:
    * a second outcome for a run ID that already has one writes nothing and returns the current
-   * Cycle; so does a second event with a command ID the cycle has already recorded. Only those
+   * Cycle; so does a second event with a command ID the cycle has already recorded, whatever its
+   * `after`. Only those
    * carry a key into the unique index (`dedupKey`); a redelivered claim is stored and apply decides.
    * The load, the apply and the insert share one write lock, so the stage stored on the row is the
    * one the rows before it lead to. `after`: the history length of the cycle the writer decided
@@ -236,6 +241,11 @@ export class EventStore {
     try {
       const now = this.replay(cycleId);
       if (!now) throw new Error(`cycle ${cycleId} not open`);
+      // A redelivery is a no-op whatever its load: its first delivery already moved the cycle.
+      if (key !== null && this.db.prepare('SELECT 1 FROM events WHERE cycle_id = ? AND run_id = ?').get(cycleId, key) !== undefined) {
+        this.db.exec('COMMIT');
+        return now.cycle;
+      }
       const length = now.cycle.history.length;
       if (opts.after !== undefined && length !== opts.after)
         throw new StaleLoad(`cycle ${cycleId} moved since it was loaded: ${length} events, not ${opts.after}; nothing was written`);
