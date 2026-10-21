@@ -96,9 +96,14 @@ export class EventStore {
     const out = [];
     for (const r of this.table.filter((r) => r.seq === 0).sort((a, b) => (a.cycle_id < b.cycle_id ? -1 : 1))) {
       const cycleId = r.cycle_id;
-      const { workId } = JSON.parse(r.body);
+      let workId = '';
       let stage;
-      try { stage = this.load(cycleId).stage; } catch (err) { out.push({ cycleId, workId, refused: err.message }); continue; }
+      try {
+        let open;
+        try { open = JSON.parse(r.body); } catch { throw new Error(`cycle ${cycleId}: row 0 is not JSON`); }
+        if (typeof open?.workId === 'string') workId = open.workId;
+        stage = this.load(cycleId).stage;
+      } catch (err) { out.push({ cycleId, workId, refused: err.message }); continue; }
       if (!SETTLED.includes(stage)) out.push({ cycleId, workId, stage });
     }
     return out;
@@ -108,7 +113,7 @@ export class EventStore {
     const rows = this.rows(cycleId);
     if (rows.length === 0) return undefined;
     const head = rows[0].body;
-    if (head.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(head.type)}, not the open marker`);
+    if (head?.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(head?.type)}, not the open marker`);
     const opened = head.workflow ?? DEFAULT_RECORD;
     const workflow = recordedWorkflow(head, this.workflow);
     if (!workflow) throw this.mismatch(cycleId, opened);
