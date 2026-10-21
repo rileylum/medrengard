@@ -644,9 +644,9 @@ test('importing main.ts runs nothing; main(argv) is exported and refuses bad arg
 // Ticket 11-a2 (A-129, A-131): accept drives the cycle on, so a grant stage after the human stage
 // runs in the same command, and a refusal writes nothing.
 /** ownerCheck with a grant stage MERGE after OWNER, run by main.ts to OWNER. */
-function atOwnerBeforeGrant(script: string, afterMerge = `'ACCEPTED'`) {
+function atOwnerBeforeGrant(script: string, afterMerge = `'ACCEPTED'`, ownerFail = `'ESCALATED'`) {
   const s = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};
-export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, OWNER: { kind: 'human', transitions: { PASS: 'MERGE', FAIL: 'ESCALATED' } },
+export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, OWNER: { kind: 'human', transitions: { PASS: 'MERGE', FAIL: ${ownerFail} } },
   FINAL: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
   MERGE: { kind: 'command', run: [{ name: 'merge', command: ['sh', '-c', ${JSON.stringify(script)}] }], network: true, grants: ['github'], transitions: { PASS: ${afterMerge}, FAIL: 'ESCALATED' } } } };\n`, { writer: 'claude', reviewer: 'claude' });
   writeFileSync(join(s.root, 'gh-token'), 'main-grant-value\n');
@@ -816,4 +816,37 @@ test('decideAt appends with the load its refusals checked, not a later one (11-d
     return decided;
   }), /^Error: cycle c1 moved since it was loaded: 6 events, not 5; nothing was written; run the command again$/);
   assert.deepEqual(look(db, 'c1'), { stage: 'AWAITING_ACCEPTANCE', events: 6 });
+});
+
+// 11-d standard 2 (A-141): a command delivered twice is recorded once and driven once.
+test('two overlapping deliveries of one command ID: the accept is recorded once and the grant stage runs once', async () => {
+  const { env, jobFile, head, db, cycleId } = atOwnerBeforeGrant(MERGES);
+  const lock = new DatabaseSync(db);
+  lock.exec('BEGIN IMMEDIATE');
+  const accept = () => new Promise<{ code: number | null; out: string }>((done) => {
+    const child = spawn(process.execPath, [MAIN, 'accept', jobFile, head, '--command-id', 'same'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (out += d));
+    child.on('close', (code) => done({ code, out }));
+  });
+  const both = Promise.all([accept(), accept()]);
+  await new Promise((r) => setTimeout(r, 2500));
+  lock.exec('COMMIT');
+  lock.close();
+  const results = await both;
+  for (const r of results) assert.equal(r.code, 0, r.out);
+  assert.equal(results.filter((r) => /^Stage: ACCEPTED$/m.test(r.out)).length, 1, results.map((r) => r.out).join('\n---\n'));
+  assert.equal(results.filter((r) => /^Already recorded: command same$/m.test(r.out)).length, 1, results.map((r) => r.out).join('\n---\n'));
+  assert.deepEqual(rows(db, cycleId).slice(-3), ['verdict', 'accept', 'verification']);
+  assert.equal(look(db, cycleId).stage, 'ACCEPTED');
+});
+
+test('request-changes drives on into the stage the owner\'s FAIL leads to, as accept does', () => {
+  const { env, jobFile, head, db, cycleId, runsDir } = atOwnerBeforeGrant(MERGES, `'ACCEPTED'`, `'MERGE'`);
+  const r = sf(['request-changes', jobFile, head], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: ACCEPTED$/m);
+  assert.deepEqual(rows(db, cycleId).slice(-2), ['request_changes', 'verification']);
+  assert.equal(readFileSync(join(runsDir, 'evidence', head, 'MERGE', 'output', 'token'), 'utf8'), 'main-grant-value');
 });

@@ -66,7 +66,10 @@ export class EventStore {
     return newCycle(cycleId, workId, parentCycleId);
   }
 
-  append(cycleId, event, opts = {}) {
+  append(cycleId, event, opts = {}) { return this.write(cycleId, event, opts).cycle; }
+
+  // append, also saying whether the event was written: not for a second outcome or command.
+  write(cycleId, event, opts = {}) {
     requireId(cycleId, 'cycle ID');
     const body = JSON.stringify(event);
     const parsed = body === undefined ? undefined : JSON.parse(body);
@@ -81,7 +84,7 @@ export class EventStore {
     // The unique index on (cycle_id, run_id): a second outcome or command writes nothing, whatever its load.
     if (runId !== null && this.table.some((r) => r.cycle_id === cycleId && r.run_id === runId)) {
       this.emit({ kind: 'duplicate', cycleId, body });
-      return now.cycle;
+      return { cycle: now.cycle, written: false };
     }
     const length = now.cycle.history.length;
     if (opts.after !== undefined && length !== opts.after)
@@ -90,7 +93,7 @@ export class EventStore {
     const seq = Math.max(...this.table.filter((r) => r.cycle_id === cycleId).map((r) => r.seq)) + 1;
     const row = this.insert(cycleId, seq, parsed.type, runId, body, cycle.stage);
     this.emit({ kind: 'append', cycleId, seq, pos: row.pos, event: parsed, cycle });
-    return cycle;
+    return { cycle, written: true };
   }
 
   events(cycleId) { return this.rows(cycleId).map((r) => r.body).filter((b) => b.type !== 'open'); }

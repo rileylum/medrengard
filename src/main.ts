@@ -21,7 +21,7 @@ import { acceptEvent, cancelWork, humanStages, requestChangesEvent, type Decided
 import { oneLine, type Job } from './developer.ts';
 import { printable } from './prompt.ts';
 import { storeFile } from './layout.ts';
-import { defaultWorkflow, isSource, type Workflow } from './lifecycle.ts';
+import { defaultWorkflow, isSource, type Cycle, type Workflow } from './lifecycle.ts';
 import { decideAndDrive, ROLE_ALIASES, run, type Adapters, type RunOptions, type RunResult } from './run.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
@@ -202,8 +202,17 @@ export async function decideAt(file: string, decide: (store: EventStore | undefi
   }
 }
 
+/** A command the store already held: another delivery recorded it and drives the cycle. */
+function already(commandId: string | undefined, cycle: Cycle): number {
+  console.log(`Already recorded: command ${printable(commandId ?? '')}`);
+  console.log(`Cycle: ${cycle.cycleId}`);
+  console.log(`Stage: ${cycle.stage}`);
+  return 0;
+}
+
 async function accept(file: string, sha: string, { source, commandId }: From): Promise<number> {
-  const { config, cycle: after, driven } = await decideAt(file, (store, workId, where) => acceptEvent(store, workId, sha, source, where, commandId));
+  const { config, cycle: after, written, driven } = await decideAt(file, (store, workId, where) => acceptEvent(store, workId, sha, source, where, commandId));
+  if (!written) return already(commandId, after);
   const { repo } = config;
   if (driven) {
     // A further human stage prints its own next steps; ACCEPTED gets the merge lines below.
@@ -223,10 +232,17 @@ async function accept(file: string, sha: string, { source, commandId }: From): P
   return 0;
 }
 
-/** The owner's FAIL: exit 0 once it is recorded, or what the driven loop's report says. */
+/**
+ * The owner's FAIL: exit 0 once it is recorded and wherever the workflow sends it, ESCALATED
+ * included; 1 only when a stage it drove into escalated the cycle.
+ */
 async function requestChanges(file: string, sha: string, { source, commandId }: From): Promise<number> {
-  const { config, cycle, driven } = await decideAt(file, (store, workId, where) => requestChangesEvent(store, workId, sha, source, where, commandId));
-  if (driven) return report(driven, config);
+  const { config, cycle, written, driven } = await decideAt(file, (store, workId, where) => requestChangesEvent(store, workId, sha, source, where, commandId));
+  if (!written) return already(commandId, cycle);
+  if (driven) {
+    report(driven, config);
+    return driven.cycle.stage === 'ESCALATED' ? 1 : 0;
+  }
   console.log(`Cycle: ${cycle.cycleId}`);
   console.log(`Stage: ${cycle.stage}`);
   if (cycle.escalation) console.log(`Escalation: ${printable(cycle.escalation)}`);

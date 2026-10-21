@@ -315,3 +315,25 @@ test('decideAndDrive appends with the load it is given, also when no loop stage 
     store.close();
   }
 });
+
+test('decideAndDrive drives nothing when its command was already recorded by another delivery (11-d standard 2)', async () => {
+  const flow = grantFlow([{ name: 'merge', command: ['true'] }]);
+  const path = join(dir, `${n++}.sqlite`);
+  const store = new EventStore(path, flow);
+  const other = new EventStore(path, flow);
+  try {
+    seed(store, 'c1', AT_OWNER);
+    const grants = grantFile('t\n');
+    const event: Event = { ...ACCEPT, commandId: 'same' };
+    // The other delivery records the same command while this one prepares the loop.
+    const ready = async () => { acceptCycle(other, 'w', H, 'owner', where, 'same'); return { adapters: roles, job, opts: { deadlineMs: 1000, runsDir: dir, grants } }; };
+    const r = await decideAndDrive(store, 'c1', event, ready);
+    assert.equal(r.written, false);
+    assert.equal(r.driven, undefined);
+    assert.equal(r.cycle.stage, 'MERGE');
+    assert.deepEqual(store.events('c1').slice(AT_OWNER.length).map((e) => e.type), ['accept']);
+  } finally {
+    store.close();
+    other.close();
+  }
+});

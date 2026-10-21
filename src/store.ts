@@ -227,6 +227,15 @@ export class EventStore {
    * land (A-132). Run outcomes and cancel pass none: they must land whatever came between.
    */
   append(cycleId: string, event: Event, opts: { after?: number } = {}): Cycle {
+    return this.write(cycleId, event, opts).cycle;
+  }
+
+  /**
+   * append, also saying whether the event was written: false for a second outcome of a run or a
+   * second delivery of a command. A caller that acts on what it recorded (decideAndDrive drives
+   * the cycle on) must not act on a delivery another process already acted on (11-d standard 2).
+   */
+  write(cycleId: string, event: Event, opts: { after?: number } = {}): { cycle: Cycle; written: boolean } {
     requireId(cycleId, 'cycle ID');
     // Validate the serialised body, not the object: sparse arrays, toJSON, array-with-props and
     // inherited fields all pass a check on the object yet serialise to something apply reads
@@ -244,7 +253,7 @@ export class EventStore {
       // A redelivery is a no-op whatever its load: its first delivery already moved the cycle.
       if (key !== null && this.db.prepare('SELECT 1 FROM events WHERE cycle_id = ? AND run_id = ?').get(cycleId, key) !== undefined) {
         this.db.exec('COMMIT');
-        return now.cycle;
+        return { cycle: now.cycle, written: false };
       }
       const length = now.cycle.history.length;
       if (opts.after !== undefined && length !== opts.after)
@@ -253,7 +262,7 @@ export class EventStore {
       const next = apply(now.cycle, parsed, now.workflow);
       const written = this.insert(cycleId, parsed.type, key, body, next.stage);
       this.db.exec('COMMIT');
-      return written ? next : now.cycle;
+      return written ? { cycle: next, written } : { cycle: now.cycle, written };
     } catch (err) {
       this.db.exec('ROLLBACK');
       throw err;

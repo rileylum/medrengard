@@ -771,3 +771,17 @@ test('a redelivered command is a no-op even when its load is stale (11-d standar
   assert.equal(store.events('c1').length, toStandardReview.length + 1);
   store.close();
 });
+
+test('write reports whether the event was written: a duplicate outcome or command is not (11-d standard 2)', () => {
+  const store = new EventStore(dbPath('record-written'));
+  store.open('c1', 'w1');
+  for (const e of toStandardReview) assert.equal(store.write('c1', e).written, true, e.type);
+  const verdict: Event = { type: 'verdict', runId: 'sr1', head: 'H1', verdict: 'PASS' };
+  const first = store.write('c1', verdict);
+  assert.deepEqual([first.written, first.cycle.stage], [true, 'ADVERSARIAL_REVIEW']);
+  assert.deepEqual(store.write('c1', verdict), { cycle: first.cycle, written: false });
+  const command: Event = { type: 'head_changed', head: 'H1', commandId: 'k' };
+  assert.equal(store.write('c1', command).written, true);
+  assert.equal(store.write('c1', command, { after: 0 }).written, false);
+  store.close();
+});
