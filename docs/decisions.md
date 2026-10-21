@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-135 — 2026-10-21 — 11-b2: the adversarial minors fixed on the branch; pins accepted; moved repository to Housekeeping
+
+Asked, after 11-b2's three reviews passed (standard 1 on `01ba4a5`, standard 2 on `4a902ef`, adversarial on `32c4c71`): (1) the mirror set-up race between cycles starting at once, and (2) the mirror's object format for a SHA-256 repository: fix on the branch, tests first, without a further review; (3) whether the three changed pins in `tests/developer.test.ts`, which leave out `mirrors/`, count as "unchanged"; (4) a line on the Housekeeping row for a repository moved or re-pointed between `develop` and `fix`. The session recommended fixing both on the branch (the mirror made in a temporary sibling and renamed into place; the fetch skipped when the base is there, and a failed fetch accepted when another process fetched it; the mirror made in the repository's object format), accepting the pins, and the Housekeeping line. Owner: “Fix both, go with your recommendations”.
+
+Effect: (1) and (2) are fixed on `feat/11-b2-shared-clones`; the review budget is spent (A-125), so the fixes have the implementer's tests and mutants only. (3) The pins count as unchanged. (4) The Housekeeping row in `docs/plan.md` names it.
+
 ### A-134 — 2026-10-21 — 11-b2: the mirror bind travels on the run request
 
 Asked, after 11-b2's probes passed: the design note's bind through `CliSpec.bind` cannot work, because `main.ts` builds every adapter before `develop` knows the mirror, and `cliAdapter` refuses a `sandbox.read` path that does not exist yet (a repository's first cycle). (1) An optional `read?: string[]` on `RunRequest`, absolute paths the controller asks the run's sandbox to bind read-only; `develop` and `fix` set it to the mirror's objects; every runtime goes through `cliAdapter`, so all are covered; extension runtimes receive the field in the request JSON (additive, D-024). (2) `main.ts` makes the mirror before building adapters and puts it in the developer's `sandbox.read`. The session recommended (1). Owner: “Option 1.”
