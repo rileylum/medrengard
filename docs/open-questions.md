@@ -15,6 +15,7 @@ O-001 to O-010 moved here from `decisions.md` on 2026-10-18; the IDs are unchang
 | O-012 | Whether and when the Design Studio gets a plan row, and which part comes first ([below](#o-012-the-design-studio)) | After plan row 11 (recovery) |
 | O-013 | The initial prompt for each role, the skills each role gets, and how a run records which versions it used ([below](#o-013-role-prompts-and-skills)) | Before the first real repository's tickets |
 | O-015 | Acceptance evidence (A-051): which tickets need it, which artifact type comes first, and when it gets a plan row ([below](#o-015-acceptance-evidence)) | When the stage gets a plan row |
+| O-017 | Which review stages a grant stage requires. The default (11-d2): every review stage's last verdict is a PASS, unless an owner accept came after the FAIL. A workflow key could relax it: a review stage marked advisory (for example `blocking: false`), or a grant stage naming the reviews it needs (for example `requires: ["SECURITY_REVIEW"]`). Until then a project that differs accepts each FAIL with risk. Build the key when a workflow the owner runs needs it (A-124) | The first workflow with an advisory review, or a grant stage that needs only some reviews |
 
 ## O-005 Independent verification of "done when"
 
