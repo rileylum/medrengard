@@ -13,32 +13,50 @@ export interface Where {
 
 export const humanStages = (w: Workflow) => Object.keys(w.stages).filter((s) => w.stages[s]!.kind === 'human');
 
+/** An owner's decision as it is recorded: `after` is the history length it was decided on (11-d). */
+export interface Decided {
+  cycleId: string;
+  event: Event;
+  after: number;
+}
+
 /** Accept the work's open cycle at `sha`. `store` is undefined when no run ever made one. */
-export function acceptCycle(store: EventStore | undefined, workId: string, sha: string, source: string, where: Where): Cycle {
-  const { cycleId, event } = acceptEvent(store, workId, sha, source, where);
-  return store!.append(cycleId, event);
+export function acceptCycle(store: EventStore | undefined, workId: string, sha: string, source: string, where: Where, commandId?: string): Cycle {
+  const { cycleId, event, after } = acceptEvent(store, workId, sha, source, where, commandId);
+  return store!.append(cycleId, event, { after });
 }
 
 /** acceptCycle's refusals, returning the event instead of recording it, for decideAndDrive (src/run.ts). */
-export function acceptEvent(store: EventStore | undefined, workId: string, sha: string, source: string, where: Where): { cycleId: string; event: Event } {
+export function acceptEvent(store: EventStore | undefined, workId: string, sha: string, source: string, where: Where, commandId?: string): Decided {
+  return humanDecision('accept', store, workId, sha, source, where, commandId);
+}
+
+/** The owner's FAIL at a human stage, with acceptEvent's refusals (11-d, A-123 item 1). */
+export function requestChangesEvent(store: EventStore | undefined, workId: string, sha: string, source: string, where: Where, commandId?: string): Decided {
+  return humanDecision('request_changes', store, workId, sha, source, where, commandId);
+}
+
+function humanDecision(type: 'accept' | 'request_changes', store: EventStore | undefined, workId: string, sha: string, source: string, where: Where, commandId?: string): Decided {
   const open = store?.cycles(workId).find((c) => !SETTLED.includes(c.stage));
   if (!store || !open) throw new Error(`no open cycle for work ${workId} in ${where.runsDir}`);
   const cycle = store.drivable(open.cycleId);
   const human = humanStages(store.workflow);
   if (!human.includes(cycle.stage)) throw new Error(`cycle ${cycle.cycleId} is ${cycle.stage}, not ${human.join(' or ') || 'at a human stage'}`);
-  // The full SHA only: the owner accepts the exact commit the reviews were bound to.
+  // The full SHA only: the owner decides on the exact commit the reviews were bound to.
   const head = cycle.candidate!.head;
   if (sha !== head) throw new Error(`${sha} is not the candidate head ${head} of cycle ${cycle.cycleId} (${where.file})`);
-  return { cycleId: cycle.cycleId, event: { type: 'accept', head, source } };
+  const event: Event = { type, head, source, ...(commandId === undefined ? {} : { commandId }) };
+  return { cycleId: cycle.cycleId, event, after: cycle.history.length };
 }
 
 /** Cancel the work's open cycle, or with none open every ESCALATED one. Returns each cycle after its cancel. */
-export function cancelWork(store: EventStore | undefined, workId: string, source: string, where: Where): Cycle[] {
+export function cancelWork(store: EventStore | undefined, workId: string, source: string, where: Where, commandId?: string): Cycle[] {
   const all = store?.cycles(workId) ?? [];
   const open = all.filter((c) => !SETTLED.includes(c.stage));
   // With none open, every ESCALATED cycle: the store would ask a new cycle to name any of them
   // as its parent, so cancelling only one would not free the work ID.
   const targets = open.length > 0 ? open : all.filter((c) => c.stage === 'ESCALATED');
   if (!store || targets.length === 0) throw new Error(`nothing to cancel for work ${workId} in ${where.runsDir}`);
-  return targets.map(({ cycleId }) => store.append(cycleId, { type: 'cancel', source }));
+  // No `after`: a cancel is meant to land whatever came between, a run in flight included (07-d).
+  return targets.map(({ cycleId }) => store.append(cycleId, { type: 'cancel', source, ...(commandId === undefined ? {} : { commandId }) }));
 }

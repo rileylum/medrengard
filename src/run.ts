@@ -80,20 +80,27 @@ export interface Drivable {
  * loop runs, `ready` and preflight run before the event is written, so a refusal writes nothing:
  * written first, the cycle would wait at that stage with no command to continue it. Otherwise the
  * event is recorded and `ready` is never called, so the default workflow's accept loads no runtime.
+ * `after`: the history length the event was decided on (decide.ts); by default this call's own
+ * load. Either way the append throws StaleLoad if another writer got in first (11-d, A-132). A
+ * command the cycle already holds, by its command ID, is not written and not driven: `written`
+ * is false, and the delivery that wrote it drives the cycle.
  */
-export async function decideAndDrive(store: EventStore, cycleId: string, event: Event, ready: () => Promise<Drivable>): Promise<{ cycle: Cycle; driven?: RunResult }> {
+export async function decideAndDrive(store: EventStore, cycleId: string, event: Event, ready: () => Promise<Drivable>, after?: number): Promise<{ cycle: Cycle; written: boolean; driven?: RunResult }> {
   const now = store.drivable(cycleId);
+  const loaded = { after: after ?? now.history.length };
   const w = store.workflow;
   // apply is pure, so this is the cycle the event leads to, before anything is written.
   const next = apply(now, event, w);
-  if (!loopRuns(w, next.stage)) return { cycle: store.append(cycleId, event) };
+  if (!loopRuns(w, next.stage)) return store.write(cycleId, event, loaded);
   const { adapters, job, opts } = await ready();
   const roles = preflight(w, adapters, job, opts);
   // verify's gate, on the cycle as it will be: refused now, the owner may fix and accept again.
   const def = w.stages[next.stage];
   if (def?.kind === 'command' && (def.grants ?? []).length > 0) headGate(next);
-  const cycle = store.append(cycleId, event);
-  return { cycle, driven: await loop(store, cycle, roles, job, opts, ...cloneOf(opts, cycleId)) };
+  const { cycle, written } = store.write(cycleId, event, loaded);
+  // Not written: another delivery of the same command recorded it first and drives the cycle.
+  if (!written) return { cycle, written };
+  return { cycle, written, driven: await loop(store, cycle, roles, job, opts, ...cloneOf(opts, cycleId)) };
 }
 
 /** Where develop put the cycle's clone, and its branch. */

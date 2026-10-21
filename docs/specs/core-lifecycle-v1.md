@@ -9,7 +9,7 @@ Brackets name the test that holds a rule: the file under `tests/`, then the open
 Core rules, which no workflow can switch off:
 
 1. The controller alone changes state and spends budget. Agents return claims; the controller checks each claim before it counts.
-2. Every verdict and every piece of evidence binds to an exact commit SHA. A new commit invalidates evidence for the old one. Budget already spent stays spent. (A-114, when built: unless the owner overrules a FAIL, recorded with a reason.)
+2. Every verdict and every piece of evidence binds to an exact commit SHA, the owner's `accept` and `request_changes` included. A new commit invalidates evidence for the old one. Budget already spent stays spent. (A-114, when built: unless the owner overrules a FAIL, recorded with a reason.)
 3. Anything the controller cannot classify stops the cycle and asks the owner. There is no automatic retry of a quality gate and no silent recovery path. The owner chooses: a new cycle, or cancel. (A-114, when built: the owner may also retry, overrule, fix, accept with risk or route, in place. A-108, when built: a workflow may send a failed check to a fix run, so "no automatic retry of a quality gate" becomes default policy.)
 
 Default policy, which another workflow may change (D-023):
@@ -42,7 +42,7 @@ Each stage has a `PASS` transition and may have a `FAIL` one. A stage with a `bu
 | Result | run ID, head SHA, artifacts, `contractHash`, `roleTextHash` |
 | Verdict | run ID, reviewed SHA, `PASS` / `FAIL`, findings, `contractHash`, `roleTextHash` |
 | Dispute | run ID, the previous candidate's SHA, reason, `contractHash`, `roleTextHash` |
-| Decision | `accept` with the exact SHA, `request_changes`, `cancel`; a child cycle names its parent |
+| Decision | `accept` or `request_changes` with the exact SHA, `cancel`; a child cycle names its parent. Each may carry a `commandId` [lifecycle: an event from outside a run may carry a command ID] |
 
 One work item has at most one open cycle, and a new cycle for the same work must name an `ESCALATED` parent [store: open enforces one open cycle; open enforces one open cycle per work item when two processes race]. **Proposal:** a contract version on Work, and the model on Run.
 
@@ -69,9 +69,11 @@ These hold under every workflow [lifecycle: evidence for a non-candidate SHA esc
 | any non-terminal | owner cancels | CANCELLED |
 | any non-terminal | verdict for a SHA that is not the candidate | recorded, counted, ESCALATED [lifecycle: SC-17b] |
 | any non-terminal | verification or `accept` for a SHA that is not the candidate | ESCALATED [lifecycle: SC-08; accept must name] |
+| human stage | `request_changes` for a SHA that is not the candidate | ESCALATED [lifecycle: request_changes for the candidate]; one with no head is unclassifiable [lifecycle: request_changes names the head] |
 | outside a commit stage | candidate head changes | ESCALATED [lifecycle: SC-16]; the same head is ignored [lifecycle: a base change naming the candidate's base]. No step records this event yet (A-103, A-111) |
 | any non-terminal | target base changes | ESCALATED [lifecycle: SC-17]; the same base is ignored [lifecycle: a base change naming the candidate's base]. No step records this event yet; `accept` will warn when the base moved (A-111) |
 | any non-terminal | duplicate result, verdict, dispute or run failure (same run ID) | no change [lifecycle: SC-06; lifecycle: outcomeRunId names the run; store: a duplicate event] |
+| any | an event from outside a run with a command ID the cycle has already recorded | nothing written [store: a second event with the same command ID; a redelivered rejection under its command ID] |
 | any non-terminal | event tagged for another stage | ESCALATED, nothing counted [lifecycle: an event with a step] |
 | any non-terminal | event the stage's kind does not take | ESCALATED, nothing counted [lifecycle: an event the stage's kind does not take; store: store dedup matches apply]. A second claim while a developer run is active is ignored [lifecycle: a claim while a developer run is active] |
 | any non-terminal | entering a budgeted stage whose budget is spent | ESCALATED [lifecycle: entering a budgeted stage] |
@@ -84,6 +86,8 @@ These hold under every workflow [lifecycle: evidence for a non-candidate SHA esc
 ## Cycle records
 
 `EventStore` keeps one append-only SQLite table and rebuilds each cycle by replaying its events through `apply` [store: loading a cycle replays]. It refuses a workflow that `checkWorkflow` refuses, before it creates anything [store: the store refuses a workflow]. When a cycle opens, the store records the workflow's name and hash [store: open records the workflow name and hash]. It refuses to load a cycle whose hash differs from its own workflow's, naming both [store: a cycle opened under one workflow]. Cycles written before 09-b load under the default workflow only [store: a store written before 09-b].
+
+An owner command appends with the history length it decided on. If another writer appended first, the store throws `StaleLoad` and writes nothing, so two commands decided on one load cannot both land [store: append refuses with StaleLoad; two processes deciding on one load] [main: two overlapping accepts before a grant stage]. `cancel` and run outcomes are not checked: they land whatever came between. A second delivery of a command the cycle already holds writes nothing and drives nothing, whatever its load; the command prints `Already recorded` and exits 0 [store: a redelivered command is a no-op; write reports whether] [main: two overlapping deliveries of one command ID].
 
 ## Driver
 
@@ -123,7 +127,7 @@ A failed run escalates and spends no budget [lifecycle: run_failed escalates]. `
 
 ## Release handoff
 
-`main.ts accept <job.json> <sha>` records the owner's acceptance of the exact candidate SHA and prints the merge command [main: main.ts end to end]. Merging stays the owner's action; deployment is out of scope. **Proposal (row 12):** record the merge against the same SHA.
+`main.ts accept <job.json> <sha>` records the owner's acceptance of the exact candidate SHA and prints the merge command [main: main.ts end to end]. `request-changes <job.json> <sha>` records the owner's FAIL for that SHA, with the same refusals [main: request-changes records]. Every owner command takes `--source` and `--command-id` [main: owner commands take --source and --command-id]; the observer kit sends `<source>:<pos>:<command>`, from the stream line it handles [observe: observe runs a real accept]. Merging stays the owner's action; deployment is out of scope. **Proposal (row 12):** record the merge against the same SHA.
 
 ## Acceptance tests
 

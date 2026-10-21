@@ -24,7 +24,7 @@ const KIND = {
     ? `An agent stage whose role <b>${esc(d.role)}</b> produces a <b>commit</b>. <code>run</code> calls <code>develop</code> the first time and <code>fix</code> when a FAIL sends the cycle back, prompted with <code>${d.fixRoleText ? 'fixRoleText' : 'roleText'}</code> and the findings.`
     : `An agent stage whose role <b>${esc(d.role)}</b> produces a <b>verdict</b>. <code>run</code> calls <code>review</code>; the reviewer's PASS or FAIL picks the transition.`,
   command: (d) => `A command stage. <code>run</code> calls <code>verify</code>, which runs ${d.run ? `the stage's own ${d.run.length} command${d.run.length > 1 ? 's' : ''}` : 'the job\'s checks'} on a fresh checkout${d.network ? ', with network' : ', with no network'}${d.grants ? `, holding the grants ${d.grants.map(esc).join(', ')}` : ''}. PASS needs at least one result and every result PASS; anything else takes FAIL.`,
-  human: () => 'A human stage. <code>run</code> returns here: the cycle waits for the owner. <code>accept &lt;sha&gt;</code> takes PASS. A <code>request_changes</code> event would take FAIL, but no command sends one yet.',
+  human: () => 'A human stage. <code>run</code> returns here: the cycle waits for the owner. <code>accept &lt;sha&gt;</code> takes PASS. <code>request-changes &lt;sha&gt;</code> takes FAIL; like accept, it names the candidate head.',
 };
 
 export default function mount(el) {

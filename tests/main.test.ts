@@ -644,9 +644,9 @@ test('importing main.ts runs nothing; main(argv) is exported and refuses bad arg
 // Ticket 11-a2 (A-129, A-131): accept drives the cycle on, so a grant stage after the human stage
 // runs in the same command, and a refusal writes nothing.
 /** ownerCheck with a grant stage MERGE after OWNER, run by main.ts to OWNER. */
-function atOwnerBeforeGrant(script: string, afterMerge = `'ACCEPTED'`) {
+function atOwnerBeforeGrant(script: string, afterMerge = `'ACCEPTED'`, ownerFail = `'ESCALATED'`) {
   const s = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};
-export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, OWNER: { kind: 'human', transitions: { PASS: 'MERGE', FAIL: 'ESCALATED' } },
+export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, OWNER: { kind: 'human', transitions: { PASS: 'MERGE', FAIL: ${ownerFail} } },
   FINAL: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
   MERGE: { kind: 'command', run: [{ name: 'merge', command: ['sh', '-c', ${JSON.stringify(script)}] }], network: true, grants: ['github'], transitions: { PASS: ${afterMerge}, FAIL: 'ESCALATED' } } } };\n`, { writer: 'claude', reviewer: 'claude' });
   writeFileSync(join(s.root, 'gh-token'), 'main-grant-value\n');
@@ -718,3 +718,167 @@ test('accept that drives on to a further human stage prints the next steps and e
   assert.doesNotMatch(r.stdout, /^To merge:$/m);
 });
 
+
+// Ticket 11-d (A-123 item 1, A-132): the owner's FAIL names its SHA; owner commands carry a command ID;
+// two accepts decided on one load cannot both land.
+test('request-changes records the owner\'s FAIL for exactly the candidate head, and refuses as accept does', () => {
+  const { jobFile, db } = scratch();
+  const refused = (args: string[], why: RegExp) => {
+    const r = sf(args);
+    assert.equal(r.status, 2, `${args.join(' ')}: ${r.stdout}${r.stderr}`);
+    assert.equal(r.stdout, '', args.join(' '));
+    assert.match(r.stderr, why, args.join(' '));
+  };
+  refused(['request-changes', jobFile, H], /no open cycle/);
+  seed(db, 'c1', TO_ACCEPTANCE.slice(0, 3));
+  refused(['request-changes', jobFile, H], /c1 is STANDARD_REVIEW, not AWAITING_ACCEPTANCE/);
+  const store = new EventStore(db);
+  for (const e of TO_ACCEPTANCE.slice(3)) store.append('c1', e);
+  store.close();
+  refused(['request-changes', jobFile, 'c'.repeat(40)], new RegExp(`not the candidate head ${H}`));
+  refused(['request-changes', jobFile], /usage/);
+  assert.deepEqual(look(db, 'c1'), { stage: 'AWAITING_ACCEPTANCE', events: 5 });
+  // The default workflow sends the owner's FAIL to ESCALATED.
+  const ok = sf(['request-changes', jobFile, H, '--command-id', 'gh:7']);
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.match(ok.stdout, /^Stage: ESCALATED$/m);
+  const after = new EventStore(db);
+  assert.deepEqual(after.events('c1').at(-1), { type: 'request_changes', head: H, source: 'owner', commandId: 'gh:7' });
+  after.close();
+});
+
+test('owner commands take --source and --command-id in either order, each once; a bad command ID is refused', () => {
+  const { jobFile, db } = scratch();
+  seed(db, 'c1', TO_ACCEPTANCE);
+  for (const args of [
+    ['accept', jobFile, H, '--command-id', 'x', '--command-id', 'y'],
+    ['accept', jobFile, H, '--command-id'],
+    ['accept', jobFile, H, '--commandid', 'x'],
+    ['cancel', jobFile, '--source', 'a', '--source', 'b'],
+  ]) {
+    const r = sf(args);
+    assert.equal(r.status, 2, args.join(' '));
+    assert.match(r.stderr, /usage/, args.join(' '));
+  }
+  for (const bad of ['', 'two\nlines']) {
+    const r = sf(['accept', jobFile, H, '--command-id', bad]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /^--command-id must be one line of printable text$/m);
+  }
+  assert.equal(look(db, 'c1').events, 5);
+  const ok = sf(['accept', jobFile, H, '--command-id', 'cli:1', '--source', 'bot']);
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  const store = new EventStore(db);
+  assert.deepEqual(store.events('c1').at(-1), { type: 'accept', head: H, source: 'bot', commandId: 'cli:1' });
+  store.close();
+});
+
+test('two overlapping accepts before a grant stage: one runs the grant stage once, the other writes nothing (A-132)', async () => {
+  for (let round = 0; round < 2; round++) {
+    const { env, jobFile, head, db, cycleId } = atOwnerBeforeGrant(MERGES);
+    // Both commands load the cycle and pass preflight under the held lock, then queue on it together.
+    const lock = new DatabaseSync(db);
+    lock.exec('BEGIN IMMEDIATE');
+    const accept = () => new Promise<{ code: number | null; out: string }>((done) => {
+      const child = spawn(process.execPath, [MAIN, 'accept', jobFile, head], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      child.stdout.on('data', (d) => (out += d));
+      child.stderr.on('data', (d) => (out += d));
+      child.on('close', (code) => done({ code, out }));
+    });
+    const both = Promise.all([accept(), accept()]);
+    await new Promise((r) => setTimeout(r, 2500));
+    lock.exec('COMMIT');
+    lock.close();
+    const results = (await both).sort((a, b) => (a.code ?? 9) - (b.code ?? 9));
+    assert.equal(results[0]!.code, 0, results[0]!.out);
+    assert.match(results[0]!.out, /^Stage: ACCEPTED$/m);
+    assert.equal(results[1]!.code, 2, results[1]!.out);
+    assert.match(results[1]!.out, new RegExp(`cycle ${cycleId} moved since it was loaded: \\d+ events, not \\d+; nothing was written; run the command again`));
+    // The review's verdict, the accept, then MERGE's verification: the grant stage ran once.
+    assert.deepEqual(rows(db, cycleId).slice(-3), ['verdict', 'accept', 'verification']);
+    assert.deepEqual(rows(db, cycleId).filter((t) => t === 'accept'), ['accept']);
+    assert.equal(look(db, cycleId).stage, 'ACCEPTED');
+  }
+});
+
+test('decideAt appends with the load its refusals checked, not a later one (11-d standard 1)', async () => {
+  const { decideAt } = await import('../src/main.ts');
+  const { acceptEvent } = await import('../src/decide.ts');
+  const { jobFile, db } = scratch();
+  seed(db, 'c1', TO_ACCEPTANCE);
+  // Another writer lands between the decision's load and decideAndDrive's own load.
+  await assert.rejects(decideAt(jobFile, (store, workId, where) => {
+    const decided = acceptEvent(store, workId, H, 'owner', where);
+    const other = new EventStore(db);
+    other.append('c1', { type: 'head_changed', head: H });
+    other.close();
+    return decided;
+  }), /^Error: cycle c1 moved since it was loaded: 6 events, not 5; nothing was written; run the command again$/);
+  assert.deepEqual(look(db, 'c1'), { stage: 'AWAITING_ACCEPTANCE', events: 6 });
+});
+
+// 11-d standard 2 (A-141): a command delivered twice is recorded once and driven once.
+test('two overlapping deliveries of one command ID: the accept is recorded once and the grant stage runs once', async () => {
+  const { env, jobFile, head, db, cycleId } = atOwnerBeforeGrant(MERGES);
+  const lock = new DatabaseSync(db);
+  lock.exec('BEGIN IMMEDIATE');
+  const accept = () => new Promise<{ code: number | null; out: string }>((done) => {
+    const child = spawn(process.execPath, [MAIN, 'accept', jobFile, head, '--command-id', 'same'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (out += d));
+    child.on('close', (code) => done({ code, out }));
+  });
+  const both = Promise.all([accept(), accept()]);
+  await new Promise((r) => setTimeout(r, 2500));
+  lock.exec('COMMIT');
+  lock.close();
+  const results = await both;
+  const all = results.map((r) => r.out).join('\n---\n');
+  for (const r of results) assert.equal(r.code, 0, r.out);
+  // The duplicate may write before or after the first has driven the cycle, so its own Stage line
+  // can say MERGE or ACCEPTED; only the writer drives on and prints the merge lines.
+  const dup = results.filter((r) => /^Already recorded: command same$/m.test(r.out));
+  const writer = results.filter((r) => !/^Already recorded:/m.test(r.out));
+  assert.equal(dup.length, 1, all);
+  assert.equal(writer.length, 1, all);
+  assert.match(writer[0]!.out, /^Stage: ACCEPTED$/m);
+  assert.match(writer[0]!.out, /^To merge:$/m);
+  assert.doesNotMatch(dup[0]!.out, /^To merge:$/m);
+  assert.deepEqual(rows(db, cycleId).slice(-3), ['verdict', 'accept', 'verification']);
+  assert.equal(look(db, cycleId).stage, 'ACCEPTED');
+});
+
+test('request-changes drives on into the stage the owner\'s FAIL leads to, as accept does', () => {
+  const { env, jobFile, head, db, cycleId, runsDir } = atOwnerBeforeGrant(MERGES, `'ACCEPTED'`, `'MERGE'`);
+  const r = sf(['request-changes', jobFile, head], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: ACCEPTED$/m);
+  assert.deepEqual(rows(db, cycleId).slice(-2), ['request_changes', 'verification']);
+  assert.equal(readFileSync(join(runsDir, 'evidence', head, 'MERGE', 'output', 'token'), 'utf8'), 'main-grant-value');
+});
+
+test('two overlapping deliveries of one request-changes command ID: the FAIL is recorded once (11-d standard 3)', async () => {
+  const { jobFile, db } = scratch();
+  seed(db, 'c1', TO_ACCEPTANCE);
+  const lock = new DatabaseSync(db);
+  lock.exec('BEGIN IMMEDIATE');
+  const send = () => new Promise<{ code: number | null; out: string }>((done) => {
+    const child = spawn(process.execPath, [MAIN, 'request-changes', jobFile, H, '--command-id', 'same'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (out += d));
+    child.on('close', (code) => done({ code, out }));
+  });
+  const both = Promise.all([send(), send()]);
+  await new Promise((r) => setTimeout(r, 2500));
+  lock.exec('COMMIT');
+  lock.close();
+  const results = await both;
+  const all = results.map((r) => r.out).join('\n---\n');
+  for (const r of results) assert.equal(r.code, 0, r.out);
+  assert.equal(results.filter((r) => /^Already recorded: command same$/m.test(r.out)).length, 1, all);
+  assert.equal(results.filter((r) => /^Escalation: AWAITING_ACCEPTANCE FAIL: owner requested changes$/m.test(r.out)).length, 1, all);
+  assert.deepEqual(look(db, 'c1'), { stage: 'ESCALATED', events: 6 });
+});

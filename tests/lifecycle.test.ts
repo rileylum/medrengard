@@ -36,7 +36,7 @@ test('outcomeRunId names the run of every outcome event', () => {
     head_changed: { type: 'head_changed', head: 'H1' },
     base_changed: { type: 'base_changed', base: 'B1' },
     accept: { type: 'accept', head: 'H1' },
-    request_changes: { type: 'request_changes' },
+    request_changes: { type: 'request_changes', head: 'H1' },
     cancel: { type: 'cancel' },
     reject_dispatch: { type: 'reject_dispatch', reason: 'x' },
     dispute: { type: 'dispute', runId: 'r', head: 'H1', reason: 'x' },
@@ -548,4 +548,47 @@ test('replayCheck refuses each stage table apply could not walk, naming the stag
     [at({ ...dev, transitions: { PASS: 'GONE' } }), /^stage DEV PASS names unknown stage GONE$/],
   ];
   for (const [w, reason] of cases) assert.ok(replayCheck(w).some((r) => reason.test(r)), `${reason}: ${replayCheck(w).join('; ')}`);
+});
+
+// Ticket 11-d (A-123 item 1, engine.md G7): the owner's FAIL is a verdict, so it names the SHA it
+// rejects, as accept names the SHA it accepts.
+const backToDev: Workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, OWNER: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'DEV' } }, REVIEW: { ...ownerCheck.stages.REVIEW, budget: 2 } as StageDef } };
+const atOwner = () => runWith(backToDev, newCycle('c1', 'w1'),
+  { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' },
+  { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] },
+  { type: 'verification', head: 'H1', checks: PASS_CHECKS },
+  verdict('rev1', 'H1', 'PASS'),
+  { type: 'request_changes', head: 'H1' },
+  { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' },
+  { type: 'developer_result', runId: 'dev2', head: 'H2', artifacts: ['r'] },
+  { type: 'verification', head: 'H2', checks: PASS_CHECKS },
+  verdict('rev2', 'H2', 'PASS'));
+
+test('request_changes names the head it rejects; one without a head is unclassifiable (11-d)', () => {
+  assert.equal(isEvent({ type: 'request_changes' }), false);
+  assert.equal(isEvent({ type: 'request_changes', head: '' }), false);
+  assert.equal(isEvent({ type: 'request_changes', head: 'H1' }), true);
+});
+
+test('request_changes for the candidate follows the human stage\'s FAIL; for any other SHA it escalates (11-d)', () => {
+  const owner = atOwner();
+  assert.equal(owner.stage, 'OWNER');
+  assert.equal(apply(owner, { type: 'request_changes', head: 'H2' }, backToDev).stage, 'DEV');
+  const stale = apply(owner, { type: 'request_changes', head: 'H1' }, backToDev);
+  assert.equal(stale.stage, 'ESCALATED');
+  assert.equal(stale.escalation, 'request_changes names a non-candidate SHA');
+});
+
+test('an event from outside a run may carry a command ID, a non-empty well-formed string (11-d)', () => {
+  const outside: Event[] = [
+    { type: 'accept', head: 'H1' },
+    { type: 'request_changes', head: 'H1' },
+    { type: 'cancel' },
+    { type: 'head_changed', head: 'H1' },
+    { type: 'base_changed', base: 'B1' },
+  ];
+  for (const e of outside) {
+    assert.equal(isEvent({ ...e, commandId: 'cmd-1' }), true, e.type);
+    for (const bad of ['', 7, null, {}, '\ud800']) assert.equal(isEvent({ ...e, commandId: bad }), false, `${e.type} ${JSON.stringify(bad)}`);
+  }
 });

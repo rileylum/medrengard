@@ -131,12 +131,17 @@ export type Event = (
   /** `grants`: the names the stage held, never the values (10-e). */
   | { type: 'verification'; head: string; checks: { name: string; result: 'PASS' | 'FAIL' | 'MISSING'; files?: Record<string, string> }[]; grants?: string[] }
   | ({ type: 'verdict'; runId: string; head: string; verdict: 'PASS' | 'FAIL'; findings?: string[] } & Partial<RunVersions>)
-  | { type: 'head_changed'; head: string }
-  | { type: 'base_changed'; base: string }
+  /**
+   * Events from outside a run may carry `commandId` (11-d): the store records one event per ID per
+   * cycle, so an observer or a tracker that redelivers sends the same ID and nothing lands twice.
+   */
+  | { type: 'head_changed'; head: string; commandId?: string }
+  | { type: 'base_changed'; base: string; commandId?: string }
   /** `source`: who ran the command, `owner` unless an observer named itself (10-d). A label, not an identity. */
-  | { type: 'accept'; head: string; source?: string }
-  | { type: 'request_changes' }
-  | { type: 'cancel'; source?: string }
+  | { type: 'accept'; head: string; source?: string; commandId?: string }
+  /** The owner's FAIL is a verdict, so it names the SHA it rejects (11-d, A-123 item 1). */
+  | { type: 'request_changes'; head: string; source?: string; commandId?: string }
+  | { type: 'cancel'; source?: string; commandId?: string }
   | { type: 'reject_dispatch'; reason: string }
   /** A fix run's claim that it will not change the candidate, with the developer's reason (07-e). */
   | ({ type: 'dispute'; runId: string; head: string; reason: string } & Partial<RunVersions>)
@@ -152,6 +157,8 @@ const versions = (e: Record<string, unknown>) => (e.runtime === undefined || str
 /** One line of printable text: a source is printed by the CLI and the stream, so it must not forge a line or a terminal sequence. */
 export const isSource = (v: unknown) => typeof v === 'string' && /^[^\p{Cc}\u2028\u2029]+$/u.test(v);
 const source = (e: Record<string, unknown>) => e.source === undefined || isSource(e.source);
+// Well-formed for the same reason as a run ID (store.ts, requireId): SQLite would fold a lone surrogate.
+const command = (e: Record<string, unknown>) => e.commandId === undefined || (str(e.commandId) && (e.commandId as string).isWellFormed());
 const isCheck = (v: unknown) => obj(v) && str(v.name) && ['PASS', 'FAIL', 'MISSING'].includes(v.result as string) && (v.files === undefined || (obj(v.files) && Object.values(v.files).every(str)));
 
 // Shape checks, one per Event type. Everything apply dereferences must be present; anything else
@@ -161,11 +168,11 @@ const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
   developer_result: (e) => str(e.runId) && arr(e.artifacts, str) && (e.head === undefined || typeof e.head === 'string') && versions(e),
   verification: (e) => str(e.head) && arr(e.checks, isCheck) && (e.grants === undefined || arr(e.grants, str)),
   verdict: (e) => str(e.runId) && str(e.head) && (e.verdict === 'PASS' || e.verdict === 'FAIL') && versions(e),
-  head_changed: (e) => str(e.head),
-  base_changed: (e) => str(e.base),
-  accept: (e) => str(e.head) && source(e),
-  request_changes: () => true,
-  cancel: (e) => source(e),
+  head_changed: (e) => str(e.head) && command(e),
+  base_changed: (e) => str(e.base) && command(e),
+  accept: (e) => str(e.head) && source(e) && command(e),
+  request_changes: (e) => str(e.head) && source(e) && command(e),
+  cancel: (e) => source(e) && command(e),
   reject_dispatch: (e) => str(e.reason),
   run_failed: (e) => str(e.runId) && str(e.reason) && versions(e),
   dispute: (e) => str(e.runId) && str(e.head) && str(e.reason) && versions(e),
@@ -510,6 +517,7 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
 
     case 'request_changes':
       if (def?.kind !== 'human') return escalate(c, e, `request_changes outside a human stage (in ${c.stage})`);
+      if (!sameCandidate(c.candidate, e.head)) return escalate(c, e, 'request_changes names a non-candidate SHA');
       return advance(w, c, e, def, 'FAIL', {}, 'owner requested changes');
 
     case 'reject_dispatch':

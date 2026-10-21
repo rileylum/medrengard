@@ -37,6 +37,42 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-143 — 2026-10-21 — 11-d: the adversarial findings tested on the branch; a hand-run accept without a command ID accepted as a risk
+
+Asked, after 11-d's adversarial FAIL on `2be3768`: (1) the "major", no test sends the observer kit's cancel ID, so a kit that gave an accept and a cancel for one line one ID passed every test (a missing test for correct code, a minor under `docs/workflow.md`); (2) the minor, no test tells that `cancelWork` passes no `after`; (3) the note that an `accept` with no `--command-id` is not deduplicated, so on a workflow OWNER → MERGE → FINAL whose MERGE keeps the head a retyped `accept <sha>` would also accept FINAL. The session recommended adding both tests on the branch, each red on its mutant, without a further review (as A-137), and accepting (3) as designed, with a line in `docs/work/accepted-risks.md`. Owner: “Go as you recommend”.
+
+Effect: (1) and (2) are tested on `feat/11-d-owner-events-bound`; the review budget is spent, so the tests have the implementer's mutants only. (3) is in `docs/work/accepted-risks.md`.
+
+### A-142 — 2026-10-21 — 11-d: standard 3's test findings fixed on the branch; on to the adversarial review
+
+Asked, after 11-d's standard 3 FAIL on `7ab24ab` (the two-delivery test asserts on timing and fails on correct behaviour; no test reaches `request-changes`'s duplicate path): fix both tests on the branch and go to the adversarial review, or a fourth standard review, or a new ticket naming 11-d. The session recommended the first; no product code changes. Owner: “fix both and go to the adversarial.”
+
+Effect: both tests are fixed on `feat/11-d-owner-events-bound` without a further standard review; the adversarial review reads that head.
+
+### A-141 — 2026-10-21 — 11-d: standard 2's FAIL fixed on the branch, then a third standard review, then the adversarial
+
+Asked, after 11-d's standard 2 FAIL on `47c3e7b` (two overlapping deliveries of one command ID both drive the cycle; no test drives the loop after `request-changes`), with the standard budget spent: fix on the branch tests-first and go to the adversarial review; or a third standard review first; or a new ticket naming 11-d. The session recommended the first: the store reports whether an append wrote, and `decideAndDrive` drives only when it did. Owner: “go with your recommendation, and go through an additonal standard review.”
+
+Effect: both findings are fixed on `feat/11-d-owner-events-bound`, tests first. A third standard review, beyond A-125's budget for this ticket only, reads the fix; then the adversarial review.
+
+### A-140 — 2026-10-21 — 11-d: two existing test pins change; no command ID is minted
+
+Asked, during 11-d's build: the ticket says existing tests pass unchanged, but two pins follow from A-123 item 1 and A-139: (1) the `request_changes` sample in `tests/lifecycle.test.ts` "outcomeRunId names the run of every outcome event" gains a `head`, since one without a head is now unclassifiable; (2) `tests/observe.test.ts` "observe runs a real accept…" expects the kit's `commandId` on the recorded accept. The session also reported that `main.ts` mints no command ID when none is given, a change from the design note: a fresh random ID deduplicates nothing, and it would change more pins. Owner: “Both are fine”.
+
+Effect: both pins change with this decision. The design note's minting line is withdrawn.
+
+### A-139 — 2026-10-21 — 11-d's design approved with the session's recommendations; 11-d and 11-d2 READY at Trust tier
+
+Asked, with `docs/design/2026-10-21-owner-moves.md`, `docs/work/11-d-owner-events-bound.md` and `docs/work/11-d2-owner-moves.md`, nine questions. The session recommended: (1) two tickets, 11-d then 11-d2 stacked on it; (2) no `ENGINE_VERSION` bump, with a fixture replay test as evidence; (3) the command ID kept in the existing `run_id` unique index under an object-shaped key; (4) `cancel` without the stale-load check; (5) a `request-changes` command in 11-d; (6) 11-d2 builds `retry`, `overrule` and `route`, with accept-with-risk as `route` to the human stage, `fix` with chosen findings goes with A-108's ticket, and the child-from-candidate option is probed, not built; (7) no cap on overrules now; (8) the reviewer-run window parked against 11-e; (9) today's `SETTLED` renamed `STOPPED`, and `SETTLED` becomes ACCEPTED and CANCELLED. Owner: “Go with your recommendations”.
+
+Effect: 11-d is READY at Trust tier on `feat/11-d-owner-events-bound`; 11-d2 is READY at Trust tier and starts after 11-d's reviews, stacked on its branch. The design note stands as drafted.
+
+### A-138 — 2026-10-21 — The parked 10-b `decisionConfig` row moves to 11-f
+
+Asked: the 10-b row in `docs/work/parked.md` names "the next ticket that touches `decisionConfig` in `src/main.ts`". 11-c changed only that function's comment and left the row. Should it stay pinned that way, or move to 11-f? Owner: “Start on 11-d. 10-b can go to 11-f”.
+
+Effect: the row's "Pick up in" is 11-f. 11-d is being drafted (STATUS 83).
+
 ### A-137 — 2026-10-21 — 11-c: the adversarial minors tested on the branch; the race test's wording; a diverged-cycle note for 11-f; an unbounded test to Housekeeping
 
 Asked, after 11-c's three reviews (standard 1 FAIL on `e64464d`, fixed; standard 2 PASS on `b126117`; adversarial PASS on `3bf36ce`): (1) the adversarial minors, two missing tests for correct code (two workflows with one name and different hashes, which `drivable` must tell apart; `addStages`'s re-check under the lock when several processes upgrade one store); (2) the done-when line that names a barrier file, where the test holds the write lock; (3) that one diverged cycle, a settled ancestor included, makes `accept`, `cancel` and `open` refuse for the whole work; (4) the 02-a test that waits with no bound for its writer child. The session recommended: (1) add both tests on the branch, each red on its mutant, without a further review; (2) the wording "a held write lock or a barrier file"; (3) a note in `docs/work/parked.md` against 11-f, so `recover` can resolve a diverged cycle without loading its siblings; (4) a line on the Housekeeping row. Owner: “Go with your recommendations”.

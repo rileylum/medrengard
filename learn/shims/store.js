@@ -1,7 +1,8 @@
 // src/store.ts for the browser. Same API and the same rules, with the SQLite table replaced by an
 // array of rows: row 0 of a cycle is the open marker with the workflow's name, hash and
 // definition; every append is checked as serialised bytes with the real isEvent; a second outcome
-// for a run ID writes nothing; each row gets a store-wide `pos`, a time `at` and the stage apply
+// for a run ID, or a second event with one command ID, writes nothing; an append decided on a load
+// the cycle has since left throws StaleLoad; each row gets a store-wide `pos`, a time `at` and the stage apply
 // gave it; load replays the log through the real apply under the workflow the cycle recorded,
 // refuses one whose replay disagrees with a stored stage, and drivable refuses a cycle opened under
 // another workflow. Keep it in step with src/store.ts; learn/learn.test.ts checks that it exports
@@ -12,6 +13,15 @@ import { apply, checkWorkflow, defaultWorkflow, ENGINE_VERSION, isEvent, newCycl
 export { SETTLED };
 export class UnclassifiableEvent extends Error {}
 export class ReplayDiverged extends Error {}
+export class StaleLoad extends Error {}
+
+// A run key is a JSON string, a command key a JSON object, so the two never collide.
+const COMMANDS = ['accept', 'request_changes', 'cancel', 'head_changed', 'base_changed'];
+function dedupKey(e) {
+  const runId = outcomeRunId(e);
+  if (runId !== undefined) return JSON.stringify(runId);
+  return COMMANDS.includes(e.type) && typeof e.commandId === 'string' ? JSON.stringify({ commandId: e.commandId }) : null;
+}
 
 export const workflowHash = (w) => createHash('sha256').update(JSON.stringify(w)).digest('hex');
 export const DEFAULT_RECORD = { name: defaultWorkflow.name, hash: workflowHash(defaultWorkflow) };
@@ -56,7 +66,10 @@ export class EventStore {
     return newCycle(cycleId, workId, parentCycleId);
   }
 
-  append(cycleId, event) {
+  append(cycleId, event, opts = {}) { return this.write(cycleId, event, opts).cycle; }
+
+  // append, also saying whether the event was written: not for a second outcome or command.
+  write(cycleId, event, opts = {}) {
     requireId(cycleId, 'cycle ID');
     const body = JSON.stringify(event);
     const parsed = body === undefined ? undefined : JSON.parse(body);
@@ -64,21 +77,23 @@ export class EventStore {
       this.emit({ kind: 'refused', cycleId, body });
       throw new UnclassifiableEvent(`unclassifiable event: ${body}`);
     }
-    const outcome = outcomeRunId(parsed);
-    const runId = outcome === undefined ? null : JSON.stringify(outcome);
-    // One write at a time is the whole lock here: the replay, the apply and the insert.
+    const runId = dedupKey(parsed);
+    // One write at a time is the whole lock here: the replay, the check, the apply and the insert.
     const now = this.replay(cycleId);
     if (!now) throw new Error(`cycle ${cycleId} not open`);
-    // The unique index on (cycle_id, run_id): INSERT OR IGNORE writes nothing for a second outcome.
+    // The unique index on (cycle_id, run_id): a second outcome or command writes nothing, whatever its load.
     if (runId !== null && this.table.some((r) => r.cycle_id === cycleId && r.run_id === runId)) {
       this.emit({ kind: 'duplicate', cycleId, body });
-      return now.cycle;
+      return { cycle: now.cycle, written: false };
     }
+    const length = now.cycle.history.length;
+    if (opts.after !== undefined && length !== opts.after)
+      throw new StaleLoad(`cycle ${cycleId} moved since it was loaded: ${length} events, not ${opts.after}; nothing was written`);
     const cycle = apply(now.cycle, parsed, now.workflow);
     const seq = Math.max(...this.table.filter((r) => r.cycle_id === cycleId).map((r) => r.seq)) + 1;
     const row = this.insert(cycleId, seq, parsed.type, runId, body, cycle.stage);
     this.emit({ kind: 'append', cycleId, seq, pos: row.pos, event: parsed, cycle });
-    return cycle;
+    return { cycle, written: true };
   }
 
   events(cycleId) { return this.rows(cycleId).map((r) => r.body).filter((b) => b.type !== 'open'); }

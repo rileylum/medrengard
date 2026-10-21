@@ -14,7 +14,11 @@ import type { Event } from '../lifecycle.ts';
 import { EventStore } from '../store.ts';
 import { FOLLOW_MS, openStream, storeReady, type Line } from '../stream.ts';
 
-/** The owner's commands, run as `node src/main.ts … --source <source>` against the job file. A refused command rejects. */
+/**
+ * The owner's commands, run as `node src/main.ts … --source <source>` against the job file. A refused command rejects.
+ * Each carries `--command-id <source>:<pos>:<command>`, from the line being handled (11-d): an observer
+ * that restarts and handles the line again sends the same ID, and the store records the command once.
+ */
 export interface Owner {
   accept(sha: string): Promise<void>;
   cancel(): Promise<void>;
@@ -23,10 +27,10 @@ export type Observer = (line: Line, owner: Owner) => void | Promise<void>;
 
 const MAIN = join(import.meta.dirname, '..', 'main.ts');
 
-function ownerFor(jobFile: string, source: string): Owner {
+function ownerFor(jobFile: string, source: string, pos: number): Owner {
   const run = (args: string[]) =>
     new Promise<void>((done, fail) =>
-      execFile(process.execPath, [MAIN, ...args, '--source', source], (err, _out, stderr) =>
+      execFile(process.execPath, [MAIN, ...args, '--source', source, '--command-id', `${source}:${pos}:${args[0]}`], (err, _out, stderr) =>
         // The last line: stderr opens with node's SQLite ExperimentalWarning.
         err ? fail(new Error(stderr.trim().split('\n').at(-1) || err.message)) : done()));
   return { accept: (sha) => run(['accept', jobFile, sha]), cancel: () => run(['cancel', jobFile]) };
@@ -40,14 +44,14 @@ function ownerFor(jobFile: string, source: string): Owner {
 export async function observe(jobFile: string, source: string, observer: Observer, opts: { after?: number; signal?: AbortSignal } = {}): Promise<void> {
   const { runsDir, workId } = storeOf(jobFile);
   const db = storeFile(runsDir);
-  const owner = ownerFor(resolve(jobFile), source);
+  const file = resolve(jobFile);
   let stream: ReturnType<typeof openStream> | undefined;
   try {
     while (!opts.signal?.aborted) {
       stream ??= storeReady(db) ? openStream(db, { workId, after: opts.after }) : undefined;
       for (const line of stream?.poll() ?? []) {
         if (opts.signal?.aborted) return;
-        await observer(line, owner);
+        await observer(line, ownerFor(file, source, line.seq));
       }
       await sleep(FOLLOW_MS, undefined, { signal: opts.signal }).catch(() => {});
     }
