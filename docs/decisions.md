@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-138 — 2026-10-21 — The parked 10-b `decisionConfig` row moves to 11-f
+
+Asked: the 10-b row in `docs/work/parked.md` names "the next ticket that touches `decisionConfig` in `src/main.ts`". 11-c changed only that function's comment and left the row. Should it stay pinned that way, or move to 11-f? Owner: “Start on 11-d. 10-b can go to 11-f”.
+
+Effect: the row's "Pick up in" is 11-f. 11-d is being drafted (STATUS 83).
+
 ### A-137 — 2026-10-21 — 11-c: the adversarial minors tested on the branch; the race test's wording; a diverged-cycle note for 11-f; an unbounded test to Housekeeping
 
 Asked, after 11-c's three reviews (standard 1 FAIL on `e64464d`, fixed; standard 2 PASS on `b126117`; adversarial PASS on `3bf36ce`): (1) the adversarial minors, two missing tests for correct code (two workflows with one name and different hashes, which `drivable` must tell apart; `addStages`'s re-check under the lock when several processes upgrade one store); (2) the done-when line that names a barrier file, where the test holds the write lock; (3) that one diverged cycle, a settled ancestor included, makes `accept`, `cancel` and `open` refuse for the whole work; (4) the 02-a test that waits with no bound for its writer child. The session recommended: (1) add both tests on the branch, each red on its mutant, without a further review; (2) the wording "a held write lock or a barrier file"; (3) a note in `docs/work/parked.md` against 11-f, so `recover` can resolve a diverged cycle without loading its siblings; (4) a line on the Housekeeping row. Owner: “Go with your recommendations”.
