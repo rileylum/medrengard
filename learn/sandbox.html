@@ -41,11 +41,11 @@
   <table>
     <thead><tr><th>Who</th><th>Writes</th><th>Reads (beyond the system)</th><th>Network</th></tr></thead>
     <tbody>
-      <tr><td><b>Developer</b></td><td>its own clone of the repository</td><td>its CLI's binary and config</td><td>yes: it talks to the model</td></tr>
+      <tr><td><b>Developer</b></td><td>its own clone of the repository</td><td>its CLI's binary and config, and the repository's mirror objects: every base an earlier cycle on the repository started from</td><td>yes: it talks to the model</td></tr>
       <tr><td><b>A command stage</b></td><td>the fresh checkout, and its <code>output/</code></td><td>its own evidence folder: the request, the diff, the file copies</td><td><b>no</b>, unless the stage sets <code>network: true</code></td></tr>
       <tr><td><b>A grant stage</b></td><td>the same</td><td>the same, and its grants' values in its environment</td><td>yes: it must</td></tr>
       <tr><td><b>Reviewers</b></td><td>nothing</td><td>the checkout, its CLI's binary and config</td><td>yes: it talks to the model</td></tr>
-      <tr><td><b>git upload-pack</b></td><td>nothing</td><td>the developer's clone</td><td>no</td></tr>
+      <tr><td><b>git upload-pack</b></td><td>nothing</td><td>the developer's clone and the mirror objects</td><td>no</td></tr>
     </tbody>
   </table>
   <p class="small muted">Runs keep their network and can read their own CLI's credentials. You accepted that when lifting the scratch-repositories-only limit (A-043).</p>

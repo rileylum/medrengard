@@ -205,8 +205,9 @@ function mirrorBase(repo: string, mirror: string, base: string): void {
   git(dirname(mirror), 'init', '-q', '--bare', mirror);
   git(mirror, 'config', 'gc.auto', '0');
   git(mirror, 'config', 'gc.pruneExpire', 'never');
-  // By SHA: protocol v2 serves a commit that is no branch tip, and needs no change to the owner's
-  // config (11-b2 probe 1); v0 might not, so it is named in case the owner's config says otherwise.
+  // By SHA, for a branch tip or any other commit, with no change to the owner's config (11-b2 probe
+  // 1, which v0 passed too). The version is named so an owner config naming another one cannot
+  // change what was probed.
   git(mirror, '-c', 'protocol.version=2', 'fetch', '-q', '--no-tags', '--no-write-fetch-head', repo, `${base}:refs/bases/${base}`);
 }
 

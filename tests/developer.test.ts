@@ -843,3 +843,23 @@ test('fix in bwrap on a shared clone, and on a clone made before 11-b2 with no m
     store.close();
   }
 });
+
+test('fix binds the mirror the layout names, never what the clone\'s alternates file says, and nothing when there is no mirror (11-b2, standard 2)', async () => {
+  for (const old of [false, true]) {
+    const { repo, store, runsDir, job: j, cycleId, worktree } = await failed();
+    const alternates = join(worktree, '.git', 'objects', 'info', 'alternates');
+    if (old) {
+      git(worktree, 'repack', '-a', '-d', '-q');
+      rmSync(alternates);
+      rmSync(join(runsDir, 'mirrors'), { recursive: true });
+    }
+    // The developer may write its clone's .git: here it asks for the owner's objects as well.
+    writeFileSync(alternates, `${old ? '' : `${join(mirrorPath(runsDir, repo), 'objects')}\n`}${join(repo, '.git', 'objects')}\n`);
+    const inner = sandboxed(claude, 'ok');
+    const reads: (string[] | undefined)[] = [];
+    const adapter = { name: 'claude', start: (req: RunRequest, signal: AbortSignal) => { reads.push(req.read); return inner.start(req, signal); } };
+    await fix(store, adapter, cycleId, j, { deadlineMs: 20_000, runsDir });
+    assert.deepEqual(reads, [old ? [] : [join(mirrorPath(runsDir, repo), 'objects')]], old ? 'old clone' : 'shared clone');
+    store.close();
+  }
+});
