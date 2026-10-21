@@ -98,7 +98,7 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
         // A reviewer's cwd is the verify checkout: what it reads must stay the commit (08-d).
         const writes = opts.writes ?? req.role === 'developer';
         [command, args] = wrap(sandbox, {
-          cwd: req.cwd, write: writes ? [req.cwd] : [], read: [dirname(bin), ...(spec.bind ?? []), ...(writes ? [] : [req.cwd]), ...inHome(spec.config.read)],
+          cwd: req.cwd, write: writes ? [req.cwd] : [], read: [dirname(bin), ...(spec.bind ?? []), ...(req.read ?? []), ...(writes ? [] : [req.cwd]), ...inHome(spec.config.read)],
           overlay: inHome(spec.config.overlay), writeOver: inHome(spec.config.write ?? []), network: true, home, tmp,
         }, bin, spec.args);
       }

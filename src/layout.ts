@@ -1,6 +1,8 @@
 // Every path under the runs folder that more than one module, or recover, must find from a cycle
 // ID alone (A-112 item 3). Changing one moves where existing cycles are looked for: a store
 // written before the change still names cycles whose clones and evidence sit at the old paths.
+import { createHash } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 /** On disk: /tmp is a RAM tmpfs on the owner's machine. */
@@ -22,4 +24,14 @@ export function cyclePaths(runsDir: string | undefined, cycleId: string) {
     /** Per head and stage: a second command stage on the same head must not delete the first one's evidence. */
     evidence: (head: string, stage: string): string => join(root, 'evidence', head, stage),
   };
+}
+
+/**
+ * The bare mirror every clone of `repo` shares its objects with (11-b2, A-126): one per repository,
+ * so two job files on one repository share it and two repositories never do. Keyed by the real
+ * path, so a symlinked or trailing-slash spelling finds the same mirror. `repo` must exist.
+ */
+export function mirrorPath(runsDir: string | undefined, repo: string): string {
+  const key = createHash('sha256').update(realpathSync(repo)).digest('hex').slice(0, 16);
+  return join(runsRoot(runsDir), 'mirrors', `${key}.git`);
 }

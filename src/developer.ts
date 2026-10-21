@@ -7,11 +7,11 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { checkDeadline, execute } from './controller.ts';
 import { bounded, git, stopped } from './git.ts';
-import { cyclePaths, runsRoot } from './layout.ts';
+import { cyclePaths, mirrorPath, runsRoot } from './layout.ts';
 import type { Cycle, Event } from './lifecycle.ts';
 import { developerPrompt } from './prompt.ts';
 import { checkSandbox, wrap, type Sandbox } from './sandbox.ts';
@@ -84,14 +84,17 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
   store.open(cycleId, job.workId, job.parentCycleId, base);
   try {
     mkdirSync(runsDir, { recursive: true });
-    clone(job.repo, worktree, branch, base);
+    const mirror = mirrorPath(runsDir, job.repo);
+    mirrorBase(job.repo, mirror, base);
+    clone(job.repo, mirror, worktree, branch, base);
+    const read = [join(mirror, 'objects')];
     const { text, ...versions } = developerPrompt(start, job.ticket);
     const cycle = await execute(
       store,
       cycleId,
       developer,
-      { role: start.role, prompt: text, cwd: worktree },
-      { deadlineMs: opts.deadlineMs, base, versions, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, undefined, sandbox, opts.deadlineMs, claim) },
+      { role: start.role, prompt: text, cwd: worktree, read },
+      { deadlineMs: opts.deadlineMs, base, versions, accept: (claim) => land(job.repo, worktree, read, branch, cycleId, base, undefined, sandbox, opts.deadlineMs, claim) },
     );
     return { cycle, worktree, branch };
   } catch (err) {
@@ -128,13 +131,17 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
   const sandbox = opts.sandbox ?? { backend: 'bwrap' };
   checkSandbox(sandbox);
   if (!existsSync(join(worktree, '.git'))) throw new Error(`no clone at ${worktree}; the cycle's branch has nowhere to be fixed`);
+  // A clone made before 11-b2 has every object itself and no mirror to bind; bwrap refuses to bind
+  // a path that does not exist.
+  const objects = join(mirrorPath(opts.runsDir, job.repo), 'objects');
+  const read = existsSync(objects) ? [objects] : [];
   // The tip must be the candidate: anything else is a head change outside a fix run, which the
   // spec gives to the owner, not to a run that would quietly build on it.
-  const tip = cloneGit(sandbox, worktree, opts.deadlineMs, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`);
+  const tip = cloneGit(sandbox, worktree, read, opts.deadlineMs, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`);
   if (tip.stdout !== head) throw new Error(`worktree ${worktree} is at ${tip.stdout || '(no branch)'}, not at the candidate ${head}`);
   // On the branch, not merely with the branch at the head: a detached or switched clone would
   // take the developer's commit off the branch and spend the run on a claim refused as not the tip.
-  const ref = cloneGit(sandbox, worktree, opts.deadlineMs, 'symbolic-ref', '--quiet', 'HEAD');
+  const ref = cloneGit(sandbox, worktree, read, opts.deadlineMs, 'symbolic-ref', '--quiet', 'HEAD');
   const onto = ref.status === 0 ? ref.stdout : '(detached)';
   if (onto !== `refs/heads/${branch}`) throw new Error(`worktree ${worktree} is on ${onto}, not on ${branch}`);
   const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
@@ -143,8 +150,8 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
     store,
     cycleId,
     developer,
-    { role: def.role, prompt: text, cwd: worktree },
-    { deadlineMs: opts.deadlineMs, base, versions, accept: (claim) => land(job.repo, worktree, branch, cycleId, base, head, sandbox, opts.deadlineMs, claim) },
+    { role: def.role, prompt: text, cwd: worktree, read },
+    { deadlineMs: opts.deadlineMs, base, versions, accept: (claim) => land(job.repo, worktree, read, branch, cycleId, base, head, sandbox, opts.deadlineMs, claim) },
   );
   return { cycle: cycleAfter, worktree, branch };
 }
@@ -185,12 +192,33 @@ function refuse(repo: string, incoming: string, branch: string, base: string, pr
 }
 
 /**
- * The clone for a cycle: `--no-hardlinks`, because a hardlinked object file is the repository's
- * own file and the developer's sandbox may write anything in the clone. The owner's ~/.gitconfig
- * is not bound in the sandbox, so the identity a commit needs is copied into the clone's config.
+ * The mirror every clone of the repository borrows its objects from (11-b2, A-126): bare, owned and
+ * written only by the controller, from the owner's repository, which it trusts; sandboxes bind it
+ * read-only. It holds only the bases cycles started from, one `refs/bases/<sha>` each, so no
+ * private branch or other cycle's `sf/*` reaches a developer (A-121 (d)); a base on a private
+ * branch does, for every later cycle on the repository (A-133). Never pruned: a pruned object
+ * corrupts every clone that borrows it, so gc stays off.
  */
-function clone(repo: string, dest: string, branch: string, base: string): void {
-  git(repo, 'clone', '-q', '--no-hardlinks', '--no-checkout', repo, dest);
+function mirrorBase(repo: string, mirror: string, base: string): void {
+  mkdirSync(dirname(mirror), { recursive: true });
+  // Safe on an existing mirror, and settles the config even if an earlier run stopped after init.
+  git(dirname(mirror), 'init', '-q', '--bare', mirror);
+  git(mirror, 'config', 'gc.auto', '0');
+  git(mirror, 'config', 'gc.pruneExpire', 'never');
+  // By SHA: protocol v2 serves a commit that is no branch tip, and needs no change to the owner's
+  // config (11-b2 probe 1); v0 might not, so it is named in case the owner's config says otherwise.
+  git(mirror, '-c', 'protocol.version=2', 'fetch', '-q', '--no-tags', '--no-write-fetch-head', repo, `${base}:refs/bases/${base}`);
+}
+
+/**
+ * The clone for a cycle, `--shared` against the mirror: it copies no object, so none is hardlinked
+ * to a file the developer's sandbox could write (A-038). The mirror has no `refs/heads/*`, so the
+ * clone starts with no ref but the branch made here, and git warns it cloned an empty repository.
+ * The owner's ~/.gitconfig is not bound in the sandbox, so the identity a commit needs is copied
+ * into the clone's config.
+ */
+function clone(repo: string, mirror: string, dest: string, branch: string, base: string): void {
+  git(dirname(dest), 'clone', '-q', '--shared', '--no-checkout', mirror, dest);
   git(dest, 'checkout', '-q', '-b', branch, base);
   for (const key of ['user.name', 'user.email']) {
     const v = spawnSync('git', ['config', '--get', key], { cwd: repo, encoding: 'utf8' });
@@ -205,7 +233,7 @@ function clone(repo: string, dest: string, branch: string, base: string): void {
  * with the clone read-only, and the received objects are checked (`fetch.fsckObjects`). The fetch
  * gets the stage deadline: the clone is the developer's, and a FIFO in it holds upload-pack forever.
  */
-function land(repo: string, clone: string, branch: string, cycleId: string, base: string, previous: string | undefined, sandbox: Sandbox, timeoutMs: number, claim: unknown): string | undefined {
+function land(repo: string, clone: string, read: string[], branch: string, cycleId: string, base: string, previous: string | undefined, sandbox: Sandbox, timeoutMs: number, claim: unknown): string | undefined {
   const head = (claim as { head?: unknown } | null)?.head;
   if (typeof head !== 'string' || !head) return undefined; // not ours to judge; the store rejects it
   // 07-e: a dispute keeps the candidate, so nothing is fetched and no branch moves. On a first run
@@ -216,7 +244,7 @@ function land(repo: string, clone: string, branch: string, cycleId: string, base
   const incoming = `refs/sf/incoming/${cycleId}`;
   try {
     // git runs this through sh with the clone's path appended; under `none` it is plain `git upload-pack`.
-    const [cmd, args] = wrap(sandbox, { cwd: clone, write: [], read: [clone], network: false }, 'git', ['upload-pack']);
+    const [cmd, args] = wrap(sandbox, { cwd: clone, write: [], read: [clone, ...read], network: false }, 'git', ['upload-pack']);
     // Its own deadline too: killing the fetch does not reach upload-pack, which under `none` would
     // stay blocked on a FIFO for good (08-f standard 1). Under bwrap --die-with-parent covers it.
     const uploadPack = ['timeout', '-s', 'KILL', `${timeoutMs / 1000}s`, cmd, ...args];
@@ -242,8 +270,8 @@ const shellQuote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
  * git in the clone through the sandbox, the clone read-only: its config, hooks and fsmonitor are
  * the developer's, and so is anything there that could hold git, hence the deadline.
  */
-function cloneGit(sandbox: Sandbox, clone: string, timeoutMs: number, ...args: string[]): { status: number | null; stdout: string } {
-  const [cmd, argv] = wrap(sandbox, { cwd: clone, write: [], read: [clone], network: false }, 'git', args);
+function cloneGit(sandbox: Sandbox, clone: string, read: string[], timeoutMs: number, ...args: string[]): { status: number | null; stdout: string } {
+  const [cmd, argv] = wrap(sandbox, { cwd: clone, write: [], read: [clone, ...read], network: false }, 'git', args);
   const r = spawnSync(cmd, argv, { cwd: clone, encoding: 'utf8', ...bounded(timeoutMs) });
   const why = stopped(r, timeoutMs);
   if (why) throw new Error(`git ${args[0]} in ${clone} ${why}`);
