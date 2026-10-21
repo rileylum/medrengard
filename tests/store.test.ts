@@ -591,3 +591,43 @@ test('unsettled lists a cycle whose row 0 cannot be read, and still lists the re
   assert.match(listed[2]!.refused!, /^cycle c3: row 0 is not JSON/);
   store.close();
 });
+
+// A-137: a workflow keeps its name across edits, so only the hash tells an old cycle's table from today's.
+test('drivable refuses a cycle opened under an earlier edit of a workflow with the same name', () => {
+  const path = dbPath('same-name');
+  const before = new EventStore(path, ownerCheck);
+  before.open('c1', 'w1');
+  before.close();
+  const edited: Workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, REVIEW: { ...ownerCheck.stages.REVIEW!, budget: 2 } as Workflow['stages'][string] } };
+  assert.equal(edited.name, ownerCheck.name);
+  const after = new EventStore(path, edited);
+  assert.equal(after.load('c1')!.stage, 'QUEUED');
+  assert.throws(() => after.drivable('c1'), new RegExp(`opened under workflow owner-check \\(${workflowHash(ownerCheck).slice(0, 12)}\\), this store runs owner-check \\(${workflowHash(edited).slice(0, 12)}\\)`));
+  after.close();
+});
+
+test('several processes opening one store written before 11-c at once all succeed (A-137)', async () => {
+  const path = dbPath('race-stages');
+  new EventStore(path).close();
+  // A store written between 10-d and 11-c: positions, no stage column.
+  const old = new DatabaseSync(path);
+  old.exec('ALTER TABLE events DROP COLUMN stage');
+  old.close();
+  const src = JSON.stringify(join(import.meta.dirname, '..', 'src', 'store.ts'));
+  // Hold the write lock so every child sees no stage column, then queues on the lock with the rest.
+  const lock = new DatabaseSync(path);
+  lock.exec('BEGIN IMMEDIATE');
+  const openOne = () => new Promise<string>((done) => {
+    const script = `import { EventStore } from ${src};
+      try { new EventStore(${JSON.stringify(path)}).close(); console.log('opened'); } catch (e) { console.log(e.message); }`;
+    const child = spawn(process.execPath, ['--no-warnings', '--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'inherit'] });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.on('close', () => done(out.trim()));
+  });
+  const all = Promise.all([openOne(), openOne(), openOne(), openOne()]);
+  await new Promise((r) => setTimeout(r, 1500));
+  lock.exec('COMMIT');
+  lock.close();
+  assert.deepEqual(await all, ['opened', 'opened', 'opened', 'opened']);
+});
