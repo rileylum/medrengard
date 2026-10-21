@@ -18,8 +18,10 @@ test('runsRoot is absolute: a relative runsDir resolves against the working dire
   assert.equal(runsRoot('/x/runs/'), '/x/runs');
 });
 
-test('the store file sits at the top of the runs folder', () => {
+test('the store file sits at the top of the runs folder, resolved no further than it is given', () => {
   assert.equal(storeFile('/x/runs'), '/x/runs/events.sqlite');
+  // main.ts names the store in its messages by the runsDir the owner wrote.
+  assert.equal(storeFile('runs'), 'runs/events.sqlite');
 });
 
 for (const [given, root] of [[undefined, DEFAULT_RUNS_DIR], ['/x/runs', '/x/runs'], ['runs', resolve('runs')]] as const) {
