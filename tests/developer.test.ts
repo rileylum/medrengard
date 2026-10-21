@@ -3,12 +3,14 @@
 // plays the developer; live (RUNTIME_SPIKE=1) the real claude and pi do, once each.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import type { RunRequest } from '../src/adapter.ts';
+import { mirrorPath } from '../src/layout.ts';
 import { EventStore } from '../src/store.ts';
 import { claude, claudeDeveloper, cliAdapter, pi, piDeveloper, type CliSpec } from '../src/runtime/cli-adapter.ts';
-import { develop, fix, oneLine, type DeveloperAdapter, type Job } from '../src/developer.ts';
+import { develop, fix, mirrorBase, oneLine, type DeveloperAdapter, type Job } from '../src/developer.ts';
 import { verify } from '../src/verify.ts';
 import { review } from '../src/review.ts';
 import { fakeAdapter } from './fake-adapter.ts';
@@ -25,6 +27,8 @@ const git = (cwd: string, ...a: string[]) =>
   execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.invalid', ...a], { cwd, encoding: 'utf8' }).trim();
 
 let n = 0;
+/** What runsDir holds besides the repository's mirror (11-b2): one entry per cycle a run made. */
+const cycleDirs = (runsDir: string) => readdirSync(runsDir).filter((e) => e !== 'mirrors');
 /** A scratch repository with one commit, a fresh store and a runs directory. */
 function scratch() {
   const root = join(dir, String(n++));
@@ -119,12 +123,12 @@ test('develop refuses a second open cycle for the work and an unknown base befor
   // Wait for the first run to start, then the second must be refused by open, not by apply.
   while (adapter.requests.length === 0) await new Promise((r) => setTimeout(r, 5));
   await assert.rejects(develop(store, fakeAdapter('hang'), job(repo), { deadlineMs: 500, runsDir }), /already has an open cycle/);
-  assert.equal(readdirSync(runsDir).length, 1);
+  assert.equal(cycleDirs(runsDir).length, 1);
   assert.equal(adapter.requests.length, 1);
   const { cycle } = await first;
   assert.equal(cycle.stage, 'ESCALATED');
   await assert.rejects(develop(store, fakeAdapter('hang'), job(repo, { workId: 'w2', base: 'no-such-ref' }), { deadlineMs: 500, runsDir }), /no-such-ref/);
-  assert.equal(readdirSync(runsDir).length, 1);
+  assert.equal(cycleDirs(runsDir).length, 1);
   store.close();
 });
 
@@ -588,7 +592,7 @@ for (const spec of [claude, pi]) {
     assert.equal(report['/tmp/sf-escape-marker'], 'ok');
     assert.ok(!existsSync('/tmp/sf-escape-marker'), 'the host /tmp is not the run\'s');
     // The run's /tmp sat beside its clone and is gone: only the clone is left in runsDir.
-    assert.deepEqual(readdirSync(runsDir), [cycle.cycleId]);
+    assert.deepEqual(cycleDirs(runsDir), [cycle.cycleId]);
     assert.equal(git(repo, 'rev-parse', `sf/${cycle.cycleId}`), cycle.candidate!.head);
     store.close();
   });
@@ -743,4 +747,166 @@ test('git in the clone before a fix is killed at the stage deadline, not at a fi
   assert.ok(took >= 2900 && took < 15_000, `fix took ${took} ms`);
   execFileSync('rm', ['-rf', worktree]);
   store.close();
+});
+
+// Ticket 11-b2 (A-126, A-133, A-134): each cycle's clone is `git clone --shared` against one bare
+// mirror per repository, which holds only the bases cycles started from.
+
+const refs = (cwd: string) => git(cwd, 'for-each-ref', '--format=%(refname)').split('\n').filter(Boolean);
+/** Object files a clone holds itself, not through its alternates. */
+const ownObjects = (clone: string) => files(join(clone, '.git', 'objects')).filter((f) => !f.includes(`${join('objects', 'info')}`));
+
+test('develop clones from the mirror: before the run the clone holds no objects of its own, no ref but its branch, and the run is asked to read the mirror (11-b2)', async () => {
+  const { repo, store, runsDir, base } = scratch();
+  // What a developer must not see: a private branch, and another cycle's branch (A-121 (d)).
+  git(repo, 'switch', '-q', '-c', 'private');
+  writeFileSync(join(repo, 'secret.txt'), 'secret\n');
+  git(repo, 'add', 'secret.txt');
+  git(repo, 'commit', '-q', '-m', 'private');
+  const secret = git(repo, 'rev-parse', 'HEAD');
+  // Tags too: one on a private commit, and one on the base itself, which a fetch would follow.
+  git(repo, 'tag', '-a', '-m', 'private', 'onprivate');
+  git(repo, 'switch', '-q', '-c', 'sf/other', base);
+  writeFileSync(join(repo, 'other.txt'), 'other\n');
+  git(repo, 'add', 'other.txt');
+  git(repo, 'commit', '-q', '-m', 'other cycle');
+  const other = git(repo, 'rev-parse', 'HEAD');
+  git(repo, 'switch', '-q', 'main');
+  git(repo, 'tag', '-a', '-m', 'on base', 'onbase');
+  const mirror = mirrorPath(runsDir, repo);
+  const inner = fake(claude);
+  const seen: { own: string[]; alternates: string; refs: string[]; read?: string[] }[] = [];
+  const adapter = { name: 'claude', start: (req: RunRequest, signal: AbortSignal) => {
+    seen.push({ own: ownObjects(req.cwd), alternates: readFileSync(join(req.cwd, '.git', 'objects', 'info', 'alternates'), 'utf8').trim(), refs: refs(req.cwd), read: req.read });
+    return inner.start(req, signal);
+  } };
+  const { cycle, worktree, branch } = await develop(store, adapter, job(repo, { base }), { deadlineMs: 20_000, runsDir });
+  assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
+  assert.deepEqual(seen, [{ own: [], alternates: join(mirror, 'objects'), refs: [`refs/heads/${branch}`], read: [join(mirror, 'objects')] }]);
+  assert.deepEqual(refs(worktree), [`refs/heads/${branch}`]);
+  // The mirror: a bare repository holding the base and nothing else, never pruned.
+  assert.equal(git(mirror, 'rev-parse', '--is-bare-repository'), 'true');
+  assert.deepEqual(refs(mirror), [`refs/bases/${base}`]);
+  for (const sha of [secret, other]) assert.notEqual(spawnSync('git', ['cat-file', '-e', sha], { cwd: mirror }).status, 0, sha);
+  assert.equal(git(mirror, 'config', 'gc.auto'), '0');
+  assert.equal(git(mirror, 'config', 'gc.pruneExpire'), 'never');
+  store.close();
+});
+
+test('a second cycle on the repository shares its mirror and adds its own base; another repository gets its own (11-b2)', async () => {
+  const { repo, store, runsDir, base } = scratch();
+  const first = await develop(store, fake(claude), job(repo, { base }), { deadlineMs: 20_000, runsDir });
+  assert.equal(first.cycle.stage, 'VERIFYING', first.cycle.escalation);
+  writeFileSync(join(repo, 'later.txt'), 'later\n');
+  git(repo, 'add', 'later.txt');
+  git(repo, 'commit', '-q', '-m', 'later');
+  const later = git(repo, 'rev-parse', 'HEAD');
+  const second = await develop(store, fake(claude), job(repo, { workId: 'w2' }), { deadlineMs: 20_000, runsDir });
+  assert.equal(second.cycle.stage, 'VERIFYING', second.cycle.escalation);
+  assert.deepEqual(refs(mirrorPath(runsDir, repo)).sort(), [`refs/bases/${base}`, `refs/bases/${later}`].sort());
+  const two = scratch();
+  const third = await develop(two.store, fake(claude), job(two.repo), { deadlineMs: 20_000, runsDir });
+  assert.equal(third.cycle.stage, 'VERIFYING', third.cycle.escalation);
+  assert.deepEqual(readdirSync(join(runsDir, 'mirrors')).sort(), [mirrorPath(runsDir, repo), mirrorPath(runsDir, two.repo)].map((p) => p.split('/').at(-1)).sort());
+  assert.deepEqual(refs(mirrorPath(runsDir, two.repo)), [`refs/bases/${two.base}`]);
+  store.close();
+  two.store.close();
+});
+
+for (const spec of [claude, pi]) {
+  test(`${spec.name} fixture in bwrap: the developer commits in a shared clone, its branch lands, and it cannot write the mirror (11-b2)`, async () => {
+    const { repo, store, runsDir } = scratch();
+    const mirror = mirrorPath(runsDir, repo);
+    const planted = join(mirror, 'objects', 'planted');
+    const { cycle, worktree } = await develop(store, sandboxed(spec, 'escape'), job(repo, { ticket: `ESCAPE ${planted}` }), { deadlineMs: 20_000, runsDir });
+    assert.equal(cycle.stage, 'VERIFYING', cycle.escalation);
+    const report = JSON.parse(readFileSync(join(worktree, 'escape.json'), 'utf8')) as Record<string, string>;
+    assert.equal(report[planted], 'EROFS');
+    assert.ok(!existsSync(planted));
+    assert.equal(git(repo, 'rev-parse', `sf/${cycle.cycleId}`), cycle.candidate!.head);
+    store.close();
+  });
+}
+
+test('fix in bwrap on a shared clone, and on a clone made before 11-b2 with no mirror, reaches VERIFYING on a new head (11-b2)', async () => {
+  for (const old of [false, true]) {
+    const { store, runsDir, job: j, cycleId, worktree, head } = await failed();
+    if (old) {
+      // What a pre-11-b2 clone is: every object its own, no alternates, no mirror under runsDir.
+      git(worktree, 'repack', '-a', '-d', '-q');
+      rmSync(join(worktree, '.git', 'objects', 'info', 'alternates'));
+      rmSync(join(runsDir, 'mirrors'), { recursive: true });
+    }
+    const fixed = await fix(store, sandboxed(claude, 'ok'), cycleId, j, { deadlineMs: 20_000, runsDir });
+    assert.equal(fixed.cycle.stage, 'VERIFYING', `${old ? 'old' : 'shared'} clone: ${fixed.cycle.escalation}`);
+    assert.notEqual(fixed.cycle.candidate!.head, head);
+    store.close();
+  }
+});
+
+test('fix binds the mirror the layout names, never what the clone\'s alternates file says, and nothing when there is no mirror (11-b2, standard 2)', async () => {
+  for (const old of [false, true]) {
+    const { repo, store, runsDir, job: j, cycleId, worktree } = await failed();
+    const alternates = join(worktree, '.git', 'objects', 'info', 'alternates');
+    if (old) {
+      git(worktree, 'repack', '-a', '-d', '-q');
+      rmSync(alternates);
+      rmSync(join(runsDir, 'mirrors'), { recursive: true });
+    }
+    // The developer may write its clone's .git: here it asks for the owner's objects as well.
+    writeFileSync(alternates, `${old ? '' : `${join(mirrorPath(runsDir, repo), 'objects')}\n`}${join(repo, '.git', 'objects')}\n`);
+    const inner = sandboxed(claude, 'ok');
+    const reads: (string[] | undefined)[] = [];
+    const adapter = { name: 'claude', start: (req: RunRequest, signal: AbortSignal) => { reads.push(req.read); return inner.start(req, signal); } };
+    await fix(store, adapter, cycleId, j, { deadlineMs: 20_000, runsDir });
+    assert.deepEqual(reads, [old ? [] : [join(mirrorPath(runsDir, repo), 'objects')]], old ? 'old clone' : 'shared clone');
+    store.close();
+  }
+});
+
+test('cycles on one repository that set up its mirror at the same moment all succeed, on a new mirror and an existing one (11-b2, adversarial minor)', { timeout: 120_000 }, async () => {
+  const { repo, runsDir, base } = scratch();
+  const mirror = mirrorPath(runsDir, repo);
+  const developer = join(import.meta.dirname, '..', 'src', 'developer.ts');
+  // Separate processes, released together: mirrorBase is synchronous, so in one process two calls never overlap.
+  const round = async (go: string) => {
+    const script = `import { existsSync } from 'node:fs'; import { mirrorBase } from ${JSON.stringify(developer)};
+      while (!existsSync(${JSON.stringify(go)})) await new Promise((r) => setTimeout(r, 1));
+      mirrorBase(${JSON.stringify(repo)}, ${JSON.stringify(mirror)}, ${JSON.stringify(base)});`;
+    const runs = Array.from({ length: 6 }, () => new Promise<{ code: number | null; err: string }>((done) => {
+      const c = spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = '';
+      c.stderr.on('data', (d) => { err += d; });
+      c.on('close', (code) => done({ code, err }));
+    }));
+    await new Promise((r) => setTimeout(r, 300));
+    writeFileSync(go, '');
+    return Promise.all(runs);
+  };
+  for (let i = 0; i < 8; i++) {
+    const fresh = i % 2 === 0;
+    if (fresh) rmSync(join(runsDir, 'mirrors'), { recursive: true, force: true });
+    const results = await round(join(dirname(runsDir), `go-${i}`));
+    assert.deepEqual(results.filter((r) => r.code !== 0), [], `round ${i} (${fresh ? 'new' : 'existing'} mirror)`);
+    assert.deepEqual(refs(mirror), [`refs/bases/${base}`]);
+    assert.deepEqual(readdirSync(join(runsDir, 'mirrors')), [mirror.split('/').at(-1)], 'no temporary mirror left beside it');
+  }
+});
+
+test('the mirror takes the repository\'s object format, not git\'s default (11-b2, adversarial minor)', async () => {
+  const runsDir = join(dir, `formats-${n++}`, 'runs');
+  for (const format of ['sha256', 'sha1']) {
+    const repo = join(dirname(runsDir), format);
+    mkdirSync(repo, { recursive: true });
+    git(repo, 'init', '-q', `--object-format=${format}`, '-b', 'main');
+    writeFileSync(join(repo, 'README.md'), '# scratch\n');
+    git(repo, 'add', 'README.md');
+    git(repo, 'commit', '-q', '-m', 'initial');
+    const base = git(repo, 'rev-parse', 'HEAD');
+    const mirror = mirrorPath(runsDir, repo);
+    // An owner whose default is the other format must still get a mirror the repository can fill.
+    await withGitConfig({ 'init.defaultObjectFormat': format === 'sha1' ? 'sha256' : 'sha1' }, async () => mirrorBase(repo, mirror, base));
+    assert.equal(git(mirror, 'rev-parse', '--show-object-format'), format);
+    assert.deepEqual(refs(mirror), [`refs/bases/${base}`]);
+  }
 });

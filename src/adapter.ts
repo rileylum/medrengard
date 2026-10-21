@@ -10,6 +10,11 @@ export interface RunRequest {
   /** The contract plus, for reviewers, diff, SHA and evidence. Assembled by the caller. */
   prompt: string;
   cwd: string;
+  /**
+   * Absolute paths the run's sandbox binds read-only, chosen by the controller per run: a shared
+   * clone's mirror objects (11-b2, A-134). An extension runtime receives it in the request JSON.
+   */
+  read?: string[];
 }
 
 /**
