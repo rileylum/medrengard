@@ -23,7 +23,8 @@ export interface OpenRow {
 
 /**
  * SHA-256 of the workflow's JSON. Key order counts: reordering a workflow file makes it a new
- * workflow, which is safe (its old cycles are refused) and avoids a canonical serialiser.
+ * workflow, which is safe (its old cycles replay under their recorded copy, and drivable refuses
+ * to drive them) and avoids a canonical serialiser.
  */
 export function workflowHash(w: Workflow): string {
   return createHash('sha256').update(JSON.stringify(w)).digest('hex');

@@ -471,6 +471,20 @@ test('open records the engine version that opened the cycle', () => {
   store.open('c1', 'w1');
   store.close();
   assert.equal(openRow(path, 'c1').engine, 1);
+  const raw = new DatabaseSync(path, { readOnly: true });
+  assert.equal(raw.prepare("SELECT stage FROM events WHERE cycle_id = 'c1' AND seq = 0").get()!.stage, 'QUEUED');
+  raw.close();
+});
+
+test('an open row whose stored stage is not QUEUED refuses the cycle, naming row 0', () => {
+  const path = dbPath('diverged-open');
+  const store = new EventStore(path);
+  store.open('c1', 'w1');
+  const raw = new DatabaseSync(path);
+  raw.prepare("UPDATE events SET stage = 'ACCEPTED' WHERE cycle_id = 'c1' AND seq = 0").run();
+  raw.close();
+  assert.throws(() => store.load('c1'), (e: Error) => e instanceof ReplayDiverged && /^cycle c1 row 0 \(open\) was recorded at ACCEPTED, but replays to QUEUED/.test(e.message));
+  store.close();
 });
 
 test('two processes appending to one cycle at once store the stages the final log replays to', async () => {
