@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-143 — 2026-10-21 — 11-d: the adversarial findings tested on the branch; a hand-run accept without a command ID accepted as a risk
+
+Asked, after 11-d's adversarial FAIL on `2be3768`: (1) the "major", no test sends the observer kit's cancel ID, so a kit that gave an accept and a cancel for one line one ID passed every test (a missing test for correct code, a minor under `docs/workflow.md`); (2) the minor, no test tells that `cancelWork` passes no `after`; (3) the note that an `accept` with no `--command-id` is not deduplicated, so on a workflow OWNER → MERGE → FINAL whose MERGE keeps the head a retyped `accept <sha>` would also accept FINAL. The session recommended adding both tests on the branch, each red on its mutant, without a further review (as A-137), and accepting (3) as designed, with a line in `docs/work/accepted-risks.md`. Owner: “Go as you recommend”.
+
+Effect: (1) and (2) are tested on `feat/11-d-owner-events-bound`; the review budget is spent, so the tests have the implementer's mutants only. (3) is in `docs/work/accepted-risks.md`.
+
 ### A-142 — 2026-10-21 — 11-d: standard 3's test findings fixed on the branch; on to the adversarial review
 
 Asked, after 11-d's standard 3 FAIL on `7ab24ab` (the two-delivery test asserts on timing and fails on correct behaviour; no test reaches `request-changes`'s duplicate path): fix both tests on the branch and go to the adversarial review, or a fourth standard review, or a new ticket naming 11-d. The session recommended the first; no product code changes. Owner: “fix both and go to the adversarial.”
