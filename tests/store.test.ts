@@ -570,6 +570,7 @@ test('unsettled lists every cycle not settled across work IDs, and a cycle it ca
   raw.close();
   assert.deepEqual(store.unsettled(), [
     { cycleId: 'c1', workId: 'w1', stage: 'DEV' },
+    { cycleId: 'c3', workId: 'w3', stage: 'ESCALATED' },
     { cycleId: 'c4', workId: 'w4', stage: 'QUEUED' },
     { cycleId: 'c5', workId: 'w5', refused: 'cycle c5 row 1 (claim) was recorded at ACCEPTED, but replays to DEVELOPING under engine 1 (opened under engine 1); the cycle is not driven' },
     { cycleId: 'c6', workId: 'w6', refused: `cycle c6 was opened under workflow gone (abababababab), this store runs default (${workflowHash(defaultWorkflow).slice(0, 12)})` },
@@ -784,4 +785,97 @@ test('write reports whether the event was written: a duplicate outcome or comman
   assert.equal(store.write('c1', command).written, true);
   assert.equal(store.write('c1', command, { after: 0 }).written, false);
   store.close();
+});
+
+// Ticket 11-d2 (A-114, A-139): an escalated cycle waits for the owner's move.
+const ESCALATED_AT_VERIFYING: Event[] = [toStandardReview[0]!, toStandardReview[1]!, { type: 'verification', head: 'H1', checks: [{ name: 'tests', result: 'FAIL' }] }];
+const RETRY: Event = { type: 'owner_decision', action: 'retry', head: 'H1', reason: 'flaky check' };
+
+test('STOPPED is every stage no run acts on; SETTLED is the two nothing moves again, and unsettled lists an escalated cycle (11-d2)', async () => {
+  const { STOPPED } = await import('../src/store.ts');
+  assert.deepEqual([...STOPPED], ['ESCALATED', 'CANCELLED', 'ACCEPTED']);
+  assert.deepEqual([...SETTLED].sort(), ['ACCEPTED', 'CANCELLED']);
+  const store = new EventStore(dbPath('unsettled-escalated'));
+  store.open('c1', 'w1');
+  for (const e of ESCALATED_AT_VERIFYING) store.append('c1', e);
+  assert.deepEqual(store.unsettled(), [{ cycleId: 'c1', workId: 'w1', stage: 'ESCALATED' }]);
+  store.append('c1', { type: 'cancel' });
+  assert.deepEqual(store.unsettled(), []);
+  store.close();
+});
+
+test('a move is deduplicated by its command ID like any owner command (11-d2)', () => {
+  const store = new EventStore(dbPath('move-command-id'));
+  store.open('c1', 'w1');
+  for (const e of ESCALATED_AT_VERIFYING) store.append('c1', e);
+  const first = store.write('c1', { ...RETRY, commandId: 'k' } as Event);
+  assert.deepEqual([first.written, first.cycle.stage], [true, 'VERIFYING']);
+  assert.deepEqual(store.write('c1', { ...RETRY, commandId: 'k' } as Event), { cycle: first.cycle, written: false });
+  store.close();
+});
+
+test('the store refuses a move on a cycle another cycle names as its parent, or while another cycle of the work is open, writing nothing (11-d2)', () => {
+  const store = new EventStore(dbPath('move-family'));
+  store.open('c1', 'w1');
+  for (const e of ESCALATED_AT_VERIFYING) store.append('c1', e);
+  store.open('c2', 'w1', 'c1');
+  assert.throws(() => store.append('c1', RETRY), /^Error: cycle c1 is the parent of cycle c2; a move on it would give work w1 two live cycles; nothing was written$/);
+  // Start over was chosen there: a settled child still holds the parent.
+  store.append('c2', { type: 'cancel' });
+  assert.throws(() => store.append('c1', RETRY), /cycle c1 is the parent of cycle c2/);
+  assert.equal(store.events('c1').length, ESCALATED_AT_VERIFYING.length);
+  // c3 escalates, c4 opens from c1: c3 has no child, but c4 is open.
+  const other = new EventStore(dbPath('move-sibling'));
+  other.open('c1', 'w1');
+  other.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
+  other.append('c1', { type: 'run_failed', runId: 'dev1', reason: 'timeout' });
+  other.open('c3', 'w1', 'c1');
+  for (const e of ESCALATED_AT_VERIFYING) other.append('c3', e);
+  other.open('c4', 'w1', 'c1');
+  assert.throws(() => other.append('c3', RETRY), /^Error: work w1 has an open cycle c4; a move on cycle c3 would give it two live cycles; nothing was written$/);
+  assert.equal(other.load('c3')!.stage, 'ESCALATED');
+  other.append('c4', { type: 'cancel' });
+  assert.equal(other.append('c3', RETRY).stage, 'VERIFYING');
+  store.close();
+  other.close();
+});
+
+test('a child open and a retry on its parent, from two processes at once: one lands, never both (11-d2)', async () => {
+  const src = JSON.stringify(join(import.meta.dirname, '..', 'src', 'store.ts'));
+  const seen = new Set<string>();
+  for (let round = 0; round < 4; round++) {
+    const path = dbPath(`race-move-${round}`);
+    const store = new EventStore(path);
+    store.open('c1', 'w1');
+    for (const e of ESCALATED_AT_VERIFYING) store.append('c1', e);
+    store.close();
+    // Both load under the held lock and block at their write; released together.
+    const lock = new DatabaseSync(path);
+    lock.exec('BEGIN IMMEDIATE');
+    const child = (body: string) => new Promise<string>((done) => {
+      const script = `import { EventStore } from ${src}; const s = new EventStore(${JSON.stringify(path)});
+        const after = s.drivable('c1').history.length;
+        try { ${body} } catch (e) { console.log('refused'); }`;
+      const p = spawn(process.execPath, ['--no-warnings', '--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'inherit'] });
+      let out = '';
+      p.stdout.on('data', (d) => (out += d));
+      p.on('close', () => done(out.trim()));
+    });
+    const both = Promise.all([
+      child(`s.open('c2', 'w1', 'c1'); console.log('opened');`),
+      child(`s.append('c1', ${JSON.stringify(RETRY)}, { after }); console.log('moved');`),
+    ]);
+    await new Promise((r) => setTimeout(r, 1500));
+    lock.exec('COMMIT');
+    lock.close();
+    const results = await both;
+    assert.deepEqual(results.filter((r) => r === 'refused').length, 1, results.join());
+    const after = new EventStore(path);
+    const c2 = after.load('c2');
+    assert.equal(after.load('c1')!.stage, c2 ? 'ESCALATED' : 'VERIFYING', results.join());
+    after.close();
+    seen.add(results.join());
+  }
+  // Not asserted: which process wins is SQLite's choice; the log says which orders ran.
+  console.log(`race orders seen: ${[...seen].join(' | ')}`);
 });

@@ -57,7 +57,7 @@ export default function mount(el) {
       const def = w.stages[id];
       $('.stage').innerHTML = def
         ? `<p><b>${esc(id)}</b>: ${KIND[def.kind](def)}</p><p>PASS → <code>${esc(def.transitions.PASS)}</code>${def.transitions.FAIL ? ` · FAIL → <code>${esc(def.transitions.FAIL)}</code>` : ' · FAIL → <code>ESCALATED</code> (none given)'}${def.budget ? ` · budget ${def.budget}: its outcomes are counted, and a FAIL at the limit escalates` : ''}</p>`
-        : `<p><b>${esc(id)}</b> is an engine stage. No workflow defines it; ${id === 'QUEUED' ? 'every cycle starts here, and the first claim moves it to the start stage' : id === 'ESCALATED' ? 'a cycle here waits for the owner, who cancels or opens a child cycle' : 'a cycle here is settled and ignores every event'}.</p>`;
+        : `<p><b>${esc(id)}</b> is an engine stage. No workflow defines it; ${id === 'QUEUED' ? 'every cycle starts here, and the first claim moves it to the start stage' : id === 'ESCALATED' ? 'a cycle here waits for the owner, who retries, overrules, routes, cancels or opens a child cycle' : 'a cycle here is settled and ignores every event'}.</p>`;
     });
   };
   const load = (k) => { $('.json').value = JSON.stringify(EXAMPLES[k].workflow, null, 2); render(); };

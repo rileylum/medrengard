@@ -2,7 +2,7 @@
 // bounds it with a deadline, and turns the outcome into exactly one lifecycle event.
 import { randomUUID } from 'node:crypto';
 import type { Adapter, RunOutcome, RunRequest } from './adapter.ts';
-import { producedBy, SETTLED, type Cycle, type Event, type PromptVersions, type Role, type RunVersions } from './lifecycle.ts';
+import { producedBy, STOPPED, type Cycle, type Event, type PromptVersions, type Role, type RunVersions } from './lifecycle.ts';
 import { oneLine } from './prompt.ts';
 import { UnclassifiableEvent, type EventStore } from './store.ts';
 
@@ -58,7 +58,7 @@ export async function execute(
   // A store that cannot be read is skipped for that tick: recording the outcome reads it again,
   // and its error surfaces there, not as an uncaught throw from a timer.
   const settled = () => {
-    try { const stage = store.load(cycleId)?.stage; return stage !== undefined && SETTLED.includes(stage); } catch { return false; }
+    try { const stage = store.load(cycleId)?.stage; return stage !== undefined && STOPPED.includes(stage); } catch { return false; }
   };
   const outcome = await bounded(adapter, { ...req, runId }, deadlineMs, settled);
   const versions: Partial<RunVersions> = { ...opts.versions, runtime: adapter.name, ...(adapter.moduleHash === undefined ? {} : { moduleHash: adapter.moduleHash }) };
@@ -109,7 +109,7 @@ function refusal(accept: NonNullable<ExecuteOptions['accept']>, claim: unknown):
 // everything, so nothing can be miscounted and a cancel mid-review must not throw).
 function requireStage(store: EventStore, cycleId: string, role: Role, runId?: string): void {
   const cycle = store.drivable(cycleId);
-  if (runId !== undefined && (cycle.consumed.includes(runId) || SETTLED.includes(cycle.stage))) return;
+  if (runId !== undefined && (cycle.consumed.includes(runId) || STOPPED.includes(cycle.stage))) return;
   const def = store.workflow.stages[cycle.stage];
   if (def?.kind === 'agent' && def.role === role) return;
   const expected = Object.entries(store.workflow.stages).find(([, d]) => d.kind === 'agent' && d.role === role)?.[0];

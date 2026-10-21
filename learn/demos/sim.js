@@ -2,9 +2,10 @@
 // the real lifecycle (src/lifecycle.ts) under the workflow the reader picks; the stages are the
 // stand-ins in shims/sim-*.js, and the agents are the reader, or a scripted autopilot. Replies go through the real claude and pi
 // parsers (src/runtime/cli-adapter.ts), so a reply without a claim block fails as it would live.
-import { run } from '/src/run.ts';
+import { decideAndDrive, run } from '/src/run.ts';
+import { moveEvent } from '/src/decide.ts';
 import { claude, pi } from '/src/runtime/cli-adapter.ts';
-import { EventStore, SETTLED } from '/src/store.ts';
+import { EventStore, SETTLED, STOPPED } from '/src/store.ts';
 import { readdirSync, readFileSync } from 'node:fs';
 import { flow, layout } from '../diagram.js';
 import { lines } from '../lines.js';
@@ -45,8 +46,8 @@ const PRESETS = {
     developer: [{ change: 'nothing' }] },
   stale: { label: 'A verdict for the wrong SHA', about: 'After the fix run, the second standard reviewer names the first, failed commit. The verdict is recorded and counted, but cannot advance the cycle.',
     developer: [{ change: 'offByOne' }, { change: 'good' }], standard: [{ verdict: 'FAIL', findings: [F1, F1b] }, { verdict: 'PASS', sha: 'previous' }] },
-  dispute: { label: 'The developer disputes a finding', about: 'The standard reviewer FAILs a correct change with a finding the ticket does not ask for. The fix run commits nothing and disputes it instead. Only the owner can weigh a dispute against a verdict, so the cycle escalates.',
-    developer: [{ change: 'good' }, { dispute: 'The ticket lists undo as a non-goal; the finding asks for undo.' }], standard: [{ verdict: 'FAIL', findings: ['src/todo.js:9 — there is no way to undo `todo done`'] }] },
+  dispute: { label: 'The developer disputes a finding', about: 'The standard reviewer FAILs a correct change with a finding the ticket does not ask for. The fix run commits nothing and disputes it instead. Only the owner can weigh a dispute against a verdict, so the cycle escalates. Overrule the FAIL, and the standard review runs again on the same commit, with your reason in its prompt.',
+    developer: [{ change: 'good' }, { dispute: 'The ticket lists undo as a non-goal; the finding asks for undo.' }], standard: [{ verdict: 'FAIL', findings: ['src/todo.js:9 — there is no way to undo `todo done`'] }, { verdict: 'PASS' }], adversarial: [{ verdict: 'PASS' }] },
   package: { label: 'A stage of its own', workflow: 'package', about: 'This workflow adds a PACKAGE stage after the reviews. It is a command stage with its own run, npm pack --dry-run, which the controller runs on the candidate as it runs the checks.',
     developer: [{ change: 'good' }], standard: [{ verdict: 'PASS' }], adversarial: [{ verdict: 'PASS' }] },
   light: { label: 'One reviewer, three tries', workflow: 'light', about: 'This workflow has one reviewer with a budget of three and no adversary. The reviewer FAILs twice; the third commit passes and the cycle waits at SIGN_OFF, the workflow\'s own human stage.',
@@ -230,7 +231,8 @@ export default function mount(el) {
       verification: () => `${short(e.head)} · ${e.checks.map((c) => `${c.name} <span class="pill ${c.result}">${c.result}</span>`).join(' ')}`,
       verdict: () => `<span class="pill ${e.verdict}">${e.verdict}</span> on ${short(e.head)}${e.findings?.length ? ` · ${e.findings.length} findings` : ''}`,
       run_failed: () => `run ${short(e.runId)}: ${esc(e.reason)}`, reject_dispatch: () => esc(e.reason),
-      head_changed: () => `head ${short(e.head)}`, base_changed: () => `base ${short(e.base)}` };
+      head_changed: () => `head ${short(e.head)}`, base_changed: () => `base ${short(e.base)}`,
+      owner_decision: () => `${e.action}${e.stage ? ` to ${esc(e.stage)}` : ''} on ${short(e.head)}: ${esc(e.reason)}` };
     return bits[e.type]?.() ?? '';
   };
   const showLines = () => { $('.lines').textContent = lines(store.table).map((l) => JSON.stringify(l)).join('\n') || '(no rows yet)'; };
@@ -332,7 +334,7 @@ export default function mount(el) {
   // stored stage tells the two apart.
   function stoppedLabel() {
     const stage = state.cycleId && store.load(state.cycleId)?.stage;
-    return SETTLED.includes(stage) ? `stopped: cycle ${stage}` : 'deadline: stopped';
+    return STOPPED.includes(stage) ? `stopped: cycle ${stage}` : 'deadline: stopped';
   }
   function settleWith(c, runtime, signal, getText, stop) {
     return new Promise((resolve) => {
@@ -500,7 +502,7 @@ export default function mount(el) {
     // A run on main after a merge starts from main's new tip: the factory always resolves HEAD.
     try {
       const adapters = Object.fromEntries(Object.entries(job.runtime).map(([role, rt]) => [role, adapter(role, rt)]));
-      const open = store.cycles(job.workId).find((c) => !SETTLED.includes(c.stage));
+      const open = store.cycles(job.workId).find((c) => !STOPPED.includes(c.stage));
       if (open) throw new Error(`work ${job.workId} already has an open cycle ${open.cycleId}`);
       const r = await run(store, adapters, job, { deadlineMs: job.deadlineMs, runsDir: RUNS, sandbox: { backend: 'bwrap' } });
       print(r, job);
@@ -529,6 +531,7 @@ export default function mount(el) {
       : `Reviews: ${budgeted.map((s) => `${s} ${cycle.budgets[s] ?? 0}`).join(', ')}`);
     for (const h of cycle.history) {
       const e = h.event;
+      if (e.type === 'owner_decision') say(`${e.source ?? 'owner'} ${e.action}${e.stage ? ` to ${e.stage}` : ''} ${e.head.slice(0, 7)}: ${e.reason}`);
       if (e.type === 'verification') say(`verification ${e.head.slice(0, 7)}: ${e.checks.map((c) => `${c.name} ${c.result}`).join(', ') || 'no checks'}`);
       if (e.type === 'verdict') {
         const role = workflow.stages[h.from]?.role ?? 'reviewer';
@@ -559,7 +562,11 @@ export default function mount(el) {
     } else if (c.stage === 'ACCEPTED' && !state.merged.includes(c.cycleId)) {
       btn(`git merge --no-ff ${short(c.candidate.head)}`, 'owner primary', merge);
     } else if (c.stage === 'ESCALATED') {
-      btn('Open a child cycle (run again)', 'owner primary', () => { state.parent = c.cycleId; showJob(); say(`\n# parentCycleId: ${c.cycleId} added to job.json`); go(); });
+      if (c.candidate?.head && state.job) {
+        btn(`Retry ${c.history.findLast((h) => h.to === 'ESCALATED' && h.from !== 'ESCALATED')?.from ?? ''}`, 'owner primary', () => move('retry', 'the owner retries the stage in place'));
+        btn('Overrule the last FAIL', 'owner', () => move('overrule', 'the owner agrees with the developer: undo is a non-goal'));
+      }
+      btn('Open a child cycle (run again)', 'owner', () => { state.parent = c.cycleId; showJob(); say(`\n# parentCycleId: ${c.cycleId} added to job.json`); go(); });
       btn('Cancel', 'owner', () => decide('cancel'));
     } else if (SETTLED.includes(c.stage) || c.stage === 'ACCEPTED') {
       btn('Next ticket on the same repository', 'owner', () => { state.parent = undefined; state.cycleId = undefined; diagram.reset(); board(); showJob(); $('.workId').value = nextWork($('.workId').value); showJob(); });
@@ -584,6 +591,32 @@ export default function mount(el) {
     }
     ownerActions();
     prView(state.cycle());
+  }
+
+  // What node src/main.ts retry | overrule does: src/decide.ts moveEvent refuses, writing nothing,
+  // what apply would only note; decideAndDrive records the move and drives the cycle on.
+  async function move(action, reason) {
+    const c = state.cycle();
+    say(`\n$ node src/main.ts ${action} job.json ${c.candidate.head} --reason '${reason}'`);
+    state.running = true;
+    $('.owner-actions').innerHTML = '';
+    try {
+      const job = state.job;
+      const decided = moveEvent(store, job.workId, { action, sha: c.candidate.head, reason, source: 'owner' }, { runsDir: RUNS, file: 'job.json' });
+      const ready = async () => ({ adapters: Object.fromEntries(Object.entries(job.runtime).map(([role, rt]) => [role, adapter(role, rt)])), job, opts: { deadlineMs: job.deadlineMs, runsDir: RUNS, sandbox: { backend: 'bwrap' } } });
+      const r = await decideAndDrive(store, decided.cycleId, decided.event, ready, decided.after);
+      if (r.driven) print(r.driven, job);
+      else { say(`Cycle: ${r.cycle.cycleId}`); say(`Stage: ${r.cycle.stage}`); }
+      prView(state.cycle());
+    } catch (err) {
+      console.error(err);
+      say(err.message);
+      say('(exit 2)');
+    } finally {
+      state.running = false;
+      interfere(false);
+      ownerActions();
+    }
   }
 
   function merge() {

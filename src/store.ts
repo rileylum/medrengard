@@ -3,7 +3,7 @@
 // cancel during a run, 07-d) waits for the write lock rather than failing.
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { apply, checkWorkflow, defaultWorkflow, ENGINE_VERSION, isEvent, newCycle, outcomeRunId, replayCheck, SETTLED, type Cycle, type Event, type Stage, type Workflow } from './lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, ENGINE_VERSION, isEvent, newCycle, outcomeRunId, replayCheck, SETTLED, STOPPED, type Cycle, type Event, type Stage, type Workflow } from './lifecycle.ts';
 
 // Row 0 of every cycle is the store's own "open" marker; it is not a lifecycle Event and never
 // reaches apply. Keeping it in the same table honours the one-table constraint.
@@ -112,8 +112,8 @@ function requireId(v: unknown, what: string): asserts v is string {
   if (!v.isWellFormed()) throw new Error(`${what} must be a well-formed string`);
 }
 
-// main.ts and the guide's demos import it from here.
-export { SETTLED };
+// main.ts and the guide's demos import them from here.
+export { SETTLED, STOPPED };
 
 /** append refused the event because apply could not classify its serialised form. */
 export class UnclassifiableEvent extends Error {}
@@ -126,7 +126,7 @@ export class StaleLoad extends Error {}
 
 // The events from outside a run, which may carry a command ID. isEvent tolerates extra fields, so
 // a commandId on any other event is ignored: it must not suppress a controller or run event.
-const COMMANDS: readonly Event['type'][] = ['accept', 'request_changes', 'cancel', 'head_changed', 'base_changed'];
+const COMMANDS: readonly Event['type'][] = ['accept', 'request_changes', 'cancel', 'head_changed', 'base_changed', 'owner_decision'];
 
 /**
  * The run_id column's key: a run's outcome by its JSON-escaped run ID, an event from outside a
@@ -258,6 +258,7 @@ export class EventStore {
       const length = now.cycle.history.length;
       if (opts.after !== undefined && length !== opts.after)
         throw new StaleLoad(`cycle ${cycleId} moved since it was loaded: ${length} events, not ${opts.after}; nothing was written`);
+      if (parsed.type === 'owner_decision') this.moveAllowed(cycleId, now.cycle.workId);
       // The parsed body, not `event`: the cycle a later load replays from the row (02-c).
       const next = apply(now.cycle, parsed, now.workflow);
       const written = this.insert(cycleId, parsed.type, key, body, next.stage);
@@ -267,6 +268,18 @@ export class EventStore {
       this.db.exec('ROLLBACK');
       throw err;
     }
+  }
+
+  /**
+   * The store's copy of the one-open-cycle rule for a move (11-d2), checked under the write lock as
+   * `open` checks it: a cycle with a child stays where it is, since "start over" was chosen there,
+   * and a move while another cycle of the work is open would give the work two live cycles.
+   */
+  private moveAllowed(cycleId: string, workId: string): void {
+    const child = this.db.prepare("SELECT cycle_id FROM events WHERE seq = 0 AND json_extract(body, '$.parentCycleId') = ? ORDER BY cycle_id").get(cycleId);
+    if (child) throw new Error(`cycle ${cycleId} is the parent of cycle ${child.cycle_id as string}; a move on it would give work ${workId} two live cycles; nothing was written`);
+    const { open } = this.cyclesFor(workId);
+    if (open !== undefined) throw new Error(`work ${workId} has an open cycle ${open}; a move on cycle ${cycleId} would give it two live cycles; nothing was written`);
   }
 
   /** Lifecycle events for a cycle in commit order, without the open marker. */
@@ -338,7 +351,7 @@ export class EventStore {
 
   /**
    * Every cycle not in SETTLED, across work IDs, ordered by cycle ID: what recover (11-f) must
-   * resolve. A cycle that cannot be replayed is listed with the reason, so one bad cycle does not
+   * resolve, or, for an ESCALATED cycle, leave to the owner's move (A-105 item 3). A cycle that cannot be replayed is listed with the reason, so one bad cycle does not
    * hide the rest; it is the owner's to resolve.
    */
   unsettled(): { cycleId: string; workId: string; stage?: Stage; refused?: string }[] {
@@ -362,11 +375,12 @@ export class EventStore {
     return out;
   }
 
-  // Open means still able to move: escalated cycles wait for the owner and never move again.
+  // Open means a run may act on it. An escalated cycle moves again only by the owner's move, which
+  // moveAllowed holds to the same rule.
   private cyclesFor(workId: string): { open?: string; escalated?: string } {
     const all = this.cycles(workId);
     return {
-      open: all.find((c) => !SETTLED.includes(c.stage))?.cycleId,
+      open: all.find((c) => !STOPPED.includes(c.stage))?.cycleId,
       escalated: all.findLast((c) => c.stage === 'ESCALATED')?.cycleId,
     };
   }

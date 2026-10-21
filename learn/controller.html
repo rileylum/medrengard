@@ -53,7 +53,7 @@
   <h2>Every run has a deadline</h2>
   <p>A runtime can simply never answer. The 03-a spike saw <code>claude -p</code> fail to return for a one-turn prompt in four runs of ten. So <code>execute</code> refuses to start a run without a deadline.</p>
   <p><code>bounded</code> races the adapter against a timer. When the timer wins, the outcome is <code>failed: timeout</code>, and only then is the adapter told to abort. Whatever the adapter does afterwards lands on a promise that has already settled, and is dropped. So even an adapter that ignores the abort cannot hold a cycle.</p>
-  <p>A settled cycle ends the race early, the same way. Once a second, <code>execute</code> reloads the cycle: if another process has settled it (the owner ran <code>cancel</code>), the outcome is <code>cancelled</code> and the adapter kills its CLI.</p>
+  <p>A stopped cycle ends the race early, the same way. Once a second, <code>execute</code> reloads the cycle: if another process has stopped it (the owner ran <code>cancel</code>, or the cycle escalated), the outcome is <code>cancelled</code> and the adapter kills its CLI.</p>
   <div class="note"><b>Why not just await the adapter?</b> Because a throw inside <code>start()</code>, a rejection, a late answer and no answer must all become one well-formed event. <code>bounded</code> turns all four into an outcome.</div>
 </section>
 

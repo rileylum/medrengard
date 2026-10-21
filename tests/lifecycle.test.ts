@@ -41,6 +41,7 @@ test('outcomeRunId names the run of every outcome event', () => {
     reject_dispatch: { type: 'reject_dispatch', reason: 'x' },
     dispute: { type: 'dispute', runId: 'r', head: 'H1', reason: 'x' },
     run_failed: { type: 'run_failed', runId: 'r', reason: 'x' },
+    owner_decision: { type: 'owner_decision', action: 'retry', head: 'H1', reason: 'x' },
   };
   assert.deepEqual(Object.keys(samples).sort(), [...EVENT_TYPES].sort());
   for (const e of Object.values(samples)) {
@@ -591,4 +592,114 @@ test('an event from outside a run may carry a command ID, a non-empty well-forme
     assert.equal(isEvent({ ...e, commandId: 'cmd-1' }), true, e.type);
     for (const bad of ['', 7, null, {}, '\ud800']) assert.equal(isEvent({ ...e, commandId: bad }), false, `${e.type} ${JSON.stringify(bad)}`);
   }
+});
+
+// Ticket 11-d2 (A-114, A-139): an escalated cycle waits for the owner's move.
+const move = (action: string, extra: Record<string, unknown> = {}) => ({ type: 'owner_decision', action, head: 'H1', reason: 'the owner read it', ...extra }) as Event;
+/** Live run 1: a standard FAIL, then the fix run disputes it. */
+const disputed = () => run(toStandardReview(), { ...verdict('sr1', 'H1', 'FAIL'), findings: ['f1'] } as Event,
+  { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' }, { type: 'dispute', runId: 'dev2', head: 'H1', reason: 'the finding is wrong' });
+const moveRefused = (c: Cycle, e: Event, why: RegExp) => {
+  const after = apply(c, e);
+  assert.equal(after.stage, 'ESCALATED', JSON.stringify(e));
+  assert.match(after.history.at(-1)!.note ?? '', why, JSON.stringify(e));
+  // Nothing moves but the history: the escalation, the budgets and the consumed runs stay.
+  assert.deepEqual({ ...after, history: c.history }, c, JSON.stringify(e));
+};
+
+test('owner_decision names an action, the head and a reason; only route names a stage (11-d2)', () => {
+  for (const ok of [move('retry'), move('overrule'), move('route', { stage: 'VERIFYING' }), move('retry', { source: 'bot', commandId: 'k' })]) assert.equal(isEvent(ok), true, JSON.stringify(ok));
+  for (const bad of [move('fix'), move('toString'), move('retry', { head: '' }), move('retry', { reason: '' }), move('retry', { reason: 7 }), move('route'), move('route', { stage: '' }),
+    move('retry', { stage: 'VERIFYING' }), move('overrule', { stage: 'VERIFYING' }), move('retry', { source: 'a\nb' }), move('retry', { commandId: '' })])
+    assert.equal(isEvent(bad), false, JSON.stringify(bad));
+});
+
+test('a move outside ESCALATED escalates with nothing counted; a settled cycle ignores it (11-d2)', () => {
+  for (const c of [toStandardReview(), run(toStandardReview(), verdict('sr1', 'H1', 'PASS'), verdict('ar1', 'H1', 'PASS'))]) {
+    const after = apply(c, move('retry'));
+    assert.equal(after.stage, 'ESCALATED');
+    assert.equal(after.escalation, `owner_decision outside ESCALATED (in ${c.stage})`);
+    assert.deepEqual(after.budgets, c.budgets);
+  }
+  assert.equal(apply(play('SC-01'), move('retry')).stage, 'ACCEPTED');
+  assert.equal(apply(apply(disputed(), { type: 'cancel' }), move('overrule')).stage, 'CANCELLED');
+});
+
+test('retry enters the stage the cycle escalated from; spent budget stays spent (11-d2)', () => {
+  const checksFailed = run(newCycle('c1', 'w1'), ...TO_STANDARD_REVIEW.slice(0, 2), { type: 'verification', head: 'H1', checks: [{ name: 'tests', result: 'FAIL' }] });
+  assert.equal(checksFailed.stage, 'ESCALATED');
+  // Events ignored while escalated do not change where it escalated from.
+  const retried = run(checksFailed, { type: 'base_changed', base: 'B9' }, move('retry', { reason: 'flaky check' }));
+  assert.equal(retried.stage, 'VERIFYING');
+  assert.equal(retried.escalation, undefined);
+  assert.deepEqual(retried.history.at(-1), { event: move('retry', { reason: 'flaky check' }), from: 'ESCALATED', to: 'VERIFYING', note: undefined });
+  // One standard FAIL spent, a fix, then the second review's run fails.
+  const reviewFailed = run(newCycle('c1', 'w1'), ...sc('SC-02').events.slice(0, 7), { type: 'run_failed', runId: 'sr2', reason: 'timeout' });
+  assert.deepEqual([reviewFailed.stage, reviewFailed.budgets], ['ESCALATED', { STANDARD_REVIEW: 1 }]);
+  const again = apply(reviewFailed, move('retry', { head: 'H2' }));
+  assert.deepEqual([again.stage, again.budgets], ['STANDARD_REVIEW', { STANDARD_REVIEW: 1 }]);
+});
+
+test('retry is refused with a note, the cycle left ESCALATED, for another head, a spent budget or an engine stage (11-d2)', () => {
+  const checksFailed = run(newCycle('c1', 'w1'), ...TO_STANDARD_REVIEW.slice(0, 2), { type: 'verification', head: 'H1', checks: [{ name: 'tests', result: 'FAIL' }] });
+  moveRefused(checksFailed, move('retry', { head: 'H2' }), /^move refused: H2 is not the candidate head H1$/);
+  // Escalated before the first commit: no candidate to name.
+  moveRefused(run(newCycle('c1', 'w1'), TO_STANDARD_REVIEW[0]!, { type: 'run_failed', runId: 'dev1', reason: 'timeout' }), move('retry'), /^move refused: H1 is not the candidate head \(none\)$/);
+  // SC-03: the second standard FAIL escalated at the limit.
+  moveRefused(play('SC-03'), move('retry', { head: 'H2' }), /^move refused: STANDARD_REVIEW budget is spent \(2 of 2\)$/);
+  // Only a hand-built cycle has a candidate and escalated from QUEUED.
+  const queued: Cycle = { ...newCycle('c1', 'w1'), stage: 'ESCALATED', candidate: { head: 'H1', base: 'B1' }, history: [{ event: { type: 'reject_dispatch', reason: 'x' }, from: 'QUEUED', to: 'ESCALATED' }] };
+  moveRefused(queued, move('retry'), /^move refused: the cycle escalated from QUEUED, not a workflow stage$/);
+});
+
+test('overrule refunds one unit at the stage of the last FAIL for the candidate and enters it (11-d2, A-109 B)', () => {
+  const c = disputed();
+  assert.deepEqual([c.stage, c.budgets], ['ESCALATED', { STANDARD_REVIEW: 1 }]);
+  const overruled = apply(c, move('overrule'));
+  assert.deepEqual([overruled.stage, overruled.budgets, overruled.escalation], ['STANDARD_REVIEW', { STANDARD_REVIEW: 0 }, undefined]);
+  // SC-04: the adversarial FAIL escalates at once; the overrule runs the adversarial review again.
+  const adv = apply(play('SC-04'), move('overrule'));
+  assert.deepEqual([adv.stage, adv.budgets], ['ADVERSARIAL_REVIEW', { STANDARD_REVIEW: 1, ADVERSARIAL_REVIEW: 0 }]);
+  // The next review runs on the same head and counts again.
+  const reviewed = apply(overruled, verdict('sr2', 'H1', 'PASS'));
+  assert.deepEqual([reviewed.stage, reviewed.budgets], ['ADVERSARIAL_REVIEW', { STANDARD_REVIEW: 1 }]);
+});
+
+test('overrule is refused with a note when the last verdict is not a FAIL for the candidate, or that FAIL was overruled already (11-d2)', () => {
+  const checksFailed = run(newCycle('c1', 'w1'), ...TO_STANDARD_REVIEW.slice(0, 2), { type: 'verification', head: 'H1', checks: [{ name: 'tests', result: 'FAIL' }] });
+  moveRefused(checksFailed, move('overrule'), /^move refused: the cycle has no verdict to overrule$/);
+  moveRefused(run(toStandardReview(), verdict('sr1', 'H1', 'PASS'), { type: 'run_failed', runId: 'ar1', reason: 'timeout' }), move('overrule'), /^move refused: the last verdict is a PASS, not a FAIL$/);
+  // SC-17b: a FAIL for a stale SHA is counted, never applied.
+  moveRefused(run(toStandardReview(), verdict('sr1', 'H0', 'FAIL')), move('overrule'), /^move refused: the last FAIL is for H0, not the candidate H1$/);
+  moveRefused(disputed(), move('overrule', { head: 'H2' }), /^move refused: H2 is not the candidate head H1$/);
+  // Each overrule needs a fresh FAIL: the same one cannot refund the budget twice.
+  const twice = run(disputed(), move('overrule'), { type: 'run_failed', runId: 'sr2', reason: 'timeout' });
+  assert.equal(twice.stage, 'ESCALATED');
+  moveRefused(twice, move('overrule'), /^move refused: the last FAIL was overruled already$/);
+});
+
+test('route enters a named workflow stage; an engine, unknown or spent stage is refused with a note (11-d2)', () => {
+  assert.equal(apply(disputed(), move('route', { stage: 'VERIFYING' })).stage, 'VERIFYING');
+  // Accept with risk: route to the human stage, then accept as usual.
+  const risk = run(disputed(), move('route', { stage: 'AWAITING_ACCEPTANCE' }), { type: 'accept', head: 'H1' });
+  assert.equal(risk.stage, 'ACCEPTED');
+  for (const stage of ['ESCALATED', 'ACCEPTED', 'QUEUED', 'CANCELLED', 'NOPE', 'toString'])
+    moveRefused(disputed(), move('route', { stage }), new RegExp(`^move refused: ${stage} is not a workflow stage$`));
+  moveRefused(play('SC-03'), move('route', { head: 'H2', stage: 'STANDARD_REVIEW' }), /^move refused: STANDARD_REVIEW budget is spent \(2 of 2\)$/);
+});
+
+test('a move consumes every developer run with no outcome, so a late outcome is a duplicate and a new run can start (11-d2)', () => {
+  const failed = run(toStandardReview(), verdict('sr1', 'H1', 'FAIL'), { type: 'claim', runId: 'dev2', base: 'B1', runtime: 'fake' });
+  const cut = apply(failed, { type: 'reject_dispatch', reason: 'controller stopped' });
+  assert.equal(cut.consumed.includes('dev2'), false);
+  // A refused move consumes nothing.
+  assert.equal(apply(cut, move('retry', { head: 'H2' })).consumed.includes('dev2'), false);
+  for (const m of [move('retry'), move('overrule'), move('route', { stage: 'DEVELOPING' })]) {
+    const moved = apply(cut, m);
+    assert.equal(moved.consumed.includes('dev2'), true, m.action);
+    const late = apply(moved, { type: 'developer_result', runId: 'dev2', head: 'H2', artifacts: ['x'] });
+    assert.deepEqual([late.stage, late.history.at(-1)!.note], [moved.stage, 'ignored: duplicate result'], m.action);
+  }
+  const next = run(cut, move('retry'), { type: 'claim', runId: 'dev3', base: 'B1', runtime: 'fake' });
+  assert.equal(next.runs.at(-1)!.runId, 'dev3');
 });

@@ -882,3 +882,122 @@ test('two overlapping deliveries of one request-changes command ID: the FAIL is 
   assert.equal(results.filter((r) => /^Escalation: AWAITING_ACCEPTANCE FAIL: owner requested changes$/m.test(r.out)).length, 1, all);
   assert.deepEqual(look(db, 'c1'), { stage: 'ESCALATED', events: 6 });
 });
+
+// Ticket 11-d2 (A-114, A-139): retry, overrule and route on an escalated cycle, driven on as accept is.
+const MARK = 'owner-ruling-7f3a';
+/**
+ * Live run 1 as a stub claude: the standard reviewer FAILs unless its prompt holds the owner's
+ * ruling, the fix run disputes, and the adversarial reviewer PASSes unless its prompt holds the
+ * ruling, which is for the standard review alone.
+ */
+function liveRunOneStub(bin: string) {
+  writeFileSync(join(bin, 'claude'), [
+    '#!/bin/sh',
+    'p=$(cat)',
+    `reply() { esc=$(printf %s "$1" | sed 's/"/\\\\"/g'); printf '{"type":"result","is_error":false,"result":"%s"}\\n' "$esc"; }`,
+    'h=$(printf %s "$p" | sed -n "s/^Candidate SHA: //p")',
+    'pass() { reply "{\\"head\\":\\"$h\\",\\"verdict\\":\\"PASS\\",\\"findings\\":[]}"; exit 0; }',
+    'fail() { reply "{\\"head\\":\\"$h\\",\\"verdict\\":\\"FAIL\\",\\"findings\\":[\\"README.md:1 the check printed exit 0\\"]}"; exit 0; }',
+    `case "$p" in *"You are the standard reviewer"*) case "$p" in *"${MARK}"*) pass;; *) fail;; esac;; esac`,
+    `case "$p" in *"You are the adversarial reviewer"*) case "$p" in *"${MARK}"*) fail;; *) pass;; esac;; esac`,
+    'case "$p" in *"fixing review findings"*) reply "{\\"head\\":\\"$(git rev-parse HEAD)\\",\\"artifacts\\":[],\\"dispute\\":\\"the finding is wrong\\"}"; exit 0;; esac',
+    'echo done > done.txt && git add done.txt && git -c user.name=s -c user.email=s@example.invalid commit -qm done',
+    'reply "{\\"head\\":\\"$(git rev-parse HEAD)\\",\\"artifacts\\":[\\"done.txt\\"]}"',
+    '',
+  ].join('\n'));
+  chmodSync(join(bin, 'claude'), 0o755);
+}
+/** A scratch job run by the stub until it escalates. */
+function escalated(stub: (bin: string, root: string) => void, checks?: unknown) {
+  const s = scratch();
+  const bin = join(s.root, 'bin');
+  mkdirSync(bin);
+  stub(bin, s.root);
+  if (checks) writeFileSync(s.jobFile, JSON.stringify({ ...JSON.parse(readFileSync(s.jobFile, 'utf8')), checks }));
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  const first = sf([s.jobFile], env);
+  assert.equal(first.status, 1, first.stdout + first.stderr);
+  assert.match(first.stdout, /^Stage: ESCALATED$/m);
+  const head = /^Head: ([0-9a-f]{40})$/m.exec(first.stdout)![1]!;
+  const cycleId = /^Cycle: (\S+)$/m.exec(first.stdout)![1]!;
+  return { ...s, bin, env, head, cycleId, first };
+}
+
+test('live run 1: a reviewer FAIL, a developer dispute, then overrule reruns the review on the same head and the cycle reaches AWAITING_ACCEPTANCE (11-d2)', () => {
+  const { env, jobFile, head, cycleId, db, first } = escalated(liveRunOneStub);
+  assert.match(first.stdout, /^Escalation: developer disputes the findings on [0-9a-f]{40}: the finding is wrong$/m);
+  assert.match(first.stdout, /^Reviews: standard 1, adversarial 0$/m);
+  const r = sf(['overrule', jobFile, head, '--reason', `${MARK}: the check prints what it observed`], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+  assert.match(r.stdout, new RegExp(`^Head: ${head}$`, 'm'));
+  // The refund: the rerun counts again, so standard stays at 1.
+  assert.match(r.stdout, /^Reviews: standard 1, adversarial 1$/m);
+  assert.match(r.stdout, new RegExp(`^owner overrule ${head.slice(0, 7)}: ${MARK}: the check prints what it observed$`, 'm'));
+  assert.doesNotMatch(r.stdout, /^Escalation:/m);
+  assert.ok(r.stdout.includes(`accept ${jobFile} ${head}`), r.stdout);
+  assert.deepEqual(rows(db, cycleId).slice(-4), ['dispute', 'owner_decision', 'verdict', 'verdict']);
+});
+
+test('retry reruns the stage the cycle escalated from, with the job\'s checks as they are now (11-d2)', () => {
+  const { env, jobFile, head, cycleId, db, first } = escalated((bin, root) => reviewerStub(bin, 'claude', 'nobody', join(root, 'outside')), [{ name: 'ok', command: ['false'] }]);
+  assert.match(first.stdout, /^Escalation: VERIFYING FAIL: required check failed or missing$/m);
+  writeFileSync(jobFile, JSON.stringify({ ...JSON.parse(readFileSync(jobFile, 'utf8')), checks: [{ name: 'ok', command: ['true'] }] }));
+  const r = sf(['retry', jobFile, head, '--reason', 'the check was wrong', '--command-id', 'r1'], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+  assert.match(r.stdout, /^verification [0-9a-f]{7}: ok PASS$/m);
+  // A later delivery finds no escalated cycle, as a late accept finds no human stage (11-d); an
+  // overlapping one is the store's to drop by its command ID.
+  const again = sf(['retry', jobFile, head, '--reason', 'the check was wrong', '--command-id', 'r1'], env);
+  assert.equal(again.status, 2, again.stdout + again.stderr);
+  assert.match(again.stderr, /^no escalated cycle for work w in /m);
+  assert.equal(rows(db, cycleId).filter((t) => t === 'owner_decision').length, 1);
+});
+
+test('route to the human stage is accept with risk: nothing runs, then accept settles it (11-d2)', () => {
+  const { env, jobFile, head, cycleId, db } = escalated((bin, root) => reviewerStub(bin, 'claude', 'nobody', join(root, 'outside')), [{ name: 'ok', command: ['false'] }]);
+  // The runtime is gone: route to a human stage builds no adapter.
+  const spec = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...spec, runtime: { developer: 'nosuch', standard: 'nosuch', adversarial: 'nosuch' } }));
+  const r = sf(['route', jobFile, head, 'AWAITING_ACCEPTANCE', '--reason', 'a known failure; shipping with it'], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+  assert.match(r.stdout, new RegExp(`^owner route to AWAITING_ACCEPTANCE ${head.slice(0, 7)}: a known failure; shipping with it$`, 'm'));
+  assert.ok(r.stdout.includes(`accept ${jobFile} ${head}`), r.stdout);
+  const a = sf(['accept', jobFile, head], env);
+  assert.equal(a.status, 0, a.stdout + a.stderr);
+  assert.match(a.stdout, /^Stage: ACCEPTED$/m);
+  assert.deepEqual(rows(db, cycleId).slice(-3), ['verification', 'owner_decision', 'accept']);
+});
+
+test('a move is refused, writing nothing, without a reason, for another head, an unknown stage, a cycle with a child, or what preflight refuses (11-d2)', () => {
+  const { env, jobFile, head, cycleId, db } = escalated((bin, root) => reviewerStub(bin, 'claude', 'nobody', join(root, 'outside')), [{ name: 'ok', command: ['false'] }]);
+  const before = rows(db, cycleId);
+  const refused = (args: string[], why: RegExp) => {
+    const r = sf(args, env);
+    assert.equal(r.status, 2, `${args.join(' ')}: ${r.stdout}${r.stderr}`);
+    assert.equal(r.stdout, '', args.join(' '));
+    assert.match(r.stderr, why, args.join(' '));
+  };
+  refused(['retry', jobFile, head], /usage/);
+  refused(['route', jobFile, head, '--reason', 'x'], /usage/);
+  refused(['retry', jobFile, head, '--reason', ''], /^a move needs a reason$/m);
+  refused(['retry', jobFile, head, '--reason', 'x', '--reason', 'y'], /usage/);
+  refused(['overrule', jobFile, 'c'.repeat(40), '--reason', 'x'], new RegExp(`move refused: ${'c'.repeat(40)} is not the candidate head ${head}`));
+  refused(['overrule', jobFile, head, '--reason', 'x'], /move refused: the cycle has no verdict to overrule/);
+  refused(['route', jobFile, head, 'NOPE', '--reason', 'x'], /move refused: NOPE is not a workflow stage/);
+  // VERIFYING runs a check, so the move builds the adapters first.
+  const spec = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...spec, runtime: { ...spec.runtime, standard: 'nosuch' } }));
+  refused(['retry', jobFile, head, '--reason', 'x'], /nosuch/);
+  writeFileSync(jobFile, JSON.stringify(spec));
+  assert.deepEqual(rows(db, cycleId), before);
+  // Start over was chosen: the child holds the parent.
+  const store = new EventStore(db);
+  store.open('child', 'w', cycleId);
+  store.append('child', { type: 'cancel' });
+  store.close();
+  refused(['retry', jobFile, head, '--reason', 'x'], new RegExp(`cycle ${cycleId} is the parent of cycle child`));
+  assert.deepEqual(rows(db, cycleId), before);
+});

@@ -10,7 +10,8 @@ import { EventStore } from '../src/store.ts';
 import { claude, claudeReviewer, cliAdapter, pi, piReviewer, type CliSpec } from '../src/runtime/cli-adapter.ts';
 import { develop, fix, type Job } from '../src/developer.ts';
 import { verify } from '../src/verify.ts';
-import { review } from '../src/review.ts';
+import { ownerRuling, review } from '../src/review.ts';
+import { apply, newCycle, type Event } from '../src/lifecycle.ts';
 import { fakeAdapter } from './fake-adapter.ts';
 import { withGitConfig } from './git-config.ts';
 
@@ -448,4 +449,33 @@ test('review compares in full a checkout whose permissions changed after verify 
   assert.equal(adapter.requests.length, 0);
   assert.equal(store.events(cycleId).length, before);
   store.close();
+});
+
+// Ticket 11-d2 (A-109 B): which reviewer sees the owner's reason.
+test('ownerRuling is the reason of the latest overrule, only in the stage it entered and only for the head it named', () => {
+  const H1 = 'a'.repeat(40);
+  const H2 = 'c'.repeat(40);
+  const play = (...events: Event[]) => events.reduce((c, e) => apply(c, e), newCycle('c1', 'w1'));
+  const overrule = (reason: string, head = H1): Event => ({ type: 'owner_decision', action: 'overrule', head, reason });
+  const toReview: Event[] = [
+    { type: 'claim', runId: 'dev1', base: 'b'.repeat(40), runtime: 'fake' },
+    { type: 'developer_result', runId: 'dev1', head: H1, artifacts: ['x'] },
+    { type: 'verification', head: H1, checks: [{ name: 'ok', result: 'PASS' }] },
+  ];
+  const failed: Event[] = [...toReview, { type: 'verdict', runId: 'sr1', head: H1, verdict: 'FAIL', findings: ['f'] }, { type: 'claim', runId: 'dev2', base: 'b'.repeat(40), runtime: 'fake' }, { type: 'dispute', runId: 'dev2', head: H1, reason: 'no' }];
+  assert.equal(ownerRuling(play(...toReview)), undefined);
+  const overruled = play(...failed, overrule('first'));
+  assert.equal(overruled.stage, 'STANDARD_REVIEW');
+  assert.equal(ownerRuling(overruled), 'first');
+  // The next stage's reviewer is not shown a ruling on another stage's FAIL.
+  assert.equal(ownerRuling(apply(overruled, { type: 'verdict', runId: 'sr2', head: H1, verdict: 'PASS' })), undefined);
+  // A fresh FAIL, a dispute and a second overrule: the latest reason.
+  const twice = play(...failed, overrule('first'), { type: 'verdict', runId: 'sr2', head: H1, verdict: 'FAIL' }, { type: 'claim', runId: 'dev3', base: 'b'.repeat(40), runtime: 'fake' }, { type: 'dispute', runId: 'dev3', head: H1, reason: 'no' }, overrule('second'));
+  assert.equal(ownerRuling(twice), 'second');
+  // A new head after the overrule: the ruling was on the old one.
+  const fixed = play(...failed, overrule('first'), { type: 'verdict', runId: 'sr2', head: H1, verdict: 'FAIL' }, { type: 'claim', runId: 'dev3', base: 'b'.repeat(40), runtime: 'fake' },
+    { type: 'developer_result', runId: 'dev3', head: H2, artifacts: ['x'] }, { type: 'verification', head: H2, checks: [{ name: 'ok', result: 'PASS' }] });
+  assert.deepEqual([fixed.stage, ownerRuling(fixed)], ['STANDARD_REVIEW', undefined]);
+  // A refused overrule rules nothing.
+  assert.equal(ownerRuling(play(...failed, overrule('wrong head', H2))), undefined);
 });

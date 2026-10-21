@@ -9,7 +9,7 @@ import type { Job } from '../src/developer.ts';
 import { decideAndDrive, type Adapters } from '../src/run.ts';
 import { ownerCheck } from './workflows.ts';
 import { EventStore, StaleLoad } from '../src/store.ts';
-import { acceptCycle, cancelWork, requestChangesEvent } from '../src/decide.ts';
+import { acceptCycle, cancelWork, moveEvent, requestChangesEvent, type Move } from '../src/decide.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-decide-');
@@ -348,6 +348,106 @@ test('cancelWork appends with no after, so a cancel lands whatever came between 
     });
     cancelWork(watched, 'w', 'owner', where);
     assert.deepEqual(seen, [undefined]);
+  } finally {
+    store.close();
+  }
+});
+
+// Ticket 11-d2 (A-114, A-139): the owner's moves. moveEvent refuses, writing nothing, what apply
+// would only record with a note, and what the driver could not run.
+const mv = (action: Move['action'], extra: Partial<Move> = {}): Move => ({ action, sha: H, reason: 'the owner read it', source: 'owner', ...extra });
+const DISPUTED: Event[] = [
+  ...TO_ACCEPTANCE.slice(0, 3),
+  { type: 'verdict', runId: 'std1', head: H, verdict: 'FAIL', findings: ['f1'] },
+  { type: 'claim', runId: 'dev2', base: 'b'.repeat(40), runtime: 'fake' },
+  { type: 'dispute', runId: 'dev2', head: H, reason: 'the finding is wrong' },
+];
+
+test('moveEvent refuses with no store or no escalated cycle, naming the runs directory (11-d2)', () => {
+  assert.throws(() => moveEvent(undefined, 'w', mv('retry'), where), /^Error: no escalated cycle for work w in \/runs$/);
+  const store = fresh();
+  try {
+    seed(store, 'c1', TO_ACCEPTANCE.slice(0, 3));
+    assert.throws(() => moveEvent(store, 'w', mv('retry'), where), /^Error: no escalated cycle for work w in \/runs$/);
+    assert.equal(store.events('c1').length, 3);
+  } finally {
+    store.close();
+  }
+});
+
+test('moveEvent returns the move for the candidate head with the load it decided on (11-d2)', () => {
+  const store = fresh();
+  try {
+    seed(store, 'c1', DISPUTED);
+    assert.deepEqual(moveEvent(store, 'w', mv('overrule', { source: 'bot', commandId: 'k' }), where), {
+      cycleId: 'c1', after: DISPUTED.length,
+      event: { type: 'owner_decision', action: 'overrule', head: H, reason: 'the owner read it', source: 'bot', commandId: 'k' },
+    });
+    assert.deepEqual(moveEvent(store, 'w', mv('route', { stage: 'VERIFYING' }), where).event,
+      { type: 'owner_decision', action: 'route', head: H, reason: 'the owner read it', stage: 'VERIFYING', source: 'owner' });
+    assert.equal(store.events('c1').length, DISPUTED.length);
+  } finally {
+    store.close();
+  }
+});
+
+test('moveEvent refuses a head other than the candidate, a spent budget, and a stage that is not the workflow\'s (11-d2)', () => {
+  const store = fresh();
+  try {
+    seed(store, 'c1', DISPUTED);
+    assert.throws(() => moveEvent(store, 'w', mv('retry', { sha: 'c'.repeat(40) }), where), new RegExp(`^Error: cycle c1 \\(/job.json\\): move refused: ${'c'.repeat(40)} is not the candidate head ${H}$`));
+    for (const stage of ['ESCALATED', 'NOPE']) assert.throws(() => moveEvent(store, 'w', mv('route', { stage }), where), new RegExp(`move refused: ${stage} is not a workflow stage$`));
+    assert.throws(() => moveEvent(store, 'w', mv('overrule', { reason: '' }), where), /^Error: a move needs a reason$/);
+    const spent = fresh();
+    seed(spent, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'verdict', runId: 'std1', head: H, verdict: 'FAIL' }, { type: 'claim', runId: 'dev2', base: 'b'.repeat(40), runtime: 'fake' },
+      { type: 'developer_result', runId: 'dev2', head: H, artifacts: ['x'] }, { type: 'verification', head: H, checks: [{ name: 'ok', result: 'PASS' }] }, { type: 'verdict', runId: 'std2', head: H, verdict: 'FAIL' }]);
+    assert.equal(spent.load('c1')!.stage, 'ESCALATED');
+    for (const m of [mv('retry'), mv('route', { stage: 'STANDARD_REVIEW' })]) assert.throws(() => moveEvent(spent, 'w', m, where), /move refused: STANDARD_REVIEW budget is spent \(2 of 2\)$/);
+    spent.close();
+    assert.equal(store.events('c1').length, DISPUTED.length);
+  } finally {
+    store.close();
+  }
+});
+
+test('moveEvent refuses a stage the driver cannot run: a commit stage without a FAIL for the candidate, a review stage without its verification, a grant stage the head gate refuses (11-d2)', () => {
+  const store = fresh();
+  try {
+    // The adversarial run failed after a standard PASS: no FAIL for a fix run to take.
+    seed(store, 'c1', [...TO_ACCEPTANCE.slice(0, 4), { type: 'run_failed', runId: 'adv1', reason: 'timeout' }]);
+    assert.throws(() => moveEvent(store, 'w', mv('route', { stage: 'DEVELOPING' }), where), new RegExp(`^Error: cycle c1: commit stage DEVELOPING runs a fix, which needs a FAIL for the candidate ${H}; the last verdict is a PASS for ${H}$`));
+    assert.doesNotThrow(() => moveEvent(store, 'w', mv('route', { stage: 'AWAITING_ACCEPTANCE' }), where));
+    // The fix's checks never ran: verify threw after the new commit.
+    const H2 = 'd'.repeat(40);
+    const unverified = fresh();
+    seed(unverified, 'c1', [...DISPUTED.slice(0, 5), { type: 'developer_result', runId: 'dev2', head: H2, artifacts: ['x'] }, { type: 'reject_dispatch', reason: 'VERIFYING: sandbox' }]);
+    assert.throws(() => moveEvent(unverified, 'w', mv('route', { sha: H2, stage: 'STANDARD_REVIEW' }), where), new RegExp(`^Error: cycle c1: review stage STANDARD_REVIEW reads the verification of the candidate ${H2}; the last is for ${H}$`));
+    assert.doesNotThrow(() => moveEvent(unverified, 'w', mv('retry', { sha: H2 }), where));
+    unverified.close();
+    // No review between the check and the grant stage, so no PASS verdict binds the head.
+    const granted = fresh(grantFlow([{ name: 'merge', command: ['true'] }], false));
+    seed(granted, 'c1', [...AT_OWNER.slice(0, 3), { type: 'request_changes', head: H }]);
+    assert.throws(() => moveEvent(granted, 'w', mv('route', { stage: 'MERGE' }), where), new RegExp(`^Error: stage MERGE holds a grant, but no PASS verdict is for the candidate ${H}$`));
+    granted.close();
+  } finally {
+    store.close();
+  }
+});
+
+test('a move through decideAndDrive drives the cycle on into the stage it enters (11-d2)', async () => {
+  const store = fresh(ownerCheck);
+  try {
+    seed(store, 'c1', [...AT_OWNER.slice(0, 3), { type: 'verdict', runId: 'rev1', head: H, verdict: 'FAIL', findings: ['f'] }]);
+    const { cycleId, event, after } = moveEvent(store, 'w', mv('overrule'), where);
+    let called = false;
+    const ready = async () => { called = true; return { adapters: none, job, opts: { deadlineMs: 1000, runsDir: dir } }; };
+    // The overrule leads to REVIEW, a stage the loop runs: ready and preflight run before anything is written.
+    await assert.rejects(decideAndDrive(store, cycleId, event, ready, after), /^Error: no adapter for role writer \(stage DEV\)$/);
+    assert.ok(called);
+    assert.equal(store.events('c1').length, 4);
+    const routed = moveEvent(store, 'w', mv('route', { stage: 'OWNER' }), where);
+    const r = await decideAndDrive(store, routed.cycleId, routed.event, async () => { throw new Error('ready called'); }, routed.after);
+    assert.deepEqual([r.written, r.cycle.stage], [true, 'OWNER']);
   } finally {
     store.close();
   }

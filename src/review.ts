@@ -78,8 +78,20 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
     }
   }
 
-  const { text, ...versions } = reviewPrompt(def.roleText, gather(job.ticket, head, base, job.repo, opts.instructions ?? ['AGENTS.md'], stages));
+  const ruling = ownerRuling(cycle);
+  const { text, ...versions } = reviewPrompt(def.roleText, { ...gather(job.ticket, head, base, job.repo, opts.instructions ?? ['AGENTS.md'], stages), ...(ruling === undefined ? {} : { ruling }) });
   return execute(store, cycleId, adapter, { role, prompt: text, cwd: checkout }, { deadlineMs: opts.deadlineMs, versions });
+}
+
+/**
+ * The owner's reason for the latest overrule, when it entered the cycle's stage on its candidate
+ * (11-d2, A-109 B): that reviewer reruns the review the owner overruled. Any other reviewer, or a
+ * new head, judges without it.
+ */
+export function ownerRuling(cycle: Cycle): string | undefined {
+  const last = cycle.history.findLast((h) => h.event.type === 'owner_decision' && h.event.action === 'overrule' && h.to !== 'ESCALATED');
+  if (last?.event.type !== 'owner_decision' || last.to !== cycle.stage || last.event.head !== cycle.candidate?.head) return undefined;
+  return last.event.reason;
 }
 
 // What the reviewer is shown, gathered from Git and the evidence files; the wording around it is

@@ -13,22 +13,23 @@
 // Ticket 11-a2: `accept` drives the cycle on when the workflow has a stage after the human one.
 // Ticket 11-d: `request-changes <job.json> <sha>` records the owner's FAIL for that SHA; every owner
 // command takes `--command-id`, which the store records once per cycle.
+// Ticket 11-d2: `retry`, `overrule` and `route` move an escalated cycle on, with the owner's reason.
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { join, resolve } from 'node:path';
 import { loadConfig, storeOf, type Config, type JobFile } from './config.ts';
-import { acceptEvent, cancelWork, humanStages, requestChangesEvent, type Decided } from './decide.ts';
+import { acceptEvent, cancelWork, humanStages, moveEvent, requestChangesEvent, type Decided } from './decide.ts';
 import { oneLine, type Job } from './developer.ts';
 import { printable } from './prompt.ts';
-import { storeFile } from './layout.ts';
-import { defaultWorkflow, isSource, type Cycle, type Workflow } from './lifecycle.ts';
+import { cyclePaths, storeFile } from './layout.ts';
+import { defaultWorkflow, isSource, MOVE_ACTIONS, type Cycle, type MoveAction, type Workflow } from './lifecycle.ts';
 import { decideAndDrive, ROLE_ALIASES, run, type Adapters, type RunOptions, type RunResult } from './run.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
 import { EventStore, openings, StaleLoad, workflowHash } from './store.ts';
 import { FOLLOW_MS, openStream, storeReady } from './stream.ts';
 
-const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> [--source <name>] [--command-id <id>] | request-changes <job.json> <sha> [--source <name>] [--command-id <id>] | cancel <job.json> [--source <name>] [--command-id <id>] | events <job.json | runsDir> [--after <seq>] [--follow]';
+const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> [--source <name>] [--command-id <id>] | request-changes <job.json> <sha> [--source <name>] [--command-id <id>] | cancel <job.json> [--source <name>] [--command-id <id>] | retry <job.json> <sha> --reason <text> [--source <name>] [--command-id <id>] | overrule <job.json> <sha> --reason <text> [--source <name>] [--command-id <id>] | route <job.json> <sha> <stage> --reason <text> [--source <name>] [--command-id <id>] | events <job.json | runsDir> [--after <seq>] [--follow]';
 
 /** One adapter per agent role, from `runtime[role]` or the alias that names the role. */
 function adaptersFor(w: Workflow, registry: Record<string, RuntimeEntry>, runtime: JobFile['runtime'], sandbox: Sandbox): Adapters {
@@ -84,22 +85,25 @@ interface From {
 /**
  * `--source <name>` and `--command-id <id>`, each at most once, after `positional` words. The
  * source is `owner` without it. No command ID is minted: a fresh one would deduplicate nothing.
+ * A move also takes `--reason`, once, and needs it.
  */
-function withFlags(rest: string[], positional: number): { args: string[]; from: From } {
+function withFlags(rest: string[], positional: number, reason = false): { args: string[]; from: From; reason?: string } {
   const args = rest.slice(0, positional);
   const flags = rest.slice(positional);
   if (args.length !== positional || flags.length % 2 !== 0) throw new Error(USAGE);
   const given = new Map<string, string>();
+  const names = reason ? ['--source', '--command-id', '--reason'] : ['--source', '--command-id'];
   for (let i = 0; i < flags.length; i += 2) {
-    if (!['--source', '--command-id'].includes(flags[i]!) || given.has(flags[i]!)) throw new Error(USAGE);
+    if (!names.includes(flags[i]!) || given.has(flags[i]!)) throw new Error(USAGE);
     given.set(flags[i]!, flags[i + 1]!);
   }
+  if (reason && !given.has('--reason')) throw new Error(USAGE);
   const source = given.get('--source') ?? 'owner';
   if (!isSource(source)) throw new Error('--source must be one line of printable text');
   const commandId = given.get('--command-id');
   // The same rule as --source: the stream prints it.
   if (commandId !== undefined && !(isSource(commandId) && commandId.isWellFormed())) throw new Error('--command-id must be one line of printable text');
-  return { args, from: { source, ...(commandId === undefined ? {} : { commandId }) } };
+  return { args, from: { source, ...(commandId === undefined ? {} : { commandId }) }, reason: given.get('--reason') };
 }
 
 /** The store's StaleLoad, with what the owner does about it. */
@@ -162,6 +166,8 @@ function report(r: RunResult, { path, repo, workflow, sandbox }: Config): number
   for (const h of cycle.history) {
     const e = h.event;
     if (e.type === 'verification') console.log(`verification ${e.head.slice(0, 7)}: ${e.checks.map((c) => `${c.name} ${c.result}`).join(', ') || 'no checks'}`);
+    // The reason is the owner's or an observer's text, printed as agent text is.
+    if (e.type === 'owner_decision') console.log(`${printable(e.source ?? 'owner')} ${e.action}${e.stage === undefined ? '' : ` to ${printable(e.stage)}`} ${printable(e.head.slice(0, 7))}: ${printable(oneLine(e.reason))}`);
     if (e.type === 'verdict') {
       const def = workflow.stages[h.from];
       const role = def?.kind === 'agent' ? def.role : 'reviewer';
@@ -210,19 +216,21 @@ function already(commandId: string | undefined, cycle: Cycle): number {
   return 0;
 }
 
+/** report, then the merge lines if the cycle reached ACCEPTED; a human stage prints its own next steps. */
+function reportDriven(driven: RunResult, config: Config): number {
+  const code = report(driven, config);
+  if (driven.cycle.stage !== 'ACCEPTED') return code;
+  console.log('');
+  console.log('To merge:');
+  console.log(`  git -C ${config.repo} merge --no-ff ${driven.cycle.candidate!.head}`);
+  return 0;
+}
+
 async function accept(file: string, sha: string, { source, commandId }: From): Promise<number> {
   const { config, cycle: after, written, driven } = await decideAt(file, (store, workId, where) => acceptEvent(store, workId, sha, source, where, commandId));
   if (!written) return already(commandId, after);
   const { repo } = config;
-  if (driven) {
-    // A further human stage prints its own next steps; ACCEPTED gets the merge lines below.
-    const code = report(driven, config);
-    if (driven.cycle.stage !== 'ACCEPTED') return code;
-    console.log('');
-    console.log('To merge:');
-    console.log(`  git -C ${repo} merge --no-ff ${driven.cycle.candidate!.head}`);
-    return 0;
-  }
+  if (driven) return reportDriven(driven, config);
   console.log(`Cycle: ${after.cycleId}`);
   console.log(`Stage: ${after.stage}`);
   if (after.stage !== 'ACCEPTED') return 1;
@@ -247,6 +255,17 @@ async function requestChanges(file: string, sha: string, { source, commandId }: 
   console.log(`Stage: ${cycle.stage}`);
   if (cycle.escalation) console.log(`Escalation: ${printable(cycle.escalation)}`);
   return 0;
+}
+
+/**
+ * The owner's move on an escalated cycle (11-d2), driven on as accept is. A move the loop does not
+ * drive entered a human stage, where report prints the next steps.
+ */
+async function moveCycle(file: string, action: MoveAction, sha: string, stage: string | undefined, reason: string, { source, commandId }: From): Promise<number> {
+  const { config, cycle, written, driven } = await decideAt(file, (store, workId, where) => moveEvent(store, workId, { action, sha, reason, stage, source, commandId }, where));
+  if (!written) return already(commandId, cycle);
+  const { clone, branch } = cyclePaths(config.runsDir, cycle.cycleId);
+  return reportDriven(driven ?? { cycle, worktree: clone, branch }, config);
 }
 
 async function cancel(file: string, { source, commandId }: From): Promise<number> {
@@ -275,6 +294,11 @@ export async function main(argv: string[]): Promise<number> {
   if (first === 'cancel') {
     const { args, from } = withFlags(rest, 1);
     return cancel(args[0]!, from);
+  }
+  if (MOVE_ACTIONS.includes(first as MoveAction)) {
+    const route = first === 'route';
+    const { args, from, reason } = withFlags(rest, route ? 3 : 2, true);
+    return moveCycle(args[0]!, first as MoveAction, args[1]!, route ? args[2] : undefined, reason!, from);
   }
   if (first === 'events') return events(rest);
   // Extra words are refused, not ignored: `job.json cancel` would otherwise start a paid run.
