@@ -77,7 +77,7 @@ overrule <job.json> <sha> --reason <text>                 # 11-d2
 route <job.json> <sha> <stage> --reason <text>            # 11-d2
 ```
 
-The observer kit (`src/kits/observe.ts`) passes `<source>:<pos>` as the command ID: the stream position of the line being handled. An observer that restarts and handles the same line again sends the same ID.
+The observer kit (`src/kits/observe.ts`) passes `<source>:<pos>:<command>` as the command ID: the stream position of the line being handled, and the command, so an accept and a cancel sent for one line stay two IDs. An observer that restarts and handles the same line again sends the same ID.
 
 ## 11-d: binding, deduplication and the stale-load refusal
 
