@@ -215,18 +215,10 @@ export function mirrorBase(repo: string, mirror: string, base: string): void {
       rmSync(made, { recursive: true, force: true });
     }
   }
-  // The ref is written after its objects, so a base with a ref is whole. A fetch that fails
-  // because another cycle wrote the same ref at the same moment has the base all the same.
-  const has = () => gitStatus(mirror, 'rev-parse', '--verify', '--quiet', `refs/bases/${base}`) === 0;
-  if (has()) return;
-  try {
-    // By SHA, for a branch tip or any other commit, with no change to the owner's config (11-b2
-    // probe 1, which v0 passed too). The version is named so an owner config naming another one
-    // cannot change what was probed.
-    git(mirror, '-c', 'protocol.version=2', 'fetch', '-q', '--no-tags', '--no-write-fetch-head', repo, `${base}:refs/bases/${base}`);
-  } catch (err) {
-    if (!has()) throw err;
-  }
+  // By SHA, for a branch tip or any other commit, with no change to the owner's config (11-b2 probe
+  // 1, which v0 passed too). The version is named so an owner config naming another one cannot
+  // change what was probed. Cycles fetching the same base at once all succeed (the race test).
+  git(mirror, '-c', 'protocol.version=2', 'fetch', '-q', '--no-tags', '--no-write-fetch-head', repo, `${base}:refs/bases/${base}`);
 }
 
 /**
