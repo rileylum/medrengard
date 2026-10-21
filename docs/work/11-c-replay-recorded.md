@@ -12,7 +12,7 @@ Done when:
 - A cycle with no recorded definition and a hash that neither the default nor the given workflow matches is still refused, naming both. Verified by test.
 - A recorded definition that `replayCheck` passes and `checkWorkflow` refuses still loads; a new store built with it is refused. Verified by test.
 - Each row stores the stage `apply` produced. A row whose stored stage differs from the replay makes `load` throw `ReplayDiverged`, naming the cycle, the row's seq, both stages and the engine version. Verified by test that edits a stored stage.
-- Two processes appending to one cycle at once store the stages the final log replays to. Verified by a test that releases them together with a barrier file.
+- Two processes appending to one cycle at once store the stages the final log replays to. Verified by a test that releases them together with a held write lock or a barrier file (A-137).
 - The open row records `engine: ENGINE_VERSION`. Verified by test.
 - `unsettled()` lists every cycle not in SETTLED across work IDs, and lists a cycle it cannot replay with the reason instead of throwing. Verified by test.
 - A store written before 11-c (the v1 and v2 fixtures) gains the column with nulls and loads every cycle as before. Verified by the existing fixture tests and one for the column.
