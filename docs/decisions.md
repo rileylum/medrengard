@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-141 — 2026-10-21 — 11-d: standard 2's FAIL fixed on the branch, then a third standard review, then the adversarial
+
+Asked, after 11-d's standard 2 FAIL on `47c3e7b` (two overlapping deliveries of one command ID both drive the cycle; no test drives the loop after `request-changes`), with the standard budget spent: fix on the branch tests-first and go to the adversarial review; or a third standard review first; or a new ticket naming 11-d. The session recommended the first: the store reports whether an append wrote, and `decideAndDrive` drives only when it did. Owner: “go with your recommendation, and go through an additonal standard review.”
+
+Effect: both findings are fixed on `feat/11-d-owner-events-bound`, tests first. A third standard review, beyond A-125's budget for this ticket only, reads the fix; then the adversarial review.
+
 ### A-140 — 2026-10-21 — 11-d: two existing test pins change; no command ID is minted
 
 Asked, during 11-d's build: the ticket says existing tests pass unchanged, but two pins follow from A-123 item 1 and A-139: (1) the `request_changes` sample in `tests/lifecycle.test.ts` "outcomeRunId names the run of every outcome event" gains a `head`, since one without a head is now unclassifiable; (2) `tests/observe.test.ts` "observe runs a real accept…" expects the kit's `commandId` on the recorded accept. The session also reported that `main.ts` mints no command ID when none is given, a change from the design note: a fresh random ID deduplicates nothing, and it would change more pins. Owner: “Both are fine”.
