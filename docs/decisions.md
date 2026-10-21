@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-140 — 2026-10-21 — 11-d: two existing test pins change; no command ID is minted
+
+Asked, during 11-d's build: the ticket says existing tests pass unchanged, but two pins follow from A-123 item 1 and A-139: (1) the `request_changes` sample in `tests/lifecycle.test.ts` "outcomeRunId names the run of every outcome event" gains a `head`, since one without a head is now unclassifiable; (2) `tests/observe.test.ts` "observe runs a real accept…" expects the kit's `commandId` on the recorded accept. The session also reported that `main.ts` mints no command ID when none is given, a change from the design note: a fresh random ID deduplicates nothing, and it would change more pins. Owner: “Both are fine”.
+
+Effect: both pins change with this decision. The design note's minting line is withdrawn.
+
 ### A-139 — 2026-10-21 — 11-d's design approved with the session's recommendations; 11-d and 11-d2 READY at Trust tier
 
 Asked, with `docs/design/2026-10-21-owner-moves.md`, `docs/work/11-d-owner-events-bound.md` and `docs/work/11-d2-owner-moves.md`, nine questions. The session recommended: (1) two tickets, 11-d then 11-d2 stacked on it; (2) no `ENGINE_VERSION` bump, with a fixture replay test as evidence; (3) the command ID kept in the existing `run_id` unique index under an object-shaped key; (4) `cancel` without the stale-load check; (5) a `request-changes` command in 11-d; (6) 11-d2 builds `retry`, `overrule` and `route`, with accept-with-risk as `route` to the human stage, `fix` with chosen findings goes with A-108's ticket, and the child-from-candidate option is probed, not built; (7) no cap on overrules now; (8) the reviewer-run window parked against 11-e; (9) today's `SETTLED` renamed `STOPPED`, and `SETTLED` becomes ACCEPTED and CANCELLED. Owner: “Go with your recommendations”.

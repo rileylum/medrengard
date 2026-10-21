@@ -66,7 +66,7 @@ export function moveEvent(store, workId, move: Move, where): { cycleId; event; a
 export function decideAndDrive(store, cycleId, event, ready, after?: number): Promise<…>;
 ```
 
-CLI (`src/main.ts`). Every owner command takes `--source` and `--command-id`. Without `--command-id`, `main.ts` mints a random one, which is recorded but deduplicates nothing:
+CLI (`src/main.ts`). Every owner command takes `--source` and `--command-id`. Without `--command-id`, no ID is recorded: a fresh random one would deduplicate nothing (A-140).
 
 ```
 accept <job.json> <sha>
