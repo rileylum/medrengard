@@ -764,12 +764,15 @@ test('develop clones from the mirror: before the run the clone holds no objects 
   git(repo, 'add', 'secret.txt');
   git(repo, 'commit', '-q', '-m', 'private');
   const secret = git(repo, 'rev-parse', 'HEAD');
+  // Tags too: one on a private commit, and one on the base itself, which a fetch would follow.
+  git(repo, 'tag', '-a', '-m', 'private', 'onprivate');
   git(repo, 'switch', '-q', '-c', 'sf/other', base);
   writeFileSync(join(repo, 'other.txt'), 'other\n');
   git(repo, 'add', 'other.txt');
   git(repo, 'commit', '-q', '-m', 'other cycle');
   const other = git(repo, 'rev-parse', 'HEAD');
   git(repo, 'switch', '-q', 'main');
+  git(repo, 'tag', '-a', '-m', 'on base', 'onbase');
   const mirror = mirrorPath(runsDir, repo);
   const inner = fake(claude);
   const seen: { own: string[]; alternates: string; refs: string[]; read?: string[] }[] = [];
