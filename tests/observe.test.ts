@@ -88,3 +88,23 @@ test('observe waits while the store file has no events table yet (10-d standard 
   await running;
   assert.deepEqual(seen, ['c1']);
 });
+
+test('the kit\'s cancel carries its own command ID, so an accept and a cancel for one line stay two (11-d adversarial)', async () => {
+  const j = job('w');
+  const store = new EventStore(j.db);
+  store.open('c1', 'w', undefined, base);
+  store.append('c1', toAcceptance(comment)[0]!);
+  store.close();
+  const stage = () => { const s = new EventStore(j.db); try { return s.load('c1')!.stage; } finally { s.close(); } };
+  const ac = new AbortController();
+  const running = observe(j.jobFile, 'observer:test', async (line, owner) => {
+    if ((line.event as { type: string }).type === 'claim') await owner.cancel();
+  }, { signal: ac.signal });
+  await settle(() => stage() === 'CANCELLED');
+  ac.abort();
+  await running;
+  const s = new EventStore(j.db);
+  // pos 1 is the open marker and 2 the claim.
+  assert.deepEqual(s.events('c1').at(-1), { type: 'cancel', source: 'observer:test', commandId: 'observer:test:2:cancel' });
+  s.close();
+});

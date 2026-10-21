@@ -337,3 +337,18 @@ test('decideAndDrive drives nothing when its command was already recorded by ano
     other.close();
   }
 });
+
+test('cancelWork appends with no after, so a cancel lands whatever came between its load and its write (11-d adversarial)', () => {
+  const store = fresh();
+  try {
+    seed(store, 'c1', ESCALATE.slice(0, 1));
+    const seen: unknown[] = [];
+    const watched = new Proxy(store, {
+      get: (target, key) => key === 'append' ? (cycleId: string, event: Event, opts?: unknown) => { seen.push(opts); return target.append(cycleId, event, opts as { after?: number }); } : Reflect.get(target, key, target),
+    });
+    cancelWork(watched, 'w', 'owner', where);
+    assert.deepEqual(seen, [undefined]);
+  } finally {
+    store.close();
+  }
+});
