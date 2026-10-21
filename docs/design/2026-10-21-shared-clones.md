@@ -20,6 +20,9 @@ Facts the design must respect:
 /** <runsDir>/mirrors/<key>.git; key: first 16 hex of sha256 of the repository's real path. */
 export function mirrorPath(runsDir: string | undefined, repo: string): string;
 
+// src/adapter.ts
+interface RunRequest { /* … */ read?: string[] }
+
 // src/developer.ts
 /** Fetch the base into the repository's mirror, making the mirror on first use. Controller git; the source is the owner's repository. */
 function mirrorBase(repo: string, mirror: string, base: string): void;
@@ -27,9 +30,9 @@ function mirrorBase(repo: string, mirror: string, base: string): void;
 
 - **Where.** One bare mirror per repository under `<runsDir>/mirrors/`, keyed by the repository's real path, so two job files on one repository share it and two repositories never do.
 - **What it holds.** Only base commits: `develop` fetches the resolved base SHA into `refs/bases/<sha>`, nothing else. No `refs/heads/*`, no tags, no `sf/*`. The mirror's config sets `gc.auto=0` and `gc.pruneExpire=never`, so nothing it holds is ever pruned.
-- **Who fetches, and when.** The controller, in `develop`, before `store.open`, so a failed fetch leaves no cycle behind; outside any sandbox. It reads the owner's repository, which the controller already trusts. Never a sandboxed process; nothing writes to the mirror after a run.
+- **Who fetches, and when.** The controller, in `develop`, after `store.open` and just before the clone, outside any sandbox. A failed fetch cancels the cycle, as a failed clone does today (A-134). It reads the owner's repository, which the controller already trusts. Never a sandboxed process; nothing writes to the mirror after a run.
 - **The clone.** `git clone --shared --no-checkout <mirror> <clone>`, then `checkout -b sf/<cycleId> <base>`. The clone sees no refs from the mirror, because the mirror has no `refs/heads/*`; `--no-hardlinks` stays where git would otherwise link.
-- **The bind.** `cyclePaths` gains nothing; `develop` and `fix` pass `<mirror>/objects` as a read-only path to the developer adapter (through `CliSpec.bind`, which `cliAdapter` already binds read-only), and `cloneGit` and `land` add it to their policy's `read`. A missing mirror (a clone made before this ticket) is not bound.
+- **The bind (A-134).** `RunRequest` gains `read?: string[]`: absolute paths the controller asks the run's sandbox to bind read-only. `develop` and `fix` set it to `[<mirror>/objects]`; `cliAdapter` adds it to the policy's `read`. `cloneGit` and `land` add the same path to their policy's `read`. A missing mirror (a clone made before this ticket) is not bound. Extension runtimes receive the field in the request JSON and may ignore it. `CliSpec.bind` cannot carry it: adapters are built before `develop` knows the mirror, and `cliAdapter` refuses a `sandbox.read` path that does not exist yet.
 
 ## Alternatives
 

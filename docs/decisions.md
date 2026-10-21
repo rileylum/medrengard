@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-134 — 2026-10-21 — 11-b2: the mirror bind travels on the run request
+
+Asked, after 11-b2's probes passed: the design note's bind through `CliSpec.bind` cannot work, because `main.ts` builds every adapter before `develop` knows the mirror, and `cliAdapter` refuses a `sandbox.read` path that does not exist yet (a repository's first cycle). (1) An optional `read?: string[]` on `RunRequest`, absolute paths the controller asks the run's sandbox to bind read-only; `develop` and `fix` set it to the mirror's objects; every runtime goes through `cliAdapter`, so all are covered; extension runtimes receive the field in the request JSON (additive, D-024). (2) `main.ts` makes the mirror before building adapters and puts it in the developer's `sandbox.read`. The session recommended (1). Owner: “Option 1.”
+
+Effect: `docs/design/2026-10-21-shared-clones.md` is updated: the bind is `RunRequest.read`; the mirror fetch runs after `open` beside the clone, so a failed fetch cancels the cycle as a failed clone does (the existing test for that case keeps its meaning).
+
 ### A-133 — 2026-10-21 — 11-b split from 11-b2; one mirror per repository; 11-b READY at Light tier
 
 Asked, with the drafts `docs/work/11-b-layout.md`, `docs/work/11-b2-shared-clones.md` and `docs/design/2026-10-21-shared-clones.md`: (1) split the `layout` refactor (Light tier) from the shared clones (Trust tier, stacked on it); (2) one mirror per repository, so a cycle can read the base history of every earlier cycle on the same repository, or one per base SHA; (3) run the design note's probes before 11-b2's code, including one paid developer run each for claude and pi. The session recommended the split and one mirror per repository. Owner: “Split is good, one mirror per repo, probes are good. Go”.
