@@ -3,7 +3,7 @@
 // cancel during a run, 07-d) waits for the write lock rather than failing.
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, outcomeRunId, SETTLED, type Cycle, type Event, type Stage, type Workflow } from './lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, outcomeRunId, replayCheck, SETTLED, type Cycle, type Event, type Stage, type Workflow } from './lifecycle.ts';
 
 // Row 0 of every cycle is the store's own "open" marker; it is not a lifecycle Event and never
 // reaches apply. Keeping it in the same table honours the one-table constraint.
@@ -28,11 +28,12 @@ export function workflowHash(w: Workflow): string {
 }
 export const DEFAULT_RECORD = { name: defaultWorkflow.name!, hash: workflowHash(defaultWorkflow) };
 
-/** The recorded definition, then defaultWorkflow, then `given`: the first that passes the check and hashes to the recorded workflow. */
+/** The recorded definition, then defaultWorkflow, then `given`: the first that passes replayCheck and hashes to the recorded workflow. */
 export function recordedWorkflow(open: OpenRow, given?: Workflow): Workflow | undefined {
   const { hash } = open.workflow ?? DEFAULT_RECORD;
-  // apply trusts its workflow, so a definition read back as data is checked like any other.
-  return [open.definition, defaultWorkflow, given].find((w) => w !== undefined && checkWorkflow(w).length === 0 && workflowHash(w) === hash);
+  // apply trusts its workflow, so a definition read back as data is checked, but only for what
+  // apply reads: the full checkWorkflow ran when the cycle opened, and may have tightened since (G9).
+  return [open.definition, defaultWorkflow, given].find((w) => w !== undefined && replayCheck(w).length === 0 && workflowHash(w) === hash);
 }
 
 // Each row's position across the store and the time it was written (10-d), both set inside the

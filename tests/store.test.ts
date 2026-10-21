@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { apply, defaultWorkflow, newCycle, type Cycle, type Event } from '../src/lifecycle.ts';
 import { EventStore, UnclassifiableEvent, workflowHash } from '../src/store.ts';
+import type { Workflow } from '../src/lifecycle.ts';
 import { PASS_CHECKS, scenarios, toStandardReview } from './scenarios.ts';
 import { counters, noHuman, ownerCheck } from './workflows.ts';
 
@@ -407,5 +408,37 @@ test('a cycle whose recorded workflow neither its definition, the default nor th
   const store = new EventStore(path, ownerCheck);
   assert.throws(() => store.load('c1'), /c1 was opened under workflow gone \(abababababab\), this store runs owner-check/);
   assert.throws(() => store.drivable('c1'), /opened under workflow gone/);
+  store.close();
+});
+
+// G9 (engine.md): a rule added to checkWorkflow later must not make an old cycle unloadable.
+// A line break in role text stands in for such a rule: checkWorkflow refuses it, apply never reads it.
+const tightened: Workflow = { ...ownerCheck, name: 'tightened', stages: { ...ownerCheck.stages, DEV: { ...ownerCheck.stages.DEV!, roleText: 'two\nlines' } as Workflow['stages'][string] } };
+
+test('a recorded definition that checkWorkflow now refuses still loads, and no new store runs it', () => {
+  const path = dbPath('tightened');
+  new EventStore(path).close();
+  const raw = new DatabaseSync(path);
+  raw.prepare("INSERT INTO events (cycle_id, seq, type, run_id, body, pos) VALUES ('c1', 0, 'open', NULL, ?, 1)")
+    .run(JSON.stringify({ type: 'open', workId: 'w1', workflow: { name: 'tightened', hash: workflowHash(tightened) }, definition: tightened }));
+  raw.prepare("INSERT INTO events (cycle_id, seq, type, run_id, body, pos) VALUES ('c1', 1, 'claim', NULL, ?, 2)")
+    .run(JSON.stringify({ type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' }));
+  raw.close();
+  const store = new EventStore(path);
+  assert.equal(store.load('c1')!.stage, 'DEV');
+  store.close();
+  assert.throws(() => new EventStore(path, tightened), /workflow refused: stage DEV role text must be one line/);
+});
+
+test('a recorded definition apply could not run is refused on load', () => {
+  const path = dbPath('broken-definition');
+  new EventStore(path).close();
+  const broken = { ...ownerCheck, name: 'broken', stages: { ...ownerCheck.stages, CHECK: { kind: 'command', transitions: { PASS: 'NOWHERE' } } } } as Workflow;
+  const raw = new DatabaseSync(path);
+  raw.prepare("INSERT INTO events (cycle_id, seq, type, run_id, body, pos) VALUES ('c1', 0, 'open', NULL, ?, 1)")
+    .run(JSON.stringify({ type: 'open', workId: 'w1', workflow: { name: 'broken', hash: workflowHash(broken) }, definition: broken }));
+  raw.close();
+  const store = new EventStore(path);
+  assert.throws(() => store.load('c1'), /c1 was opened under workflow broken/);
   store.close();
 });

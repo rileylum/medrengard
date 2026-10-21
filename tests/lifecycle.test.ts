@@ -3,7 +3,7 @@
 // todo where v1 has no corresponding model yet.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apply, checkWorkflow, defaultWorkflow, EVENT_TYPES, isEvent, newCycle, openChild, outcomeRunId, type Cycle, type Event, type StageDef, type Workflow } from '../src/lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, EVENT_TYPES, isEvent, newCycle, openChild, outcomeRunId, replayCheck, type Cycle, type Event, type StageDef, type Workflow } from '../src/lifecycle.ts';
 import { PASS_CHECKS, sc, scenarios, toStandardReview as TO_STANDARD_REVIEW } from './scenarios.ts';
 import { counters, noHuman, ownerCheck } from './workflows.ts';
 
@@ -520,4 +520,32 @@ test('a base change naming the candidate\'s base is ignored in any stage; a head
   assert.equal(developing.history.at(-1)!.note, 'ignored: same base');
   assert.equal(apply(reviewing, { type: 'head_changed', head: 'H2' }).stage, 'ESCALATED');
   assert.equal(apply(reviewing, { type: 'base_changed', base: 'B2' }).stage, 'ESCALATED');
+});
+
+// Ticket 11-c: replayCheck keeps only what apply reads (A-136, engine.md P6).
+test('replayCheck passes every workflow checkWorkflow passes, and one with role text checkWorkflow refuses', () => {
+  for (const w of [defaultWorkflow, noHuman, ownerCheck]) assert.deepEqual(replayCheck(w), [], w.name);
+  const twoLines = { ...ownerCheck, stages: { ...ownerCheck.stages, DEV: { ...ownerCheck.stages.DEV!, roleText: 'a\nb' } } } as Workflow;
+  assert.notDeepEqual(checkWorkflow(twoLines), []);
+  assert.deepEqual(replayCheck(twoLines), []);
+});
+
+test('replayCheck refuses each stage table apply could not walk, naming the stage', () => {
+  const dev = ownerCheck.stages.DEV!;
+  const at = (DEV: unknown, more: Partial<Workflow> = {}) => ({ ...ownerCheck, ...more, stages: { ...ownerCheck.stages, DEV } }) as Workflow;
+  const cases: [Workflow, RegExp][] = [
+    [{ start: 'DEV' } as unknown as Workflow, /^workflow must be an object with stages$/],
+    [at(dev, { start: 'NOWHERE' }), /^start stage NOWHERE is not a workflow stage$/],
+    [{ ...ownerCheck, stages: { ...ownerCheck.stages, ESCALATED: dev } }, /^stage ESCALATED uses an engine stage name$/],
+    [at('DEV'), /^stage DEV must be an object$/],
+    [at({ ...dev, kind: 'timer' }), /^stage DEV has unknown kind timer$/],
+    [at({ ...dev, role: '' }), /^stage DEV is an agent stage with no role$/],
+    [at({ ...dev, produces: 'both' }), /^stage DEV produces both, not commit or verdict$/],
+    [at({ ...dev, budget: 0 }), /^stage DEV budget must be a positive integer$/],
+    [at({ ...dev, transitions: undefined }), /^stage DEV has no transitions$/],
+    [at({ ...dev, transitions: { FAIL: 'CHECK' } }), /^stage DEV has no PASS transition$/],
+    [at({ ...dev, transitions: { PASS: 'CHECK', FAIL: 7 } }), /^stage DEV FAIL transition must be a stage name$/],
+    [at({ ...dev, transitions: { PASS: 'GONE' } }), /^stage DEV PASS names unknown stage GONE$/],
+  ];
+  for (const [w, reason] of cases) assert.ok(replayCheck(w).some((r) => reason.test(r)), `${reason}: ${replayCheck(w).join('; ')}`);
 });
