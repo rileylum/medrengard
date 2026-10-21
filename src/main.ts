@@ -18,6 +18,7 @@ import { loadConfig, storeOf, type Config, type JobFile } from './config.ts';
 import { acceptEvent, cancelWork, humanStages } from './decide.ts';
 import { oneLine, type Job } from './developer.ts';
 import { printable } from './prompt.ts';
+import { storeFile } from './layout.ts';
 import { defaultWorkflow, isSource, type Workflow } from './lifecycle.ts';
 import { decideAndDrive, ROLE_ALIASES, run, type Adapters, type RunOptions, type RunResult } from './run.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
@@ -41,7 +42,7 @@ function adaptersFor(w: Workflow, registry: Record<string, RuntimeEntry>, runtim
 
 /** The job's store, or undefined when no run ever made one: nothing to decide on. */
 function existingStore(runsDir: string, workflow: Workflow): EventStore | undefined {
-  const db = join(runsDir, 'events.sqlite');
+  const db = storeFile(runsDir);
   return existsSync(db) ? new EventStore(db, workflow) : undefined;
 }
 
@@ -53,7 +54,7 @@ function existingStore(runsDir: string, workflow: Workflow): EventStore | undefi
  */
 async function decisionConfig(file: string) {
   const { runsDir, workId } = storeOf(file);
-  const db = join(runsDir, 'events.sqlite');
+  const db = storeFile(runsDir);
   const opened = existsSync(db) ? openings(db, workId) : [];
   let unmerged: Error | undefined;
   for (const base of new Set(opened.flatMap((o) => (o.base ? [o.base] : [])))) {
@@ -94,7 +95,7 @@ async function events(rest: string[]): Promise<number> {
   const dir = existsSync(target) && statSync(target).isDirectory();
   // A job file names one work and the workflow its older cycles need; a runs directory names neither.
   const { runsDir, workId, workflow } = dir ? { runsDir: target, workId: undefined, workflow: undefined } : { ...(await decisionConfig(target)), workId: storeOf(target).workId };
-  const db = join(runsDir, 'events.sqlite');
+  const db = storeFile(runsDir);
   if (!storeReady(db) && !follow) throw new Error(`no event store at ${db}`);
   while (!storeReady(db)) await sleep(FOLLOW_MS);
   const stream = openStream(db, { workId, after, workflow });
@@ -221,7 +222,7 @@ export async function main(argv: string[]): Promise<number> {
   const adapters = adaptersFor(workflow, registry, spec.runtime, sandbox);
   // develop makes runsDir, but the store opens first.
   mkdirSync(runsDir, { recursive: true });
-  const store = new EventStore(join(runsDir, 'events.sqlite'), workflow);
+  const store = new EventStore(storeFile(runsDir), workflow);
   try {
     // `cancel` can settle the parent a job file still names. The store would refuse it too, but
     // without saying that the fix is in the job file.

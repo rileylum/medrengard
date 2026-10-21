@@ -11,6 +11,7 @@ import { createServer } from 'node:net';
 import { dirname, join, sep } from 'node:path';
 import type { Adapter } from '../adapter.ts';
 import { develop } from '../developer.ts';
+import { storeFile } from '../layout.ts';
 import { HEAD_CHECK, type StageDef, type Workflow } from '../lifecycle.ts';
 import { restoreAccess, type Sandbox } from '../sandbox.ts';
 import { EventStore } from '../store.ts';
@@ -86,7 +87,7 @@ export function commandKit(name: string, o: CommandKitOptions): void {
         return { status: 'completed', claim: { head: git(req.cwd, 'rev-parse', 'HEAD').trim(), artifacts: ['.'] } };
       },
     };
-    const store = new EventStore(join(root, 'events.sqlite'), workflow);
+    const store = new EventStore(storeFile(root), workflow);
     try {
       const runsDir = join(root, 'runs');
       const job = { workId: 'kit', ticket: TICKET, repo };

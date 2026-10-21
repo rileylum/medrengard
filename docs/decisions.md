@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-133 — 2026-10-21 — 11-b split from 11-b2; one mirror per repository; 11-b READY at Light tier
+
+Asked, with the drafts `docs/work/11-b-layout.md`, `docs/work/11-b2-shared-clones.md` and `docs/design/2026-10-21-shared-clones.md`: (1) split the `layout` refactor (Light tier) from the shared clones (Trust tier, stacked on it); (2) one mirror per repository, so a cycle can read the base history of every earlier cycle on the same repository, or one per base SHA; (3) run the design note's probes before 11-b2's code, including one paid developer run each for claude and pi. The session recommended the split and one mirror per repository. Owner: “Split is good, one mirror per repo, probes are good. Go”.
+
+Effect: 11-b is READY at Light tier (one review, A-125). 11-b2 keeps one mirror per repository and its probes, paid runs included, are approved; its design note stands as drafted, and its code waits for the probe results.
+
 ### A-132 — 2026-10-21 — 11-a2: the adversarial minor fixed on the branch; the race parked against 11-d
 
 Asked, after 11-a2's three reviews passed (standard 1 on `28de902`, standard 2 and adversarial on `80c321d`): (1) the adversarial minor, where `preflight` passes, the `accept` is recorded, and `verify` then refuses the grant stage before anything runs (an empty grant file, a missing `{ file }` argument, no PASS verdict for the head): fix on the branch, or a fix ticket; (2) the race between two overlapping `accept` commands: park it against 11-d. The session recommended fixing (1) on the branch, tests first, by moving `verify`'s file and empty-grant checks into `preflight` and running `headGate` on the predicted cycle, and parking (2) with the fix all three reviewers named. Owner: “Fix the minor and park the race”.

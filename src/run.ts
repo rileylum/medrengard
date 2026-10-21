@@ -4,9 +4,9 @@
 // with the message and the owner decides. Ticket 09-b: any workflow that passes checkWorkflow,
 // read from the store; adapters are chosen by the stage's role. Ticket 11-a: `drive` is the one
 // entry point for a cycle already open; `run` opens one first.
-import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
-import { DEFAULT_RUNS_DIR, develop, fix, type DeveloperAdapter, type Job } from './developer.ts';
+import { develop, fix, type DeveloperAdapter, type Job } from './developer.ts';
+import { cyclePaths } from './layout.ts';
 import { apply, type Cycle, type Event, type Role, type Stage, type Workflow } from './lifecycle.ts';
 import { review } from './review.ts';
 import { checkSandbox, type Sandbox } from './sandbox.ts';
@@ -66,7 +66,7 @@ export async function drive(store: EventStore, cycleId: string, adapters: Adapte
   // Nothing has run, so there is no clone to continue from; recovery (row 11) owns this case.
   if (cycle.stage === 'QUEUED') throw new Error(`cycle ${cycleId} is QUEUED: no run started; cancel it and run the job again`);
   const roles = preflight(store.workflow, adapters, job, opts);
-  return loop(store, cycle, roles, job, opts, clonePath(opts, cycleId), `sf/${cycleId}`);
+  return loop(store, cycle, roles, job, opts, ...cloneOf(opts, cycleId));
 }
 
 /** What drive needs, built only when an owner's event leads to a stage the loop runs. */
@@ -95,11 +95,11 @@ export async function decideAndDrive(store: EventStore, cycleId: string, event: 
   const def = w.stages[next.stage];
   if (def?.kind === 'command' && (def.grants ?? []).length > 0) headGate(next);
   const cycle = store.append(cycleId, event);
-  return { cycle, driven: await loop(store, cycle, roles, job, opts, clonePath(opts, cycleId), `sf/${cycleId}`) };
+  return { cycle, driven: await loop(store, cycle, roles, job, opts, ...cloneOf(opts, cycleId)) };
 }
 
-/** Where develop put the cycle's clone. */
-const clonePath = (opts: RunOptions, cycleId: string) => join(resolve(opts.runsDir ?? DEFAULT_RUNS_DIR), cycleId);
+/** Where develop put the cycle's clone, and its branch. */
+const cloneOf = (opts: RunOptions, cycleId: string) => { const p = cyclePaths(opts.runsDir, cycleId); return [p.clone, p.branch] as const; };
 
 /** The stage kinds loop has a step for. */
 const loopRuns = (w: Workflow, stage: Stage) => ['agent', 'command'].includes(w.stages[stage]?.kind ?? '');
