@@ -3,6 +3,7 @@
 // can run it: wrap and spawnEnv from src/sandbox.ts for the stage and for a check, redactAll and
 // headGate cut out of src/verify.ts, stageGrants for the sandbox rule, and the event verify
 // would append. A place that holds the value is marked; every other place must not.
+import { defaultWorkflow, took } from '/src/lifecycle.ts';
 import { confines, spawnEnv, wrap } from '/src/sandbox.ts';
 import { esc, liveFunction } from '../live.js';
 
@@ -12,6 +13,7 @@ const OLD = '1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d';
 const EVIDENCE = `${RUNS}/evidence/${HEAD}/MERGE`;
 const CHECKOUT = `${RUNS}/c0ffee-verify`;
 const MERGE = { kind: 'command', grants: ['forge'], network: true, run: [{ name: 'merge', command: ['gh', 'pr', 'merge', '--squash'] }], transitions: { PASS: 'ACCEPTED' } };
+const WORKFLOW = { ...defaultWorkflow, stages: { ...defaultWorkflow.stages, MERGE } };
 const GRANTS = { forge: { variable: 'FORGE_TOKEN', file: '/home/owner/.config/software_factory/forge-token' } };
 
 // The history a grant stage looks back on: verify, two PASS verdicts, the owner's accept.
@@ -26,7 +28,7 @@ const reviewed = (late) => ({
 });
 
 export default async function mount(el) {
-  const [redactAll, headGate, stageGrants] = await Promise.all([liveFunction('src/verify.ts', 'redactAll'), liveFunction('src/verify.ts', 'headGate'), liveFunction('src/verify.ts', 'stageGrants', { confines })]);
+  const [redactAll, headGate, stageGrants] = await Promise.all([liveFunction('src/verify.ts', 'redactAll'), liveFunction('src/verify.ts', 'headGate', { took }), liveFunction('src/verify.ts', 'stageGrants', { confines })]);
   el.innerHTML = `
     <div class="cols"><div>
       <label>The token's value <span class="dim">(read from the grant's file when the stage runs; a fake one here)</span></label>
@@ -51,7 +53,7 @@ export default async function mount(el) {
     const value = $('.value').value;
     const sandbox = { backend: $('.none').checked ? 'none' : 'bwrap' };
     // Before anything runs: the stage's grants, then the head gate.
-    try { stageGrants('MERGE', MERGE, GRANTS, sandbox); headGate(reviewed($('.late').checked)); }
+    try { stageGrants('MERGE', MERGE, GRANTS, sandbox); headGate(reviewed($('.late').checked), WORKFLOW); }
     catch (err) { $('.gate').innerHTML = `<p><span class="pill FAIL">nothing runs</span> <span class="bad-t">${esc(err.message)}</span></p><p class="small">The cycle escalates and the token is never read.</p>`; $('.trace tbody').innerHTML = ''; return; }
     $('.gate').innerHTML = '<p><span class="pill PASS">the stage may run</span> <span class="small">every stage\'s last outcome names the candidate, and a PASS verdict does</span></p>';
     if (!value) { $('.trace tbody').innerHTML = '<tr><td colspan="3" class="err">An empty grant file is refused: redacting an empty value would mark every character.</td></tr>'; return; }

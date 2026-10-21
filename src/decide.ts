@@ -1,7 +1,7 @@
 // Ticket 11-a: the owner's decisions on a job's cycles, without printing, so a command, a tracker
 // (row 12) or a test can record them in-process. Ticket 07-d's rules: each refuses, writing
 // nothing, rather than send an event apply would escalate on.
-import { apply, lastVerdictAt, type Cycle, type Event, type MoveAction, type Stage, type Workflow } from './lifecycle.ts';
+import { apply, lastVerdictAt, took, type Cycle, type Event, type MoveAction, type Stage, type Workflow } from './lifecycle.ts';
 import { STOPPED, type EventStore } from './store.ts';
 import { headGate } from './verify.ts';
 
@@ -95,7 +95,6 @@ export function moveEvent(store: EventStore | undefined, workId: string, move: M
   const next = apply(cycle, event, store.workflow);
   if (next.stage === 'ESCALATED') throw new Error(`cycle ${cycle.cycleId} (${where.file}): ${next.history.at(-1)!.note}`);
   const def = store.workflow.stages[next.stage]!;
-  const events = next.history.map((h) => h.event);
   // fix's precondition (developer.ts): its findings are the last verdict's. Goes when A-108 lets a commit stage run without one.
   if (def.kind === 'agent' && def.produces === 'commit') {
     const last = next.history[lastVerdictAt(store.workflow, next)]?.event as Verdict | undefined;
@@ -104,9 +103,9 @@ export function moveEvent(store: EventStore | undefined, workId: string, move: M
   }
   // review's precondition (review.ts): the reviewer reads the checkout and evidence verify made of the candidate.
   if (def.kind === 'agent' && def.produces === 'verdict') {
-    const last = events.filter((e): e is Verification => e.type === 'verification').at(-1);
+    const last = next.history.findLast((h) => h.event.type === 'verification' && took(store.workflow, h))?.event as Verification | undefined;
     if (last?.head !== head) throw new Error(`cycle ${cycle.cycleId}: review stage ${next.stage} reads the verification of the candidate ${head}; the last is for ${last?.head ?? 'none'}`);
   }
-  if (def.kind === 'command' && (def.grants ?? []).length > 0) headGate(next);
+  if (def.kind === 'command' && (def.grants ?? []).length > 0) headGate(next, store.workflow);
   return { cycleId: cycle.cycleId, event, after: cycle.history.length };
 }

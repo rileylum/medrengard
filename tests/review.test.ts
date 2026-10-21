@@ -146,6 +146,16 @@ test('the prompt carries the role, ticket, SHAs, instructions from the commit, e
   store.close();
 });
 
+test('a verification that lands while escalated is not evidence: after a retry, review reads only the command stage\'s (11-d2, standard 2)', async () => {
+  const { store, runsDir, job, cycleId, head } = await reviewable();
+  store.append(cycleId, { type: 'reject_dispatch', reason: 'another writer' });
+  store.append(cycleId, { type: 'verification', head, checks: [{ name: 'file', result: 'PASS' }] });
+  assert.equal(store.append(cycleId, { type: 'owner_decision', action: 'retry', head, reason: 'run it again' }).stage, 'STANDARD_REVIEW');
+  const reviewed = await review(store, fake(claude, 'verdict', 'pass'), cycleId, job, opts(runsDir));
+  assert.equal(reviewed.stage, 'ADVERSARIAL_REVIEW', reviewed.escalation);
+  store.close();
+});
+
 test('review throws and appends nothing outside a review stage, without the checkout at the head, or without evidence', async () => {
   const { store, runsDir, job, cycleId, checkout, evidenceDir } = await reviewable();
   const before = store.events(cycleId).length;

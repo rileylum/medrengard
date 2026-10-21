@@ -96,7 +96,7 @@ export async function decideAndDrive(store: EventStore, cycleId: string, event: 
   const roles = preflight(w, adapters, job, opts);
   // verify's gate, on the cycle as it will be: refused now, the owner may fix and accept again.
   const def = w.stages[next.stage];
-  if (def?.kind === 'command' && (def.grants ?? []).length > 0) headGate(next);
+  if (def?.kind === 'command' && (def.grants ?? []).length > 0) headGate(next, w);
   const { cycle, written } = store.write(cycleId, event, loaded);
   // Not written: another delivery of the same command recorded it first and drives the cycle.
   if (!written) return { cycle, written };

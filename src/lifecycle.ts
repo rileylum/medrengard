@@ -552,12 +552,25 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
 type Move = Extract<Event, { type: 'owner_decision' }>;
 
 /**
- * Where the last verdict a review stage took sits in the history, or -1. A verdict recorded but
- * ignored (while escalated, settled, or a duplicate) or one out of place at another stage was never
- * the review's word, and its `from` may be a stage with no budget to refund.
+ * Whether the stage in `from` took the entry's outcome as its own. An outcome recorded but ignored
+ * (while escalated, settled, or a duplicate), escalated for another step before the stage looked
+ * at it, or out of place at a stage of another kind was never that stage's word. Every read of the
+ * history for evidence goes through this: since a move lets an ESCALATED cycle run again, an
+ * ignored PASS or verification would otherwise stand in for one the engine never took.
  */
+export function took(w: Workflow, h: Cycle['history'][number]): boolean {
+  const { event: e, from, note } = h;
+  if (note?.startsWith('ignored:') || (e.step !== undefined && e.step !== from)) return false;
+  const def = w.stages[from];
+  if (e.type === 'verdict') return takes(def, 'verdict');
+  if (e.type === 'verification') return def?.kind === 'command';
+  if (e.type === 'accept') return def?.kind === 'human';
+  return def !== undefined;
+}
+
+/** Where the last verdict a review stage took sits in the history, or -1. */
 export function lastVerdictAt(w: Workflow, c: Cycle): number {
-  return c.history.findLastIndex((h) => h.event.type === 'verdict' && takes(w.stages[h.from], 'verdict') && !h.note?.startsWith('ignored:'));
+  return c.history.findLastIndex((h) => h.event.type === 'verdict' && took(w, h));
 }
 
 /**

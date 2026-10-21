@@ -3,7 +3,7 @@
 // todo where v1 has no corresponding model yet.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apply, checkWorkflow, defaultWorkflow, EVENT_TYPES, isEvent, newCycle, openChild, outcomeRunId, replayCheck, type Cycle, type Event, type StageDef, type Workflow } from '../src/lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, EVENT_TYPES, isEvent, newCycle, openChild, outcomeRunId, replayCheck, took, type Cycle, type Event, type StageDef, type Workflow } from '../src/lifecycle.ts';
 import { PASS_CHECKS, sc, scenarios, toStandardReview as TO_STANDARD_REVIEW } from './scenarios.ts';
 import { counters, noHuman, ownerCheck } from './workflows.ts';
 
@@ -688,6 +688,21 @@ test('overrule reads only verdicts a review stage took: one ignored or escalated
   const atOwner = run(toStandardReview(), verdict('sr1', 'H1', 'PASS'), verdict('ar1', 'H1', 'PASS'));
   assert.equal(atOwner.stage, 'AWAITING_ACCEPTANCE');
   moveRefused(apply(atOwner, verdict('sr9', 'H1', 'FAIL')), move('overrule'), /^move refused: the last verdict is a PASS, not a FAIL$/);
+  // A FAIL for another step escalates before the review stage counts it: no unit was spent to refund.
+  const otherStep = apply(toStandardReview(), verdict('sr1', 'H1', 'FAIL', 'ADVERSARIAL_REVIEW'));
+  assert.deepEqual([otherStep.stage, otherStep.budgets], ['ESCALATED', {}]);
+  moveRefused(otherStep, move('overrule'), /^move refused: the cycle has no verdict to overrule$/);
+});
+
+test('took: an outcome counts only where its stage took it, not as a duplicate or out of place (11-d2, standard 2)', () => {
+  const at = (c: Cycle) => took(defaultWorkflow, c.history.at(-1)!);
+  const reviewed = apply(toStandardReview(), verdict('sr1', 'H1', 'PASS'));
+  assert.equal(at(reviewed), true);
+  // The same run's verdict again, now in the adversarial review: recorded, never that stage's.
+  assert.equal(at(apply(reviewed, verdict('sr1', 'H1', 'PASS'))), false);
+  assert.equal(at(apply(reviewed, { type: 'verification', head: 'H1', checks: [{ name: 'tests', result: 'PASS' }] })), false);
+  assert.equal(at(apply(reviewed, { type: 'accept', head: 'H1' })), false);
+  assert.equal(at(apply(run(reviewed, verdict('ar1', 'H1', 'PASS')), { type: 'accept', head: 'H1' })), true);
 });
 
 test('route enters a named workflow stage; an engine, unknown or spent stage is refused with a note (11-d2)', () => {

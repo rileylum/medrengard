@@ -434,11 +434,25 @@ test('moveEvent refuses a stage the driver cannot run: a commit stage without a 
     assert.throws(() => moveEvent(unverified, 'w', mv('route', { sha: H2, stage: 'STANDARD_REVIEW' }), where), new RegExp(`^Error: cycle c1: review stage STANDARD_REVIEW reads the verification of the candidate ${H2}; the last is for ${H}$`));
     assert.doesNotThrow(() => moveEvent(unverified, 'w', mv('retry', { sha: H2 }), where));
     unverified.close();
+    // A verification that lands while escalated was never a command stage's: no evidence for review to read.
+    const lateChecks = fresh();
+    seed(lateChecks, 'c1', [...DISPUTED.slice(0, 5), { type: 'developer_result', runId: 'dev2', head: H2, artifacts: ['x'] }, { type: 'reject_dispatch', reason: 'another writer' },
+      { type: 'verification', head: H2, checks: [{ name: 'ok', result: 'PASS' }] }]);
+    assert.throws(() => moveEvent(lateChecks, 'w', mv('route', { sha: H2, stage: 'STANDARD_REVIEW' }), where), new RegExp(`the last is for ${H}$`));
+    lateChecks.close();
     // No review between the check and the grant stage, so no PASS verdict binds the head.
     const granted = fresh(grantFlow([{ name: 'merge', command: ['true'] }], false));
     seed(granted, 'c1', [...AT_OWNER.slice(0, 3), { type: 'request_changes', head: H }]);
     assert.throws(() => moveEvent(granted, 'w', mv('route', { stage: 'MERGE' }), where), new RegExp(`^Error: stage MERGE holds a grant, but no PASS verdict is for the candidate ${H}$`));
     granted.close();
+    // A PASS that lands while escalated was never the review's: after a FAIL, or after another writer cut the review off.
+    const PASS_LATE: Event = { type: 'verdict', runId: 'late', head: H, verdict: 'PASS', findings: [] };
+    for (const cut of [{ type: 'verdict', runId: 'rev1', head: H, verdict: 'FAIL', findings: ['f'] }, { type: 'reject_dispatch', reason: 'another writer' }] as Event[]) {
+      const late = fresh(grantFlow([{ name: 'merge', command: ['true'] }]));
+      seed(late, 'c1', [...AT_OWNER.slice(0, 3), cut, PASS_LATE]);
+      assert.throws(() => moveEvent(late, 'w', mv('route', { stage: 'MERGE' }), where), new RegExp(`^Error: stage MERGE holds a grant, but no PASS verdict is for the candidate ${H}$`), cut.type);
+      late.close();
+    }
   } finally {
     store.close();
   }

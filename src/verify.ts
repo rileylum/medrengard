@@ -16,7 +16,7 @@ import { bounded, git, stopped } from './git.ts';
 import type { CommandRequest } from './kits/request.ts';
 import { cyclePaths } from './layout.ts';
 import type { Grant } from './config.ts';
-import { FILE_STEM, HEAD_CHECK, TREE_CHECK, fileArgs, type Command, type Cycle, type Event, type StageDef } from './lifecycle.ts';
+import { FILE_STEM, HEAD_CHECK, TREE_CHECK, fileArgs, took, type Command, type Cycle, type Event, type StageDef, type Workflow } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
 import { checkSandbox, confines, executables, reachable, restoreAccess, spawnEnv, wrap, type Policy, type Sandbox } from './sandbox.ts';
@@ -139,14 +139,15 @@ export function missingProgram(command: string, sandbox: Sandbox, policy: Policy
  * verification or accept names the candidate, and at least one PASS verdict does. A workflow can
  * route a fix past its reviews, and one with no review at all has nothing to bind the head to.
  */
-export function headGate(cycle: Cycle): void {
+export function headGate(cycle: Cycle, w: Workflow): void {
   const head = cycle.candidate!.head;
+  const outcomes = cycle.history.filter((h) => took(w, h));
   const last = new Map<string, string>();
-  for (const { event, from } of cycle.history)
+  for (const { event, from } of outcomes)
     if (event.type === 'verdict' || event.type === 'verification' || event.type === 'accept') last.set(from, event.head);
   const stale = [...last].filter(([, h]) => h !== head).map(([stage, h]) => `${stage} (${h})`);
   if (stale.length > 0) throw new Error(`stage ${cycle.stage} holds a grant, but the last outcome of ${stale.join(', ')} is not for the candidate ${head}`);
-  if (!cycle.history.some(({ event: e }) => e.type === 'verdict' && e.verdict === 'PASS' && e.head === head))
+  if (!outcomes.some(({ event: e }) => e.type === 'verdict' && e.verdict === 'PASS' && e.head === head))
     throw new Error(`stage ${cycle.stage} holds a grant, but no PASS verdict is for the candidate ${head}`);
 }
 
@@ -161,7 +162,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // Before anything is written: a missing file is the owner's setup, not a FAIL of the candidate.
   const files = stageFiles(cycle.stage, checks, opts.workflowDir);
   const grants = stageGrants(cycle.stage, def, opts.grants, opts.sandbox);
-  if (grants.length > 0) headGate(cycle);
+  if (grants.length > 0) headGate(cycle, store.workflow);
   // Read now, not at load, so the value lives in this process no longer than the stage runs; and
   // before the stage folder is cleared, so a refusal leaves the last run's evidence whole.
   const values = grantValues(grants);
