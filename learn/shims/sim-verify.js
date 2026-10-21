@@ -5,9 +5,9 @@
 // files under evidence/<head>/<stage>/; add the tree check when the checkout is dirty; append one
 // verification event. Only "run" is the reader's: they say how each command behaves.
 import { join } from 'node:path';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { checkDeadline } from '/src/controller.ts';
-import { FILE_STEM, TREE_CHECK } from '/src/lifecycle.ts';
+import { FILE_STEM, TREE_CHECK, fileArgs } from '/src/lifecycle.ts';
 import { checkSandbox, confines, executables, reachable } from '/src/sandbox.ts';
 import { liveFunction } from '../live.js';
 import { RUNS, world } from './world.js';
@@ -18,6 +18,10 @@ export const noWorkflowDir = await liveFunction('src/verify.ts', 'noWorkflowDir'
 export const stageGrants = await liveFunction('src/verify.ts', 'stageGrants', { confines });
 export const checkCommands = await liveFunction('src/verify.ts', 'checkCommands', { FILE_STEM, TREE_CHECK });
 export const missingProgram = await liveFunction('src/verify.ts', 'missingProgram', { executables, reachable });
+export const stageFiles = await liveFunction('src/verify.ts', 'stageFiles', { fileArgs, noWorkflowDir, statSync, join });
+export const grantValues = await liveFunction('src/verify.ts', 'grantValues', { readFileSync });
+// src/run.ts's decideAndDrive calls it on the cycle an owner's event leads to.
+export const headGate = await liveFunction('src/verify.ts', 'headGate');
 
 export async function verify(store, cycleId, job, opts) {
   const cycle = store.load(cycleId);

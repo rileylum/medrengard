@@ -284,13 +284,15 @@ export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: 
 
 // sweep-terminal-escapes: `Error:` and the top-level stderr message print a thrown message, which can
 // quote a name with control characters in it. Here the names come from a workflow module.
-test('a run error and a refusal on stderr show control characters only as visible escapes', () => {
+test('refusals on stderr show control characters only as visible escapes', () => {
   const missing = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};
 export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: { ...ownerCheck.stages.CHECK, run: [{ name: 'lint', command: ['sh', { file: '\\u001b[2J\\u009b.sh' }] }] } } };\n`, { writer: 'claude', reviewer: 'claude' });
   reviewerStub(missing.bin, 'claude', 'nobody', join(missing.root, 'outside'));
   const r = sf([missing.jobFile], missing.env);
-  assert.equal(r.status, 1, r.stdout + r.stderr);
-  assert.match(r.stdout, /^Error: CHECK: stage CHECK names file \\u\{1b\}\[2J\\u\{9b\}\.sh/m);
+  // 11-a2 (A-132): preflight refuses the missing file before the developer run, so the message
+  // reaches stderr, not the run's `Error:` line.
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /^stage CHECK names file \\u\{1b\}\[2J\\u\{9b\}\.sh/m);
   assert.doesNotMatch(r.stdout + r.stderr, /[\u001b\u009b]/);
   const refused = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};\nexport const workflow = { ...ownerCheck, start: '\\u001b[2J' };\n`, { writer: 'claude', reviewer: 'claude' });
   const e = sf([refused.jobFile], refused.env);
@@ -638,3 +640,81 @@ test('importing main.ts runs nothing; main(argv) is exported and refuses bad arg
   await assert.rejects(main([]), /^Error: usage: /);
   await assert.rejects(main(['accept', 'job.json']), /^Error: usage: /);
 });
+
+// Ticket 11-a2 (A-129, A-131): accept drives the cycle on, so a grant stage after the human stage
+// runs in the same command, and a refusal writes nothing.
+/** ownerCheck with a grant stage MERGE after OWNER, run by main.ts to OWNER. */
+function atOwnerBeforeGrant(script: string, afterMerge = `'ACCEPTED'`) {
+  const s = withWorkflow(`import { ownerCheck } from ${JSON.stringify(WORKFLOWS)};
+export const workflow = { ...ownerCheck, stages: { ...ownerCheck.stages, OWNER: { kind: 'human', transitions: { PASS: 'MERGE', FAIL: 'ESCALATED' } },
+  FINAL: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } },
+  MERGE: { kind: 'command', run: [{ name: 'merge', command: ['sh', '-c', ${JSON.stringify(script)}] }], network: true, grants: ['github'], transitions: { PASS: ${afterMerge}, FAIL: 'ESCALATED' } } } };\n`, { writer: 'claude', reviewer: 'claude' });
+  writeFileSync(join(s.root, 'gh-token'), 'main-grant-value\n');
+  const spec = JSON.parse(readFileSync(s.jobFile, 'utf8'));
+  writeFileSync(s.jobFile, JSON.stringify({ ...spec, grants: { github: { variable: 'GH_TOKEN', file: 'gh-token' } } }));
+  reviewerStub(s.bin, 'claude', 'nobody', join(s.root, 'outside'));
+  const first = sf([s.jobFile], s.env);
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  assert.match(first.stdout, /^Stage: OWNER$/m);
+  const head = /^Head: ([0-9a-f]{40})$/m.exec(first.stdout)![1]!;
+  const cycleId = /^Cycle: (\S+)$/m.exec(first.stdout)![1]!;
+  return { ...s, head, cycleId };
+}
+const field = (k: string) => `$(sed -n 's/.*"${k}": "\\(.*\\)".*/\\1/p' "$SF_REQUEST")`;
+const MERGES = `out=${field('outputDir')}; echo ${field('head')} > "$out/head"; printf %s "$GH_TOKEN" > "$out/token"`;
+const rows = (db: string, cycleId: string) => {
+  const raw = new DatabaseSync(db);
+  try { return (raw.prepare('SELECT type FROM events WHERE cycle_id = ? ORDER BY seq').all(cycleId) as { type: string }[]).map((r) => r.type); } finally { raw.close(); }
+};
+
+test('accept runs the grant stage after the human stage, and the cycle ends ACCEPTED (11-a2)', () => {
+  const { env, jobFile, runsDir, head, db, cycleId } = atOwnerBeforeGrant(MERGES);
+  const r = sf(['accept', jobFile, head], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: ACCEPTED$/m);
+  assert.ok(r.stdout.includes(`merge --no-ff ${head}`), r.stdout);
+  assert.equal(readFileSync(join(runsDir, 'evidence', head, 'MERGE', 'output', 'token'), 'utf8'), 'main-grant-value');
+  assert.deepEqual(rows(db, cycleId).slice(-2), ['accept', 'verification']);
+});
+
+test('a grant stage that fails after accept escalates the cycle, and accept exits 1 with the escalation (11-a2)', () => {
+  const { env, jobFile, head } = atOwnerBeforeGrant('exit 3');
+  const r = sf(['accept', jobFile, head], env);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: ESCALATED$/m);
+  assert.match(r.stdout, /^Escalation: /m);
+  assert.doesNotMatch(r.stdout, /merge --no-ff/);
+});
+
+test('accept refuses, writing nothing, when the grant stage it leads to would fail preflight (11-a2)', () => {
+  const { env, jobFile, head, db, cycleId } = atOwnerBeforeGrant(MERGES);
+  const before = rows(db, cycleId);
+  const spec = JSON.parse(readFileSync(jobFile, 'utf8'));
+  delete spec.grants;
+  writeFileSync(jobFile, JSON.stringify(spec));
+  const r = sf(['accept', jobFile, head], env);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /^stage MERGE asks for grant github, which no personal or job file gives$/m);
+  assert.deepEqual(rows(db, cycleId), before);
+});
+
+test('accept under the default workflow builds no adapter: a runtime nobody registered does not stop it (11-a2)', () => {
+  const { jobFile, db } = scratch();
+  seed(db, 'c1', TO_ACCEPTANCE);
+  const spec = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...spec, runtime: { developer: 'nosuch', standard: 'nosuch', adversarial: 'nosuch' } }));
+  const r = sf(['accept', jobFile, H]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.stdout, `Cycle: c1\nStage: ACCEPTED\n\nTo merge:\n  git -C ${spec.repo} merge --no-ff ${H}\n`);
+});
+
+test('accept that drives on to a further human stage prints the next steps and exits 0 (11-a2 standard 1)', () => {
+  const { env, jobFile, head } = atOwnerBeforeGrant(MERGES, `'FINAL'`);
+  const r = sf(['accept', jobFile, head], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: FINAL$/m);
+  assert.ok(r.stdout.includes(`accept ${jobFile} ${head}`), r.stdout);
+  assert.doesNotMatch(r.stdout, /^To merge:$/m);
+});
+

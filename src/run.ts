@@ -7,11 +7,11 @@
 import { join, resolve } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { DEFAULT_RUNS_DIR, develop, fix, type DeveloperAdapter, type Job } from './developer.ts';
-import { fileArgs, type Cycle, type Role, type Stage, type Workflow } from './lifecycle.ts';
+import { apply, type Cycle, type Event, type Role, type Stage, type Workflow } from './lifecycle.ts';
 import { review } from './review.ts';
 import { checkSandbox, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
-import { checkCommands, missingProgram, noWorkflowDir, stageGrants, verify, type VerifyOptions } from './verify.ts';
+import { checkCommands, grantValues, headGate, missingProgram, stageFiles, stageGrants, verify, type VerifyOptions } from './verify.ts';
 
 /** By role. A commit role may be a factory per worktree; a verdict role must be an Adapter. */
 export type Adapters = Record<Role, DeveloperAdapter>;
@@ -66,10 +66,43 @@ export async function drive(store: EventStore, cycleId: string, adapters: Adapte
   // Nothing has run, so there is no clone to continue from; recovery (row 11) owns this case.
   if (cycle.stage === 'QUEUED') throw new Error(`cycle ${cycleId} is QUEUED: no run started; cancel it and run the job again`);
   const roles = preflight(store.workflow, adapters, job, opts);
-  // Where develop put them.
-  const worktree = join(resolve(opts.runsDir ?? DEFAULT_RUNS_DIR), cycleId);
-  return loop(store, cycle, roles, job, opts, worktree, `sf/${cycleId}`);
+  return loop(store, cycle, roles, job, opts, clonePath(opts, cycleId), `sf/${cycleId}`);
 }
+
+/** What drive needs, built only when an owner's event leads to a stage the loop runs. */
+export interface Drivable {
+  adapters: Adapters;
+  job: Job;
+  opts: RunOptions;
+}
+
+/**
+ * Record an owner's event, then drive the cycle on (A-129). When the event leads to a stage the
+ * loop runs, `ready` and preflight run before the event is written, so a refusal writes nothing:
+ * written first, the cycle would wait at that stage with no command to continue it. Otherwise the
+ * event is recorded and `ready` is never called, so the default workflow's accept loads no runtime.
+ */
+export async function decideAndDrive(store: EventStore, cycleId: string, event: Event, ready: () => Promise<Drivable>): Promise<{ cycle: Cycle; driven?: RunResult }> {
+  const now = store.load(cycleId);
+  if (!now) throw new Error(`cycle ${cycleId} not open`);
+  const w = store.workflow;
+  // apply is pure, so this is the cycle the event leads to, before anything is written.
+  const next = apply(now, event, w);
+  if (!loopRuns(w, next.stage)) return { cycle: store.append(cycleId, event) };
+  const { adapters, job, opts } = await ready();
+  const roles = preflight(w, adapters, job, opts);
+  // verify's gate, on the cycle as it will be: refused now, the owner may fix and accept again.
+  const def = w.stages[next.stage];
+  if (def?.kind === 'command' && (def.grants ?? []).length > 0) headGate(next);
+  const cycle = store.append(cycleId, event);
+  return { cycle, driven: await loop(store, cycle, roles, job, opts, clonePath(opts, cycleId), `sf/${cycleId}`) };
+}
+
+/** Where develop put the cycle's clone. */
+const clonePath = (opts: RunOptions, cycleId: string) => join(resolve(opts.runsDir ?? DEFAULT_RUNS_DIR), cycleId);
+
+/** The stage kinds loop has a step for. */
+const loopRuns = (w: Workflow, stage: Stage) => ['agent', 'command'].includes(w.stages[stage]?.kind ?? '');
 
 /**
  * Throws for what a later step would refuse only after a paid run: a sandbox that cannot start,
@@ -86,8 +119,9 @@ function preflight(w: Workflow, adapters: Adapters, job: Job, opts: RunOptions):
   const policy = { cwd: '/', write: [], read: [], network: false };
   for (const [name, def] of Object.entries(w.stages)) {
     if (def.kind !== 'command') continue;
-    if (opts.workflowDir === undefined) for (const file of (def.run ?? []).flatMap(fileArgs)) throw new Error(noWorkflowDir(name, file));
-    stageGrants(name, def, opts.grants, opts.sandbox);
+    stageFiles(name, def.run ?? [], opts.workflowDir);
+    // Read and dropped: an empty file would otherwise be found only when the stage runs.
+    grantValues(stageGrants(name, def, opts.grants, opts.sandbox));
     const checks = def.run ?? job.checks ?? [];
     checkCommands(checks, def.run !== undefined);
     for (const { name: check, command: [program] } of checks) {

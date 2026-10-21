@@ -10,15 +10,16 @@
 // Ticket 10-d: `events <job.json | runsDir>` prints the observation stream as JSON lines, and
 // `accept` and `cancel` record who ran them (`--source`, default `owner`).
 // Ticket 11-a: the decisions' rules live in src/decide.ts, and `main` runs only as a program.
+// Ticket 11-a2: `accept` drives the cycle on when the workflow has a stage after the human one.
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { join, resolve } from 'node:path';
-import { loadConfig, storeOf, type JobFile } from './config.ts';
-import { acceptCycle, cancelWork, humanStages } from './decide.ts';
+import { loadConfig, storeOf, type Config, type JobFile } from './config.ts';
+import { acceptEvent, cancelWork, humanStages } from './decide.ts';
 import { oneLine, type Job } from './developer.ts';
 import { printable } from './prompt.ts';
 import { defaultWorkflow, isSource, type Workflow } from './lifecycle.ts';
-import { ROLE_ALIASES, run, type Adapters } from './run.ts';
+import { decideAndDrive, ROLE_ALIASES, run, type Adapters, type RunOptions, type RunResult } from './run.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
 import { EventStore, openings, workflowHash } from './store.ts';
@@ -108,11 +109,70 @@ async function events(rest: string[]): Promise<number> {
   }
 }
 
+/** The job the run command builds from its config, and accept when it drives on. */
+function jobOf({ path, spec, repo }: Config): Job {
+  const ticket = spec.ticket ?? (spec.ticketFile ? readFileSync(resolve(path, '..', spec.ticketFile), 'utf8') : undefined);
+  if (!ticket) throw new Error('job needs ticket or ticketFile');
+  return { workId: spec.workId, ticket, repo, base: spec.base, parentCycleId: spec.parentCycleId, checks: spec.checks };
+}
+
+const optionsOf = ({ spec, runsDir, sandbox, workflowDir, grants }: Config): RunOptions => ({ deadlineMs: spec.deadlineMs ?? 120_000, runsDir, sandbox, workflowDir, grants });
+
+/** Prints what the loop left for the owner; returns the exit code: 0 only at a human stage. */
+function report(r: RunResult, { path, repo, workflow, sandbox }: Config): number {
+  const { cycle } = r;
+  console.log(`Stage: ${cycle.stage}`);
+  console.log(`Cycle: ${cycle.cycleId}`);
+  console.log(`Branch: ${r.branch}`);
+  console.log(`Head: ${cycle.candidate?.head || '(none)'}`);
+  console.log(`Base: ${cycle.candidate?.base ?? '(none)'}`);
+  console.log(`Worktree: ${r.worktree}`);
+  console.log(`Sandbox: ${sandbox.backend}`);
+  const budgeted = Object.keys(workflow.stages).filter((s) => workflow.stages[s]!.budget !== undefined);
+  console.log(workflow === defaultWorkflow
+    ? `Reviews: standard ${cycle.budgets.STANDARD_REVIEW ?? 0}, adversarial ${cycle.budgets.ADVERSARIAL_REVIEW ?? 0}`
+    : `Reviews: ${budgeted.map((s) => `${s} ${cycle.budgets[s] ?? 0}`).join(', ')}`);
+  for (const h of cycle.history) {
+    const e = h.event;
+    if (e.type === 'verification') console.log(`verification ${e.head.slice(0, 7)}: ${e.checks.map((c) => `${c.name} ${c.result}`).join(', ') || 'no checks'}`);
+    if (e.type === 'verdict') {
+      const def = workflow.stages[h.from];
+      const role = def?.kind === 'agent' ? def.role : 'reviewer';
+      console.log(`${role} ${printable(e.head.slice(0, 7))}: ${e.verdict}`);
+      for (const f of Array.isArray(e.findings) ? e.findings : []) console.log(`  - ${printable(oneLine(f))}`);
+    }
+  }
+  if (cycle.escalation) console.log(`Escalation: ${printable(cycle.escalation)}`);
+  if (r.error) console.log(`Error: ${printable(r.error)}`);
+  if (humanStages(workflow).includes(cycle.stage)) {
+    console.log('');
+    console.log('To review, accept and merge:');
+    console.log(`  git -C ${repo} diff ${cycle.candidate!.base}..${cycle.candidate!.head}`);
+    console.log(`  node ${process.argv[1]} accept ${path} ${cycle.candidate!.head}`);
+    // By SHA, not branch: the branch can move after the reviews; the SHA is what they passed.
+    console.log(`  git -C ${repo} merge --no-ff ${cycle.candidate!.head}`);
+    return 0;
+  }
+  return 1;
+}
+
 async function accept(file: string, sha: string, source: string): Promise<number> {
-  const { path, spec, repo, runsDir, workflow } = await decisionConfig(file);
+  const config = await decisionConfig(file);
+  const { path, spec, repo, runsDir, workflow, registry, sandbox } = config;
   const store = existingStore(runsDir, workflow);
   try {
-    const after = acceptCycle(store, spec.workId, sha, source, { runsDir, file: path });
+    const { cycleId, event } = acceptEvent(store, spec.workId, sha, source, { runsDir, file: path });
+    const { cycle: after, driven } = await decideAndDrive(store!, cycleId, event, async () =>
+      ({ adapters: adaptersFor(workflow, registry, spec.runtime, sandbox), job: jobOf(config), opts: optionsOf(config) }));
+    if (driven) {
+      // A further human stage prints its own next steps; ACCEPTED gets the merge lines below.
+      const code = report(driven, config);
+      if (driven.cycle.stage !== 'ACCEPTED') return code;
+      console.log('');
+      console.log('To merge:');
+      console.log(`  git -C ${repo} merge --no-ff ${driven.cycle.candidate!.head}`);
+      return 0;
+    }
     console.log(`Cycle: ${after.cycleId}`);
     console.log(`Stage: ${after.stage}`);
     if (after.stage !== 'ACCEPTED') return 1;
@@ -155,10 +215,9 @@ export async function main(argv: string[]): Promise<number> {
   if (first === 'events') return events(rest);
   // Extra words are refused, not ignored: `job.json cancel` would otherwise start a paid run.
   if (!first || rest.length !== 0) throw new Error(USAGE);
-  const { path, spec, repo, runsDir, workflow, registry, sandbox, workflowDir, grants } = await loadConfig(first);
-  const ticket = spec.ticket ?? (spec.ticketFile ? readFileSync(resolve(path, '..', spec.ticketFile), 'utf8') : undefined);
-  if (!ticket) throw new Error('job needs ticket or ticketFile');
-  const job: Job = { workId: spec.workId, ticket, repo, base: spec.base, parentCycleId: spec.parentCycleId, checks: spec.checks };
+  const config = await loadConfig(first);
+  const { path, spec, runsDir, workflow, registry, sandbox } = config;
+  const job = jobOf(config);
   const adapters = adaptersFor(workflow, registry, spec.runtime, sandbox);
   // develop makes runsDir, but the store opens first.
   mkdirSync(runsDir, { recursive: true });
@@ -169,41 +228,7 @@ export async function main(argv: string[]): Promise<number> {
     const parent = job.parentCycleId === undefined ? undefined : store.load(job.parentCycleId);
     if (parent && parent.stage !== 'ESCALATED')
       throw new Error(`parentCycleId ${parent.cycleId} is ${parent.stage}, not ESCALATED; remove parentCycleId from ${path} to start the work fresh`);
-    const r = await run(store, adapters, job, { deadlineMs: spec.deadlineMs ?? 120_000, runsDir, sandbox, workflowDir, grants });
-    const { cycle } = r;
-    console.log(`Stage: ${cycle.stage}`);
-    console.log(`Cycle: ${cycle.cycleId}`);
-    console.log(`Branch: ${r.branch}`);
-    console.log(`Head: ${cycle.candidate?.head || '(none)'}`);
-    console.log(`Base: ${cycle.candidate?.base ?? '(none)'}`);
-    console.log(`Worktree: ${r.worktree}`);
-    console.log(`Sandbox: ${sandbox.backend}`);
-    const budgeted = Object.keys(workflow.stages).filter((s) => workflow.stages[s]!.budget !== undefined);
-    console.log(workflow === defaultWorkflow
-      ? `Reviews: standard ${cycle.budgets.STANDARD_REVIEW ?? 0}, adversarial ${cycle.budgets.ADVERSARIAL_REVIEW ?? 0}`
-      : `Reviews: ${budgeted.map((s) => `${s} ${cycle.budgets[s] ?? 0}`).join(', ')}`);
-    for (const h of cycle.history) {
-      const e = h.event;
-      if (e.type === 'verification') console.log(`verification ${e.head.slice(0, 7)}: ${e.checks.map((c) => `${c.name} ${c.result}`).join(', ') || 'no checks'}`);
-      if (e.type === 'verdict') {
-        const def = workflow.stages[h.from];
-        const role = def?.kind === 'agent' ? def.role : 'reviewer';
-        console.log(`${role} ${printable(e.head.slice(0, 7))}: ${e.verdict}`);
-        for (const f of Array.isArray(e.findings) ? e.findings : []) console.log(`  - ${printable(oneLine(f))}`);
-      }
-    }
-    if (cycle.escalation) console.log(`Escalation: ${printable(cycle.escalation)}`);
-    if (r.error) console.log(`Error: ${printable(r.error)}`);
-    if (humanStages(workflow).includes(cycle.stage)) {
-      console.log('');
-      console.log('To review, accept and merge:');
-      console.log(`  git -C ${job.repo} diff ${cycle.candidate!.base}..${cycle.candidate!.head}`);
-      console.log(`  node ${process.argv[1]} accept ${path} ${cycle.candidate!.head}`);
-      // By SHA, not branch: the branch can move after the reviews; the SHA is what they passed.
-      console.log(`  git -C ${job.repo} merge --no-ff ${cycle.candidate!.head}`);
-      return 0;
-    }
-    return 1;
+    return report(await run(store, adapters, job, optionsOf(config)), config);
   } finally {
     store.close();
   }
