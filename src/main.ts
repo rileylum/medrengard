@@ -50,7 +50,9 @@ function existingStore(runsDir: string, workflow: Workflow): EventStore | undefi
  * The job's configuration as its existing cycles were opened under. The base ref has usually
  * moved since (the owner merges into it), and the layers at the new tip may not load them, or
  * not load at all (A-078 Q4). The recorded bases come first; the job file's base is the last
- * resort, and its error, or the store's refusal naming both workflows, is the one reported.
+ * resort, and its error is the one reported. Then `accept` gets the store's refusal naming both
+ * workflows (`drivable`); `cancel` needs no match, since the store reads each cycle under the
+ * workflow it recorded (11-c).
  */
 async function decisionConfig(file: string) {
   const { runsDir, workId } = storeOf(file);

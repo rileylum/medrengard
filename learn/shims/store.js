@@ -1,17 +1,25 @@
 // src/store.ts for the browser. Same API and the same rules, with the SQLite table replaced by an
 // array of rows: row 0 of a cycle is the open marker with the workflow's name, hash and
 // definition; every append is checked as serialised bytes with the real isEvent; a second outcome
-// for a run ID writes nothing; each row gets a store-wide `pos` and a time `at`; load refuses a
-// cycle opened under another workflow and replays the log through the real apply. Keep it in step
-// with src/store.ts; learn/learn.test.ts checks that it exports what src/ imports from there.
+// for a run ID writes nothing; each row gets a store-wide `pos`, a time `at` and the stage apply
+// gave it; load replays the log through the real apply under the workflow the cycle recorded,
+// refuses one whose replay disagrees with a stored stage, and drivable refuses a cycle opened under
+// another workflow. Keep it in step with src/store.ts; learn/learn.test.ts checks that it exports
+// what src/ imports from there.
 import { createHash } from 'node:crypto';
-import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, outcomeRunId, SETTLED } from '/src/lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, ENGINE_VERSION, isEvent, newCycle, outcomeRunId, replayCheck, SETTLED } from '/src/lifecycle.ts';
 
 export { SETTLED };
 export class UnclassifiableEvent extends Error {}
+export class ReplayDiverged extends Error {}
 
 export const workflowHash = (w) => createHash('sha256').update(JSON.stringify(w)).digest('hex');
 export const DEFAULT_RECORD = { name: defaultWorkflow.name, hash: workflowHash(defaultWorkflow) };
+
+export function recordedWorkflow(open, given) {
+  const { hash } = open.workflow ?? DEFAULT_RECORD;
+  return [open.definition, defaultWorkflow, given].find((w) => w !== undefined && replayCheck(w).length === 0 && workflowHash(w) === hash);
+}
 
 export class EventStore {
   constructor(path = ':memory:', workflow = defaultWorkflow, table = []) {
@@ -20,7 +28,7 @@ export class EventStore {
     this.path = path;
     this.workflow = workflow;
     this.record = { name: workflow.name ?? 'unnamed', hash: workflowHash(workflow) };
-    /** { cycle_id, seq, type, run_id, body, pos, at }: the columns of the real table. Two stores may share one. */
+    /** { cycle_id, seq, type, run_id, body, pos, at, stage }: the columns of the real table. Two stores may share one. */
     this.table = table;
     this.listeners = new Set();
   }
@@ -42,8 +50,8 @@ export class EventStore {
     const { open, escalated } = this.cyclesFor(workId);
     if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
     if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
-    const row = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow };
-    this.insert(cycleId, 0, 'open', null, JSON.stringify(row));
+    const row = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow, engine: ENGINE_VERSION };
+    this.insert(cycleId, 0, 'open', null, JSON.stringify(row), 'QUEUED');
     this.emit({ kind: 'open', cycleId });
     return newCycle(cycleId, workId, parentCycleId);
   }
@@ -56,31 +64,70 @@ export class EventStore {
       this.emit({ kind: 'refused', cycleId, body });
       throw new UnclassifiableEvent(`unclassifiable event: ${body}`);
     }
-    if (!this.exists(cycleId)) throw new Error(`cycle ${cycleId} not open`);
     const outcome = outcomeRunId(parsed);
     const runId = outcome === undefined ? null : JSON.stringify(outcome);
+    // One write at a time is the whole lock here: the replay, the apply and the insert.
+    const now = this.replay(cycleId);
+    if (!now) throw new Error(`cycle ${cycleId} not open`);
     // The unique index on (cycle_id, run_id): INSERT OR IGNORE writes nothing for a second outcome.
     if (runId !== null && this.table.some((r) => r.cycle_id === cycleId && r.run_id === runId)) {
       this.emit({ kind: 'duplicate', cycleId, body });
-      return this.load(cycleId);
+      return now.cycle;
     }
+    const cycle = apply(now.cycle, parsed, now.workflow);
     const seq = Math.max(...this.table.filter((r) => r.cycle_id === cycleId).map((r) => r.seq)) + 1;
-    const row = this.insert(cycleId, seq, parsed.type, runId, body);
-    const cycle = this.load(cycleId);
+    const row = this.insert(cycleId, seq, parsed.type, runId, body, cycle.stage);
     this.emit({ kind: 'append', cycleId, seq, pos: row.pos, event: parsed, cycle });
     return cycle;
   }
 
-  events(cycleId) { return this.rows(cycleId).filter((r) => r.type !== 'open'); }
+  events(cycleId) { return this.rows(cycleId).map((r) => r.body).filter((b) => b.type !== 'open'); }
 
-  load(cycleId) {
-    const [first, ...rest] = this.rows(cycleId);
-    if (!first) return undefined;
-    if (first.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(first.type)}, not the open marker`);
-    const opened = first.workflow ?? DEFAULT_RECORD;
-    if (opened.hash !== this.record.hash)
-      throw new Error(`cycle ${cycleId} was opened under workflow ${opened.name} (${opened.hash.slice(0, 12)}), this store runs ${this.record.name} (${this.record.hash.slice(0, 12)})`);
-    return rest.reduce((c, e) => apply(c, e, this.workflow), newCycle(cycleId, first.workId, first.parentCycleId));
+  load(cycleId) { return this.replay(cycleId)?.cycle; }
+
+  drivable(cycleId) {
+    const r = this.replay(cycleId);
+    if (!r) throw new Error(`cycle ${cycleId} not open`);
+    if (r.opened.hash !== this.record.hash) throw this.mismatch(cycleId, r.opened);
+    return r.cycle;
+  }
+
+  unsettled() {
+    const out = [];
+    for (const r of this.table.filter((r) => r.seq === 0).sort((a, b) => (a.cycle_id < b.cycle_id ? -1 : 1))) {
+      const cycleId = r.cycle_id;
+      let workId = '';
+      let stage;
+      try {
+        let open;
+        try { open = JSON.parse(r.body); } catch { throw new Error(`cycle ${cycleId}: row 0 is not JSON`); }
+        if (typeof open?.workId === 'string') workId = open.workId;
+        stage = this.load(cycleId).stage;
+      } catch (err) { out.push({ cycleId, workId, refused: err.message }); continue; }
+      if (!SETTLED.includes(stage)) out.push({ cycleId, workId, stage });
+    }
+    return out;
+  }
+
+  replay(cycleId) {
+    const rows = this.rows(cycleId);
+    if (rows.length === 0) return undefined;
+    const head = rows[0].body;
+    if (head?.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(head?.type)}, not the open marker`);
+    const opened = head.workflow ?? DEFAULT_RECORD;
+    const workflow = recordedWorkflow(head, this.workflow);
+    if (!workflow) throw this.mismatch(cycleId, opened);
+    let cycle = newCycle(cycleId, head.workId, head.parentCycleId);
+    for (const [i, { seq, body, stage }] of rows.entries()) {
+      if (i > 0) cycle = apply(cycle, body, workflow);
+      if (stage !== null && stage !== cycle.stage)
+        throw new ReplayDiverged(`cycle ${cycleId} row ${seq} (${body.type}) was recorded at ${stage}, but replays to ${cycle.stage} under engine ${ENGINE_VERSION} (opened ${head.engine === undefined ? 'before engine versions' : `under engine ${head.engine}`}); the cycle is not driven`);
+    }
+    return { cycle, workflow, opened };
+  }
+
+  mismatch(cycleId, opened) {
+    return new Error(`cycle ${cycleId} was opened under workflow ${opened.name} (${opened.hash.slice(0, 12)}), this store runs ${this.record.name} (${this.record.hash.slice(0, 12)})`);
   }
 
   close() {}
@@ -101,14 +148,14 @@ export class EventStore {
   exists(cycleId) { return this.table.some((r) => r.cycle_id === cycleId && r.seq === 0); }
 
   // pos and at are set in the real insert statement; here, one row at a time is the whole lock.
-  insert(cycleId, seq, type, runId, body) {
-    const row = { cycle_id: cycleId, seq, type, run_id: runId, body, pos: this.table.length + 1, at: new Date().toISOString() };
+  insert(cycleId, seq, type, runId, body, stage) {
+    const row = { cycle_id: cycleId, seq, type, run_id: runId, body, pos: this.table.length + 1, at: new Date().toISOString(), stage };
     this.table.push(row);
     return row;
   }
 
   rows(cycleId) {
-    return this.table.filter((r) => r.cycle_id === cycleId).sort((a, b) => a.seq - b.seq).map((r) => JSON.parse(r.body));
+    return this.table.filter((r) => r.cycle_id === cycleId).sort((a, b) => a.seq - b.seq).map((r) => ({ seq: r.seq, body: JSON.parse(r.body), stage: r.stage ?? null }));
   }
 }
 

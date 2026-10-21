@@ -115,8 +115,7 @@ type Verdict = Extract<Event, { type: 'verdict' }>;
  */
 export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId: string, job: Job, opts: DevelopOptions): Promise<Developed> {
   checkDeadline(opts.deadlineMs);
-  const cycle = store.load(cycleId);
-  if (!cycle) throw new Error(`cycle ${cycleId} not open`);
+  const cycle = store.drivable(cycleId);
   // A commit stage with a head is a stage re-entered after a FAIL; without one it is the first
   // run, which develop owns.
   const def = store.workflow.stages[cycle.stage];

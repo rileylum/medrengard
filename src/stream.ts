@@ -3,8 +3,8 @@
 // it cannot replay is passed on as stored, with null stages, never escalated.
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, type Cycle, type Stage, type Workflow } from './lifecycle.ts';
-import { addPositions, DEFAULT_RECORD, workflowHash, type OpenRow } from './store.ts';
+import { apply, isEvent, newCycle, type Cycle, type Stage, type Workflow } from './lifecycle.ts';
+import { addPositions, recordedWorkflow, type OpenRow } from './store.ts';
 
 export interface Line {
   /** The row's position. Increasing across the store; not dense. */
@@ -23,13 +23,6 @@ export interface Line {
 
 /** How often a follower looks for new rows: SQLite cannot notify another process. */
 export const FOLLOW_MS = 500;
-
-/** The cycle's own recorded definition, the default, or the caller's, whichever hashes to the recorded workflow. */
-function workflowOf(open: OpenRow, given?: Workflow): Workflow | undefined {
-  const { hash } = open.workflow ?? DEFAULT_RECORD;
-  // apply trusts its workflow, so a definition read back as data is checked like any other.
-  return [open.definition, defaultWorkflow, given].find((w) => w !== undefined && checkWorkflow(w).length === 0 && workflowHash(w) === hash);
-}
 
 /** True once `path` holds an events table: a writer creates the file before the table. Never creates the file. */
 export function storeReady(path: string): boolean {
@@ -65,7 +58,7 @@ export function openStream(path: string, opts: { workId?: string; after?: number
         if (r.seq === 0) {
           // Only a raw write makes row 0 anything but the open marker; its cycle then has no stages.
           const open = (typeof body === 'object' && body !== null ? body : {}) as OpenRow;
-          const workflow = open.type === 'open' ? workflowOf(open, opts.workflow) : undefined;
+          const workflow = open.type === 'open' ? recordedWorkflow(open, opts.workflow) : undefined;
           const known = { workId: typeof open.workId === 'string' ? open.workId : '', workflow, cycle: workflow && newCycle(cycleId, open.workId, open.parentCycleId) };
           cycles.set(cycleId, known);
           if (!known.cycle && (opts.workId === undefined || opts.workId === known.workId)) warn(cycleId, 'no workflow that matches the one it was opened under');

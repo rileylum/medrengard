@@ -7,7 +7,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { apply, defaultWorkflow, newCycle, type Event } from '../src/lifecycle.ts';
-import { EventStore } from '../src/store.ts';
+import { EventStore, workflowHash } from '../src/store.ts';
 import { openStream, type Line } from '../src/stream.ts';
 import { ownerCheck } from './workflows.ts';
 
@@ -468,5 +468,25 @@ test('cancel and events on a job file wait for another connection\'s exclusive l
     lock.close();
     const { code, err } = await child;
     assert.equal(code, 0, `${args[0]}: ${err}`);
+  }
+});
+
+// Ticket 11-c: the stream picks a cycle's workflow by the store's rule, so a check added to
+// checkWorkflow later leaves old cycles' stages readable (engine.md G9).
+test('events gives stages for a cycle whose recorded definition checkWorkflow now refuses', () => {
+  const db = join(fresh('tightened'), 'events.sqlite');
+  const tightened = { ...ownerCheck, name: 'tightened', stages: { ...ownerCheck.stages, DEV: { ...ownerCheck.stages.DEV!, roleText: 'two\nlines' } } } as typeof ownerCheck;
+  new EventStore(db).close();
+  const raw = new DatabaseSync(db);
+  raw.prepare("INSERT INTO events (cycle_id, seq, type, run_id, body, pos) VALUES ('t1', 0, 'open', NULL, ?, 1)")
+    .run(JSON.stringify({ type: 'open', workId: 'wt', workflow: { name: 'tightened', hash: workflowHash(tightened) }, definition: tightened }));
+  raw.prepare("INSERT INTO events (cycle_id, seq, type, run_id, body, pos) VALUES ('t1', 1, 'claim', NULL, ?, 2)")
+    .run(JSON.stringify(OWNER_CHECK[0]));
+  raw.close();
+  const s = openStream(db);
+  try {
+    assert.deepEqual(s.poll().map((l) => [l.from, l.stage]), [['QUEUED', 'DEV']]);
+  } finally {
+    s.close();
   }
 });

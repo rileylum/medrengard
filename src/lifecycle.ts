@@ -13,6 +13,12 @@ export const ENGINE_STAGES = ['QUEUED', 'ESCALATED', 'CANCELLED', 'ACCEPTED'];
 /** Stages that hold no open cycle: escalated cycles wait for the owner and never move again. */
 export const SETTLED: readonly Stage[] = Object.freeze(ENGINE_STAGES.slice(1));
 
+/**
+ * Recorded on each open row (A-123). Bump it when apply would move any existing log to another
+ * stage; the stage stored on each row then refuses the cycles it changes, naming both versions.
+ */
+export const ENGINE_VERSION = 1;
+
 export interface Transitions {
   PASS: Stage;
   FAIL?: Stage;
@@ -276,6 +282,32 @@ export function checkWorkflow(w: Workflow): string[] {
       }
   }
   for (const [name] of entries) if (!settles.has(name)) reasons.push(`stage ${name} has no path to ${SETTLED.join(', ')}`);
+  return reasons;
+}
+
+/**
+ * What apply reads, for a workflow read back from the store (A-123, engine.md P6): a stage table
+ * apply can walk without crashing or routing to a stage that is not there. checkWorkflow's other
+ * rules guard new cycles; adding one here makes every cycle opened before it unloadable.
+ */
+export function replayCheck(w: Workflow): string[] {
+  if (!obj(w) || !obj(w.stages)) return ['workflow must be an object with stages'];
+  const reasons: string[] = [];
+  const known = (s: unknown) => typeof s === 'string' && Object.hasOwn(w.stages, s) && !ENGINE_STAGES.includes(s);
+  if (!known(w.start)) reasons.push(`start stage ${String(w.start)} is not a workflow stage`);
+  for (const [name, def] of Object.entries(w.stages)) {
+    if (ENGINE_STAGES.includes(name)) reasons.push(`stage ${name} uses an engine stage name`);
+    if (!obj(def)) { reasons.push(`stage ${name} must be an object`); continue; }
+    if (!['agent', 'command', 'human'].includes(def.kind)) reasons.push(`stage ${name} has unknown kind ${String(def.kind)}`);
+    if (def.kind === 'agent' && !str(def.role)) reasons.push(`stage ${name} is an agent stage with no role`);
+    if (def.kind === 'agent' && def.produces !== 'commit' && def.produces !== 'verdict') reasons.push(`stage ${name} produces ${String(def.produces)}, not commit or verdict`);
+    if (def.budget !== undefined && !(Number.isSafeInteger(def.budget) && def.budget > 0)) reasons.push(`stage ${name} budget must be a positive integer`);
+    if (!obj(def.transitions)) { reasons.push(`stage ${name} has no transitions`); continue; }
+    if (!str(def.transitions.PASS)) reasons.push(`stage ${name} has no PASS transition`);
+    if (def.transitions.FAIL !== undefined && !str(def.transitions.FAIL)) reasons.push(`stage ${name} FAIL transition must be a stage name`);
+    for (const [outcome, to] of Object.entries(def.transitions))
+      if (!known(to) && !SETTLED.includes(to)) reasons.push(`stage ${name} ${outcome} names unknown stage ${String(to)}`);
+  }
   return reasons;
 }
 
