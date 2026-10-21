@@ -13,6 +13,12 @@ export const ENGINE_STAGES = ['QUEUED', 'ESCALATED', 'CANCELLED', 'ACCEPTED'];
 /** Stages that hold no open cycle: escalated cycles wait for the owner and never move again. */
 export const SETTLED: readonly Stage[] = Object.freeze(ENGINE_STAGES.slice(1));
 
+/**
+ * Recorded on each open row (A-123). Bump it when apply would move any existing log to another
+ * stage; the stage stored on each row then refuses the cycles it changes, naming both versions.
+ */
+export const ENGINE_VERSION = 1;
+
 export interface Transitions {
   PASS: Stage;
   FAIL?: Stage;

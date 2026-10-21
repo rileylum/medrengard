@@ -3,7 +3,7 @@
 // cancel during a run, 07-d) waits for the write lock rather than failing.
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { apply, checkWorkflow, defaultWorkflow, isEvent, newCycle, outcomeRunId, replayCheck, SETTLED, type Cycle, type Event, type Stage, type Workflow } from './lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, ENGINE_VERSION, isEvent, newCycle, outcomeRunId, replayCheck, SETTLED, type Cycle, type Event, type Stage, type Workflow } from './lifecycle.ts';
 
 // Row 0 of every cycle is the store's own "open" marker; it is not a lifecycle Event and never
 // reaches apply. Keeping it in the same table honours the one-table constraint.
@@ -17,6 +17,8 @@ export interface OpenRow {
   base?: string;
   /** The workflow itself (10-d), so a reader with no job file can replay the cycle. Trust it only if it hashes to `workflow.hash`. */
   definition?: Workflow;
+  /** The ENGINE_VERSION that opened the cycle (11-c). Absent before 11-c. */
+  engine?: number;
 }
 
 /**
@@ -67,6 +69,24 @@ export function addPositions(db: DatabaseSync): void {
 }
 
 /**
+ * Add `stage` to a store written before 11-c: the stage apply gave each row, kept as a checksum,
+ * never read as state (A-123). Old rows stay null and are not compared. Filling them from today's
+ * apply would vouch for whatever today's apply says, which is what the column is there to catch.
+ */
+function addStages(db: DatabaseSync): void {
+  const has = () => db.prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = 'stage'").get() !== undefined;
+  if (has()) return;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (!has()) db.exec('ALTER TABLE events ADD COLUMN stage TEXT');
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
  * How each cycle of the work was opened: its base and workflow hash. Read without replay, so it
  * needs no workflow: accept and cancel use it to pick the workflow to open the store with.
  */
@@ -97,6 +117,9 @@ export { SETTLED };
 /** append refused the event because apply could not classify its serialised form. */
 export class UnclassifiableEvent extends Error {}
 
+/** The replay disagrees with a stage stored on a row: the engine reads this log differently from the one that wrote it. */
+export class ReplayDiverged extends Error {}
+
 export class EventStore {
   private db: DatabaseSync;
   readonly workflow: Workflow;
@@ -126,6 +149,7 @@ export class EventStore {
         ON events (cycle_id, run_id) WHERE run_id IS NOT NULL;
     `);
     addPositions(this.db);
+    addStages(this.db);
   }
 
   /** Create a cycle. Returns the initial Cycle. Throws if the ID is already in use. */
@@ -149,11 +173,11 @@ export class EventStore {
       if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
       // Spec: a new cycle for the same work names its parent; an escalated cycle is waiting for one.
       if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
-      const row: OpenRow = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow };
+      const row: OpenRow = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow, engine: ENGINE_VERSION };
       // Fixed seq 0, not MAX+1: an open row that landed mid-log would reach apply, which has no
       // 'open' case.
       this.db
-        .prepare(`INSERT INTO events (cycle_id, seq, type, run_id, body, pos, at) VALUES (?, 0, ?, NULL, ?, ${POS}, ${NOW})`)
+        .prepare(`INSERT INTO events (cycle_id, seq, type, run_id, body, pos, at, stage) VALUES (?, 0, ?, NULL, ?, ${POS}, ${NOW}, 'QUEUED')`)
         .run(cycleId, row.type, JSON.stringify(row));
       this.db.exec('COMMIT');
     } catch (err) {
@@ -170,7 +194,8 @@ export class EventStore {
    * the serialised event: a bad row would make the whole log unloadable. A run has one outcome:
    * a second outcome for a run ID that already has one writes nothing and returns the current
    * Cycle. Only events `outcomeRunId` names carry run_id into the unique index; a redelivered
-   * claim is stored and apply decides.
+   * claim is stored and apply decides. The load, the apply and the insert share one write lock,
+   * so the stage stored on the row is the one the rows before it lead to.
    */
   append(cycleId: string, event: Event): Cycle {
     requireId(cycleId, 'cycle ID');
@@ -180,18 +205,28 @@ export class EventStore {
     const body = JSON.stringify(event);
     const parsed: unknown = body === undefined ? undefined : JSON.parse(body);
     if (!isEvent(parsed)) throw new UnclassifiableEvent(`unclassifiable event: ${body}`);
-    if (!this.exists(cycleId)) throw new Error(`cycle ${cycleId} not open`);
     // The index key is the JSON-escaped run ID, not the raw string: SQLite would fold a lone
     // surrogate to U+FFFD and two distinct run IDs would collide.
     const runId = outcomeRunId(parsed);
     const dedupKey = runId === undefined ? null : JSON.stringify(runId);
-    this.insert(cycleId, parsed.type, dedupKey, body);
-    return this.load(cycleId)!;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const now = this.replay(cycleId);
+      if (!now) throw new Error(`cycle ${cycleId} not open`);
+      // The parsed body, not `event`: the cycle a later load replays from the row (02-c).
+      const next = apply(now.cycle, parsed, now.workflow);
+      const written = this.insert(cycleId, parsed.type, dedupKey, body, next.stage);
+      this.db.exec('COMMIT');
+      return written ? next : now.cycle;
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
   }
 
   /** Lifecycle events for a cycle in commit order, without the open marker. */
   events(cycleId: string): Event[] {
-    return this.rows(cycleId).filter((r) => r.type !== 'open') as Event[];
+    return this.rows(cycleId).map((r) => r.body).filter((b) => b.type !== 'open') as Event[];
   }
 
   /** Replay the cycle through apply, under the workflow it was opened with. Undefined if the cycle was never opened. */
@@ -214,32 +249,38 @@ export class EventStore {
     this.db.close();
   }
 
-  private replay(cycleId: string): { cycle: Cycle; opened: { name: string; hash: string } } | undefined {
-    const [first, ...rest] = this.rows(cycleId);
-    if (!first) return undefined;
+  private replay(cycleId: string): { cycle: Cycle; workflow: Workflow; opened: { name: string; hash: string } } | undefined {
+    const rows = this.rows(cycleId);
+    if (rows.length === 0) return undefined;
+    const head = rows[0]!.body;
     // workId and parent come from this row; any other type would replay as a cycle of no work.
-    if (first.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(first.type)}, not the open marker`);
-    const opened = first.workflow ?? DEFAULT_RECORD;
+    if (head.type !== 'open') throw new Error(`cycle ${cycleId}: row 0 is ${String(head.type)}, not the open marker`);
+    const opened = head.workflow ?? DEFAULT_RECORD;
     // A cycle replayed under another workflow than it was opened with can reach a stage it never
     // had, so it replays only under one that hashes to its record; with none, refuse (A-059, A-112).
-    const w = recordedWorkflow(first, this.workflow);
-    if (!w) throw this.mismatch(cycleId, opened);
-    return { cycle: (rest as Event[]).reduce((c, e) => apply(c, e, w), newCycle(cycleId, first.workId, first.parentCycleId)), opened };
+    const workflow = recordedWorkflow(head, this.workflow);
+    if (!workflow) throw this.mismatch(cycleId, opened);
+    let cycle = newCycle(cycleId, head.workId, head.parentCycleId);
+    for (const [i, { seq, body, stage }] of rows.entries()) {
+      if (i > 0) cycle = apply(cycle, body as Event, workflow);
+      if (stage !== null && stage !== cycle.stage)
+        throw new ReplayDiverged(`cycle ${cycleId} row ${seq} (${body.type}) was recorded at ${stage}, but replays to ${cycle.stage} under engine ${ENGINE_VERSION} (opened ${head.engine === undefined ? 'before engine versions' : `under engine ${head.engine}`}); the cycle is not driven`);
+    }
+    return { cycle, workflow, opened };
   }
 
   private mismatch(cycleId: string, opened: { name: string; hash: string }): Error {
     return new Error(`cycle ${cycleId} was opened under workflow ${opened.name} (${opened.hash.slice(0, 12)}), this store runs ${this.record.name} (${this.record.hash.slice(0, 12)})`);
   }
 
-  // Single statement so seq allocation and the insert cannot interleave with another append on
-  // this connection; OR IGNORE turns the unique-index hit into "no change".
-  private insert(cycleId: string, type: string, runId: string | null, body: string): void {
-    this.db
+  // OR IGNORE turns the unique-index hit into "no change"; returns false then.
+  private insert(cycleId: string, type: string, runId: string | null, body: string, stage: Stage): boolean {
+    return this.db
       .prepare(
-        `INSERT OR IGNORE INTO events (cycle_id, seq, type, run_id, body, pos, at)
-         SELECT ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ?, ${POS}, ${NOW} FROM events WHERE cycle_id = ?`,
+        `INSERT OR IGNORE INTO events (cycle_id, seq, type, run_id, body, pos, at, stage)
+         SELECT ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ?, ${POS}, ${NOW}, ? FROM events WHERE cycle_id = ?`,
       )
-      .run(cycleId, type, runId, body, cycleId);
+      .run(cycleId, type, runId, body, stage, cycleId).changes > 0;
   }
 
   /** Every cycle of a work item with its replayed stage, ordered by cycle ID. */
@@ -263,10 +304,10 @@ export class EventStore {
     return this.db.prepare('SELECT 1 FROM events WHERE cycle_id = ? AND seq = 0').get(cycleId) !== undefined;
   }
 
-  private rows(cycleId: string): (Event | OpenRow)[] {
+  private rows(cycleId: string): { seq: number; body: Event | OpenRow; stage: Stage | null }[] {
     return this.db
-      .prepare('SELECT body FROM events WHERE cycle_id = ? ORDER BY seq')
+      .prepare('SELECT seq, body, stage FROM events WHERE cycle_id = ? ORDER BY seq')
       .all(cycleId)
-      .map((r) => JSON.parse(r.body as string));
+      .map((r) => ({ seq: r.seq as number, body: JSON.parse(r.body as string), stage: r.stage as Stage | null }));
   }
 }

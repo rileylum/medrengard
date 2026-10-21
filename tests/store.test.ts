@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { apply, defaultWorkflow, newCycle, type Cycle, type Event } from '../src/lifecycle.ts';
-import { EventStore, UnclassifiableEvent, workflowHash } from '../src/store.ts';
+import { EventStore, ReplayDiverged, SETTLED, UnclassifiableEvent, workflowHash } from '../src/store.ts';
 import type { Workflow } from '../src/lifecycle.ts';
 import { PASS_CHECKS, scenarios, toStandardReview } from './scenarios.ts';
 import { counters, noHuman, ownerCheck } from './workflows.ts';
@@ -441,4 +441,86 @@ test('a recorded definition apply could not run is refused on load', () => {
   const store = new EventStore(path);
   assert.throws(() => store.load('c1'), /c1 was opened under workflow broken/);
   store.close();
+});
+
+// A-123 item 2: each row keeps the stage apply gave it, so an engine change that would move an
+// old cycle is refused, not replayed silently (engine.md G8).
+test('a row whose stored stage the replay no longer gives refuses the cycle, naming the row, both stages and the engine', () => {
+  const path = dbPath('diverged');
+  const store = new EventStore(path);
+  store.open('c1', 'w1');
+  store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
+  store.append('c1', { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] });
+  // What a changed apply looks like from here: the log says one thing, the replay another.
+  const raw = new DatabaseSync(path);
+  raw.prepare("UPDATE events SET stage = 'ACCEPTED' WHERE cycle_id = 'c1' AND seq = 1").run();
+  raw.close();
+  assert.throws(() => store.load('c1'), (e: Error) => e instanceof ReplayDiverged && /^cycle c1 row 1 \(claim\) was recorded at ACCEPTED, but replays to DEVELOPING under engine 1 \(opened under engine 1\)/.test(e.message));
+  assert.throws(() => store.append('c1', { type: 'cancel' }), ReplayDiverged);
+  store.close();
+});
+
+test('open records the engine version that opened the cycle', () => {
+  const path = dbPath('engine');
+  const store = new EventStore(path);
+  store.open('c1', 'w1');
+  store.close();
+  assert.equal(openRow(path, 'c1').engine, 1);
+});
+
+test('two processes appending to one cycle at once store the stages the final log replays to', async () => {
+  const src = JSON.stringify(join(import.meta.dirname, '..', 'src', 'store.ts'));
+  for (let round = 0; round < 3; round++) {
+    const path = dbPath(`race-append-${round}`);
+    const store = new EventStore(path);
+    store.open('c1', 'w1');
+    store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
+    store.close();
+    // The result moves the cycle to VERIFYING; the head change is ignored while the developer
+    // writes, and escalates once the cycle verifies. Whichever lands second must be stored with
+    // the stage it gives after the first.
+    const events = [
+      { type: 'developer_result', runId: 'dev1', head: 'H1', artifacts: ['r'] },
+      { type: 'head_changed', head: 'H2' },
+    ];
+    // Holding the write lock lets both children load before either writes, as in the open race.
+    const lock = new DatabaseSync(path);
+    lock.exec('BEGIN IMMEDIATE');
+    const append = (event: object) => new Promise<string>((done) => {
+      const script = `import { EventStore } from ${src}; const s = new EventStore(${JSON.stringify(path)});
+        try { s.append('c1', ${JSON.stringify(event)}); console.log('appended'); } catch (e) { console.log(e.message); }`;
+      const child = spawn(process.execPath, ['--no-warnings', '--input-type=module', '-e', script], { stdio: ['ignore', 'pipe', 'inherit'] });
+      let out = '';
+      child.stdout.on('data', (d) => (out += d));
+      child.on('close', () => done(out.trim()));
+    });
+    const both = Promise.all(events.map(append));
+    await new Promise((r) => setTimeout(r, 1500));
+    lock.exec('COMMIT');
+    lock.close();
+    assert.deepEqual(await both, ['appended', 'appended']);
+    const after = new EventStore(path);
+    assert.equal(after.events('c1').length, 3);
+    assert.ok(['VERIFYING', 'ESCALATED'].includes(after.load('c1')!.stage), after.load('c1')!.stage);
+    after.close();
+  }
+});
+
+test('a store written before 11-c gains the stage column and still loads and appends every cycle', () => {
+  const path = dbPath('v2-stages');
+  copyFileSync(join(import.meta.dirname, 'fixtures', 'v2-store.sqlite'), path);
+  const before = new DatabaseSync(path, { readOnly: true });
+  const ids = before.prepare('SELECT cycle_id FROM events WHERE seq = 0').all().map((r) => r.cycle_id as string);
+  assert.equal(before.prepare("SELECT 1 FROM pragma_table_info('events') WHERE name = 'stage'").get(), undefined);
+  before.close();
+  // Written before 10-d, its owner-check cycles carry no definition: only a store running owner-check reads them.
+  const stores = [new EventStore(path), new EventStore(path, ownerCheck)];
+  for (const id of ids) {
+    const store = stores[id.startsWith('o') ? 1 : 0]!;
+    const stage = store.load(id)!.stage;
+    // cancel settles anything but a terminal cycle; ESCALATED is settled, not terminal.
+    assert.equal(store.append(id, { type: 'cancel' }).stage, SETTLED.includes(stage) && stage !== 'ESCALATED' ? stage : 'CANCELLED', id);
+    store.load(id);
+  }
+  for (const s of stores) s.close();
 });
