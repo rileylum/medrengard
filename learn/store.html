@@ -32,7 +32,7 @@
   <h2>Try it: read a day's log</h2>
   <p>This runs directory holds a day of work on three work items. Read it the way <code>events</code> does: pick a work item or the whole directory, skip what you have seen with <code>--after</code>, or turn on <code>--follow</code> and let the rest of the day arrive. Click a line to read it.</p>
   <div class="demo real" data-demo="store-query"></div>
-  <p class="small muted"><code>seq</code> is the row's place in the whole store, so lines from different work items interleave in the order they were written. <code>from</code> and <code>stage</code> are not stored: the reader works them out by replaying each cycle.</p>
+  <p class="small muted"><code>seq</code> is the row's place in the whole store, so lines from different work items interleave in the order they were written. <code>from</code> and <code>stage</code> are not read from the rows: the reader works them out by replaying each cycle. The store keeps each row's stage only as a check: a replay that disagrees with it is refused, so a changed engine can never quietly move an old cycle.</p>
 </section>
 
 <section class="slide" id="break" data-lv="2">
@@ -44,7 +44,7 @@
 <section class="slide" id="stream" data-lv="2">
   <h2>The observation stream</h2>
   <p><code>node src/main.ts events</code> prints one JSON line per row. Each line gives the row's position, the time it was written, the cycle and work it belongs to, the event as stored, and the stage it moved the cycle from and to. With <code>--follow</code> it keeps reading: SQLite cannot notify another process, so it looks for new rows every 500 ms.</p>
-  <p>A reader decides nothing, and writes nothing except once, to number the rows of a store written before positions existed. It replays each cycle under the workflow its first row recorded, after checking that workflow's hash. A row it cannot replay, such as an event type from a newer controller, is passed on as stored with null stages, never escalated.</p>
+  <p>A reader decides nothing, and writes nothing except once, to number the rows of a store written before positions existed. It replays each cycle under the workflow its first row recorded, after checking that workflow's hash, by the store's own rule (<code>recordedWorkflow</code>). A row it cannot replay, such as an event type from a newer controller, is passed on as stored with null stages, never escalated.</p>
   <h3>Observers</h3>
   <p>An <a class="w" href="words.html#observer">observer</a> is any process that reads the stream and acts. It may act only through your two commands, <code>accept</code> and <code>cancel</code>, which record its name with <code>--source</code>. The controller never starts one, and nothing it does is trusted more than you typing the command (D-024).</p>
   <p class="small">The kit for an observer (<code>observerKit</code> in <code>src/kits/observe.ts</code>) feeds it lines from a scratch store and checks only what it does through those two commands, including that an unknown event type makes it neither throw nor act. The example in <code>tests/fixtures/comment-observer.ts</code> accepts a change whose every changed line is blank or a comment.</p>
@@ -53,11 +53,11 @@
 <section class="slide" id="code" data-lv="3">
   <h2>Read the code: src/store.ts and src/stream.ts</h2>
   <p>One table for every cycle. The partial unique index is the one-outcome rule. <code>busy_timeout</code> lets a second process, such as <code>cancel</code> during a run, wait for the write lock instead of failing. <code>open</code> runs its checks and its insert in one <code>BEGIN IMMEDIATE</code> transaction, so two processes opening a cycle for one work item take turns: the second sees the first cycle and is refused.</p>
-  <pre data-code="src/store.ts#OpenRow,constructor,open,append,load,insert"></pre>
+  <pre data-code="src/store.ts#OpenRow,recordedWorkflow,constructor,open,append,load,drivable,insert,replay"></pre>
   <p>Each row's position and time are set inside the insert statement, under the write lock, so positions follow commit order.</p>
   <pre data-code="src/store.ts#POS,NOW"></pre>
   <p>The reader:</p>
-  <pre data-code="src/stream.ts#Line,workflowOf,openStream"></pre>
+  <pre data-code="src/stream.ts#Line,openStream"></pre>
   <p>And the observer helper, which turns an observer's two actions into your commands with its name as the source:</p>
   <pre data-code="src/kits/observe.ts#ownerFor,observe"></pre>
 </section>

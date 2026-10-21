@@ -53,8 +53,8 @@
 <section class="slide" id="chosen" data-lv="2">
   <h2>One workflow per job, bound by its hash</h2>
   <p>A job names a workflow with <code>"workflow": "path/to/module.ts"</code>; the module's named export <code>workflow</code> is the object. The job file, your personal file or the repository can set it (<a href="config.html">configuration</a>). A repository workflow is read from the base commit, never from the working tree.</p>
-  <p>When a cycle opens, the store writes the workflow's name, its hash and the whole definition into the cycle's first row. Every later load replays the cycle under the store's workflow, and refuses if the hashes differ: a cycle replayed under another workflow could land in a stage its log never had (A-059).</p>
-  <p class="small">The hash is SHA-256 of the object's JSON, so reordering two keys makes a new workflow. That is safe: old cycles are refused, never misread. The editor above shows the hash as you type.</p>
+  <p>When a cycle opens, the store writes the workflow's name, its hash and the whole definition into the cycle's first row. Every later load replays the cycle under that recorded workflow, once its hash checks out, so one store can hold cycles of several workflows (A-112). A cycle replayed under another workflow could land in a stage its log never had, so the controller drives only the cycles opened under the workflow it runs, and refuses the rest (A-059, A-136).</p>
+  <p class="small">The hash is SHA-256 of the object's JSON, so reordering two keys makes a new workflow. That is safe: old cycles still replay under their own copy, never misread. The editor above shows the hash as you type.</p>
 </section>
 
 <section class="slide" id="code" data-lv="3">
@@ -63,8 +63,8 @@
   <pre data-code="src/lifecycle.ts#StageDef,Workflow,defaultWorkflow"></pre>
   <pre data-code="src/lifecycle.ts#checkWorkflow"></pre>
   <pre data-code="src/lifecycle.ts#counted,enter,advance,apply"></pre>
-  <p>And where the hash is checked, in <code>src/store.ts</code>:</p>
-  <pre data-code="src/store.ts#workflowHash,load"></pre>
+  <p>And where the hash is checked, in <code>src/store.ts</code>. A definition read back from the store gets <code>replayCheck</code>, only what <code>apply</code> reads, so a rule added to <code>checkWorkflow</code> later never makes an old cycle unloadable:</p>
+  <pre data-code="src/store.ts#workflowHash,recordedWorkflow,drivable"></pre>
 </section>
 
 </main>
