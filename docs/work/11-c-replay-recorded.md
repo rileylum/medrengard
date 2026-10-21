@@ -24,3 +24,4 @@ Verification: `npm test` and `npm run test:learn`; the owner's pre-merge hook ru
 
 ## Log
 - 2026-10-21 — drafted on `feat/11-c-replay-recorded` off main at `12b3be9`. Not READY until the owner answers the design note's questions and says go.
+- 2026-10-21 — owner: “Go with your recommendations” (A-136). READY at Trust tier.

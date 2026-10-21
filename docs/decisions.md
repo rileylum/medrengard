@@ -37,6 +37,12 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-136 — 2026-10-21 — 11-c's design approved with the session's recommendations; READY at Trust tier
+
+Asked, with `docs/work/11-c-replay-recorded.md` and `docs/design/2026-10-21-replay-recorded.md`, seven questions: (1) one ticket or two; (2) how stores written before 11-c load; (3) whether `decisionConfig` becomes a fallback; (4) whether a cycle under another workflow may be driven; (5) what the engine version does; (6) whether two `tests/store.test.ts` pins that hold A-059's refusal may change; (7) the append lock and the parked overlapping-accept race. The session recommended: (1) one ticket; (2) the stage column added with nulls, null rows not compared, no backfill, an open row with no `engine` read as before 11-c; (3) `decisionConfig` unchanged, since `accept` drives on with the whole config at the old base, which narrows A-112 item 6 to moving only the workflow match into the store; (4) refused by `drivable`, with 11-f to decide; (5) recorded only and named in the divergence error; (6) both pins rewritten to "loads under the recorded workflow, and `drivable` refuses, naming both", with a new test keeping the refusal when nothing matches; (7) `append` loads, applies and inserts under one write lock, and the race stays parked against 11-d. Owner: “Go with your recommendations”.
+
+Effect: 11-c is READY at Trust tier, as the design note says. The two pins in (6) change with this decision.
+
 ### A-135 — 2026-10-21 — 11-b2: the adversarial minors fixed on the branch; pins accepted; moved repository to Housekeeping
 
 Asked, after 11-b2's three reviews passed (standard 1 on `01ba4a5`, standard 2 on `4a902ef`, adversarial on `32c4c71`): (1) the mirror set-up race between cycles starting at once, and (2) the mirror's object format for a SHA-256 repository: fix on the branch, tests first, without a further review; (3) whether the three changed pins in `tests/developer.test.ts`, which leave out `mirrors/`, count as "unchanged"; (4) a line on the Housekeeping row for a repository moved or re-pointed between `develop` and `fix`. The session recommended fixing both on the branch (the mirror made in a temporary sibling and renamed into place; the fetch skipped when the base is there, and a failed fetch accepted when another process fetched it; the mirror made in the repository's object format), accepting the pins, and the Housekeeping line. Owner: “Fix both, go with your recommendations”.
