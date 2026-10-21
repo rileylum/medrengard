@@ -138,6 +138,9 @@ export function missingProgram(command: string, sandbox: Sandbox, policy: Policy
  * A grant stage runs only on a reviewed head (A-074, A-083 Q3): each stage's last verdict,
  * verification or accept names the candidate, and at least one PASS verdict does. A workflow can
  * route a fix past its reviews, and one with no review at all has nothing to bind the head to.
+ * Each review stage's last verdict must also be a PASS (11-d2): an owner's `route` from ESCALATED
+ * could otherwise enter the grant stage past a FAIL. An owner accept after the FAIL is accept with
+ * risk, the one way past; a workflow key for advisory reviews is parked (open-questions.md).
  */
 export function headGate(cycle: Cycle, w: Workflow): void {
   const head = cycle.candidate!.head;
@@ -149,6 +152,11 @@ export function headGate(cycle: Cycle, w: Workflow): void {
   if (stale.length > 0) throw new Error(`stage ${cycle.stage} holds a grant, but the last outcome of ${stale.join(', ')} is not for the candidate ${head}`);
   if (!outcomes.some(({ event: e }) => e.type === 'verdict' && e.verdict === 'PASS' && e.head === head))
     throw new Error(`stage ${cycle.stage} holds a grant, but no PASS verdict is for the candidate ${head}`);
+  const lastVerdict = new Map<string, { verdict: string; at: number }>();
+  outcomes.forEach(({ event: e, from }, at) => e.type === 'verdict' && lastVerdict.set(from, { verdict: e.verdict, at }));
+  const accepted = outcomes.findLastIndex(({ event: e }) => e.type === 'accept');
+  const unaccepted = [...lastVerdict].find(([, v]) => v.verdict === 'FAIL' && v.at > accepted);
+  if (unaccepted) throw new Error(`stage ${cycle.stage} holds a grant, but the last verdict of ${unaccepted[0]} is a FAIL for the candidate ${head}; an owner accept after it is the only way past`);
 }
 
 /** Run every declared check on the cycle's candidate and record one verification event. */

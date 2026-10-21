@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Event, Workflow } from '../src/lifecycle.ts';
+import { apply, newCycle, type Event, type Workflow } from '../src/lifecycle.ts';
+import { headGate } from '../src/verify.ts';
 import type { Job } from '../src/developer.ts';
 import { decideAndDrive, type Adapters } from '../src/run.ts';
 import { ownerCheck } from './workflows.ts';
@@ -209,11 +210,64 @@ function grantFlow(run: unknown[], reviewed = true) {
   }
   return { ...ownerCheck, stages } as Workflow;
 }
+/** grantFlow with a second review stage, SECURITY, between REVIEW and the owner. */
+function twoReviewGrantFlow() {
+  const w = grantFlow([{ name: 'merge', command: ['true'] }]);
+  const stages = { ...w.stages, REVIEW: { ...w.stages.REVIEW, transitions: { PASS: 'SECURITY', FAIL: 'ESCALATED' } }, SECURITY: { ...w.stages.REVIEW, role: 'security' } } as Workflow['stages'];
+  return { ...w, stages } as Workflow;
+}
+
 function grantFile(text: string) {
   const file = join(dir, `grant-${n++}`);
   writeFileSync(file, text);
   return { github: { variable: 'GH_TOKEN', file } };
 }
+
+test('a grant stage needs every review stage\'s last verdict to be a PASS; only an owner accept after a FAIL ships it (11-d2)', () => {
+  const w = twoReviewGrantFlow();
+  const store = fresh(w);
+  try {
+    seed(store, 'c1', [...AT_OWNER.slice(0, 4), { type: 'verdict', runId: 'sec1', head: H, verdict: 'FAIL', findings: ['f'] }]);
+    assert.equal(store.load('c1')!.stage, 'ESCALATED');
+    assert.throws(() => moveEvent(store, 'w', mv('route', { stage: 'MERGE' }), where), new RegExp(`^Error: stage MERGE holds a grant, but the last verdict of SECURITY is a FAIL for the candidate ${H}; an owner accept after it is the only way past$`));
+    // Accept with risk: the owner routes to the human stage and accepts there, naming the head.
+    const atOwner = store.append('c1', { type: 'owner_decision', action: 'route', head: H, reason: 'accepted with risk', stage: 'OWNER' });
+    const merging = apply(atOwner, ACCEPT, w);
+    assert.equal(merging.stage, 'MERGE');
+    assert.doesNotThrow(() => headGate(merging, w));
+    // Both reviews PASS: the usual way in.
+    const passed = [...AT_OWNER.slice(0, 4), { type: 'verdict', runId: 'sec1', head: H, verdict: 'PASS', findings: [] }, ACCEPT] as Event[];
+    const merged = passed.reduce((c, e) => apply(c, e, w), newCycle('c2', 'w'));
+    assert.equal(merged.stage, 'MERGE');
+    assert.doesNotThrow(() => headGate(merged, w));
+  } finally {
+    store.close();
+  }
+});
+
+test('the grant rule reads each review stage\'s last verdict, and only an accept after the FAIL ships past it (11-d2)', () => {
+  const merge = { kind: 'command', run: [{ name: 'merge', command: ['true'] }], network: true, grants: ['github'], transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } };
+  const H2 = 'c'.repeat(40);
+  // No human stage: a FAIL, a fix, then a PASS on the new head is the usual way into the grant stage.
+  const direct = { ...ownerCheck, stages: { ...ownerCheck.stages, REVIEW: { ...ownerCheck.stages.REVIEW, budget: 2, transitions: { PASS: 'MERGE', FAIL: 'DEV' } }, MERGE: merge } } as Workflow;
+  const fixed = ([...AT_OWNER.slice(0, 3), { type: 'verdict', runId: 'rev1', head: H, verdict: 'FAIL', findings: ['f'] },
+    { type: 'claim', runId: 'dev2', base: 'b'.repeat(40), runtime: 'fake' }, { type: 'developer_result', runId: 'dev2', head: H2, artifacts: ['x'] },
+    { type: 'verification', head: H2, checks: [{ name: 'ok', result: 'PASS' }] }, { type: 'verdict', runId: 'rev2', head: H2, verdict: 'PASS', findings: [] }] as Event[])
+    .reduce((c, e) => apply(c, e, direct), newCycle('c1', 'w'));
+  assert.equal(fixed.stage, 'MERGE');
+  assert.doesNotThrow(() => headGate(fixed, direct));
+  // The owner accepts, then a later review FAILs: that accept never saw the FAIL.
+  const late = { ...ownerCheck, stages: { ...ownerCheck.stages, OWNER: { kind: 'human', transitions: { PASS: 'SECURITY', FAIL: 'ESCALATED' } },
+    SECURITY: { ...ownerCheck.stages.REVIEW, role: 'security', transitions: { PASS: 'MERGE', FAIL: 'ESCALATED' } }, MERGE: merge } } as Workflow;
+  const store = fresh(late);
+  try {
+    seed(store, 'c1', [...AT_OWNER, ACCEPT, { type: 'verdict', runId: 'sec1', head: H, verdict: 'FAIL', findings: ['f'] }]);
+    assert.equal(store.load('c1')!.stage, 'ESCALATED');
+    assert.throws(() => moveEvent(store, 'w', mv('route', { stage: 'MERGE' }), where), /the last verdict of SECURITY is a FAIL/);
+  } finally {
+    store.close();
+  }
+});
 
 test('decideAndDrive refuses an empty grant file at the stage the event leads to, writing nothing', async () => {
   const store = fresh(grantFlow([{ name: 'merge', command: ['true'] }]));
