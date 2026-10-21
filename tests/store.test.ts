@@ -524,3 +524,32 @@ test('a store written before 11-c gains the stage column and still loads and app
   }
   for (const s of stores) s.close();
 });
+
+// For recover (11-f): every cycle that may still move, whichever work or workflow it belongs to.
+test('unsettled lists every cycle not settled across work IDs, and a cycle it cannot replay with the reason', () => {
+  const path = dbPath('unsettled');
+  const a = new EventStore(path, ownerCheck);
+  a.open('c1', 'w1');
+  a.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
+  a.close();
+  const store = new EventStore(path);
+  store.open('c2', 'w2');
+  store.append('c2', { type: 'cancel' });
+  store.open('c3', 'w3');
+  store.append('c3', { type: 'reject_dispatch', reason: 'no' });
+  store.open('c4', 'w4');
+  store.open('c5', 'w5');
+  store.append('c5', { type: 'claim', runId: 'dev5', base: 'B1', runtime: 'fake' });
+  const raw = new DatabaseSync(path);
+  raw.prepare("UPDATE events SET stage = 'ACCEPTED' WHERE cycle_id = 'c5' AND seq = 1").run();
+  raw.prepare("INSERT INTO events (cycle_id, seq, type, run_id, body, pos) VALUES ('c6', 0, 'open', NULL, ?, 100)")
+    .run(JSON.stringify({ type: 'open', workId: 'w6', workflow: { name: 'gone', hash: 'ab'.repeat(32) } }));
+  raw.close();
+  assert.deepEqual(store.unsettled(), [
+    { cycleId: 'c1', workId: 'w1', stage: 'DEV' },
+    { cycleId: 'c4', workId: 'w4', stage: 'QUEUED' },
+    { cycleId: 'c5', workId: 'w5', refused: 'cycle c5 row 1 (claim) was recorded at ACCEPTED, but replays to DEVELOPING under engine 1 (opened under engine 1); the cycle is not driven' },
+    { cycleId: 'c6', workId: 'w6', refused: `cycle c6 was opened under workflow gone (abababababab), this store runs default (${workflowHash(defaultWorkflow).slice(0, 12)})` },
+  ]);
+  store.close();
+});

@@ -291,6 +291,28 @@ export class EventStore {
       .map((r) => ({ cycleId: r.cycle_id as string, stage: this.load(r.cycle_id as string)!.stage }));
   }
 
+  /**
+   * Every cycle not in SETTLED, across work IDs, ordered by cycle ID: what recover (11-f) must
+   * resolve. A cycle that cannot be replayed is listed with the reason, so one bad cycle does not
+   * hide the rest; it is the owner's to resolve.
+   */
+  unsettled(): { cycleId: string; workId: string; stage?: Stage; refused?: string }[] {
+    const out: { cycleId: string; workId: string; stage?: Stage; refused?: string }[] = [];
+    for (const r of this.db.prepare('SELECT cycle_id, body FROM events WHERE seq = 0 ORDER BY cycle_id').all()) {
+      const cycleId = r.cycle_id as string;
+      const { workId } = JSON.parse(r.body as string) as OpenRow;
+      let stage: Stage;
+      try {
+        stage = this.load(cycleId)!.stage;
+      } catch (err) {
+        out.push({ cycleId, workId, refused: (err as Error).message });
+        continue;
+      }
+      if (!SETTLED.includes(stage)) out.push({ cycleId, workId, stage });
+    }
+    return out;
+  }
+
   // Open means still able to move: escalated cycles wait for the owner and never move again.
   private cyclesFor(workId: string): { open?: string; escalated?: string } {
     const all = this.cycles(workId);
