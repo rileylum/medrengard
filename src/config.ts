@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Job } from './developer.ts';
 import { git } from './git.ts';
+import { DEFAULT_RUNS_DIR } from './layout.ts';
 import { checkWorkflow, defaultWorkflow, fileArgs, type Workflow } from './lifecycle.ts';
 import { runtimes, type RuntimeEntry } from './runtime/registry.ts';
 import { SYSTEM, type Sandbox } from './sandbox.ts';
@@ -51,7 +52,7 @@ export interface Config {
 }
 
 // The factory-defaults layer. `none` must be written out by the owner (08-a).
-const DEFAULTS = { runsDir: '/var/tmp/software_factory/runs', sandbox: { backend: 'bwrap' } };
+const DEFAULTS = { runsDir: DEFAULT_RUNS_DIR, sandbox: { backend: 'bwrap' } };
 
 /** Merged one level down; every other key is replaced whole, arrays included (A-078 Q3). */
 const NESTED = ['runtime', 'runtimes', 'sandbox', 'grants'];

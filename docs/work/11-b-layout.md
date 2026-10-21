@@ -22,8 +22,8 @@ export function cyclePaths(runsDir: string | undefined, cycleId: string): {
 
 Done when:
 - `tests/layout.test.ts` pins each path above for a relative and an absolute `runsDir` and for `undefined`. Red step: the test before `src/layout.ts` exists.
-- `developer.ts`, `run.ts`, `verify.ts`, `review.ts`, `config.ts`, `main.ts` and `kits/observe.ts` take these paths from `layout.ts`. `grep -n "'/var/tmp/software_factory/runs'\|-verify\`\|'evidence'\|sf/\${\|events.sqlite" src/` matches only `src/layout.ts`.
-- `DEFAULT_RUNS_DIR` stays exported from `developer.ts` as a re-export, so no import outside `src/` breaks.
+- `developer.ts`, `run.ts`, `verify.ts`, `review.ts`, `config.ts`, `main.ts`, `kits/observe.ts` and `kits/command.ts` take these paths from `layout.ts`. `grep -n "'/var/tmp/software_factory/runs'\|-verify\`\|'evidence'\|sf/\${\|events.sqlite" src/` matches only `src/layout.ts` and doc comments.
+- `DEFAULT_RUNS_DIR` moves to `layout.ts`. Only `run.ts` imported it from `developer.ts`, so `developer.ts` does not re-export it.
 - Every existing test passes unchanged: no file under `tests/` is edited except the new one.
 - `npm run test:learn` passes; `learn/shims/` gains an export for any new live import, as `sim-verify.js` did in 11-a2.
 

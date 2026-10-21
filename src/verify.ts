@@ -9,11 +9,12 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { checkDeadline } from './controller.ts';
 import type { Job } from './developer.ts';
 import { bounded, git, stopped } from './git.ts';
 import type { CommandRequest } from './kits/request.ts';
+import { cyclePaths } from './layout.ts';
 import type { Grant } from './config.ts';
 import { FILE_STEM, HEAD_CHECK, TREE_CHECK, fileArgs, type Command, type Cycle, type Event, type StageDef } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
@@ -57,7 +58,6 @@ export interface Verified {
 
 type CheckResult = Extract<Event, { type: 'verification' }>['checks'][number];
 
-const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
 // Git knows the empty tree without storing it. SHA-1 only, as the controller is: a SHA-256
 // repository names it differently, and every checkout there would fail.
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -173,10 +173,8 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   checkSandbox(sandbox);
   const { head, base } = cycle.candidate;
 
-  const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
-  const worktree = join(runsDir, `${cycleId}-verify`);
-  // Per stage: a second command stage on the same head must not delete the first one's evidence.
-  const evidenceDir = join(runsDir, 'evidence', head, cycle.stage);
+  const { checkout: worktree, evidence } = cyclePaths(opts.runsDir, cycleId);
+  const evidenceDir = evidence(head, cycle.stage);
   // Fresh every time: the spec wants checks that ran independently of the developer, and a
   // checkout of the commit alone is the only thing that proves it. A checkout left by an earlier
   // verification of this cycle (a fix run moved the head) goes first.

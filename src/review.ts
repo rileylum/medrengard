@@ -5,11 +5,12 @@
 // Ticket 08-a: the checkout has no .git; git runs in the job's repository, and the checkout is
 // compared with the head through verify's private index.
 import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { checkDeadline, execute } from './controller.ts';
 import type { Job } from './developer.ts';
 import { git } from './git.ts';
+import { cyclePaths } from './layout.ts';
 import type { Cycle, Event } from './lifecycle.ts';
 import { reviewPrompt, type ReviewParts } from './prompt.ts';
 import type { EventStore } from './store.ts';
@@ -23,7 +24,6 @@ export interface ReviewOptions {
   instructions?: string[];
 }
 
-const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
 // Per evidence file, head and tail kept. A prompt is read by a model, not a log viewer; the
 // verdict's source is the event's result line, the file is detail.
 const EVIDENCE_KEEP = 16 * 1024;
@@ -51,8 +51,7 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
 
   // Everything the reviewer sees was produced by verify for this head; anything else is refused
   // before a run starts, so a reviewer never reads a tree the controller did not verify.
-  const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
-  const checkout = join(runsDir, `${cycleId}-verify`);
+  const { checkout, evidence } = cyclePaths(opts.runsDir, cycleId);
   if (!existsSync(checkout)) throw new Error(`no verify checkout at ${checkout}; run verify first`);
   // A check ran the candidate's code here; it may have rewritten a tracked file the reviewer
   // would then Read instead of the commit (06-b adversarial). The comparison is with the head,
@@ -69,7 +68,7 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
   // last stage would miss a custom step's result. Keyed by the stage it was recorded in.
   const byStage = new Map<string, Verification>();
   for (const h of all) if (h.event.head === head) byStage.set(h.from, h.event);
-  const stages = [...byStage].map(([stage, verification]) => ({ stage, verification, dir: join(runsDir, 'evidence', head, stage) }));
+  const stages = [...byStage].map(([stage, verification]) => ({ stage, verification, dir: evidence(head, stage) }));
   for (const { verification, dir } of stages) {
     if (!existsSync(dir)) throw new Error(`no verification evidence at ${dir}`);
     for (const c of verification.checks) {

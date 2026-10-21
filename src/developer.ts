@@ -7,10 +7,11 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import type { Adapter } from './adapter.ts';
 import { checkDeadline, execute } from './controller.ts';
 import { bounded, git, stopped } from './git.ts';
+import { cyclePaths, runsRoot } from './layout.ts';
 import type { Cycle, Event } from './lifecycle.ts';
 import { developerPrompt } from './prompt.ts';
 import { checkSandbox, wrap, type Sandbox } from './sandbox.ts';
@@ -64,17 +65,13 @@ export interface Developed {
   branch: string;
 }
 
-export const DEFAULT_RUNS_DIR = '/var/tmp/software_factory/runs';
-
 /** Open a cycle for the job, run the developer once, return the replayed Cycle and where its branch lives. */
 export async function develop(store: EventStore, adapter: DeveloperAdapter, job: Job, opts: DevelopOptions): Promise<Developed> {
   // Resolve before open: a ref that does not exist must not leave an empty cycle behind.
   const base = git(job.repo, 'rev-parse', '--verify', '--end-of-options', `${job.base ?? 'HEAD'}^{commit}`);
   const cycleId = randomUUID();
-  const branch = `sf/${cycleId}`;
-  // Absolute: git -C repo would resolve a relative path against the repository, mkdir against cwd.
-  const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
-  const worktree = join(runsDir, cycleId);
+  const runsDir = runsRoot(opts.runsDir);
+  const { clone: worktree, branch } = cyclePaths(runsDir, cycleId);
   // Everything that can throw without Git or the store goes before open, so a setup failure
   // (no user systemd for cliAdapter, a bad deadline) leaves nothing to clean up.
   checkDeadline(opts.deadlineMs);
@@ -127,9 +124,7 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
   const verdict = cycle.history.map((h) => h.event).filter((e): e is Verdict => e.type === 'verdict').at(-1);
   if (!verdict || verdict.verdict !== 'FAIL' || verdict.head !== head) throw new Error(`cycle ${cycleId}: last verdict is not a FAIL for the candidate ${head}`);
 
-  const runsDir = resolve(opts.runsDir ?? DEFAULT_RUNS_DIR);
-  const worktree = join(runsDir, cycleId);
-  const branch = `sf/${cycleId}`;
+  const { clone: worktree, branch } = cyclePaths(opts.runsDir, cycleId);
   const sandbox = opts.sandbox ?? { backend: 'bwrap' };
   checkSandbox(sandbox);
   if (!existsSync(join(worktree, '.git'))) throw new Error(`no clone at ${worktree}; the cycle's branch has nowhere to be fixed`);

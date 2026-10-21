@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { storeOf } from '../config.ts';
+import { storeFile } from '../layout.ts';
 import type { Event } from '../lifecycle.ts';
 import { EventStore } from '../store.ts';
 import { FOLLOW_MS, openStream, storeReady, type Line } from '../stream.ts';
@@ -38,7 +39,7 @@ function ownerFor(jobFile: string, source: string): Owner {
  */
 export async function observe(jobFile: string, source: string, observer: Observer, opts: { after?: number; signal?: AbortSignal } = {}): Promise<void> {
   const { runsDir, workId } = storeOf(jobFile);
-  const db = join(runsDir, 'events.sqlite');
+  const db = storeFile(runsDir);
   const owner = ownerFor(resolve(jobFile), source);
   let stream: ReturnType<typeof openStream> | undefined;
   try {
