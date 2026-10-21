@@ -840,6 +840,15 @@ test('the store refuses a move on a cycle another cycle names as its parent, or 
   other.close();
 });
 
+test('a move on an open cycle reaches apply, which escalates it: the cycle is not its own sibling (11-d2, standard 1)', () => {
+  const store = new EventStore(dbPath('move-open'));
+  store.open('c1', 'w1');
+  store.append('c1', { type: 'claim', runId: 'dev1', base: 'B1', runtime: 'fake' });
+  const moved = store.append('c1', RETRY);
+  assert.deepEqual([moved.stage, moved.escalation], ['ESCALATED', 'owner_decision outside ESCALATED (in DEVELOPING)']);
+  store.close();
+});
+
 test('a child open and a retry on its parent, from two processes at once: one lands, never both (11-d2)', async () => {
   const src = JSON.stringify(join(import.meta.dirname, '..', 'src', 'store.ts'));
   const seen = new Set<string>();

@@ -1,7 +1,7 @@
 // Ticket 11-a: the owner's decisions on a job's cycles, without printing, so a command, a tracker
 // (row 12) or a test can record them in-process. Ticket 07-d's rules: each refuses, writing
 // nothing, rather than send an event apply would escalate on.
-import { apply, type Cycle, type Event, type MoveAction, type Stage, type Workflow } from './lifecycle.ts';
+import { apply, lastVerdictAt, type Cycle, type Event, type MoveAction, type Stage, type Workflow } from './lifecycle.ts';
 import { STOPPED, type EventStore } from './store.ts';
 import { headGate } from './verify.ts';
 
@@ -98,7 +98,7 @@ export function moveEvent(store: EventStore | undefined, workId: string, move: M
   const events = next.history.map((h) => h.event);
   // fix's precondition (developer.ts): its findings are the last verdict's. Goes when A-108 lets a commit stage run without one.
   if (def.kind === 'agent' && def.produces === 'commit') {
-    const last = events.filter((e): e is Verdict => e.type === 'verdict').at(-1);
+    const last = next.history[lastVerdictAt(store.workflow, next)]?.event as Verdict | undefined;
     if (last?.verdict !== 'FAIL' || last.head !== head)
       throw new Error(`cycle ${cycle.cycleId}: commit stage ${next.stage} runs a fix, which needs a FAIL for the candidate ${head}; the last verdict is ${last ? `a ${last.verdict} for ${last.head}` : 'none'}`);
   }

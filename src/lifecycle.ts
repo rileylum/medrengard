@@ -552,6 +552,15 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
 type Move = Extract<Event, { type: 'owner_decision' }>;
 
 /**
+ * Where the last verdict a review stage took sits in the history, or -1. A verdict recorded but
+ * ignored (while escalated, settled, or a duplicate) or one out of place at another stage was never
+ * the review's word, and its `from` may be a stage with no budget to refund.
+ */
+export function lastVerdictAt(w: Workflow, c: Cycle): number {
+  return c.history.findLastIndex((h) => h.event.type === 'verdict' && takes(w.stages[h.from], 'verdict') && !h.note?.startsWith('ignored:'));
+}
+
+/**
  * The owner's move on an ESCALATED cycle (A-114). A move whose condition does not hold is recorded
  * with a note and changes nothing else; decide.ts refuses it before it is written, so only a raw
  * write lands here. A move that holds enters its stage directly, not through `enter`: a spent
@@ -571,7 +580,7 @@ function move(w: Workflow, c: Cycle, e: Move): Cycle {
     to = c.history.findLast((h) => h.to === 'ESCALATED' && h.from !== 'ESCALATED')?.from ?? 'QUEUED';
     if (!Object.hasOwn(w.stages, to)) return refuse(`the cycle escalated from ${to}, not a workflow stage`);
   } else if (e.action === 'overrule') {
-    const at = c.history.findLastIndex((h) => h.event.type === 'verdict');
+    const at = lastVerdictAt(w, c);
     if (at < 0) return refuse('the cycle has no verdict to overrule');
     const { event: last, from } = c.history[at]! as { event: Extract<Event, { type: 'verdict' }>; from: Stage };
     if (last.verdict !== 'FAIL') return refuse(`the last verdict is a ${last.verdict}, not a FAIL`);

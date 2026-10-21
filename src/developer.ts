@@ -12,7 +12,7 @@ import type { Adapter } from './adapter.ts';
 import { checkDeadline, execute } from './controller.ts';
 import { bounded, git, stopped } from './git.ts';
 import { cyclePaths, mirrorPath, runsRoot } from './layout.ts';
-import type { Cycle, Event } from './lifecycle.ts';
+import { lastVerdictAt, type Cycle, type Event } from './lifecycle.ts';
 import { developerPrompt } from './prompt.ts';
 import { checkSandbox, wrap, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
@@ -123,7 +123,7 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
   // Only claims create runs, so any run without an outcome is a commit stage's.
   if (cycle.runs.some((r) => !cycle.consumed.includes(r.runId))) throw new Error(`cycle ${cycleId} has a developer run still active`);
   const { head, base } = cycle.candidate;
-  const verdict = cycle.history.map((h) => h.event).filter((e): e is Verdict => e.type === 'verdict').at(-1);
+  const verdict = cycle.history[lastVerdictAt(store.workflow, cycle)]?.event as Verdict | undefined;
   if (!verdict || verdict.verdict !== 'FAIL' || verdict.head !== head) throw new Error(`cycle ${cycleId}: last verdict is not a FAIL for the candidate ${head}`);
 
   const { clone: worktree, branch } = cyclePaths(opts.runsDir, cycleId);

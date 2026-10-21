@@ -422,6 +422,11 @@ test('moveEvent refuses a stage the driver cannot run: a commit stage without a 
     seed(stale, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'verdict', runId: 'std1', head: 'e'.repeat(40), verdict: 'FAIL', findings: ['f'] }]);
     assert.throws(() => moveEvent(stale, 'w', mv('route', { stage: 'DEVELOPING' }), where), new RegExp(`the last verdict is a FAIL for ${'e'.repeat(40)}$`));
     stale.close();
+    // A PASS that lands while escalated is ignored, so the dispute's FAIL is still the one a fix takes.
+    const late = fresh();
+    seed(late, 'c1', [...DISPUTED, { type: 'verdict', runId: 'std9', head: H, verdict: 'PASS' }]);
+    assert.doesNotThrow(() => moveEvent(late, 'w', mv('route', { stage: 'DEVELOPING' }), where));
+    late.close();
     // The fix's checks never ran: verify threw after the new commit.
     const H2 = 'd'.repeat(40);
     const unverified = fresh();

@@ -307,6 +307,18 @@ test('the fix prompt carries the ticket, the failed head and each finding; cwd i
   store.close();
 });
 
+test('a verdict ignored while escalated is not the one a fix takes: after a route back, the FAIL\'s findings reach the prompt (11-d2, standard 1)', async () => {
+  const { store, runsDir, job: j, cycleId, head } = await failed();
+  store.append(cycleId, { type: 'reject_dispatch', reason: 'another writer' });
+  store.append(cycleId, { type: 'verdict', runId: 'late', head, verdict: 'PASS' });
+  store.append(cycleId, { type: 'owner_decision', action: 'route', head, reason: 'fix the finding', stage: 'DEVELOPING' });
+  assert.equal(store.load(cycleId)!.stage, 'DEVELOPING');
+  const adapter = fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } });
+  await fix(store, adapter, cycleId, j, { deadlineMs: 5000, runsDir });
+  assert.match(adapter.requests[0]!.prompt, /\[major\] done\.txt:1 — fixture finding/);
+  store.close();
+});
+
 test('a fix claim is refused when it names the previous head, the base, a non-tip, an orphan, a revert to the base or an unknown SHA (07-a)', async () => {
   // The fixture's "base" is the worktree HEAD when it starts, which in a fix run is the previous
   // candidate: nocommit claims it without committing, base after committing. 07-e took `empty`

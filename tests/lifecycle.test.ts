@@ -678,6 +678,18 @@ test('overrule is refused with a note when the last verdict is not a FAIL for th
   moveRefused(twice, move('overrule'), /^move refused: the last FAIL was overruled already$/);
 });
 
+test('overrule reads only verdicts a review stage took: one ignored or escalated outside a review stage is not the last FAIL (11-d2)', () => {
+  // A late PASS ignored while escalated leaves the dispute's FAIL the one to overrule.
+  const latePass = apply(run(disputed(), verdict('sr9', 'H1', 'PASS')), move('overrule'));
+  assert.deepEqual([latePass.stage, latePass.budgets], ['STANDARD_REVIEW', { STANDARD_REVIEW: 0 }]);
+  // A FAIL that lands after another writer escalated the review is ignored, so there is nothing to overrule.
+  moveRefused(run(toStandardReview(), { type: 'reject_dispatch', reason: 'another writer' }, verdict('sr1', 'H1', 'FAIL')), move('overrule'), /^move refused: the cycle has no verdict to overrule$/);
+  // A FAIL at the human stage escalates as out of place; the adversarial PASS stays the last word.
+  const atOwner = run(toStandardReview(), verdict('sr1', 'H1', 'PASS'), verdict('ar1', 'H1', 'PASS'));
+  assert.equal(atOwner.stage, 'AWAITING_ACCEPTANCE');
+  moveRefused(apply(atOwner, verdict('sr9', 'H1', 'FAIL')), move('overrule'), /^move refused: the last verdict is a PASS, not a FAIL$/);
+});
+
 test('route enters a named workflow stage; an engine, unknown or spent stage is refused with a note (11-d2)', () => {
   assert.equal(apply(disputed(), move('route', { stage: 'VERIFYING' })).stage, 'VERIFYING');
   // Accept with risk: route to the human stage, then accept as usual.
