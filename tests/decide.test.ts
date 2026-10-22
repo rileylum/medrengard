@@ -293,7 +293,7 @@ test('a failed check and the owner\'s request_changes count as a FAIL for the gr
   assert.doesNotThrow(() => headGate(retried, w));
 });
 
-test('a FAIL counts for the grant rule only when an owner route landed after it: a path the workflow declares runs, direct or not (11-d2, adversarial)', () => {
+test('a path the workflow declares from a FAIL runs, direct or not: with no jump, no FAIL counts for the grant rule (11-d2, adversarial)', () => {
   const grant = (PASS: string) => ({ kind: 'command', run: [{ name: 'post', command: ['true'] }], network: true, grants: ['github'], transitions: { PASS, FAIL: 'ESCALATED' } });
   const play = (w: Workflow, events: Event[]) => events.reduce((c, e) => apply(c, e, w), newCycle('c1', 'w'));
   const passes = (w: Workflow, events: Event[], stage: string) => {
@@ -366,6 +366,14 @@ test('a move jumps when it enters a stage other than the one the cycle escalated
   // The owner's request_changes upstream of the review, then an overrule into the review.
   const owner = flow({ CHECK: { kind: 'command', transitions: { PASS: 'OWNER', FAIL: 'ESCALATED' } }, OWNER: { kind: 'human', transitions: { PASS: 'REVIEW', FAIL: 'ESCALATED' } } });
   assert.throws(gate(owner, [ok, { type: 'accept', head: H }, verdict('r1', 'FAIL'), { move: 'route', stage: 'OWNER' }, { type: 'request_changes', head: H }, { move: 'overrule' }, verdict('r2', 'PASS')]), skipped);
+  // A verification that ran no checks is a FAIL: a jump past it refuses as a failed check does.
+  assert.throws(gate(flow(), [{ type: 'verification', head: H, checks: [] }, { move: 'route', stage: 'REVIEW' }, verdict('r2', 'PASS')]), skipped);
+  // Accept with risk after an earlier accept at the same stage: the latest accept, after the FAIL, is the one that clears it.
+  const security = flow({ REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'r', budget: 2, transitions: { PASS: 'OWNER', FAIL: 'ESCALATED' } },
+    OWNER: { kind: 'human', transitions: { PASS: 'SECURITY', FAIL: 'ESCALATED' } },
+    SECURITY: { kind: 'agent', role: 'security', produces: 'verdict', roleText: 's', budget: 1, transitions: { PASS: 'MERGE', FAIL: 'ESCALATED' } } });
+  assert.doesNotThrow(gate(security, [ok, verdict('r1', 'PASS'), { type: 'accept', head: H }, verdict('s1', 'FAIL'), { move: 'route', stage: 'OWNER' }, { type: 'accept', head: H },
+    { type: 'reject_dispatch', reason: 'paused' }, { move: 'route', stage: 'MERGE' }]));
   // A route forward past the check, as before.
   assert.throws(gate(flow(), [ok, verdict('r1', 'FAIL'), { move: 'route', stage: 'CHECK' }, bad, { move: 'route', stage: 'REVIEW' }, verdict('r2', 'PASS')]), skipped);
   // A route back into the stage the cycle escalated from skips nothing, as a retry does.
