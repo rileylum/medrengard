@@ -49,6 +49,7 @@ Rows 9 and 10 are built with the later rows and open questions in view (A-055), 
 | Release tracking and deployment (O-009) | Command stages after acceptance, with grants |
 | Design Studio (O-012) | Stages with no candidate yet. The SHA guarantee applies to steps that produce evidence about code |
 | herdr frontend (O-010) | The observation stream drives the board. An owner's message to an agent is recorded as an event that later steps can see |
+| Messaging (A-144, O-018; after A-106 and the egress proxy) | A message event the controller records before delivery, with sender and head set by the controller and the body as a hashed file. Senders known by channel: one controller-owned socket per run, bound into its sandbox; observers through the observation stream (`note` becomes a message); the owner through a command. A `deliver` capability per adapter (claude hooks, pi `steer`, a fixed herdr doorbell), else the next run. A stage's SHA-bound output named as an input to a linked work item's cycle (A-117 across cycles). Routing, visibility and caps as extension points, the observer the first user of routing (A-124). Research: `docs/research/2026-10-22-agent-messaging/`. First experiment: claude and pi through `pasta --splice-only` and a stub proxy, OAuth refresh included |
 | Configuration | Layers: factory defaults, personal, repository, job |
 
 Measure as you go: stage waits, manual interventions, review attempts, confirmed defects. Automate the next most repeated manual step.
