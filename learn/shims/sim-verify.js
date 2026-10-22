@@ -7,7 +7,7 @@
 import { join } from 'node:path';
 import { readFileSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { checkDeadline } from '/src/controller.ts';
-import { FILE_STEM, TREE_CHECK, checksPass, fileArgs, took } from '/src/lifecycle.ts';
+import { FILE_STEM, TREE_CHECK, checksPass, escalatedFrom, fileArgs, took } from '/src/lifecycle.ts';
 import { checkSandbox, confines, executables, reachable } from '/src/sandbox.ts';
 import { liveFunction } from '../live.js';
 import { RUNS, world } from './world.js';
@@ -21,7 +21,7 @@ export const missingProgram = await liveFunction('src/verify.ts', 'missingProgra
 export const stageFiles = await liveFunction('src/verify.ts', 'stageFiles', { fileArgs, noWorkflowDir, statSync, join });
 export const grantValues = await liveFunction('src/verify.ts', 'grantValues', { readFileSync });
 // src/run.ts's decideAndDrive calls it on the cycle an owner's event leads to.
-export const headGate = await liveFunction('src/verify.ts', 'headGate', { checksPass, took });
+export const headGate = await liveFunction('src/verify.ts', 'headGate', { checksPass, escalatedFrom, took });
 
 export async function verify(store, cycleId, job, opts) {
   const cycle = store.load(cycleId);

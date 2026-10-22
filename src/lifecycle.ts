@@ -571,6 +571,9 @@ export function took(w: Workflow, h: Cycle['history'][number]): boolean {
   return def !== undefined;
 }
 
+/** The stage the cycle last escalated from. Entries recorded while escalated run from ESCALATED to ESCALATED; the one before them entered it. */
+export const escalatedFrom = (history: Cycle['history']): Stage | undefined => history.findLast((h) => h.to === 'ESCALATED' && h.from !== 'ESCALATED')?.from;
+
 /** Where the last verdict a review stage took sits in the history, or -1. */
 export function lastVerdictAt(w: Workflow, c: Cycle): number {
   return c.history.findLastIndex((h) => h.event.type === 'verdict' && took(w, h));
@@ -592,8 +595,7 @@ function move(w: Workflow, c: Cycle, e: Move): Cycle {
   let to: Stage;
   let budgets = c.budgets;
   if (e.action === 'retry') {
-    // Entries recorded while escalated run from ESCALATED to ESCALATED; the one before them entered it.
-    to = c.history.findLast((h) => h.to === 'ESCALATED' && h.from !== 'ESCALATED')?.from ?? 'QUEUED';
+    to = escalatedFrom(c.history) ?? 'QUEUED';
     if (!Object.hasOwn(w.stages, to)) return refuse(`the cycle escalated from ${to}, not a workflow stage`);
   } else if (e.action === 'overrule') {
     const at = lastVerdictAt(w, c);

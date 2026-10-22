@@ -4,7 +4,7 @@
 // parsers (src/runtime/cli-adapter.ts), so a reply without a claim block fails as it would live.
 import { decideAndDrive, run } from '/src/run.ts';
 import { moveEvent } from '/src/decide.ts';
-import { lastVerdictAt } from '/src/lifecycle.ts';
+import { escalatedFrom, lastVerdictAt } from '/src/lifecycle.ts';
 import { claude, pi } from '/src/runtime/cli-adapter.ts';
 import { EventStore, SETTLED, STOPPED } from '/src/store.ts';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -564,7 +564,7 @@ export default function mount(el) {
       btn(`git merge --no-ff ${short(c.candidate.head)}`, 'owner primary', merge);
     } else if (c.stage === 'ESCALATED') {
       if (c.candidate?.head && state.job) {
-        btn(`Retry ${c.history.findLast((h) => h.to === 'ESCALATED' && h.from !== 'ESCALATED')?.from ?? ''}`, 'owner primary', () => move('retry', 'the owner retries the stage in place'));
+        btn(`Retry ${escalatedFrom(c.history) ?? ''}`, 'owner primary', () => move('retry', 'the owner retries the stage in place'));
         const verdict = c.history[lastVerdictAt(workflow, c)]?.event;
         if (verdict?.verdict === 'FAIL' && verdict.head === c.candidate.head) btn('Overrule the last FAIL', 'owner', () => move('overrule', 'the owner agrees with the developer: undo is a non-goal'));
       }

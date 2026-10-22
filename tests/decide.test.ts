@@ -329,6 +329,64 @@ test('a FAIL counts for the grant rule only when an owner route landed after it:
     { type: 'reject_dispatch', reason: 'paused' }, { type: 'owner_decision', action: 'route', head: H2, reason: 'merge it', stage: 'MERGE' }], 'MERGE');
 });
 
+test('a move jumps when it enters a stage other than the one the cycle escalated from; a FAIL a jump skipped refuses the grant stage, whatever the move (11-d2, standard 4)', () => {
+  const merge = { kind: 'command', run: [{ name: 'merge', command: ['true'] }], network: true, grants: ['github'], transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } };
+  const flow = (stages: Record<string, unknown> = {}) => ({ name: 'p', start: 'DEV', stages: {
+    DEV: { kind: 'agent', role: 'writer', produces: 'commit', roleText: 'w', transitions: { PASS: 'CHECK' } },
+    CHECK: { kind: 'command', transitions: { PASS: 'REVIEW', FAIL: 'ESCALATED' } },
+    REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'r', budget: 2, transitions: { PASS: 'MERGE', FAIL: 'ESCALATED' } },
+    MERGE: merge, ...stages } }) as Workflow;
+  const ok: Event = { type: 'verification', head: H, checks: [{ name: 'tests', result: 'PASS' }] };
+  const bad: Event = { type: 'verification', head: H, checks: [{ name: 'tests', result: 'FAIL' }] };
+  const verdict = (runId: string, v: 'PASS' | 'FAIL'): Event => ({ type: 'verdict', runId, head: H, verdict: v, findings: v === 'FAIL' ? ['f'] : [] });
+  type Step = Event | { move: Move['action']; stage?: string };
+  // Through the store and moveEvent, so every refusal before a write applies; then the gate verify runs.
+  const gate = (w: Workflow, steps: Step[]) => {
+    const store = fresh(w);
+    try {
+      seed(store, 'c1', AT_OWNER.slice(0, 2));
+      for (const step of steps) {
+        if (!('move' in step)) { store.append('c1', step); continue; }
+        const d = moveEvent(store, 'w', mv(step.move, step.stage === undefined ? {} : { stage: step.stage }), where);
+        store.append(d.cycleId, d.event, { after: d.after });
+      }
+      const c = store.load('c1')!;
+      assert.equal(c.stage, 'MERGE', c.escalation);
+      return () => headGate(c, w);
+    } finally {
+      store.close();
+    }
+  };
+  const skipped = /^Error: stage MERGE holds a grant, but the last outcome of (CHECK|OWNER) is a FAIL for the candidate a{40}; an owner accept after it is the only way past$/;
+  // An overrule from CHECK into REVIEW jumps past the check that FAILed after the review's FAIL.
+  assert.throws(gate(flow(), [ok, verdict('r1', 'FAIL'), { move: 'route', stage: 'CHECK' }, bad, { move: 'overrule' }, verdict('r2', 'PASS')]), skipped);
+  // The same with no route at all: the review's declared FAIL edge reruns the check.
+  const back = flow({ REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'r', budget: 2, transitions: { PASS: 'MERGE', FAIL: 'CHECK' } } });
+  assert.throws(gate(back, [ok, verdict('r1', 'FAIL'), bad, { move: 'overrule' }, verdict('r2', 'PASS')]), skipped);
+  // The owner's request_changes upstream of the review, then an overrule into the review.
+  const owner = flow({ CHECK: { kind: 'command', transitions: { PASS: 'OWNER', FAIL: 'ESCALATED' } }, OWNER: { kind: 'human', transitions: { PASS: 'REVIEW', FAIL: 'ESCALATED' } } });
+  assert.throws(gate(owner, [ok, { type: 'accept', head: H }, verdict('r1', 'FAIL'), { move: 'route', stage: 'OWNER' }, { type: 'request_changes', head: H }, { move: 'overrule' }, verdict('r2', 'PASS')]), skipped);
+  // A route forward past the check, as before.
+  assert.throws(gate(flow(), [ok, verdict('r1', 'FAIL'), { move: 'route', stage: 'CHECK' }, bad, { move: 'route', stage: 'REVIEW' }, verdict('r2', 'PASS')]), skipped);
+  // A route back into the stage the cycle escalated from skips nothing, as a retry does.
+  const advisory = flow({ CHECK: { kind: 'command', transitions: { PASS: 'REVIEW', FAIL: 'REVIEW' } } });
+  assert.doesNotThrow(gate(advisory, [bad, { type: 'run_failed', runId: 'r0', reason: 'timeout' }, { move: 'route', stage: 'REVIEW' }, verdict('r2', 'PASS')]));
+  // Each move is judged by where the cycle stood when it landed: a later escalation from MERGE does not make the route back into REVIEW a jump.
+  assert.doesNotThrow(gate(advisory, [bad, { type: 'run_failed', runId: 'r0', reason: 'timeout' }, { move: 'route', stage: 'REVIEW' }, verdict('r2', 'PASS'),
+    { type: 'verification', head: H, checks: [{ name: 'merge', result: 'FAIL' }] }, { move: 'retry' }]));
+  // A jump back to the review after the merge failed: the grant stage's own failed run is not a FAIL it skips.
+  assert.doesNotThrow(gate(flow(), [ok, verdict('r1', 'PASS'), { type: 'verification', head: H, checks: [{ name: 'merge', result: 'FAIL' }] },
+    { move: 'route', stage: 'REVIEW' }, verdict('r2', 'PASS')]));
+  // A FAIL that lands while escalated was never the review's: a jump after it skips nothing.
+  assert.doesNotThrow(gate(flow(), [ok, { type: 'reject_dispatch', reason: 'paused' }, verdict('late', 'FAIL'), { move: 'route', stage: 'CHECK' }, ok, verdict('r2', 'PASS')]));
+  // A route back into the grant stage after its own run failed is a second attempt, as a retry is.
+  assert.doesNotThrow(gate(advisory, [bad, verdict('r1', 'PASS'), { type: 'verification', head: H, checks: [{ name: 'merge', result: 'FAIL' }] }, { move: 'route', stage: 'MERGE' }]));
+  // The usual overrule: the dispute escalates from the commit stage, the overrule reruns the review, whose PASS replaces its FAIL.
+  const disputed = flow({ REVIEW: { kind: 'agent', role: 'reviewer', produces: 'verdict', roleText: 'r', budget: 2, transitions: { PASS: 'MERGE', FAIL: 'DEV' } } });
+  assert.doesNotThrow(gate(disputed, [ok, verdict('r1', 'FAIL'), { type: 'claim', runId: 'dev2', base: 'b'.repeat(40), runtime: 'fake' },
+    { type: 'dispute', runId: 'dev2', head: H, reason: 'the finding is wrong' }, { move: 'overrule' }, verdict('r2', 'PASS')]));
+});
+
 test('decideAndDrive refuses an empty grant file at the stage the event leads to, writing nothing', async () => {
   const store = fresh(grantFlow([{ name: 'merge', command: ['true'] }]));
   try {
