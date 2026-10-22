@@ -77,9 +77,10 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
     name: spec.name,
     ...(moduleHash === undefined ? {} : { moduleHash }),
     async start(req, signal) {
-      // systemd mangles characters outside this set (a space becomes \x20), so the scope would be
+      // systemd mangles characters outside this set (a space becomes \x20), and keeps a name that
+      // already ends in a unit type instead of adding `.scope`; either way the scope would be
       // created under a different name than scopePath() computes and cgroup.kill would go nowhere.
-      if (isolation === 'cgroup' && !/^[A-Za-z0-9:_.-]{1,200}$/.test(req.runId)) {
+      if (isolation === 'cgroup' && (!/^[A-Za-z0-9:_.-]{1,200}$/.test(req.runId) || UNIT_SUFFIX.test(req.runId))) {
         return failed(`run ID ${JSON.stringify(req.runId.slice(0, 40))} is not usable as a systemd unit name`);
       }
       let [command, args] = [spec.command, spec.args];
@@ -139,6 +140,20 @@ function removeTmp(tmp: string): void {
   if (rm.status !== 0) console.error(`could not remove ${tmp}: ${rm.error?.message ?? rm.stderr.trim()}`);
 }
 
+const UNIT_SUFFIX = /\.(service|socket|device|mount|automount|swap|target|path|timer|slice|scope)$/;
+
+/**
+ * A shell from an SSH login runs in the login's `session-N.scope`, outside the user manager, and
+ * systemd-run puts the scope under the manager instead of beside it, so the probe below refuses
+ * (11-d2 merge, parked). Said in the error, since the fix is the owner's: start the command in a
+ * user scope. `cgroup` is /proc/self/cgroup's content.
+ */
+export function scopeHint(cgroup: string): string {
+  return /\/session-[^/]+\.scope$/.test(cgroup.trim())
+    ? '; this process is in a login session\'s scope (an SSH shell, say): run the command under `systemd-run --user --scope --quiet`'
+    : '';
+}
+
 // Fail at construction, not on the first run: a machine without a user systemd is a setup
 // problem, and a silent fallback would hide the 03-b escape on exactly that machine. The probe
 // runs a throwaway scope exactly as spawnRuntime will and checks, from inside it, that the path
@@ -154,7 +169,7 @@ export function checkScopes(): void {
     : probe.stdout.toString().trim() !== expected ? `scope landed at ${probe.stdout.toString().trim()}, expected ${expected}`
     : undefined);
   if (why !== undefined) {
-    throw new Error(`cgroup isolation needs systemd-run --user --scope (${why}); pass isolation: 'process-group' to accept the process-group limit`);
+    throw new Error(`cgroup isolation needs systemd-run --user --scope (${why})${scopeHint(readFileSync('/proc/self/cgroup', 'utf8'))}; or pass isolation: 'process-group' to accept the process-group limit`);
   }
 }
 

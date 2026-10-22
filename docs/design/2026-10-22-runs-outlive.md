@@ -18,24 +18,26 @@ Facts the design must respect, probed on this machine on 2026-10-22 (systemd use
 ```ts
 // src/layout.ts
 /** <runsDir>/runs/<runId>/: what a run left. Not bound into any sandbox. */
-export function runPaths(runsDir: string | undefined, runId: string): { dir: string; stdin: string; stdout: string; stderr: string; exit: string };
+export const runDir: (runsDir: string | undefined, runId: string) => string;
 
-// src/adapter.ts
-interface RunRequest { /* … */ runDir?: string }   // set by the controller; not sent to an extension
+// src/adapter.ts: set by the controller; neither is sent to an extension runtime
+interface RunRequest { /* … */ runDir?: string; deadlineMs?: number }
 
 // src/lifecycle.ts
 | { type: 'run_started'; runId: string; runtime: string }
 
 // src/runtime/spawn.ts
+interface SpawnOptions { /* … */ dir?: string; maxRuntimeMs?: number }
+export const runFiles: (dir: string) => { stdin: string; stdout: string; stderr: string; exit: string };
 /** What a run folder says now. The same reader serves a live run and, in 11-f, a run whose controller died. */
-export function readRun(dir: string, maxOutputBytes: number): RunResult | undefined;  // undefined: no exit file yet
+export function readRun(dir: string, maxOutputBytes?: number): RunResult | undefined;  // undefined: no exit file yet
 ```
 
-- **The folder.** `execute` mints the run ID, records the start, then the adapter creates `<runsDir>/runs/<runId>/` and writes the prompt (or the extension's request JSON) to `stdin`. The child's stdin, stdout and stderr are those files, opened by the controller and passed as file descriptors: no pipe stays between the controller and the run.
+- **The folder.** `execute` mints the run ID, records the start, and passes `runDir` and its deadline on the request; `spawnRuntime` creates the folder (refusing one that exists) and writes the prompt (or the extension's request JSON) to `stdin`. A `cliAdapter` called with no `runDir` (a test, a kit) runs over pipes as before; every run the controller starts has one. Command stages call `spawnRuntime` with no folder. The child's stdin, stdout and stderr are those files, opened by the controller and passed as file descriptors: no pipe stays between the controller and the run.
 - **The supervisor.** A fixed `sh` wrapper inside today's scope, outside bwrap: it runs the command, then writes its exit status to `exit.tmp` and renames it to `exit`, so `exit` is either absent or whole. A signal death is written as `128+n`, as the shell reports it. The sandboxed CLI cannot reach the folder: no path in it is bound.
-- **The deadline.** Under cgroup isolation the scope gets `-p RuntimeMaxSec=<deadline + grace>`, so a run with no controller still stops. The live controller keeps its own deadline as today; systemd's is the backstop.
+- **The deadline.** Under cgroup isolation the scope gets `-p RuntimeMaxSec=<deadline + grace>` and `-p TimeoutStopSec=<grace>`, so a run with no controller still stops, and the wrapper writes `143` for it. The live controller keeps its own deadline as today; systemd's is the backstop.
 - **One reader.** The live adapter waits for its child to exit, then calls `readRun` and parses what it returns with the spec's `parse`, as `outcome` does today. 11-f calls the same reader on a run whose controller died, so a received run and an adopted one go through the same code.
-- **The byte cap.** A pipe cannot be capped any more, so the adapter checks the two files' sizes on a timer (250 ms) and stops the run past `maxOutputBytes`, recording `overflow` as today. `readRun` never reads more than the cap, so a run that wrote past it while no controller watched is an overflow too, not a large string.
+- **The byte cap.** A pipe cannot be capped any more, so `spawnRuntime` checks the two files' sizes on a timer (100 ms) and stops the run past `maxOutputBytes`, recording `overflow` as today. `readRun` never reads more than the cap, so a run that wrote past it while no controller watched is an overflow too, not a large string.
 - **`run_started`.** `execute` appends `{ type: 'run_started', runId, runtime }` before a reviewer run starts, where it now only calls `requireStage`. `apply` accepts it in an agent stage that produces a verdict, adds the run to `cycle.runs` with its role and runtime, and does not change the stage. Anywhere else it escalates, as a claim outside a commit stage does. If `apply` did not take the run (the cycle was cancelled meanwhile), nothing is launched. A developer's `claim` stays its start record.
 - **Folders are kept.** A run folder is not deleted after the run: it is the raw output the Run records row wants. The owner clears `runsDir` as today. The run's `/tmp` is still removed after a live run.
 

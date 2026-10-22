@@ -343,8 +343,11 @@ for (const isolation of ['process-group', 'cgroup'] as const) {
 test('cgroup: a run whose controller is dead is stopped by systemd at maxRuntimeMs, and the wrapper still writes its status', async (t) => {
   if (!scoped(t)) return;
   const runDir = join(dir, 'runs', 'orphan-deadline');
+  const unit = `sf-test-${process.pid}-deadline`;
+  // systemd keeps a scope it stopped for its time limit as `failed` until told to forget it.
+  t.after(() => { spawnSync('systemctl', ['--user', 'reset-failed', `${unit}.scope`]); });
   const started = Date.now();
-  killedController(runDir, 'sleep 30', `sf-test-${process.pid}-deadline`, { maxRuntimeMs: 1000, graceMs: 1000 });
+  killedController(runDir, 'sleep 30', unit, { maxRuntimeMs: 1000, graceMs: 1000 });
   assert.ok(await exitFile(runDir, 6000), 'the run was not stopped');
   assert.ok(Date.now() - started < 4000, `stopped after ${Date.now() - started}ms`);
   // 128 + SIGTERM: systemd's stop signal reached the command, and the wrapper outlived it.

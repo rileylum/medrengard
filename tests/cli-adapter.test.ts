@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { RunOutcome } from '../src/adapter.ts';
 import { execute } from '../src/controller.ts';
-import { claude, cliAdapter, extensionSpec, pi, type CliSpec } from '../src/runtime/cli-adapter.ts';
+import { claude, cliAdapter, extensionSpec, pi, scopeHint, type CliSpec } from '../src/runtime/cli-adapter.ts';
 import { EventStore } from '../src/store.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
@@ -210,7 +210,8 @@ test('a run ID that is not a valid unit-name fragment is failed before anything 
   if (!hasUserSystemd) return void t.skip('no user systemd');
   const marker = join(dir, 'bad-unit-marker.txt');
   const adapter = cliAdapter({ ...claude, command: process.execPath, args: ['-e', `require("fs").writeFileSync(${JSON.stringify(marker)}, "ran")`] });
-  for (const runId of ['r 1', 'é', 'a/b', 'x'.repeat(201)]) {
+  // A name ending in a unit type is kept as is by systemd, not given `.scope`, so cgroup.kill would miss it (04-e adversarial).
+  for (const runId of ['r 1', 'é', 'a/b', 'x'.repeat(201), 'x.scope', 'x.service', 'x.slice']) {
     const o = await adapter.start({ ...req(), runId }, new AbortController().signal);
     assert.equal(o.status, 'failed', runId);
     assert.match((o as any).reason, /run ID .* unit name/, runId);
@@ -431,4 +432,9 @@ test('sandboxed adapter: a developer run cannot write its own run folder (11-e)'
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('a cgroup-isolation refusal from a login session\'s scope names the systemd-run --user --scope workaround (11-d2 parked)', () => {
+  assert.match(scopeHint('0::/user.slice/user-1000.slice/session-4.scope'), /systemd-run --user --scope/);
+  assert.equal(scopeHint('0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-foot.scope'), '');
 });
