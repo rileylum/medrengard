@@ -17,3 +17,4 @@ Verification: `npm test` and `npm run test:learn`; the owner's pre-merge hook ru
 
 ## Log
 - 2026-10-22 — drafted on `feat/11-e2-wrapper-hardening` off main at `53730ed`. Picks up the three 11-e adversarial minors in `docs/work/parked.md`, and the flaky deadline test, at the owner's word: “Yeah lets just put it into 11-e2”. Not READY until the owner says go.
+- 2026-10-22 — READY at the owner's word: “Go”.

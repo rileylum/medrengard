@@ -448,7 +448,11 @@ test('cgroup isolation: execute\'s deadline reaches the scope as RuntimeMaxSec, 
   let limit = '';
   for (const end = Date.now() + 1500; Date.now() < end && !limit; await new Promise((res) => setTimeout(res, 50))) {
     const runId = existsSync(join(runsDir, 'runs')) ? readdirSync(join(runsDir, 'runs'))[0] : undefined;
-    if (runId) limit = spawnSync('systemctl', ['--user', 'show', `sf-${runId}.scope`, '-p', 'RuntimeMaxUSec', '--value'], { encoding: 'utf8' }).stdout.trim();
+    if (!runId) continue;
+    // The run folder exists before systemd registers the scope, and `show` on a unit not yet
+    // loaded answers the default, `infinity`, with LoadState=not-found (11-e2).
+    const show = spawnSync('systemctl', ['--user', 'show', `sf-${runId}.scope`, '-p', 'LoadState', '-p', 'RuntimeMaxUSec'], { encoding: 'utf8' }).stdout;
+    if (/^LoadState=loaded$/m.test(show)) limit = /^RuntimeMaxUSec=(.*)$/m.exec(show)![1];
   }
   await running;
   store.close();

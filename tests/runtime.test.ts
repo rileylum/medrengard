@@ -3,6 +3,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readRun, spawnRuntime } from '../src/runtime/spawn.ts';
@@ -318,10 +319,12 @@ async function exitFile(runDir: string, ms: number): Promise<boolean> {
 function killedController(runDir: string, shell: string, scope?: string, extra: object = {}): void {
   const spawnTs = join(import.meta.dirname, '..', 'src', 'runtime', 'spawn.ts');
   const opts = { command: 'sh', args: ['-c', shell], prompt: 'p', cwd: dir, dir: runDir, scope, ...extra };
-  const script = `import { spawnRuntime } from ${JSON.stringify(spawnTs)};
-spawnRuntime(${JSON.stringify(opts)});
+  // The options go on stdin: a 2 MB prompt is past Linux's 128 KiB cap on one argument.
+  const script = `import { readFileSync } from 'node:fs';
+import { spawnRuntime } from ${JSON.stringify(spawnTs)};
+spawnRuntime(JSON.parse(readFileSync(0, 'utf8')));
 setTimeout(() => process.kill(process.pid, 'SIGKILL'), 300);`;
-  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10_000 });
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { input: JSON.stringify(opts), timeout: 10_000 });
   assert.equal(r.signal, 'SIGKILL', `controller did not die as planned: ${r.stderr}`);
 }
 
@@ -340,6 +343,18 @@ for (const isolation of ['process-group', 'cgroup'] as const) {
   });
 }
 
+test('a controller SIGKILLed while a pipe would still be taking its 2 MB prompt leaves the run the whole prompt (11-e2)', async () => {
+  const runDir = join(dir, 'runs', 'orphan-prompt');
+  // Numbered lines, so a truncated or reordered prompt changes the digest as well as the length.
+  const prompt = Array.from({ length: 2 * 1024 * 1024 / 8 }, (_, i) => `${i}`.padStart(7, '0') + '\n').join('');
+  assert.equal(prompt.length, 2 * 1024 * 1024);
+  // The controller dies 300 ms in, and the run reads nothing for 1 s: a pipe from the controller
+  // would have taken one pipe buffer by then, far short of 2 MB.
+  killedController(runDir, `exec "${process.execPath}" "${fixture('stdin-digest.ts')}"`, undefined, { prompt });
+  assert.ok(await exitFile(runDir, 5000), 'the run left no exit file');
+  assert.equal(readRun(runDir)!.stdout, `${2 * 1024 * 1024} ${createHash('sha256').update(prompt).digest('hex')}\n`);
+});
+
 test('cgroup: a run whose controller is dead is stopped by systemd at maxRuntimeMs, and the wrapper still writes its status', async (t) => {
   if (!scoped(t)) return;
   const runDir = join(dir, 'runs', 'orphan-deadline');
@@ -352,6 +367,23 @@ test('cgroup: a run whose controller is dead is stopped by systemd at maxRuntime
   assert.ok(Date.now() - started < 4000, `stopped after ${Date.now() - started}ms`);
   // 128 + SIGTERM: systemd's stop signal reached the command, and the wrapper outlived it.
   assert.equal(readRun(runDir)!.exitCode, 143);
+});
+
+test('readRun polled in a tight loop while the wrapper writes exit sees no status or the whole one, never an empty or partial one (11-e2)', async () => {
+  // One run catches a non-atomic write (`echo "$s" > "$e"`) mid-way most of the time, not always;
+  // twenty make a miss on all of them negligible.
+  for (let i = 0; i < 20; i++) {
+    const runDir = join(dir, 'runs', `exit-race-${i}`);
+    const run = spawnRuntime({ command: 'sh', args: ['-c', 'exit 7'], prompt: '', cwd: dir, dir: runDir });
+    for (const end = Date.now() + 5000; ;) {
+      assert.ok(Date.now() < end, 'the run left no exit file');
+      const r = readRun(runDir);
+      if (r === undefined) continue;
+      assert.equal(r.exitCode, 7, `run ${i}`);
+      break;
+    }
+    await run;
+  }
 });
 
 test('with a run folder: output past maxOutputBytes stops the run inside the grace bound and reports overflow with nothing kept', async () => {
