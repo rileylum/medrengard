@@ -8,6 +8,7 @@
 - The ticket you are working on, under `docs/work/`.
 - `docs/decisions.md`: what the owner has decided. Latest entry wins.
 - `docs/open-questions.md`: what is still undecided. Check it before proposing a design.
+- `docs/live-runs.md`: before any run with real runtimes (a live run): plan, seed, record.
 
 ## Rules
 
