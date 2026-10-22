@@ -81,7 +81,7 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
 
   const ruling = ownerRuling(cycle);
   const { text, ...versions } = reviewPrompt(def.roleText, { ...gather(job.ticket, head, base, job.repo, opts.instructions ?? ['AGENTS.md'], stages), ...(ruling === undefined ? {} : { ruling }) });
-  return execute(store, cycleId, adapter, { role, prompt: text, cwd: checkout }, { deadlineMs: opts.deadlineMs, versions });
+  return execute(store, cycleId, adapter, { role, prompt: text, cwd: checkout }, { deadlineMs: opts.deadlineMs, versions, runsDir: opts.runsDir });
 }
 
 /**

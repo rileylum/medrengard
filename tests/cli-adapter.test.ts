@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { RunOutcome } from '../src/adapter.ts';
 import { execute } from '../src/controller.ts';
-import { claude, cliAdapter, pi, type CliSpec } from '../src/runtime/cli-adapter.ts';
+import { claude, cliAdapter, extensionSpec, pi, type CliSpec } from '../src/runtime/cli-adapter.ts';
 import { EventStore } from '../src/store.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
@@ -106,7 +106,7 @@ test('pi: an error turn fails with pi\'s errorMessage, not as a missing claim bl
 test('output past maxOutputBytes is failed with the cap in the reason, and never reaches the controller as a claim', async () => {
   const adapter = cliAdapter({ ...claude, command: process.execPath, args: [join(import.meta.dirname, 'fixtures', 'flood.ts')] }, { ...offline, maxOutputBytes: 65536, graceMs: 300 });
   const store = fresh();
-  const c = await execute(store, 'c1', adapter, { role: 'developer', prompt: '', cwd: dir }, { deadlineMs: 10_000, base: 'B1' });
+  const c = await execute(store, 'c1', adapter, { role: 'developer', prompt: '', cwd: dir }, { deadlineMs: 10_000, base: 'B1', runsDir: dir });
   assert.equal(c.stage, 'ESCALATED');
   assert.match(c.escalation ?? '', /65536 bytes/);
   store.close();
@@ -114,7 +114,7 @@ test('output past maxOutputBytes is failed with the cap in the reason, and never
 
 test('through execute: a fixture claude run moves DEVELOPING to VERIFYING with the head from the block', async () => {
   const store = fresh();
-  const c = await execute(store, 'c1', cliAdapter(fake(claude, 'ping'), offline), { role: 'developer', prompt: 'ping', cwd: dir }, { deadlineMs: 10_000, base: 'B1' });
+  const c = await execute(store, 'c1', cliAdapter(fake(claude, 'ping'), offline), { role: 'developer', prompt: 'ping', cwd: dir }, { deadlineMs: 10_000, base: 'B1', runsDir: dir });
   assert.equal(c.stage, 'VERIFYING');
   assert.equal(c.candidate?.head, 'H1');
   assert.deepEqual(c, store.load('c1'));
@@ -138,7 +138,7 @@ test('cgroup isolation: the deadline through execute kills a setsid grandchild o
   const marker = join(dir, 'execute-escape-marker.txt');
   const adapter = cliAdapter({ ...claude, command: process.execPath, args: [join(import.meta.dirname, 'fixtures', 'escape.ts'), marker] }, { graceMs: 300 });
   const store = fresh();
-  const c = await execute(store, 'c1', adapter, { role: 'developer', prompt: '', cwd: dir }, { deadlineMs: 500, base: 'B1' });
+  const c = await execute(store, 'c1', adapter, { role: 'developer', prompt: '', cwd: dir }, { deadlineMs: 500, base: 'B1', runsDir: dir });
   assert.equal(c.stage, 'ESCALATED');
   assert.match(c.escalation ?? '', /timeout/);
   await new Promise((res) => setTimeout(res, 3000));
@@ -149,7 +149,7 @@ test('cgroup isolation: the deadline through execute kills a setsid grandchild o
 test('cgroup isolation: the fixture runs under a scope and a run through execute still completes', async (t) => {
   if (!hasUserSystemd) return void t.skip('no user systemd');
   const store = fresh();
-  const c = await execute(store, 'c1', cliAdapter(fake(pi, 'ping')), { role: 'developer', prompt: 'ping', cwd: dir }, { deadlineMs: 10_000, base: 'B1' });
+  const c = await execute(store, 'c1', cliAdapter(fake(pi, 'ping')), { role: 'developer', prompt: 'ping', cwd: dir }, { deadlineMs: 10_000, base: 'B1', runsDir: dir });
   assert.equal(c.stage, 'VERIFYING');
   store.close();
 });
@@ -160,7 +160,7 @@ for (const spec of [claude, pi]) {
   test(`live ${spec.name}: a real ping through execute reaches VERIFYING with the claim from the block`, async (t) => {
     if (!LIVE) return void t.skip('RUNTIME_SPIKE is not set');
     const store = fresh();
-    const c = await execute(store, 'c1', cliAdapter(spec), { role: 'developer', prompt: CLAIM_PROMPT, cwd: dir }, { deadlineMs: 60_000, base: 'B1' });
+    const c = await execute(store, 'c1', cliAdapter(spec), { role: 'developer', prompt: CLAIM_PROMPT, cwd: dir }, { deadlineMs: 60_000, base: 'B1', runsDir: dir });
     t.diagnostic(`${spec.name} live: ${c.stage} ${c.escalation ?? ''}`);
     assert.equal(c.stage, 'VERIFYING');
     assert.equal(c.candidate?.head, 'H1');
@@ -171,7 +171,7 @@ for (const spec of [claude, pi]) {
     if (!LIVE) return void t.skip('RUNTIME_SPIKE is not set');
     const store = fresh();
     const adapter = cliAdapter({ ...spec, args: [...spec.args, '--model', 'no-such-model-xyz'] });
-    const c = await execute(store, 'c1', adapter, { role: 'developer', prompt: CLAIM_PROMPT, cwd: dir }, { deadlineMs: 60_000, base: 'B1' });
+    const c = await execute(store, 'c1', adapter, { role: 'developer', prompt: CLAIM_PROMPT, cwd: dir }, { deadlineMs: 60_000, base: 'B1', runsDir: dir });
     assert.equal(c.stage, 'ESCALATED');
     assert.match(c.escalation ?? '', /no-such-model-xyz/);
     store.close();
@@ -390,5 +390,45 @@ test('a directory chain past PATH_MAX left in the run\'s /tmp does not turn a co
   } finally {
     spawnSync('chmod', ['-R', 'u+rwX', root]);
     spawnSync('rm', ['-rf', root]);
+  }
+});
+
+// Ticket 11-e: the controller names a run folder per run; the adapter's run lives in it.
+test('through execute: a run leaves its stdin, stdout, stderr and exit in <runsDir>/runs/<runId>/', async () => {
+  const store = fresh();
+  const runsDir = join(dir, 'execute-runs');
+  const c = await execute(store, 'c1', cliAdapter(fake(claude, 'ping'), offline), { role: 'developer', prompt: 'ping', cwd: dir }, { deadlineMs: 10_000, base: 'B1', runsDir });
+  assert.equal(c.stage, 'VERIFYING');
+  const runDir = join(runsDir, 'runs', c.runs[0]!.runId);
+  assert.equal(readFileSync(join(runDir, 'stdin'), 'utf8'), 'ping');
+  assert.match(readFileSync(join(runDir, 'stdout'), 'utf8'), /"session_id"/);
+  assert.equal(readFileSync(join(runDir, 'exit'), 'utf8'), '0\n');
+  store.close();
+});
+
+test('an extension runtime\'s request JSON, kept as the run\'s stdin, carries neither the run folder nor the deadline', async () => {
+  const runDir = join(dir, 'runs', 'ext-request');
+  await cliAdapter(extensionSpec('ext', join(import.meta.dirname, 'fixtures', 'ext-runtime.ts')), offline).start({ ...req(), runDir, deadlineMs: 1000 }, new AbortController().signal);
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(runDir, 'stdin'), 'utf8'))).sort(), ['cwd', 'prompt', 'role', 'runId']);
+});
+
+test('sandboxed adapter: a developer run cannot write its own run folder (11-e)', async () => {
+  const root = mkdtempSync('/var/tmp/software_factory/sf-cli-sandbox-');
+  const cwd = join(root, 'cycle');
+  mkdirSync(cwd);
+  const runDir = join(root, 'runs', 'r-dev');
+  const probe = join(import.meta.dirname, 'fixtures', 'sandbox-probe.ts');
+  const targets = { exit: join(runDir, 'exit'), stdout: join(runDir, 'stdout'), other: join(runDir, 'other') };
+  const spec: CliSpec = { ...claude, command: process.execPath, args: [probe, ...Object.entries(targets).map(([k, v]) => `${k}=${v}`)], config: { read: [], overlay: [] } };
+  const adapter = cliAdapter(spec, { ...offline, sandbox: { backend: 'bwrap', read: [dirname(dirname(realpathSync(process.execPath))), import.meta.dirname] } });
+  try {
+    const o = await adapter.start({ runId: 'r-dev', role: 'developer', prompt: '', cwd, runDir }, new AbortController().signal);
+    assert.equal(o.status, 'completed', JSON.stringify(o));
+    const r = (o as { claim: Record<string, string> }).claim;
+    for (const k of Object.keys(targets)) assert.notEqual(r[k], 'ok', k);
+    assert.equal(readFileSync(join(runDir, 'exit'), 'utf8'), '0\n');
+    assert.equal(existsSync(targets.other), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

@@ -99,7 +99,7 @@ test('extension: malformed JSON, a non-zero exit, a deadline overrun, a cancel a
   const adapter = cliAdapter(extensionSpec('ext', EXT), { ...offline, graceMs: 500 });
   const failures = async (prompt: string, deadlineMs: number) => {
     const store = fresh();
-    const c = await execute(store, 'c1', adapter, { role: 'developer', prompt, cwd }, { deadlineMs, base: 'B1' });
+    const c = await execute(store, 'c1', adapter, { role: 'developer', prompt, cwd }, { deadlineMs, base: 'B1', runsDir: dir });
     const failed = store.events('c1').filter((e) => e.type === 'run_failed');
     assert.equal(failed.length, 1, prompt);
     assert.equal(c.stage, 'ESCALATED', prompt);

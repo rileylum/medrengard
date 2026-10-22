@@ -111,6 +111,10 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
           graceMs: opts.graceMs,
           maxOutputBytes: opts.maxOutputBytes,
           scope: isolation === 'cgroup' ? `sf-${req.runId}` : undefined,
+          dir: req.runDir,
+          // Past the controller's own deadline and grace, so the live controller always stops the
+          // run first and records why; this one ends a run whose controller died.
+          maxRuntimeMs: req.deadlineMs === undefined ? undefined : req.deadlineMs + (opts.graceMs ?? 5000),
         });
         signal.addEventListener('abort', () => run.cancel(), { once: true });
         const r = await run;
@@ -267,7 +271,8 @@ export function extensionSpec(name: string, module: string): CliSpec {
     name,
     command: process.execPath,
     args: [module],
-    input: (req) => JSON.stringify(req),
+    // The run folder and the deadline are the controller's business; the protocol is the rest.
+    input: ({ runDir: _dir, deadlineMs: _deadline, ...req }) => JSON.stringify(req),
     bind: [dirname(module)],
     module,
     config: { read: [], overlay: [] },

@@ -26,6 +26,9 @@ export function cyclePaths(runsDir: string | undefined, cycleId: string) {
   };
 }
 
+/** What one run left: its stdin, output and exit code (11-e). Never bound into a sandbox. */
+export const runDir = (runsDir: string | undefined, runId: string): string => join(runsRoot(runsDir), 'runs', runId);
+
 /**
  * The bare mirror every clone of `repo` shares its objects with (11-b2, A-126): one per repository,
  * so two job files on one repository share it and two repositories never do. Keyed by the real

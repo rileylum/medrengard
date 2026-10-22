@@ -24,3 +24,4 @@ Verification: `npm test` and `npm run test:learn`; the owner's pre-merge hook ru
 
 ## Log
 - 2026-10-22 — drafted on `feat/11-e-runs-outlive` off main at `6c0fb0a`. Owner chose 11-e as the next ticket: "Yes". Probes before the draft (scratch in `/tmp`, deleted): a scoped run outlives its SIGKILLed controller and a wrapper writes its exit code; `RuntimeMaxSec` stops a scope; a transient service keeps a failed exit status, and one that exits 0 only with `RemainAfterExit=yes`. Not READY until the owner answers the design note's questions and says go.
+- 2026-10-22 — owner: “go with your recommendations”: the `sh` wrapper in today's scope; `run_started` for reviewer runs only; a verdict with no `run_started` applied as today, `ENGINE_VERSION` stays 1; the three parked lines picked up. READY at Trust tier.

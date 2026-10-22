@@ -1,11 +1,11 @@
 // Ticket 03-a: how a runtime behaves as a launched, observed and cancelled child process.
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnRuntime } from '../src/runtime/spawn.ts';
+import { readRun, spawnRuntime } from '../src/runtime/spawn.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'sf-runtime-'));
 test.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -292,4 +292,82 @@ test('scope: cancel() after the child exited while a grandchild held the pipe si
     process.kill = kill;
   }
   assert.equal(calls, 0, 'cancel after exit under a scope signalled the process group');
+});
+
+// Ticket 11-e: a run folder holds the run's stdin, output and exit code, so the run outlives the controller.
+test('with a run folder: stdin, stdout, stderr and exit are files in it, and the result is read back from them', async () => {
+  const runDir = join(dir, 'runs', 'echo');
+  const r = await spawnRuntime({ command: process.execPath, args: [fixture('echo-prompt.ts')], prompt: 'hello folder', cwd: dir, dir: runDir });
+  assert.equal(r.status, 'exited');
+  assert.equal(r.exitCode, 3);
+  assert.equal(r.stdout, `prompt=hello folder cwd=${dir}\n`);
+  assert.equal(r.stderr, 'to stderr\n');
+  assert.equal(readFileSync(join(runDir, 'stdin'), 'utf8'), 'hello folder');
+  assert.equal(readFileSync(join(runDir, 'stdout'), 'utf8'), `prompt=hello folder cwd=${dir}\n`);
+  assert.equal(readFileSync(join(runDir, 'stderr'), 'utf8'), 'to stderr\n');
+  assert.equal(readFileSync(join(runDir, 'exit'), 'utf8').trim(), '3');
+});
+
+/** Polls until `exit` appears in `runDir`, up to `ms`. */
+async function exitFile(runDir: string, ms: number): Promise<boolean> {
+  for (const end = Date.now() + ms; Date.now() < end; await new Promise((res) => setTimeout(res, 50))) if (existsSync(join(runDir, 'exit'))) return true;
+  return false;
+}
+
+// A controller in its own process, SIGKILLed while the run goes on, as a crash or a Ctrl-C would end it.
+function killedController(runDir: string, shell: string, scope?: string, extra: object = {}): void {
+  const spawnTs = join(import.meta.dirname, '..', 'src', 'runtime', 'spawn.ts');
+  const opts = { command: 'sh', args: ['-c', shell], prompt: 'p', cwd: dir, dir: runDir, scope, ...extra };
+  const script = `import { spawnRuntime } from ${JSON.stringify(spawnTs)};
+spawnRuntime(${JSON.stringify(opts)});
+setTimeout(() => process.kill(process.pid, 'SIGKILL'), 300);`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10_000 });
+  assert.equal(r.signal, 'SIGKILL', `controller did not die as planned: ${r.stderr}`);
+}
+
+for (const isolation of ['process-group', 'cgroup'] as const) {
+  test(`${isolation}: a run whose controller was SIGKILLed finishes, and readRun gives its output and exit code`, async (t) => {
+    if (isolation === 'cgroup' && !scoped(t)) return;
+    const runDir = join(dir, 'runs', `orphan-${isolation}`);
+    killedController(runDir, 'cat; sleep 1; echo done; echo oops >&2; exit 5', isolation === 'cgroup' ? `sf-test-${process.pid}-orphan` : undefined);
+    assert.equal(readRun(runDir), undefined, 'the run had already ended when its controller died');
+    assert.ok(await exitFile(runDir, 5000), 'the run left no exit file');
+    const r = readRun(runDir)!;
+    assert.equal(r.status, 'exited');
+    assert.equal(r.exitCode, 5);
+    assert.equal(r.stdout, 'pdone\n');
+    assert.equal(r.stderr, 'oops\n');
+  });
+}
+
+test('cgroup: a run whose controller is dead is stopped by systemd at maxRuntimeMs, and the wrapper still writes its status', async (t) => {
+  if (!scoped(t)) return;
+  const runDir = join(dir, 'runs', 'orphan-deadline');
+  const started = Date.now();
+  killedController(runDir, 'sleep 30', `sf-test-${process.pid}-deadline`, { maxRuntimeMs: 1000, graceMs: 1000 });
+  assert.ok(await exitFile(runDir, 6000), 'the run was not stopped');
+  assert.ok(Date.now() - started < 4000, `stopped after ${Date.now() - started}ms`);
+  // 128 + SIGTERM: systemd's stop signal reached the command, and the wrapper outlived it.
+  assert.equal(readRun(runDir)!.exitCode, 143);
+});
+
+test('with a run folder: output past maxOutputBytes stops the run inside the grace bound and reports overflow with nothing kept', async () => {
+  const started = Date.now();
+  const r = await spawnRuntime({ command: process.execPath, args: [fixture('flood.ts')], prompt: '', cwd: dir, graceMs: 300, maxOutputBytes: 65536, dir: join(dir, 'runs', 'flood') });
+  const took = Date.now() - started;
+  assert.equal(r.status, 'overflow');
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /stdout exceeded 65536 bytes/);
+  assert.ok(took < 300 + 1000, `took ${took}ms`);
+});
+
+test('readRun: a file past the cap is overflow, and the cap holds for stderr too', () => {
+  const runDir = join(dir, 'runs', 'big');
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, 'stdout'), 'x'.repeat(100));
+  writeFileSync(join(runDir, 'stderr'), 'y'.repeat(101));
+  writeFileSync(join(runDir, 'exit'), '0\n');
+  assert.deepEqual(readRun(runDir, 100), { status: 'overflow', exitCode: 0, signal: null, stdout: '', stderr: 'stderr exceeded 100 bytes', wallMs: 0 });
+  writeFileSync(join(runDir, 'stderr'), 'y');
+  assert.deepEqual(readRun(runDir, 100), { status: 'exited', exitCode: 0, signal: null, stdout: 'x'.repeat(100), stderr: 'y', wallMs: 0 });
 });

@@ -2,6 +2,7 @@
 // bounds it with a deadline, and turns the outcome into exactly one lifecycle event.
 import { randomUUID } from 'node:crypto';
 import type { Adapter, RunOutcome, RunRequest } from './adapter.ts';
+import { runDir } from './layout.ts';
 import { producedBy, STOPPED, type Cycle, type Event, type PromptVersions, type Role, type RunVersions } from './lifecycle.ts';
 import { oneLine } from './prompt.ts';
 import { UnclassifiableEvent, type EventStore } from './store.ts';
@@ -20,6 +21,8 @@ export interface ExecuteOptions {
   accept?: (claim: unknown) => string | undefined;
   /** Recorded on the run's outcome event. develop, fix and review always pass it; optional for tests that drive execute directly. */
   versions?: PromptVersions;
+  /** Where the run's folder goes (11-e). Default the layout's. */
+  runsDir?: string;
 }
 
 // setTimeout silently clamps anything outside this range to 1 ms, which would time every run out.
@@ -60,7 +63,7 @@ export async function execute(
   const settled = () => {
     try { const stage = store.load(cycleId)?.stage; return stage !== undefined && STOPPED.includes(stage); } catch { return false; }
   };
-  const outcome = await bounded(adapter, { ...req, runId }, deadlineMs, settled);
+  const outcome = await bounded(adapter, { ...req, runId, runDir: runDir(opts.runsDir, runId), deadlineMs }, deadlineMs, settled);
   const versions: Partial<RunVersions> = { ...opts.versions, runtime: adapter.name, ...(adapter.moduleHash === undefined ? {} : { moduleHash: adapter.moduleHash }) };
   return receive(store, cycleId, runId, req.role, outcome, opts.accept, versions);
 }

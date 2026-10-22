@@ -28,7 +28,7 @@ const git = (cwd: string, ...a: string[]) =>
 
 let n = 0;
 /** What runsDir holds besides the repository's mirror (11-b2): one entry per cycle a run made. */
-const cycleDirs = (runsDir: string) => readdirSync(runsDir).filter((e) => e !== 'mirrors');
+const cycleDirs = (runsDir: string) => readdirSync(runsDir).filter((e) => e !== 'mirrors' && e !== 'runs');
 /** A scratch repository with one commit, a fresh store and a runs directory. */
 function scratch() {
   const root = join(dir, String(n++));

@@ -15,6 +15,14 @@ export interface RunRequest {
    * clone's mirror objects (11-b2, A-134). An extension runtime receives it in the request JSON.
    */
   read?: string[];
+  /**
+   * The run's folder, `<runsDir>/runs/<runId>/` (11-e): a `cliAdapter` keeps the run's stdin,
+   * output and exit code there, so they outlive the controller. Set by the controller; never sent
+   * to an extension runtime. Without one the run's output goes through pipes and dies with this process.
+   */
+  runDir?: string;
+  /** The controller's deadline for the run, so the supervisor can enforce it without the controller (11-e). Not sent to an extension. */
+  deadlineMs?: number;
 }
 
 /**

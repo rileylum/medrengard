@@ -94,7 +94,7 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
       cycleId,
       developer,
       { role: start.role, prompt: text, cwd: worktree, read },
-      { deadlineMs: opts.deadlineMs, base, versions, accept: (claim) => land(job.repo, worktree, read, branch, cycleId, base, undefined, sandbox, opts.deadlineMs, claim) },
+      { deadlineMs: opts.deadlineMs, base, versions, runsDir: opts.runsDir, accept: (claim) => land(job.repo, worktree, read, branch, cycleId, base, undefined, sandbox, opts.deadlineMs, claim) },
     );
     return { cycle, worktree, branch };
   } catch (err) {
@@ -150,7 +150,7 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
     cycleId,
     developer,
     { role: def.role, prompt: text, cwd: worktree, read },
-    { deadlineMs: opts.deadlineMs, base, versions, accept: (claim) => land(job.repo, worktree, read, branch, cycleId, base, head, sandbox, opts.deadlineMs, claim) },
+    { deadlineMs: opts.deadlineMs, base, versions, runsDir: opts.runsDir, accept: (claim) => land(job.repo, worktree, read, branch, cycleId, base, head, sandbox, opts.deadlineMs, claim) },
   );
   return { cycle: cycleAfter, worktree, branch };
 }
