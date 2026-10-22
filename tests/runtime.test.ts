@@ -421,6 +421,15 @@ test('with a run folder: a cancel that lands while the wrapper renames a finishe
   assert.equal(readRun(runDir)?.exitCode, 3);
 });
 
+test('with a run folder: a command killed by its own SIGTERM leaves exit 143, so the wrapper did not hand it an ignored SIGTERM (11-e2, standard 2)', async () => {
+  const runDir = join(dir, 'runs', 'own-sigterm');
+  // An ignored signal stays ignored across exec, so a wrapper that ignored SIGTERM before the
+  // command would let it run on to `exit 9`.
+  const r = await spawnRuntime({ command: 'sh', args: ['-c', 'kill -TERM $$; exit 9'], prompt: '', cwd: dir, dir: runDir });
+  assert.equal(r.exitCode, 143);
+  assert.equal(readRun(runDir)?.exitCode, 143);
+});
+
 test('with a run folder: output past maxOutputBytes stops the run inside the grace bound and reports overflow with nothing kept', async () => {
   const started = Date.now();
   const r = await spawnRuntime({ command: process.execPath, args: [fixture('flood.ts')], prompt: '', cwd: dir, graceMs: 300, maxOutputBytes: 65536, dir: join(dir, 'runs', 'flood') });
