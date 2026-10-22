@@ -83,7 +83,10 @@ export const runFiles = (dir: string) => ({ stdin: join(dir, 'stdin'), stdout: j
 // name and is renamed, so `exit` is absent or whole. `trap :` rather than `trap ''`: an ignored
 // signal stays ignored across exec, so the command would inherit deafness to SIGTERM; a handler
 // does not, and it lets the wrapper outlive a SIGTERM to the group long enough to write the status.
-const WRAPPER = 'trap : TERM; e=$1; shift; "$@"; s=$?; echo "$s" > "$e.tmp" && mv "$e.tmp" "$e"; exit "$s"';
+// Then it SIGKILLs its own process group, itself included: whatever the command left running
+// there dies with the run, as a scope's cgroup.kill does, and the group is surely the wrapper's
+// while it is alive to signal it. The live result takes its exit code from `exit` for that reason.
+const WRAPPER = 'trap : TERM; e=$1; shift; "$@"; s=$?; echo "$s" > "$e.tmp" && mv "$e.tmp" "$e"; kill -KILL 0';
 
 /**
  * At most `max` bytes of a file, and whether it held more. Never reads past the cap, so a run that
@@ -173,7 +176,9 @@ export function spawnRuntime(opts: SpawnOptions): Run {
       mkdirSync(dirname(opts.dir), { recursive: true });
       // Not recursive: a folder that exists belongs to another run, whose files must not be reused.
       mkdirSync(opts.dir);
-      writeFileSync(files.stdin, opts.prompt);
+      // Read-only: the run's uid is the owner's even in a sandbox, and fd 0 reopened through
+      // /proc/self/fd/0 would otherwise let it rewrite the record of what it was asked (standard 2).
+      writeFileSync(files.stdin, opts.prompt, { mode: 0o400 });
       stdio = [openSync(files.stdin, 'r'), openSync(files.stdout, 'wx'), openSync(files.stderr, 'wx')];
     } catch (err) {
       return neverStarted(`run folder ${opts.dir}: ${(err as Error).message}`);
@@ -268,9 +273,10 @@ export function spawnRuntime(opts: SpawnOptions): Run {
       // An overflow the poll caught keeps its own reason, and a cancel stays a cancel whatever the
       // run wrote after it.
       if (opts.dir && status === 'exited') {
-        const read = readOutput(opts.dir, maxOutputBytes);
-        if (read.status === 'overflow') status = 'overflow';
-        ({ stdout, stderr } = read);
+        const read = readRun(opts.dir, maxOutputBytes);
+        if (read) ({ status, stdout, stderr, exitCode, signal } = read);
+        // No status written: the wrapper itself was killed, and the child's own end is all there is.
+        else ({ status, stdout, stderr } = readOutput(opts.dir, maxOutputBytes));
       }
       resolve({ status, exitCode, signal, stdout, stderr, wallMs: Date.now() - started });
     };

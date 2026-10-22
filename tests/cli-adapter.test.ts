@@ -467,3 +467,24 @@ test('a checkScopes refusal names the systemd-run --user --scope workaround when
     process.env.PATH = path;
   }
 });
+
+test('sandboxed adapter: a run cannot rewrite its kept prompt through /proc/self/fd/0 (11-e, standard 2)', async () => {
+  const root = mkdtempSync('/var/tmp/software_factory/sf-cli-sandbox-');
+  const cwd = join(root, 'checkout');
+  mkdirSync(cwd);
+  const runDir = join(root, 'runs', 'r-rev');
+  const probe = join(import.meta.dirname, 'fixtures', 'sandbox-probe.ts');
+  const spec: CliSpec = { ...claude, command: process.execPath, args: [probe, 'stdin=/proc/self/fd/0'], config: { read: [], overlay: [] } };
+  const adapter = cliAdapter(spec, { ...offline, sandbox: { backend: 'bwrap', read: [dirname(dirname(realpathSync(process.execPath))), import.meta.dirname] } });
+  try {
+    for (const role of ['standard_reviewer', 'developer'] as const) {
+      const dir = `${runDir}-${role}`;
+      const o = await adapter.start({ runId: `r-${role}`, role, prompt: 'THE REAL PROMPT', cwd, runDir: dir }, new AbortController().signal);
+      assert.equal(o.status, 'completed', JSON.stringify(o));
+      assert.notEqual((o as { claim: Record<string, string> }).claim.stdin, 'ok', role);
+      assert.equal(readFileSync(join(dir, 'stdin'), 'utf8'), 'THE REAL PROMPT', role);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

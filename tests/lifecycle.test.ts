@@ -765,3 +765,12 @@ test('run_started for a run that already has its outcome is ignored', () => {
   assert.equal(late.stage, 'ADVERSARIAL_REVIEW');
   assert.deepEqual(late.runs, passed.runs);
 });
+
+test('run_started on an ESCALATED cycle is ignored: the escalation and its reason stand (11-e, standard 2)', () => {
+  const e = apply(toStandardReview(), { type: 'head_changed', head: 'OTHER' });
+  assert.equal(e.stage, 'ESCALATED');
+  const after = apply(e, { type: 'run_started', runId: 'R1', runtime: 'claude' });
+  assert.equal(after.stage, 'ESCALATED');
+  assert.equal(after.escalation, e.escalation);
+  assert.deepEqual(after.runs, e.runs);
+});

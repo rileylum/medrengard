@@ -398,3 +398,24 @@ test('readRun on a 1 GiB output reports overflow without reading it: a whole rea
   writeFileSync(join(runDir, 'exit'), '0\n');
   assert.equal(readRun(runDir)!.status, 'overflow');
 });
+
+test('a run folder that exists is refused, and its files are left as they were (11-e, standard 2)', async () => {
+  const runDir = join(dir, 'runs', 'taken');
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, 'stdin'), 'the first run\'s prompt');
+  const r = await spawnRuntime({ command: 'true', args: [], prompt: 'a second prompt', cwd: dir, dir: runDir });
+  assert.equal(r.status, 'failed');
+  assert.match(r.stderr, /EEXIST/);
+  assert.equal(readFileSync(join(runDir, 'stdin'), 'utf8'), 'the first run\'s prompt');
+});
+
+test('process-group isolation with a run folder: a descendant left behind dies when the run exits, and the exit code still comes through (11-e, standard 2)', async () => {
+  const marker = join(dir, 'left-behind-marker.txt');
+  const worker = `setTimeout(() => require("fs").writeFileSync(${JSON.stringify(marker)}, "late"), 1500)`;
+  const r = await spawnRuntime({ command: 'sh', args: ['-c', `"${process.execPath}" -e ${JSON.stringify(worker)} & echo hi; exit 4`], prompt: '', cwd: dir, dir: join(dir, 'runs', 'left-behind') });
+  assert.equal(r.status, 'exited');
+  assert.equal(r.exitCode, 4);
+  assert.equal(r.stdout, 'hi\n');
+  await new Promise((res) => setTimeout(res, 2500));
+  assert.equal(existsSync(marker), false, 'the descendant outlived the run');
+});
