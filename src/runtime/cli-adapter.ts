@@ -158,7 +158,8 @@ export function scopeHint(cgroup: string): string {
 // problem, and a silent fallback would hide the 03-b escape on exactly that machine. The probe
 // runs a throwaway scope exactly as spawnRuntime will and checks, from inside it, that the path
 // spawnRuntime computes is the scope's real cgroup and that its cgroup.kill is writable.
-export function checkScopes(): void {
+/** `cgroup`: the file naming this process's cgroup; a test may point it elsewhere. */
+export function checkScopes(cgroup = '/proc/self/cgroup'): void {
   const unit = `sf-probe-${process.pid}-${Date.now()}`;
   const expected = scopePath(unit);
   const probe = spawnSync('systemd-run', ['--user', '--scope', '-q', '--slice-inherit', `--unit=${unit}`, '--', 'sh', '-c',
@@ -169,7 +170,7 @@ export function checkScopes(): void {
     : probe.stdout.toString().trim() !== expected ? `scope landed at ${probe.stdout.toString().trim()}, expected ${expected}`
     : undefined);
   if (why !== undefined) {
-    throw new Error(`cgroup isolation needs systemd-run --user --scope (${why})${scopeHint(readFileSync('/proc/self/cgroup', 'utf8'))}; or pass isolation: 'process-group' to accept the process-group limit`);
+    throw new Error(`cgroup isolation needs systemd-run --user --scope (${why})${scopeHint(readFileSync(cgroup, 'utf8'))}; or pass isolation: 'process-group' to accept the process-group limit`);
   }
 }
 

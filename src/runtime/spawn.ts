@@ -5,7 +5,7 @@
 // exit code on disk (A-122).
 import { spawn } from 'node:child_process';
 import { accessSync, closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 
 export interface SpawnOptions {
   command: string;
@@ -165,6 +165,9 @@ export function spawnRuntime(opts: SpawnOptions): Run {
   let stdio: ['pipe', 'pipe', 'pipe'] | number[] = ['pipe', 'pipe', 'pipe'];
   let [command, args] = [opts.command, opts.args];
   if (opts.dir) {
+    // The wrapper resolves `exit` against the run's cwd, this process against its own: only an
+    // absolute path names one folder for both.
+    if (!isAbsolute(opts.dir)) return neverStarted(`run folder ${opts.dir} is not an absolute path`);
     const files = runFiles(opts.dir);
     try {
       mkdirSync(dirname(opts.dir), { recursive: true });
@@ -262,8 +265,9 @@ export function spawnRuntime(opts: SpawnOptions): Run {
       clearInterval(poll);
       markReady();
       // The same reader as readRun, so a received run and one read after its controller died agree.
-      // An overflow the poll caught keeps its own reason.
-      if (opts.dir && status !== 'failed' && status !== 'overflow') {
+      // An overflow the poll caught keeps its own reason, and a cancel stays a cancel whatever the
+      // run wrote after it.
+      if (opts.dir && status === 'exited') {
         const read = readOutput(opts.dir, maxOutputBytes);
         if (read.status === 'overflow') status = 'overflow';
         ({ stdout, stderr } = read);

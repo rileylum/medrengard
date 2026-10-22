@@ -120,8 +120,10 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
   // run, which develop owns.
   const def = store.workflow.stages[cycle.stage];
   if (def?.kind !== 'agent' || def.produces !== 'commit' || !cycle.candidate?.head) throw new Error(`fix on a cycle in ${cycle.stage}${cycle.candidate?.head ? '' : ' with no candidate'}, expected a commit stage after a FAIL`);
-  // Only claims create runs, so any run without an outcome is a commit stage's.
-  if (cycle.runs.some((r) => !cycle.consumed.includes(r.runId))) throw new Error(`cycle ${cycleId} has a developer run still active`);
+  // A reviewer's run_started creates runs too (11-e), but a verdict, a run_failed or an owner's
+  // move consumes it before the cycle reaches a commit stage; the error names the role it finds.
+  const active = cycle.runs.find((r) => !cycle.consumed.includes(r.runId));
+  if (active) throw new Error(`cycle ${cycleId} has a ${active.role} run still active`);
   const { head, base } = cycle.candidate;
   const verdict = cycle.history[lastVerdictAt(store.workflow, cycle)]?.event as Verdict | undefined;
   if (!verdict || verdict.verdict !== 'FAIL' || verdict.head !== head) throw new Error(`cycle ${cycleId}: last verdict is not a FAIL for the candidate ${head}`);

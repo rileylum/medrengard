@@ -1,7 +1,7 @@
 // Ticket 03-a: how a runtime behaves as a launched, observed and cancelled child process.
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -373,4 +373,28 @@ test('readRun: a file past the cap is overflow, and the cap holds for stderr too
   assert.deepEqual(readRun(runDir, 100), { status: 'overflow', exitCode: 0, signal: null, stdout: '', stderr: 'stderr exceeded 100 bytes', wallMs: 0 });
   writeFileSync(join(runDir, 'stderr'), 'y');
   assert.deepEqual(readRun(runDir, 100), { status: 'exited', exitCode: 0, signal: null, stdout: 'x'.repeat(100), stderr: 'y', wallMs: 0 });
+});
+
+test('with a run folder: a cancel stays cancelled even when the run wrote past the cap since the last poll (11-e, standard 1)', async () => {
+  const run = spawnRuntime({ command: 'sh', args: ['-c', 'head -c 200000 /dev/zero; echo ready >&2; sleep 5'], prompt: '', cwd: dir, maxOutputBytes: 100_000, dir: join(dir, 'runs', 'cancel-over') });
+  await new Promise((res) => setTimeout(res, 30));
+  run.cancel();
+  assert.equal((await run).status, 'cancelled');
+});
+
+test('a relative run folder is refused before anything is created (11-e, standard 1)', async () => {
+  const r = await spawnRuntime({ command: 'true', args: [], prompt: '', cwd: dir, dir: 'rel-run-folder' });
+  assert.equal(r.status, 'failed');
+  assert.match(r.stderr, /absolute/);
+  assert.equal(existsSync('rel-run-folder'), false);
+});
+
+test('readRun on a 1 GiB output reports overflow without reading it: a whole read could not even become a string (11-e, standard 1)', () => {
+  const runDir = join(dir, 'runs', 'huge');
+  mkdirSync(runDir, { recursive: true });
+  // Sparse: no memory or disk behind it, but V8's string cap is about 512 MiB.
+  writeFileSync(join(runDir, 'stdout'), '');
+  truncateSync(join(runDir, 'stdout'), 1 << 30);
+  writeFileSync(join(runDir, 'exit'), '0\n');
+  assert.equal(readRun(runDir)!.status, 'overflow');
 });

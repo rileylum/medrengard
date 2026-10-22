@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { RunOutcome } from '../src/adapter.ts';
 import { execute } from '../src/controller.ts';
-import { claude, cliAdapter, extensionSpec, pi, scopeHint, type CliSpec } from '../src/runtime/cli-adapter.ts';
+import { checkScopes, claude, cliAdapter, extensionSpec, pi, scopeHint, type CliSpec } from '../src/runtime/cli-adapter.ts';
 import { EventStore } from '../src/store.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
@@ -437,4 +437,33 @@ test('sandboxed adapter: a developer run cannot write its own run folder (11-e)'
 test('a cgroup-isolation refusal from a login session\'s scope names the systemd-run --user --scope workaround (11-d2 parked)', () => {
   assert.match(scopeHint('0::/user.slice/user-1000.slice/session-4.scope'), /systemd-run --user --scope/);
   assert.equal(scopeHint('0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-foot.scope'), '');
+});
+
+test('cgroup isolation: execute\'s deadline reaches the scope as RuntimeMaxSec, deadline plus grace, so a run with no controller still stops (11-e, standard 1)', async (t) => {
+  if (!hasUserSystemd) return void t.skip('no user systemd');
+  const runsDir = join(dir, 'deadline-runs');
+  const adapter = cliAdapter({ ...claude, command: process.execPath, args: ['-e', 'setTimeout(() => {}, 1500)'] }, { graceMs: 500 });
+  const store = fresh();
+  const running = execute(store, 'c1', adapter, { role: 'developer', prompt: '', cwd: dir }, { deadlineMs: 3000, base: 'B1', runsDir });
+  let limit = '';
+  for (const end = Date.now() + 1500; Date.now() < end && !limit; await new Promise((res) => setTimeout(res, 50))) {
+    const runId = existsSync(join(runsDir, 'runs')) ? readdirSync(join(runsDir, 'runs'))[0] : undefined;
+    if (runId) limit = spawnSync('systemctl', ['--user', 'show', `sf-${runId}.scope`, '-p', 'RuntimeMaxUSec', '--value'], { encoding: 'utf8' }).stdout.trim();
+  }
+  await running;
+  store.close();
+  assert.equal(limit, '3.500000s');
+});
+
+test('a checkScopes refusal names the systemd-run --user --scope workaround when this process is in a login session\'s scope (11-e, standard 1)', () => {
+  const cgroup = join(dir, 'session-cgroup');
+  writeFileSync(cgroup, '0::/user.slice/user-1000.slice/session-4.scope\n');
+  const path = process.env.PATH;
+  // No systemd-run on PATH, so the probe fails as it would from an SSH shell.
+  process.env.PATH = join(dir, 'empty-path');
+  try {
+    assert.throws(() => checkScopes(cgroup), /login session's scope.*systemd-run --user --scope --quiet/);
+  } finally {
+    process.env.PATH = path;
+  }
 });
