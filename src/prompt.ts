@@ -79,6 +79,8 @@ export interface ReviewParts {
   diff: string;
   /** One entry per check and extension, `name` like `file.exit`, `text` already cut. */
   evidence: { name: string; text: string }[];
+  /** The owner's reason for overruling the last FAIL on this head (11-d2, A-109 B); absent when there is none. */
+  ruling?: string;
 }
 
 function reviewContract(nonce: string, p: ReviewParts): string {
@@ -100,6 +102,9 @@ function reviewContract(nonce: string, p: ReviewParts): string {
     section('TICKET'),
     p.ticket.trim(),
   ];
+  // Quoted like a finding: one line, inside the delimiters, so the owner's text cannot open a
+  // section of its own. The reviewer weighs it; it is not a rule.
+  if (p.ruling !== undefined) parts.push('', section(`OWNER RULING (the owner overruled the last FAIL on ${p.head}, with this reason)`), oneLine(p.ruling));
   // The note is on the delimiter line because only the controller can write one; in the body it
   // would read as quoted file text. It names CHANGED PATHS, which is never cut: the DIFF alone can
   // lose the edit in its cut middle.
@@ -120,13 +125,16 @@ function reviewContract(nonce: string, p: ReviewParts): string {
 
 // The contract's version is its wording, so each kind is hashed once, built from placeholders. A
 // hash of the sent text would identify nothing: the nonce makes every review prompt unique.
+const REVIEW_PLACEHOLDERS: ReviewParts = {
+  head: '<head>', base: '<base>', ticket: '<ticket>', instructions: [{ path: '<path>', text: '<instructions>', changed: false }, { path: '<path>', text: '<instructions>', changed: true }],
+  checks: [{ name: '<check>', result: '<result>' }], paths: '<paths>', commits: '<commits>', diff: '<diff>', evidence: [{ name: '<evidence>', text: '<text>' }],
+};
 const CONTRACT = {
   developer: sha256(developerContract('<ticket>')),
   fix: sha256(developerContract('<ticket>', { head: '<head>', findings: ['<finding>'] })),
-  review: sha256(reviewContract('<nonce>', {
-    head: '<head>', base: '<base>', ticket: '<ticket>', instructions: [{ path: '<path>', text: '<instructions>', changed: false }, { path: '<path>', text: '<instructions>', changed: true }],
-    checks: [{ name: '<check>', result: '<result>' }], paths: '<paths>', commits: '<commits>', diff: '<diff>', evidence: [{ name: '<evidence>', text: '<text>' }],
-  })),
+  review: sha256(reviewContract('<nonce>', REVIEW_PLACEHOLDERS)),
+  // Its own version, so a verdict given with the owner's ruling in view can be told apart.
+  reviewRuling: sha256(reviewContract('<nonce>', { ...REVIEW_PLACEHOLDERS, ruling: '<ruling>' })),
 };
 
 /** First run when `fixing` is absent; otherwise a fix run, using `fixRoleText ?? roleText`. */
@@ -140,5 +148,5 @@ export function reviewPrompt(roleText: string, parts: ReviewParts): Built {
   // Per-run nonce in every delimiter: a committed file can contain any text, including a header
   // that looks like ours, but not one it has not seen (06-b adversarial).
   const nonce = randomBytes(4).toString('hex');
-  return { text: `${roleText}\n${reviewContract(nonce, parts)}`, contractHash: CONTRACT.review, roleTextHash: sha256(roleText) };
+  return { text: `${roleText}\n${reviewContract(nonce, parts)}`, contractHash: parts.ruling === undefined ? CONTRACT.review : CONTRACT.reviewRuling, roleTextHash: sha256(roleText) };
 }

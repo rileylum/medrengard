@@ -1,22 +1,23 @@
 // src/store.ts for the browser. Same API and the same rules, with the SQLite table replaced by an
 // array of rows: row 0 of a cycle is the open marker with the workflow's name, hash and
 // definition; every append is checked as serialised bytes with the real isEvent; a second outcome
-// for a run ID, or a second event with one command ID, writes nothing; an append decided on a load
+// for a run ID, or a second event with one command ID, writes nothing; a move on a cycle with a
+// child or an open sibling is refused; an append decided on a load
 // the cycle has since left throws StaleLoad; each row gets a store-wide `pos`, a time `at` and the stage apply
 // gave it; load replays the log through the real apply under the workflow the cycle recorded,
 // refuses one whose replay disagrees with a stored stage, and drivable refuses a cycle opened under
 // another workflow. Keep it in step with src/store.ts; learn/learn.test.ts checks that it exports
 // what src/ imports from there.
 import { createHash } from 'node:crypto';
-import { apply, checkWorkflow, defaultWorkflow, ENGINE_VERSION, isEvent, newCycle, outcomeRunId, replayCheck, SETTLED } from '/src/lifecycle.ts';
+import { apply, checkWorkflow, defaultWorkflow, ENGINE_VERSION, isEvent, newCycle, outcomeRunId, replayCheck, SETTLED, STOPPED } from '/src/lifecycle.ts';
 
-export { SETTLED };
+export { SETTLED, STOPPED };
 export class UnclassifiableEvent extends Error {}
 export class ReplayDiverged extends Error {}
 export class StaleLoad extends Error {}
 
 // A run key is a JSON string, a command key a JSON object, so the two never collide.
-const COMMANDS = ['accept', 'request_changes', 'cancel', 'head_changed', 'base_changed'];
+const COMMANDS = ['accept', 'request_changes', 'cancel', 'head_changed', 'base_changed', 'owner_decision'];
 function dedupKey(e) {
   const runId = outcomeRunId(e);
   if (runId !== undefined) return JSON.stringify(runId);
@@ -89,11 +90,21 @@ export class EventStore {
     const length = now.cycle.history.length;
     if (opts.after !== undefined && length !== opts.after)
       throw new StaleLoad(`cycle ${cycleId} moved since it was loaded: ${length} events, not ${opts.after}; nothing was written`);
+    if (parsed.type === 'owner_decision') this.moveAllowed(cycleId, now.cycle.workId);
     const cycle = apply(now.cycle, parsed, now.workflow);
     const seq = Math.max(...this.table.filter((r) => r.cycle_id === cycleId).map((r) => r.seq)) + 1;
     const row = this.insert(cycleId, seq, parsed.type, runId, body, cycle.stage);
     this.emit({ kind: 'append', cycleId, seq, pos: row.pos, event: parsed, cycle });
     return { cycle, written: true };
+  }
+
+  // A move on a cycle with a child, or while another cycle of the work is open, would give the work two live cycles (11-d2).
+  moveAllowed(cycleId, workId) {
+    const child = this.table.filter((r) => r.seq === 0 && JSON.parse(r.body).parentCycleId === cycleId).map((r) => r.cycle_id).sort()[0];
+    if (child) throw new Error(`cycle ${cycleId} is the parent of cycle ${child}; a move on it would give work ${workId} two live cycles; nothing was written`);
+    // The cycle itself is not a sibling: a move on it while open reaches apply, which escalates it.
+    const open = this.cycles(workId).find((c) => c.cycleId !== cycleId && !STOPPED.includes(c.stage))?.cycleId;
+    if (open !== undefined) throw new Error(`work ${workId} has an open cycle ${open}; a move on cycle ${cycleId} would give it two live cycles; nothing was written`);
   }
 
   events(cycleId) { return this.rows(cycleId).map((r) => r.body).filter((b) => b.type !== 'open'); }
@@ -155,7 +166,7 @@ export class EventStore {
   cyclesFor(workId) {
     const all = this.cycles(workId);
     return {
-      open: all.find((c) => !SETTLED.includes(c.stage))?.cycleId,
+      open: all.find((c) => !STOPPED.includes(c.stage))?.cycleId,
       escalated: all.findLast((c) => c.stage === 'ESCALATED')?.cycleId,
     };
   }

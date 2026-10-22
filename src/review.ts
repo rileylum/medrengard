@@ -11,7 +11,7 @@ import { checkDeadline, execute } from './controller.ts';
 import type { Job } from './developer.ts';
 import { git } from './git.ts';
 import { cyclePaths } from './layout.ts';
-import type { Cycle, Event } from './lifecycle.ts';
+import { took, type Cycle, type Event } from './lifecycle.ts';
 import { reviewPrompt, type ReviewParts } from './prompt.ts';
 import type { EventStore } from './store.ts';
 import { treeDiff } from './verify.ts';
@@ -57,9 +57,10 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
   // so a checkout of any other commit fails it too. Untracked leftovers are allowed.
   const dirty = treeDiff(job.repo, checkout, head, opts.deadlineMs);
   if (dirty) throw new Error(`verify checkout ${checkout} is not clean against ${head}:\n${dirty}`);
-  // The last verification is the candidate's: apply admits one only in a command stage and only for
-  // the candidate SHA, so a mismatch here is a store or lifecycle bug, not a case to pick around.
-  const all = cycle.history.filter((h): h is Verified => h.event.type === 'verification');
+  // The last verification a command stage took is the candidate's: apply admits one only there and
+  // only for the candidate SHA, so a mismatch here is a store or lifecycle bug, not a case to pick
+  // around. One recorded while escalated has no evidence of its own, and a move lets review run after it.
+  const all = cycle.history.filter((h): h is Verified => h.event.type === 'verification' && took(store.workflow, h));
   const last = all.at(-1);
   if (!last) throw new Error(`cycle ${cycleId} has no verification event`);
   if (last.event.head !== head) throw new Error(`cycle ${cycleId}: last verification is for ${last.event.head}, candidate is ${head}`);
@@ -78,8 +79,20 @@ export async function review(store: EventStore, adapter: Adapter, cycleId: strin
     }
   }
 
-  const { text, ...versions } = reviewPrompt(def.roleText, gather(job.ticket, head, base, job.repo, opts.instructions ?? ['AGENTS.md'], stages));
+  const ruling = ownerRuling(cycle);
+  const { text, ...versions } = reviewPrompt(def.roleText, { ...gather(job.ticket, head, base, job.repo, opts.instructions ?? ['AGENTS.md'], stages), ...(ruling === undefined ? {} : { ruling }) });
   return execute(store, cycleId, adapter, { role, prompt: text, cwd: checkout }, { deadlineMs: opts.deadlineMs, versions });
+}
+
+/**
+ * The owner's reason for the latest overrule, when it entered the cycle's stage on its candidate
+ * (11-d2, A-109 B): that reviewer reruns the review the owner overruled. Any other reviewer, or a
+ * new head, judges without it.
+ */
+export function ownerRuling(cycle: Cycle): string | undefined {
+  const last = cycle.history.findLast((h) => h.event.type === 'owner_decision' && h.event.action === 'overrule' && h.to !== 'ESCALATED');
+  if (last?.event.type !== 'owner_decision' || last.to !== cycle.stage || last.event.head !== cycle.candidate?.head) return undefined;
+  return last.event.reason;
 }
 
 // What the reviewer is shown, gathered from Git and the evidence files; the wording around it is

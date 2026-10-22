@@ -10,8 +10,10 @@ export type Outcome = 'PASS' | 'FAIL';
 
 /** Stages the engine owns. A workflow may target the last three; it may define none of them. */
 export const ENGINE_STAGES = ['QUEUED', 'ESCALATED', 'CANCELLED', 'ACCEPTED'];
-/** Stages that hold no open cycle: escalated cycles wait for the owner and never move again. */
-export const SETTLED: readonly Stage[] = Object.freeze(ENGINE_STAGES.slice(1));
+/** Stages no run acts on: a run in flight stops, and the driver returns to the owner. */
+export const STOPPED: readonly Stage[] = Object.freeze(ENGINE_STAGES.slice(1));
+/** Stages nothing moves again. An ESCALATED cycle is stopped but not settled: it waits for the owner's move (A-114). */
+export const SETTLED: readonly Stage[] = Object.freeze(['CANCELLED', 'ACCEPTED']);
 
 /**
  * Recorded on each open row (A-123). Bump it when apply would move any existing log to another
@@ -142,12 +144,20 @@ export type Event = (
   /** The owner's FAIL is a verdict, so it names the SHA it rejects (11-d, A-123 item 1). */
   | { type: 'request_changes'; head: string; source?: string; commandId?: string }
   | { type: 'cancel'; source?: string; commandId?: string }
+  /**
+   * The owner's move on an ESCALATED cycle (11-d2, A-114), bound to the candidate head, with the
+   * owner's reason. `stage` names route's target and is absent for the other actions.
+   */
+  | { type: 'owner_decision'; action: MoveAction; head: string; reason: string; stage?: Stage; source?: string; commandId?: string }
   | { type: 'reject_dispatch'; reason: string }
   /** A fix run's claim that it will not change the candidate, with the developer's reason (07-e). */
   | ({ type: 'dispute'; runId: string; head: string; reason: string } & Partial<RunVersions>)
   /** The run ended with no usable claim: timeout, crash, malformed output, cancelled by deadline. */
   | ({ type: 'run_failed'; runId: string; reason: string } & Partial<RunVersions>)
 ) & { step?: string };
+
+export const MOVE_ACTIONS = ['retry', 'overrule', 'route'] as const;
+export type MoveAction = (typeof MOVE_ACTIONS)[number];
 
 const str = (v: unknown) => typeof v === 'string' && v.length > 0;
 const arr = (v: unknown, each: (x: unknown) => boolean) => Array.isArray(v) && v.every(each);
@@ -176,6 +186,7 @@ const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
   reject_dispatch: (e) => str(e.reason),
   run_failed: (e) => str(e.runId) && str(e.reason) && versions(e),
   dispute: (e) => str(e.runId) && str(e.head) && str(e.reason) && versions(e),
+  owner_decision: (e) => MOVE_ACTIONS.includes(e.action as MoveAction) && str(e.head) && str(e.reason) && (e.action === 'route' ? str(e.stage) : e.stage === undefined) && source(e) && command(e),
 };
 
 export const EVENT_TYPES = Object.keys(SHAPE) as Event['type'][];
@@ -262,7 +273,7 @@ export function checkWorkflow(w: Workflow): string[] {
   const targets = (name: Stage) => Object.values(w.stages[name]!.transitions);
   for (const [name] of entries)
     for (const [outcome, to] of Object.entries(w.stages[name]!.transitions))
-      if (!known(to) && !SETTLED.includes(to)) reasons.push(`stage ${name} ${outcome} names unknown stage ${String(to)}`);
+      if (!known(to) && !STOPPED.includes(to)) reasons.push(`stage ${name} ${outcome} names unknown stage ${String(to)}`);
 
   // Every loop must spend a budget (A-054): with budgeted stages removed, the graph must be acyclic.
   const unbudgeted = entries.filter(([, d]) => d.budget === undefined).map(([n]) => n);
@@ -283,12 +294,12 @@ export function checkWorkflow(w: Workflow): string[] {
   for (let grew = true; grew; ) {
     grew = false;
     for (const [name] of entries)
-      if (!settles.has(name) && targets(name).some((to) => SETTLED.includes(to) || settles.has(to))) {
+      if (!settles.has(name) && targets(name).some((to) => STOPPED.includes(to) || settles.has(to))) {
         settles.add(name);
         grew = true;
       }
   }
-  for (const [name] of entries) if (!settles.has(name)) reasons.push(`stage ${name} has no path to ${SETTLED.join(', ')}`);
+  for (const [name] of entries) if (!settles.has(name)) reasons.push(`stage ${name} has no path to ${STOPPED.join(', ')}`);
   return reasons;
 }
 
@@ -313,7 +324,7 @@ export function replayCheck(w: Workflow): string[] {
     if (!str(def.transitions.PASS)) reasons.push(`stage ${name} has no PASS transition`);
     if (def.transitions.FAIL !== undefined && !str(def.transitions.FAIL)) reasons.push(`stage ${name} FAIL transition must be a stage name`);
     for (const [outcome, to] of Object.entries(def.transitions))
-      if (!known(to) && !SETTLED.includes(to)) reasons.push(`stage ${name} ${outcome} names unknown stage ${String(to)}`);
+      if (!known(to) && !STOPPED.includes(to)) reasons.push(`stage ${name} ${outcome} names unknown stage ${String(to)}`);
   }
   return reasons;
 }
@@ -393,8 +404,6 @@ export function producedBy(w: Workflow, role: Role): 'commit' | 'verdict' | unde
   return undefined;
 }
 
-const TERMINAL: Stage[] = ['ACCEPTED', 'CANCELLED'];
-
 function record(c: Cycle, event: Event, to: Stage, patch: Partial<Cycle> = {}, note?: string): Cycle {
   return { ...c, ...patch, stage: to, history: [...c.history, { event, from: c.stage, to, note }] };
 }
@@ -436,11 +445,11 @@ const takes = (def: StageDef | undefined, produces: 'commit' | 'verdict'): def i
 
 /** Apply one event. Unknown or out-of-place input never advances the cycle. Trusts that `w` passed checkWorkflow. */
 export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle {
-  if (TERMINAL.includes(c.stage)) {
+  if (SETTLED.includes(c.stage)) {
     return record(c, e, c.stage, {}, 'ignored: terminal cycle');
   }
   if (e.type === 'cancel') return record(c, e, 'CANCELLED');
-  if (c.stage === 'ESCALATED') return record(c, e, 'ESCALATED', {}, 'ignored: escalated; owner must open a child cycle or cancel');
+  if (c.stage === 'ESCALATED') return e.type === 'owner_decision' ? move(w, c, e) : record(c, e, 'ESCALATED', {}, 'ignored: escalated; the owner moves it, opens a child cycle or cancels');
   if (e.step !== undefined && e.step !== c.stage) return escalate(c, e, `event for step ${e.step} while in ${c.stage}`);
   const def = w.stages[c.stage];
 
@@ -485,7 +494,7 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
     case 'verification': {
       if (def?.kind !== 'command') return escalate(c, e, `verification outside a command stage (in ${c.stage})`);
       if (!sameCandidate(c.candidate, e.head)) return escalate(c, e, 'verification for a non-candidate SHA');
-      if (e.checks.length === 0 || e.checks.some((k) => k.result !== 'PASS')) return advance(w, c, e, def, 'FAIL', {}, 'required check failed or missing');
+      if (!checksPass(e.checks)) return advance(w, c, e, def, 'FAIL', {}, 'required check failed or missing');
       return advance(w, c, e, def, 'PASS');
     }
 
@@ -523,6 +532,9 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
     case 'reject_dispatch':
       return escalate(c, e, `dispatch rejected: ${e.reason}`);
 
+    case 'owner_decision':
+      return escalate(c, e, `owner_decision outside ESCALATED (in ${c.stage})`);
+
     // Counters do not move: an infrastructure failure is not a review attempt (spec, Recovery).
     // A run that already delivered its result or verdict cannot fail afterwards; a late
     // run_failed for it is a redelivery and must not overturn the recorded transition.
@@ -535,6 +547,77 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
     default:
       return escalate(c, e, `unclassifiable event: ${String((e as { type?: unknown }).type)}`);
   }
+}
+
+type Move = Extract<Event, { type: 'owner_decision' }>;
+
+/** A verification passes only with at least one check and every check PASS. */
+export const checksPass = (checks: { result: string }[]): boolean => checks.length > 0 && checks.every((k) => k.result === 'PASS');
+
+/**
+ * Whether the stage in `from` took the entry's outcome as its own. An outcome recorded but ignored
+ * (while escalated, settled, or a duplicate), escalated for another step before the stage looked
+ * at it, or out of place at a stage of another kind was never that stage's word. Every read of the
+ * history for evidence goes through this: since a move lets an ESCALATED cycle run again, an
+ * ignored PASS or verification would otherwise stand in for one the engine never took.
+ */
+export function took(w: Workflow, h: Cycle['history'][number]): boolean {
+  const { event: e, from, note } = h;
+  if (note?.startsWith('ignored:') || (e.step !== undefined && e.step !== from)) return false;
+  const def = w.stages[from];
+  if (e.type === 'verdict') return takes(def, 'verdict');
+  if (e.type === 'verification') return def?.kind === 'command';
+  if (e.type === 'accept' || e.type === 'request_changes') return def?.kind === 'human';
+  return def !== undefined;
+}
+
+/** The stage the cycle last escalated from. Entries recorded while escalated run from ESCALATED to ESCALATED; the one before them entered it. */
+export const escalatedFrom = (history: Cycle['history']): Stage | undefined => history.findLast((h) => h.to === 'ESCALATED' && h.from !== 'ESCALATED')?.from;
+
+/** Where the last verdict a review stage took sits in the history, or -1. */
+export function lastVerdictAt(w: Workflow, c: Cycle): number {
+  return c.history.findLastIndex((h) => h.event.type === 'verdict' && took(w, h));
+}
+
+/**
+ * The owner's move on an ESCALATED cycle (A-114). A move whose condition does not hold is recorded
+ * with a note and changes nothing else; decide.ts refuses it before it is written, so only a raw
+ * write lands here. A move that holds enters its stage directly, not through `enter`: a spent
+ * budget is a refusal here, where `enter` would escalate again with a new reason.
+ */
+function move(w: Workflow, c: Cycle, e: Move): Cycle {
+  const refuse = (why: string) => record(c, e, 'ESCALATED', {}, `move refused: ${why}`);
+  if (!sameCandidate(c.candidate, e.head)) return refuse(`${e.head} is not the candidate head ${c.candidate?.head || '(none)'}`);
+  const spent = (stage: Stage, budgets: Record<Stage, number>) => {
+    const limit = w.stages[stage]!.budget;
+    return limit !== undefined && (budgets[stage] ?? 0) >= limit ? `${stage} budget is spent (${budgets[stage]} of ${limit})` : undefined;
+  };
+  let to: Stage;
+  let budgets = c.budgets;
+  if (e.action === 'retry') {
+    to = escalatedFrom(c.history) ?? 'QUEUED';
+    if (!Object.hasOwn(w.stages, to)) return refuse(`the cycle escalated from ${to}, not a workflow stage`);
+  } else if (e.action === 'overrule') {
+    const at = lastVerdictAt(w, c);
+    if (at < 0) return refuse('the cycle has no verdict to overrule');
+    const { event: last, from } = c.history[at]! as { event: Extract<Event, { type: 'verdict' }>; from: Stage };
+    if (last.verdict !== 'FAIL') return refuse(`the last verdict is a ${last.verdict}, not a FAIL`);
+    if (last.head !== c.candidate!.head) return refuse(`the last FAIL is for ${last.head}, not the candidate ${c.candidate!.head}`);
+    // One refund per FAIL: an overrule loops paid reviews only after a fresh FAIL (engine.md P5 holds any cap).
+    if (c.history.slice(at + 1).some((h) => h.event.type === 'owner_decision' && h.event.action === 'overrule' && h.to !== 'ESCALATED'))
+      return refuse('the last FAIL was overruled already');
+    to = from;
+    if (w.stages[to]!.budget !== undefined) budgets = { ...budgets, [to]: (budgets[to] ?? 0) - 1 };
+  } else {
+    to = e.stage!;
+    if (!Object.hasOwn(w.stages, to)) return refuse(`${to} is not a workflow stage`);
+  }
+  const why = spent(to, budgets);
+  if (why) return refuse(why);
+  // A run cut off by the escalation will never get an outcome the cycle takes; consumed, its late
+  // outcome is a duplicate, and fix is not blocked by a run that will never answer.
+  const consumed = [...c.consumed, ...c.runs.filter((r) => !c.consumed.includes(r.runId)).map((r) => r.runId)];
+  return record(c, e, to, { budgets, consumed, escalation: undefined });
 }
 
 /** Owner opens a child cycle from an ESCALATED parent. The parent is unchanged. */

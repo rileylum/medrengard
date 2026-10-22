@@ -406,6 +406,7 @@ Effort is S, M, L or XL. Impact runs from 1 to 5.
 - **Description.**
   - `transitions.EXHAUSTED` says where a stage goes when its budget is spent. The default is `ESCALATED`, as today.
   - Optional cycle limits: `maxAgentRuns`, `maxCostUsd` (once A-111's run records exist) and `maxWallClock`. Each escalates with a reason.
+  - The limits count every run, including those an owner's move starts (11-d2). `retry` spends no budget and needs no FAIL, so stage budgets alone do not bound a `retry` loop from an observer.
   - The checker treats EXHAUSTED edges as edges in the loop rule, so termination still holds.
   - The checker warns when a budget-1 stage has a FAIL edge, because that edge is never followed (G14).
 - **Decision implied.** It widens D-023's "every agent loop has a finite budget" to the whole cycle, and gives O-007 its engine hook.

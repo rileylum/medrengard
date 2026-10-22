@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkDeadline, execute } from '/src/controller.ts';
 import { reviewPrompt } from '/src/prompt.ts';
+import { took } from '/src/lifecycle.ts';
 import { RUNS, world } from './world.js';
 
 export async function review(store, adapter, cycleId, job, opts) {
@@ -20,7 +21,7 @@ export async function review(store, adapter, cycleId, job, opts) {
   const runsDir = opts.runsDir ?? RUNS;
   const checkout = join(runsDir, `${cycleId}-verify`);
   if (!existsSync(checkout)) throw new Error(`no verify checkout at ${checkout}; run verify first`);
-  const all = cycle.history.filter((h) => h.event.type === 'verification');
+  const all = cycle.history.filter((h) => h.event.type === 'verification' && took(store.workflow, h));
   const last = all.at(-1);
   if (!last) throw new Error(`cycle ${cycleId} has no verification event`);
   if (last.event.head !== head) throw new Error(`cycle ${cycleId}: last verification is for ${last.event.head}, candidate is ${head}`);

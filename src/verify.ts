@@ -16,7 +16,7 @@ import { bounded, git, stopped } from './git.ts';
 import type { CommandRequest } from './kits/request.ts';
 import { cyclePaths } from './layout.ts';
 import type { Grant } from './config.ts';
-import { FILE_STEM, HEAD_CHECK, TREE_CHECK, fileArgs, type Command, type Cycle, type Event, type StageDef } from './lifecycle.ts';
+import { FILE_STEM, HEAD_CHECK, TREE_CHECK, checksPass, escalatedFrom, fileArgs, took, type Command, type Cycle, type Event, type StageDef, type Workflow } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
 import { checkSandbox, confines, executables, reachable, restoreAccess, spawnEnv, wrap, type Policy, type Sandbox } from './sandbox.ts';
@@ -138,16 +138,38 @@ export function missingProgram(command: string, sandbox: Sandbox, policy: Policy
  * A grant stage runs only on a reviewed head (A-074, A-083 Q3): each stage's last verdict,
  * verification or accept names the candidate, and at least one PASS verdict does. A workflow can
  * route a fix past its reviews, and one with no review at all has nothing to bind the head to.
+ * No owner move may have jumped past a FAIL either (11-d2): a review's verdict, a command stage's
+ * checks, the owner's request_changes. An owner accept after the FAIL is accept with risk, the one
+ * way past; a workflow key for advisory stages is parked (O-017).
  */
-export function headGate(cycle: Cycle): void {
+export function headGate(cycle: Cycle, w: Workflow): void {
   const head = cycle.candidate!.head;
+  const outcomes = cycle.history.filter((h) => took(w, h));
   const last = new Map<string, string>();
-  for (const { event, from } of cycle.history)
+  for (const { event, from } of outcomes)
     if (event.type === 'verdict' || event.type === 'verification' || event.type === 'accept') last.set(from, event.head);
   const stale = [...last].filter(([, h]) => h !== head).map(([stage, h]) => `${stage} (${h})`);
   if (stale.length > 0) throw new Error(`stage ${cycle.stage} holds a grant, but the last outcome of ${stale.join(', ')} is not for the candidate ${head}`);
-  if (!cycle.history.some(({ event: e }) => e.type === 'verdict' && e.verdict === 'PASS' && e.head === head))
+  if (!outcomes.some(({ event: e }) => e.type === 'verdict' && e.verdict === 'PASS' && e.head === head))
     throw new Error(`stage ${cycle.stage} holds a grant, but no PASS verdict is for the candidate ${head}`);
+  // A FAIL counts only when a jump landed after it: a move that enters a stage other than the one
+  // the cycle escalated from. Without a jump the cycle moves only along edges the workflow declares,
+  // so a path declared from a FAIL (advisory checks, feedback posted to the PR) runs, and a retry or
+  // a move back into the escalated stage skips nothing. An overrule can jump: it enters the stage of
+  // the last FAIL verdict, which may lie past a stage that FAILed since.
+  // The grant stage's own last run is left out: a retry after a failed merge is a second attempt.
+  const jumped = cycle.history.findLastIndex((h, at) => h.event.type === 'owner_decision' && h.to !== 'ESCALATED'
+    && h.to !== escalatedFrom(cycle.history.slice(0, at)));
+  const accepted = cycle.history.findLastIndex((h) => h.event.type === 'accept' && took(w, h));
+  const lastOutcome = new Map<string, { failed: boolean; at: number }>();
+  cycle.history.forEach((h, at) => {
+    const { event: e, from } = h;
+    if (from === cycle.stage || !took(w, h)) return;
+    const failed = e.type === 'verdict' ? e.verdict === 'FAIL' : e.type === 'verification' ? !checksPass(e.checks) : e.type === 'request_changes';
+    if (e.type === 'verdict' || e.type === 'verification' || e.type === 'accept' || e.type === 'request_changes') lastOutcome.set(from, { failed, at });
+  });
+  const unaccepted = [...lastOutcome].find(([, o]) => o.failed && o.at < jumped && o.at > accepted);
+  if (unaccepted) throw new Error(`stage ${cycle.stage} holds a grant, but the last outcome of ${unaccepted[0]} is a FAIL for the candidate ${head}; an owner accept after it is the only way past`);
 }
 
 /** Run every declared check on the cycle's candidate and record one verification event. */
@@ -161,7 +183,7 @@ export async function verify(store: EventStore, cycleId: string, job: Job, opts:
   // Before anything is written: a missing file is the owner's setup, not a FAIL of the candidate.
   const files = stageFiles(cycle.stage, checks, opts.workflowDir);
   const grants = stageGrants(cycle.stage, def, opts.grants, opts.sandbox);
-  if (grants.length > 0) headGate(cycle);
+  if (grants.length > 0) headGate(cycle, store.workflow);
   // Read now, not at load, so the value lives in this process no longer than the stage runs; and
   // before the stage folder is cleared, so a refusal leaves the last run's evidence whole.
   const values = grantValues(grants);

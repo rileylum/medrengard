@@ -22,7 +22,7 @@
   <div class="cols3">
     <div class="card cyan"><h3>Break the claim</h3><p class="small">In <b>I play the agents</b>, commit, then edit the reply: delete the json block, shorten the SHA, or name the base commit. The controller never takes the agent's word for it.</p></div>
     <div class="card amber"><h3>Spend the budget</h3><p class="small">FAIL the first standard review. A fix run starts. FAIL it again: the cycle stops and waits for you. Open a child cycle and every budget starts empty.</p></div>
-    <div class="card violet"><h3>Interfere</h3><p class="small">While a run is going, press <b>Owner cancels</b> or <b>main moves on</b>. The cycle is settled at once, and within about a second the controller stops the running agent.</p></div>
+    <div class="card violet"><h3>Interfere</h3><p class="small">While a run is going, press <b>Owner cancels</b> or <b>main moves on</b>. The cycle stops at once, and within about a second the controller stops the running agent.</p></div>
   </div>
   <div class="cols3" style="margin-top:16px">
     <div class="card"><h3>Change the workflow</h3><p class="small">Pick <b>with a stage of its own</b> and a PACKAGE stage runs after the reviews. Pick <b>light</b> and one reviewer gets three tries. The diagram, the budgets and the roles follow the workflow.</p></div>
@@ -53,7 +53,7 @@
 
 <section class="slide" id="loop" data-lv="2">
   <h2>The loop never decides</h2>
-  <p><code>run()</code> calls <code>develop()</code> once, then looks at the kind of stage the cycle is in: an agent stage that commits gets <code>fix()</code>, one that reviews gets <code>review()</code>, a command stage gets <code>verify()</code>. It never moves a stage itself: each step records an event, and <code>apply</code> decides where that leaves the cycle. At a human stage, or a stage that settles the cycle, the loop returns.</p>
+  <p><code>run()</code> calls <code>develop()</code> once, then looks at the kind of stage the cycle is in: an agent stage that commits gets <code>fix()</code>, one that reviews gets <code>review()</code>, a command stage gets <code>verify()</code>. It never moves a stage itself: each step records an event, and <code>apply</code> decides where that leaves the cycle. At a human stage, or a stage that stops the cycle, the loop returns.</p>
   <p>If a step throws, the loop cannot tell what happened, so it does not guess. It records <code>reject_dispatch</code> with the message, which escalates the cycle, and you decide.</p>
   <p class="small">Before the developer starts, <code>run</code> refuses a sandbox that cannot start, a grant nobody gave, a check name or program the command stage would refuse, and a workflow shape the steps cannot run, such as a check's FAIL back to the developer: each would fail only after a paid developer run. <code>drive</code>, which continues a cycle already open, makes the same checks.</p>
 </section>

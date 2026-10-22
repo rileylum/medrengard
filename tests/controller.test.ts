@@ -301,6 +301,22 @@ test('a reviewer run whose cycle was cancelled or escalated while it ran is reco
   }
 });
 
+test('a run is stopped when another writer escalates its cycle: ESCALATED is a stopped stage, not only a settled one (11-d2, adversarial)', async () => {
+  const store = fresh();
+  for (const e of toStandardReview) store.append('c1', e);
+  const adapter = fakeAdapter('hang');
+  const running = execute(store, 'c1', adapter, { ...req, role: 'standard_reviewer' }, { deadlineMs: 3000 });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(store.append('c1', { type: 'reject_dispatch', reason: 'another writer' }).stage, 'ESCALATED');
+  const c = await running;
+  assert.equal(adapter.aborted, 1);
+  // The stop names a cancel; a run left to its deadline would name a timeout.
+  const { type, runId, reason } = store.events('c1').at(-1) as { type: string; runId: string; reason: string };
+  assert.deepEqual({ type, runId, reason }, { type: 'run_failed', runId: adapter.requests[0]!.runId, reason: 'cancelled' });
+  assert.equal(c.stage, 'ESCALATED');
+  store.close();
+});
+
 test('the claim event records the adapter name as the runtime (05-a)', async () => {
   const store = fresh();
   const c = await dev(store, { outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['r'] } } });

@@ -6,6 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { checkDeadline, execute } from '/src/controller.ts';
+import { lastVerdictAt } from '/src/lifecycle.ts';
 import { developerPrompt } from '/src/prompt.ts';
 import { checkSandbox } from '/src/sandbox.ts';
 import { RUNS, world } from './world.js';
@@ -49,7 +50,7 @@ export async function fix(store, adapter, cycleId, job, opts) {
   if (def?.kind !== 'agent' || def.produces !== 'commit' || !cycle.candidate?.head) throw new Error(`fix on a cycle in ${cycle.stage}${cycle.candidate?.head ? '' : ' with no candidate'}, expected a commit stage after a FAIL`);
   if (cycle.runs.some((r) => !cycle.consumed.includes(r.runId))) throw new Error(`cycle ${cycleId} has a developer run still active`);
   const { head, base } = cycle.candidate;
-  const verdict = cycle.history.map((h) => h.event).filter((e) => e.type === 'verdict').at(-1);
+  const verdict = cycle.history[lastVerdictAt(store.workflow, cycle)]?.event;
   if (!verdict || verdict.verdict !== 'FAIL' || verdict.head !== head) throw new Error(`cycle ${cycleId}: last verdict is not a FAIL for the candidate ${head}`);
   const worktree = join(opts.runsDir ?? RUNS, cycleId);
   const branch = `sf/${cycleId}`;
