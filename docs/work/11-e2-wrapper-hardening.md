@@ -1,0 +1,19 @@
+# 11-e2 — Run wrapper hardening: 11-e's adversarial minors and a flaky deadline test
+
+Route: Fast. Four findings from 11-e, each with one obvious fix named by its reviewer. Tier: Trust (2 standard + 1 adversarial through `claude -p`, A-125): the wrapper runs every agent run, outside the sandbox.
+
+Goal: the run wrapper writes `exit` and kills its group as soon as the command ends, whatever `cat` is doing, and the tests pin what 11-e's code already does but no test proved.
+
+Done when:
+- The test "execute's deadline reaches the scope as RuntimeMaxSec" (`tests/cli-adapter.test.ts`) polls until the scope is loaded, not until `systemctl show` answers: a scope not yet registered reports `RuntimeMaxUSec=infinity` with `LoadState=not-found`, which failed the owner's `npm test` on main at `53730ed`. Verified by 50 runs of the test, and by a mutant that drops the check and polls straight into that gap (a delayed scope).
+- A controller SIGKILLed while it would still be writing a 2 MB prompt leaves the run with the whole prompt: the run reports the length and SHA-256 of what it read, and they match. Verified by test, and by the adversarial reviewer's mutant (the controller writes the prompt into a stdin pipe), which must fail it.
+- `readRun` polled in a tight loop while the wrapper writes `exit` returns only undefined or the whole status, never an empty or partial one, over many runs. Verified by test, and by the mutant `echo "$s" > "$e"` (no rename), which must fail it in every run. Written before the next item, which moves the same lines.
+- With a 2 MB prompt, a command that exits leaving a descendant holding its fd 0 resolves within a second with its own exit code, and the descendant is dead. Unsandboxed, under process-group isolation. Verified by test (red first: the wrapper waits on `cat`).
+- The wrapper's status is still the command's own, a signal death is still `128+n`, and a cancel still leaves `exit` written or absent, never partial. Verified by the existing `tests/runtime.test.ts` and `tests/cli-adapter.test.ts`.
+
+Constraints: zero dependencies; Node built-ins and `sh`; no paid calls. The run folder stays unbound in every sandbox, and the run never holds `stdin` (11-e, standard 3).
+Non-goals: liveness under process-group isolation, adoption and `recover` (11-f); the guide pages on `run_started`; the rollback note (a store written by 11-e cannot be replayed by main).
+Verification: `npm test` and `npm run test:learn`; the owner's pre-merge hook runs `npm test` on the merge result, or the owner runs it after a fast-forward.
+
+## Log
+- 2026-10-22 — drafted on `feat/11-e2-wrapper-hardening` off main at `53730ed`. Picks up the three 11-e adversarial minors in `docs/work/parked.md`, and the flaky deadline test, at the owner's word: “Yeah lets just put it into 11-e2”. Not READY until the owner says go.
