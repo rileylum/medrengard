@@ -468,20 +468,23 @@ test('a checkScopes refusal names the systemd-run --user --scope workaround when
   }
 });
 
-test('sandboxed adapter: a run cannot rewrite its kept prompt through /proc/self/fd/0 (11-e, standard 2)', async () => {
+test('sandboxed adapter: a run cannot rewrite its kept prompt through /proc/self/fd/0, directly or after an fchmod of fd 0 (11-e, standards 2 and 3)', async () => {
   const root = mkdtempSync('/var/tmp/software_factory/sf-cli-sandbox-');
   const cwd = join(root, 'checkout');
   mkdirSync(cwd);
   const runDir = join(root, 'runs', 'r-rev');
   const probe = join(import.meta.dirname, 'fixtures', 'sandbox-probe.ts');
-  const spec: CliSpec = { ...claude, command: process.execPath, args: [probe, 'stdin=/proc/self/fd/0'], config: { read: [], overlay: [] } };
+  const spec: CliSpec = { ...claude, command: process.execPath, args: [probe, 'stdin=/proc/self/fd/0', 'fchmod:stdin=/proc/self/fd/0'], config: { read: [], overlay: [] } };
   const adapter = cliAdapter(spec, { ...offline, sandbox: { backend: 'bwrap', read: [dirname(dirname(realpathSync(process.execPath))), import.meta.dirname] } });
   try {
     for (const role of ['standard_reviewer', 'developer'] as const) {
       const dir = `${runDir}-${role}`;
       const o = await adapter.start({ runId: `r-${role}`, role, prompt: 'THE REAL PROMPT', cwd, runDir: dir }, new AbortController().signal);
       assert.equal(o.status, 'completed', JSON.stringify(o));
-      assert.notEqual((o as { claim: Record<string, string> }).claim.stdin, 'ok', role);
+      // Both writes ran; whether they reached anything is for the kept file to say. A pipe on fd 0
+      // takes the write and goes nowhere, so the probe's own report is not the evidence.
+      const claim = (o as { claim: Record<string, string> }).claim;
+      assert.ok('stdin' in claim && 'fchmod:stdin' in claim, JSON.stringify(claim));
       assert.equal(readFileSync(join(dir, 'stdin'), 'utf8'), 'THE REAL PROMPT', role);
     }
   } finally {

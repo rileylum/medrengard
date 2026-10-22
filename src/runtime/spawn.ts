@@ -30,9 +30,10 @@ export interface SpawnOptions {
    */
   maxOutputBytes?: number;
   /**
-   * A run folder to create (11-e). stdin, stdout and stderr become files in it, passed to the
-   * child as descriptors, so no pipe joins this process and the run; a wrapper outside any sandbox
-   * writes `exit` when the command ends. The result is read back from the files. Must not exist.
+   * An absolute run folder to create (11-e). stdin, stdout and stderr become files in it: the
+   * output files are passed to the child as descriptors and a wrapper outside any sandbox pipes
+   * the prompt from `stdin`, so no pipe joins this process and the run; the wrapper writes `exit`
+   * when the command ends. The result is read back from the files. Must not exist.
    */
   dir?: string;
   /**
@@ -83,10 +84,14 @@ export const runFiles = (dir: string) => ({ stdin: join(dir, 'stdin'), stdout: j
 // name and is renamed, so `exit` is absent or whole. `trap :` rather than `trap ''`: an ignored
 // signal stays ignored across exec, so the command would inherit deafness to SIGTERM; a handler
 // does not, and it lets the wrapper outlive a SIGTERM to the group long enough to write the status.
+// The command reads the kept prompt through a pipe from `cat`, never as the file itself: the run
+// owns that file (its uid is the owner's even in a sandbox), so with the file as fd 0 it could
+// fchmod it and rewrite it through /proc/self/fd/0 (standard 3). The pipe joins the wrapper and
+// the command inside the scope, not this process, and a pipeline's status is its last command's.
 // Then it SIGKILLs its own process group, itself included: whatever the command left running
 // there dies with the run, as a scope's cgroup.kill does, and the group is surely the wrapper's
 // while it is alive to signal it. The live result takes its exit code from `exit` for that reason.
-const WRAPPER = 'trap : TERM; e=$1; shift; "$@"; s=$?; echo "$s" > "$e.tmp" && mv "$e.tmp" "$e"; kill -KILL 0';
+const WRAPPER = 'trap : TERM; e=$1; i=$2; shift 2; cat "$i" | "$@"; s=$?; echo "$s" > "$e.tmp" && mv "$e.tmp" "$e"; kill -KILL 0';
 
 /**
  * At most `max` bytes of a file, and whether it held more. Never reads past the cap, so a run that
@@ -176,14 +181,13 @@ export function spawnRuntime(opts: SpawnOptions): Run {
       mkdirSync(dirname(opts.dir), { recursive: true });
       // Not recursive: a folder that exists belongs to another run, whose files must not be reused.
       mkdirSync(opts.dir);
-      // Read-only: the run's uid is the owner's even in a sandbox, and fd 0 reopened through
-      // /proc/self/fd/0 would otherwise let it rewrite the record of what it was asked (standard 2).
+      // Read-only, as a record: the run never holds it, the wrapper's `cat` does.
       writeFileSync(files.stdin, opts.prompt, { mode: 0o400 });
-      stdio = [openSync(files.stdin, 'r'), openSync(files.stdout, 'wx'), openSync(files.stderr, 'wx')];
+      stdio = [openSync('/dev/null', 'r'), openSync(files.stdout, 'wx'), openSync(files.stderr, 'wx')];
     } catch (err) {
       return neverStarted(`run folder ${opts.dir}: ${(err as Error).message}`);
     }
-    [command, args] = ['sh', ['-c', WRAPPER, 'sh', files.exit, command, ...args]];
+    [command, args] = ['sh', ['-c', WRAPPER, 'sh', files.exit, files.stdin, command, ...args]];
   }
 
   // On systemd 262 `--scope` makes systemd-run fork the command, not exec it: child.pid is
