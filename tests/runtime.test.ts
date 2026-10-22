@@ -3,6 +3,7 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readRun, spawnRuntime } from '../src/runtime/spawn.ts';
@@ -318,10 +319,12 @@ async function exitFile(runDir: string, ms: number): Promise<boolean> {
 function killedController(runDir: string, shell: string, scope?: string, extra: object = {}): void {
   const spawnTs = join(import.meta.dirname, '..', 'src', 'runtime', 'spawn.ts');
   const opts = { command: 'sh', args: ['-c', shell], prompt: 'p', cwd: dir, dir: runDir, scope, ...extra };
-  const script = `import { spawnRuntime } from ${JSON.stringify(spawnTs)};
-spawnRuntime(${JSON.stringify(opts)});
+  // The options go on stdin: a 2 MB prompt is past Linux's 128 KiB cap on one argument.
+  const script = `import { readFileSync } from 'node:fs';
+import { spawnRuntime } from ${JSON.stringify(spawnTs)};
+spawnRuntime(JSON.parse(readFileSync(0, 'utf8')));
 setTimeout(() => process.kill(process.pid, 'SIGKILL'), 300);`;
-  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { timeout: 10_000 });
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { input: JSON.stringify(opts), timeout: 10_000 });
   assert.equal(r.signal, 'SIGKILL', `controller did not die as planned: ${r.stderr}`);
 }
 
@@ -340,6 +343,19 @@ for (const isolation of ['process-group', 'cgroup'] as const) {
   });
 }
 
+test('a controller SIGKILLed while a pipe would still be taking its 16 MB prompt leaves the run the whole prompt (11-e2)', async () => {
+  const runDir = join(dir, 'runs', 'orphan-prompt');
+  // Numbered lines, so a truncated or reordered prompt changes the digest as well as the length.
+  const prompt = Array.from({ length: 16 * 1024 * 1024 / 8 }, (_, i) => `${i}`.padStart(7, '0') + '\n').join('');
+  assert.equal(prompt.length, 16 * 1024 * 1024);
+  // The controller dies 300 ms in, and the run reads nothing for 1 s. A pipe from the controller,
+  // even into a `cat` in the wrapper, holds about 2.4 MB in flight by then (11-e2, standard 1), far
+  // short of 16 MB. A smaller prompt arrives whole and the test cannot tell the two apart.
+  killedController(runDir, `exec "${process.execPath}" "${fixture('stdin-digest.ts')}"`, undefined, { prompt });
+  assert.ok(await exitFile(runDir, 5000), 'the run left no exit file');
+  assert.equal(readRun(runDir)!.stdout, `${16 * 1024 * 1024} ${createHash('sha256').update(prompt).digest('hex')}\n`);
+});
+
 test('cgroup: a run whose controller is dead is stopped by systemd at maxRuntimeMs, and the wrapper still writes its status', async (t) => {
   if (!scoped(t)) return;
   const runDir = join(dir, 'runs', 'orphan-deadline');
@@ -352,6 +368,66 @@ test('cgroup: a run whose controller is dead is stopped by systemd at maxRuntime
   assert.ok(Date.now() - started < 4000, `stopped after ${Date.now() - started}ms`);
   // 128 + SIGTERM: systemd's stop signal reached the command, and the wrapper outlived it.
   assert.equal(readRun(runDir)!.exitCode, 143);
+});
+
+test('readRun polled in a tight loop while the wrapper writes exit sees no status or the whole one, never an empty or partial one (11-e2)', async () => {
+  // One run catches a non-atomic write (`echo "$s" > "$e"`) mid-way most of the time, not always;
+  // twenty make a miss on all of them negligible.
+  for (let i = 0; i < 20; i++) {
+    const runDir = join(dir, 'runs', `exit-race-${i}`);
+    const run = spawnRuntime({ command: 'sh', args: ['-c', 'exit 7'], prompt: '', cwd: dir, dir: runDir });
+    for (const end = Date.now() + 5000; ;) {
+      assert.ok(Date.now() < end, 'the run left no exit file');
+      const r = readRun(runDir);
+      if (r === undefined) continue;
+      assert.equal(r.exitCode, 7, `run ${i}`);
+      break;
+    }
+    await run;
+  }
+});
+
+test('with a run folder and a 2 MB prompt: a command that exits leaving a descendant on its stdin resolves at once with its own code, and the descendant is dead (11-e2)', async () => {
+  const runDir = join(dir, 'runs', 'stdin-held');
+  const pidFile = join(dir, 'stdin-held.pid');
+  // A background job in a non-interactive sh gets /dev/null as stdin unless it is redirected
+  // explicitly, so the descendant takes fd 0 through fd 3. It reads nothing, so cat stays blocked
+  // on the 2 MB that the pipe cannot hold.
+  const started = Date.now();
+  const r = await spawnRuntime({ command: 'sh', args: ['-c', `exec 3<&0; (sleep 10) <&3 & echo $! > ${pidFile}; exit 4`], prompt: 'x'.repeat(2 * 1024 * 1024), cwd: dir, dir: runDir });
+  const took = Date.now() - started;
+  assert.equal(r.exitCode, 4);
+  assert.ok(took < 1000, `took ${took}ms`);
+  const pid = Number(readFileSync(pidFile, 'utf8'));
+  // Killed, it may stay a zombie a moment before its new parent reaps it.
+  const alive = () => { try { return !/^\d+ \(.*\) Z/.test(readFileSync(`/proc/${pid}/stat`, 'utf8')); } catch { return false; } };
+  for (const end = Date.now() + 1000; alive() && Date.now() < end;) await new Promise((res) => setTimeout(res, 20));
+  assert.equal(alive(), false, `descendant ${pid} is alive`);
+});
+
+test('with a run folder: a cancel that lands while the wrapper renames a finished command\'s status still leaves exit written (11-e2, standard 1)', async () => {
+  const runDir = join(dir, 'runs', 'cancel-mv');
+  const shim = join(dir, 'slow-mv');
+  const mark = join(dir, 'slow-mv.started');
+  // A slow `mv` on PATH holds open the moment between the command's end and the rename, which
+  // a real cancel hits only now and then.
+  const mv = spawnSync('sh', ['-c', 'command -v mv'], { encoding: 'utf8' }).stdout.trim();
+  mkdirSync(shim);
+  writeFileSync(join(shim, 'mv'), `#!/bin/sh\ntouch ${mark}\nsleep 0.5\nexec ${mv} "$@"\n`, { mode: 0o755 });
+  const run = spawnRuntime({ command: 'sh', args: ['-c', 'exit 3'], prompt: '', cwd: dir, dir: runDir, graceMs: 3000, env: { ...process.env, PATH: `${shim}:${process.env.PATH}` } });
+  for (const end = Date.now() + 5000; !existsSync(mark); await new Promise((res) => setTimeout(res, 10))) assert.ok(Date.now() < end, 'mv never started');
+  run.cancel();
+  assert.equal((await run).status, 'cancelled');
+  assert.equal(readRun(runDir)?.exitCode, 3);
+});
+
+test('with a run folder: a command killed by its own SIGTERM leaves exit 143, so the wrapper did not hand it an ignored SIGTERM (11-e2, standard 2)', async () => {
+  const runDir = join(dir, 'runs', 'own-sigterm');
+  // An ignored signal stays ignored across exec, so a wrapper that ignored SIGTERM before the
+  // command would let it run on to `exit 9`.
+  const r = await spawnRuntime({ command: 'sh', args: ['-c', 'kill -TERM $$; exit 9'], prompt: '', cwd: dir, dir: runDir });
+  assert.equal(r.exitCode, 143);
+  assert.equal(readRun(runDir)?.exitCode, 143);
 });
 
 test('with a run folder: output past maxOutputBytes stops the run inside the grace bound and reports overflow with nothing kept', async () => {
