@@ -91,11 +91,13 @@ export const runFiles = (dir: string) => ({ stdin: join(dir, 'stdin'), stdout: j
 // the pipe, not after the pipeline: a descendant holding the pipe's read end would keep `cat`, and
 // so the whole pipeline, from ending until it did (11-e adversarial). That side is a subshell,
 // where a trap with a handler is reset, so it sets its own; without it a cancel's SIGTERM kills it
-// before it writes `exit`. Then it SIGKILLs its own process group, the wrapper and `cat` included:
-// whatever the command left running there dies with the run, as a scope's cgroup.kill does, and
-// the group is surely the wrapper's while it is alive to signal it. The live result takes its exit
-// code from `exit` for that reason.
-const WRAPPER = 'trap : TERM; e=$1; i=$2; shift 2; cat "$i" | { trap : TERM; "$@"; s=$?; echo "$s" > "$e.tmp" && mv "$e.tmp" "$e"; kill -KILL 0; }';
+// before it writes `exit`. Once the command has ended, SIGTERM is ignored outright: `mv` is a
+// separate process, and a cancel or systemd's stop that killed it mid-way would leave a finished
+// command's status unwritten (11-e2, standard 1). Then it SIGKILLs its own process group, the
+// wrapper and `cat` included: whatever the command left running there dies with the run, as a
+// scope's cgroup.kill does, and the group is surely the wrapper's while it is alive to signal it.
+// The live result takes its exit code from `exit` for that reason.
+const WRAPPER = 'trap : TERM; e=$1; i=$2; shift 2; cat "$i" | { trap : TERM; "$@"; s=$?; trap "" TERM; echo "$s" > "$e.tmp" && mv "$e.tmp" "$e"; kill -KILL 0; }';
 
 /**
  * At most `max` bytes of a file, and whether it held more. Never reads past the cap, so a run that
