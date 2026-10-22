@@ -229,7 +229,7 @@ test('a grant stage needs every review stage\'s last verdict to be a PASS; only 
   try {
     seed(store, 'c1', [...AT_OWNER.slice(0, 4), { type: 'verdict', runId: 'sec1', head: H, verdict: 'FAIL', findings: ['f'] }]);
     assert.equal(store.load('c1')!.stage, 'ESCALATED');
-    assert.throws(() => moveEvent(store, 'w', mv('route', { stage: 'MERGE' }), where), new RegExp(`^Error: stage MERGE holds a grant, but the last verdict of SECURITY is a FAIL for the candidate ${H}; an owner accept after it is the only way past$`));
+    assert.throws(() => moveEvent(store, 'w', mv('route', { stage: 'MERGE' }), where), new RegExp(`^Error: stage MERGE holds a grant, but the last outcome of SECURITY is a FAIL for the candidate ${H}; an owner accept after it is the only way past$`));
     // Accept with risk: the owner routes to the human stage and accepts there, naming the head.
     const atOwner = store.append('c1', { type: 'owner_decision', action: 'route', head: H, reason: 'accepted with risk', stage: 'OWNER' });
     const merging = apply(atOwner, ACCEPT, w);
@@ -263,10 +263,30 @@ test('the grant rule reads each review stage\'s last verdict, and only an accept
   try {
     seed(store, 'c1', [...AT_OWNER, ACCEPT, { type: 'verdict', runId: 'sec1', head: H, verdict: 'FAIL', findings: ['f'] }]);
     assert.equal(store.load('c1')!.stage, 'ESCALATED');
-    assert.throws(() => moveEvent(store, 'w', mv('route', { stage: 'MERGE' }), where), /the last verdict of SECURITY is a FAIL/);
+    assert.throws(() => moveEvent(store, 'w', mv('route', { stage: 'MERGE' }), where), /the last outcome of SECURITY is a FAIL/);
   } finally {
     store.close();
   }
+});
+
+test('a failed check and the owner\'s request_changes count as a FAIL for the grant rule; the grant stage\'s own failed run does not (11-d2, standard 3)', () => {
+  const merge = { kind: 'command', run: [{ name: 'merge', command: ['true'] }], network: true, grants: ['github'], transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } };
+  const direct = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: { kind: 'command', transitions: { PASS: 'REVIEW', FAIL: 'ESCALATED' } }, REVIEW: { ...ownerCheck.stages.REVIEW, transitions: { PASS: 'MERGE', FAIL: 'ESCALATED' } }, MERGE: merge } } as Workflow;
+  const play = (w: Workflow, events: Event[]) => events.reduce((c, e) => apply(c, e, w), newCycle('c1', 'w'));
+  const route = (stage: string): Event => ({ type: 'owner_decision', action: 'route', head: H, reason: 'review it anyway', stage });
+  // The required check FAILs; a route past it and a review PASS reach the grant stage.
+  const pastCheck = play(direct, [...AT_OWNER.slice(0, 2), { type: 'verification', head: H, checks: [{ name: 'ok', result: 'FAIL' }] }, route('REVIEW'), AT_OWNER[3]!]);
+  assert.equal(pastCheck.stage, 'MERGE');
+  assert.throws(() => headGate(pastCheck, direct), new RegExp(`^Error: stage MERGE holds a grant, but the last outcome of CHECK is a FAIL for the candidate ${H}; an owner accept after it is the only way past$`));
+  // The owner asks for changes at the human stage, then a route skips to the grant stage.
+  const w = grantFlow([{ name: 'merge', command: ['true'] }]);
+  const rejected = play(w, [...AT_OWNER, { type: 'request_changes', head: H }, route('MERGE')]);
+  assert.equal(rejected.stage, 'MERGE');
+  assert.throws(() => headGate(rejected, w), /the last outcome of OWNER is a FAIL/);
+  // The merge itself failed; a retry of it is a second attempt, not a way past a FAIL.
+  const retried = play(w, [...AT_OWNER, ACCEPT, { type: 'verification', head: H, checks: [{ name: 'merge', result: 'FAIL' }] }, { type: 'owner_decision', action: 'retry', head: H, reason: 'the forge was down' }]);
+  assert.equal(retried.stage, 'MERGE');
+  assert.doesNotThrow(() => headGate(retried, w));
 });
 
 test('decideAndDrive refuses an empty grant file at the stage the event leads to, writing nothing', async () => {

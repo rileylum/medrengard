@@ -702,6 +702,7 @@ test('took: an outcome counts only where its stage took it, not as a duplicate o
   assert.equal(at(apply(reviewed, verdict('sr1', 'H1', 'PASS'))), false);
   assert.equal(at(apply(reviewed, { type: 'verification', head: 'H1', checks: [{ name: 'tests', result: 'PASS' }] })), false);
   assert.equal(at(apply(reviewed, { type: 'accept', head: 'H1' })), false);
+  assert.equal(at(apply(reviewed, { type: 'request_changes', head: 'H1' })), false);
   assert.equal(at(apply(run(reviewed, verdict('ar1', 'H1', 'PASS')), { type: 'accept', head: 'H1' })), true);
 });
 

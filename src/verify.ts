@@ -16,7 +16,7 @@ import { bounded, git, stopped } from './git.ts';
 import type { CommandRequest } from './kits/request.ts';
 import { cyclePaths } from './layout.ts';
 import type { Grant } from './config.ts';
-import { FILE_STEM, HEAD_CHECK, TREE_CHECK, fileArgs, took, type Command, type Cycle, type Event, type StageDef, type Workflow } from './lifecycle.ts';
+import { FILE_STEM, HEAD_CHECK, TREE_CHECK, checksPass, fileArgs, took, type Command, type Cycle, type Event, type StageDef, type Workflow } from './lifecycle.ts';
 import { checkScopes } from './runtime/cli-adapter.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
 import { checkSandbox, confines, executables, reachable, restoreAccess, spawnEnv, wrap, type Policy, type Sandbox } from './sandbox.ts';
@@ -138,9 +138,10 @@ export function missingProgram(command: string, sandbox: Sandbox, policy: Policy
  * A grant stage runs only on a reviewed head (A-074, A-083 Q3): each stage's last verdict,
  * verification or accept names the candidate, and at least one PASS verdict does. A workflow can
  * route a fix past its reviews, and one with no review at all has nothing to bind the head to.
- * Each review stage's last verdict must also be a PASS (11-d2): an owner's `route` from ESCALATED
- * could otherwise enter the grant stage past a FAIL. An owner accept after the FAIL is accept with
- * risk, the one way past; a workflow key for advisory reviews is parked (open-questions.md).
+ * Every other stage's last outcome must also be a PASS (11-d2): a review's verdict, a command
+ * stage's checks, the owner's accept rather than request_changes. An owner's `route` from
+ * ESCALATED could otherwise enter the grant stage past a FAIL. An owner accept after the FAIL is
+ * accept with risk, the one way past; a workflow key for advisory stages is parked (O-017).
  */
 export function headGate(cycle: Cycle, w: Workflow): void {
   const head = cycle.candidate!.head;
@@ -152,11 +153,18 @@ export function headGate(cycle: Cycle, w: Workflow): void {
   if (stale.length > 0) throw new Error(`stage ${cycle.stage} holds a grant, but the last outcome of ${stale.join(', ')} is not for the candidate ${head}`);
   if (!outcomes.some(({ event: e }) => e.type === 'verdict' && e.verdict === 'PASS' && e.head === head))
     throw new Error(`stage ${cycle.stage} holds a grant, but no PASS verdict is for the candidate ${head}`);
-  const lastVerdict = new Map<string, { verdict: string; at: number }>();
-  outcomes.forEach(({ event: e, from }, at) => e.type === 'verdict' && lastVerdict.set(from, { verdict: e.verdict, at }));
+  // The grant stage's own last run is left out: a retry after a failed merge is a second attempt.
+  // A FAIL whose workflow edge leads into this stage is no FAIL here: the workflow declared that
+  // path (a FAIL that posts the owner's feedback to the PR). Only a move can skip a FAIL.
+  const lastOutcome = new Map<string, { failed: boolean; at: number }>();
+  outcomes.forEach(({ event: e, from, to }, at) => {
+    if (from === cycle.stage) return;
+    const failed = e.type === 'verdict' ? e.verdict === 'FAIL' : e.type === 'verification' ? !checksPass(e.checks) : e.type === 'request_changes';
+    if (e.type === 'verdict' || e.type === 'verification' || e.type === 'accept' || e.type === 'request_changes') lastOutcome.set(from, { failed: failed && to !== cycle.stage, at });
+  });
   const accepted = outcomes.findLastIndex(({ event: e }) => e.type === 'accept');
-  const unaccepted = [...lastVerdict].find(([, v]) => v.verdict === 'FAIL' && v.at > accepted);
-  if (unaccepted) throw new Error(`stage ${cycle.stage} holds a grant, but the last verdict of ${unaccepted[0]} is a FAIL for the candidate ${head}; an owner accept after it is the only way past`);
+  const unaccepted = [...lastOutcome].find(([, o]) => o.failed && o.at > accepted);
+  if (unaccepted) throw new Error(`stage ${cycle.stage} holds a grant, but the last outcome of ${unaccepted[0]} is a FAIL for the candidate ${head}; an owner accept after it is the only way past`);
 }
 
 /** Run every declared check on the cycle's candidate and record one verification event. */

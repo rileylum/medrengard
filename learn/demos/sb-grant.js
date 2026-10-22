@@ -3,7 +3,7 @@
 // can run it: wrap and spawnEnv from src/sandbox.ts for the stage and for a check, redactAll and
 // headGate cut out of src/verify.ts, stageGrants for the sandbox rule, and the event verify
 // would append. A place that holds the value is marked; every other place must not.
-import { defaultWorkflow, took } from '/src/lifecycle.ts';
+import { checksPass, defaultWorkflow, took } from '/src/lifecycle.ts';
 import { confines, spawnEnv, wrap } from '/src/sandbox.ts';
 import { esc, liveFunction } from '../live.js';
 
@@ -20,7 +20,7 @@ const GRANTS = { forge: { variable: 'FORGE_TOKEN', file: '/home/owner/.config/so
 const reviewed = (late) => ({
   stage: 'MERGE', candidate: { head: HEAD, base: 'b'.repeat(40) },
   history: [
-    { from: 'VERIFYING', event: { type: 'verification', head: HEAD } },
+    { from: 'VERIFYING', event: { type: 'verification', head: HEAD, checks: [{ name: 'tests', result: 'PASS' }] } },
     { from: 'STANDARD_REVIEW', event: { type: 'verdict', verdict: 'PASS', head: HEAD } },
     { from: 'ADVERSARIAL_REVIEW', event: { type: 'verdict', verdict: 'PASS', head: late ? OLD : HEAD } },
     { from: 'AWAITING_ACCEPTANCE', event: { type: 'accept', head: HEAD } },
@@ -28,7 +28,7 @@ const reviewed = (late) => ({
 });
 
 export default async function mount(el) {
-  const [redactAll, headGate, stageGrants] = await Promise.all([liveFunction('src/verify.ts', 'redactAll'), liveFunction('src/verify.ts', 'headGate', { took }), liveFunction('src/verify.ts', 'stageGrants', { confines })]);
+  const [redactAll, headGate, stageGrants] = await Promise.all([liveFunction('src/verify.ts', 'redactAll'), liveFunction('src/verify.ts', 'headGate', { checksPass, took }), liveFunction('src/verify.ts', 'stageGrants', { confines })]);
   el.innerHTML = `
     <div class="cols"><div>
       <label>The token's value <span class="dim">(read from the grant's file when the stage runs; a fake one here)</span></label>

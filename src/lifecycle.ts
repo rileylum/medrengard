@@ -494,7 +494,7 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
     case 'verification': {
       if (def?.kind !== 'command') return escalate(c, e, `verification outside a command stage (in ${c.stage})`);
       if (!sameCandidate(c.candidate, e.head)) return escalate(c, e, 'verification for a non-candidate SHA');
-      if (e.checks.length === 0 || e.checks.some((k) => k.result !== 'PASS')) return advance(w, c, e, def, 'FAIL', {}, 'required check failed or missing');
+      if (!checksPass(e.checks)) return advance(w, c, e, def, 'FAIL', {}, 'required check failed or missing');
       return advance(w, c, e, def, 'PASS');
     }
 
@@ -551,6 +551,9 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
 
 type Move = Extract<Event, { type: 'owner_decision' }>;
 
+/** A verification passes only with at least one check and every check PASS. */
+export const checksPass = (checks: { result: string }[]): boolean => checks.length > 0 && checks.every((k) => k.result === 'PASS');
+
 /**
  * Whether the stage in `from` took the entry's outcome as its own. An outcome recorded but ignored
  * (while escalated, settled, or a duplicate), escalated for another step before the stage looked
@@ -564,7 +567,7 @@ export function took(w: Workflow, h: Cycle['history'][number]): boolean {
   const def = w.stages[from];
   if (e.type === 'verdict') return takes(def, 'verdict');
   if (e.type === 'verification') return def?.kind === 'command';
-  if (e.type === 'accept') return def?.kind === 'human';
+  if (e.type === 'accept' || e.type === 'request_changes') return def?.kind === 'human';
   return def !== undefined;
 }
 
