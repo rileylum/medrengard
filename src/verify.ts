@@ -138,10 +138,9 @@ export function missingProgram(command: string, sandbox: Sandbox, policy: Policy
  * A grant stage runs only on a reviewed head (A-074, A-083 Q3): each stage's last verdict,
  * verification or accept names the candidate, and at least one PASS verdict does. A workflow can
  * route a fix past its reviews, and one with no review at all has nothing to bind the head to.
- * Every other stage's last outcome must also be a PASS (11-d2): a review's verdict, a command
- * stage's checks, the owner's accept rather than request_changes. An owner's `route` from
- * ESCALATED could otherwise enter the grant stage past a FAIL. An owner accept after the FAIL is
- * accept with risk, the one way past; a workflow key for advisory stages is parked (O-017).
+ * No owner `route` may have skipped a FAIL either (11-d2): a review's verdict, a command stage's
+ * checks, the owner's request_changes. An owner accept after the FAIL is accept with risk, the one
+ * way past; a workflow key for advisory stages is parked (O-017).
  */
 export function headGate(cycle: Cycle, w: Workflow): void {
   const head = cycle.candidate!.head;
@@ -153,17 +152,20 @@ export function headGate(cycle: Cycle, w: Workflow): void {
   if (stale.length > 0) throw new Error(`stage ${cycle.stage} holds a grant, but the last outcome of ${stale.join(', ')} is not for the candidate ${head}`);
   if (!outcomes.some(({ event: e }) => e.type === 'verdict' && e.verdict === 'PASS' && e.head === head))
     throw new Error(`stage ${cycle.stage} holds a grant, but no PASS verdict is for the candidate ${head}`);
+  // A FAIL counts only when an owner `route` landed after it: route is the one move that jumps
+  // ahead, where retry and overrule rerun a stage and give it a fresh outcome. A path the workflow
+  // declares from a FAIL (advisory checks, feedback posted to the PR) needs no move, so it runs.
   // The grant stage's own last run is left out: a retry after a failed merge is a second attempt.
-  // A FAIL whose workflow edge leads into this stage is no FAIL here: the workflow declared that
-  // path (a FAIL that posts the owner's feedback to the PR). Only a move can skip a FAIL.
+  const routed = cycle.history.findLastIndex((h) => h.event.type === 'owner_decision' && h.event.action === 'route' && h.to !== 'ESCALATED');
+  const accepted = cycle.history.findLastIndex((h) => h.event.type === 'accept' && took(w, h));
   const lastOutcome = new Map<string, { failed: boolean; at: number }>();
-  outcomes.forEach(({ event: e, from, to }, at) => {
-    if (from === cycle.stage) return;
+  cycle.history.forEach((h, at) => {
+    const { event: e, from } = h;
+    if (from === cycle.stage || !took(w, h)) return;
     const failed = e.type === 'verdict' ? e.verdict === 'FAIL' : e.type === 'verification' ? !checksPass(e.checks) : e.type === 'request_changes';
-    if (e.type === 'verdict' || e.type === 'verification' || e.type === 'accept' || e.type === 'request_changes') lastOutcome.set(from, { failed: failed && to !== cycle.stage, at });
+    if (e.type === 'verdict' || e.type === 'verification' || e.type === 'accept' || e.type === 'request_changes') lastOutcome.set(from, { failed, at });
   });
-  const accepted = outcomes.findLastIndex(({ event: e }) => e.type === 'accept');
-  const unaccepted = [...lastOutcome].find(([, o]) => o.failed && o.at > accepted);
+  const unaccepted = [...lastOutcome].find(([, o]) => o.failed && o.at < routed && o.at > accepted);
   if (unaccepted) throw new Error(`stage ${cycle.stage} holds a grant, but the last outcome of ${unaccepted[0]} is a FAIL for the candidate ${head}; an owner accept after it is the only way past`);
 }
 

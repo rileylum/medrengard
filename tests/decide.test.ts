@@ -278,6 +278,10 @@ test('a failed check and the owner\'s request_changes count as a FAIL for the gr
   const pastCheck = play(direct, [...AT_OWNER.slice(0, 2), { type: 'verification', head: H, checks: [{ name: 'ok', result: 'FAIL' }] }, route('REVIEW'), AT_OWNER[3]!]);
   assert.equal(pastCheck.stage, 'MERGE');
   assert.throws(() => headGate(pastCheck, direct), new RegExp(`^Error: stage MERGE holds a grant, but the last outcome of CHECK is a FAIL for the candidate ${H}; an owner accept after it is the only way past$`));
+  // An accept recorded while escalated was never the owner's word at a human stage: it clears nothing.
+  const ignoredAccept = play(direct, [...AT_OWNER.slice(0, 2), { type: 'verification', head: H, checks: [{ name: 'ok', result: 'FAIL' }] }, ACCEPT, route('REVIEW'), AT_OWNER[3]!]);
+  assert.equal(ignoredAccept.stage, 'MERGE');
+  assert.throws(() => headGate(ignoredAccept, direct), /the last outcome of CHECK is a FAIL/);
   // The owner asks for changes at the human stage, then a route skips to the grant stage.
   const w = grantFlow([{ name: 'merge', command: ['true'] }]);
   const rejected = play(w, [...AT_OWNER, { type: 'request_changes', head: H }, route('MERGE')]);
@@ -287,6 +291,42 @@ test('a failed check and the owner\'s request_changes count as a FAIL for the gr
   const retried = play(w, [...AT_OWNER, ACCEPT, { type: 'verification', head: H, checks: [{ name: 'merge', result: 'FAIL' }] }, { type: 'owner_decision', action: 'retry', head: H, reason: 'the forge was down' }]);
   assert.equal(retried.stage, 'MERGE');
   assert.doesNotThrow(() => headGate(retried, w));
+});
+
+test('a FAIL counts for the grant rule only when an owner route landed after it: a path the workflow declares runs, direct or not (11-d2, adversarial)', () => {
+  const grant = (PASS: string) => ({ kind: 'command', run: [{ name: 'post', command: ['true'] }], network: true, grants: ['github'], transitions: { PASS, FAIL: 'ESCALATED' } });
+  const play = (w: Workflow, events: Event[]) => events.reduce((c, e) => apply(c, e, w), newCycle('c1', 'w'));
+  const passes = (w: Workflow, events: Event[], stage: string) => {
+    const c = play(w, events);
+    assert.equal(c.stage, stage, c.escalation);
+    assert.doesNotThrow(() => headGate(c, w));
+  };
+  // Advisory checks: a failed check goes on to the review, whose PASS leads to the grant stage.
+  const advisory = { ...ownerCheck, stages: { ...ownerCheck.stages, CHECK: { kind: 'command', transitions: { PASS: 'REVIEW', FAIL: 'REVIEW' } }, REVIEW: { ...ownerCheck.stages.REVIEW, budget: 2, transitions: { PASS: 'MERGE', FAIL: 'ESCALATED' } }, MERGE: grant('ACCEPTED') } } as Workflow;
+  const failedCheck: Event[] = [...AT_OWNER.slice(0, 2), { type: 'verification', head: H, checks: [{ name: 'ok', result: 'FAIL' }] }];
+  passes(advisory, [...failedCheck, AT_OWNER[3]!], 'MERGE');
+  // A retry reruns the stage the cycle escalated from; it skips nothing, so the declared path still runs.
+  passes(advisory, [...failedCheck, { type: 'run_failed', runId: 'rev0', reason: 'timeout' }, { type: 'owner_decision', action: 'retry', head: H, reason: 'again' }, AT_OWNER[3]!], 'MERGE');
+  // A route the cycle refused moved nothing, so it skipped nothing.
+  passes(advisory, [...failedCheck, { type: 'run_failed', runId: 'rev0', reason: 'timeout' }, { type: 'owner_decision', action: 'route', head: H, reason: 'x', stage: 'NOPE' },
+    { type: 'owner_decision', action: 'retry', head: H, reason: 'again' }, AT_OWNER[3]!], 'MERGE');
+  // A FAIL that lands while escalated was never the review's, so a route after it skips nothing.
+  passes(advisory, [...AT_OWNER.slice(0, 3), { type: 'reject_dispatch', reason: 'paused' }, { type: 'verdict', runId: 'late', head: H, verdict: 'FAIL', findings: ['f'] },
+    { type: 'owner_decision', action: 'route', head: H, reason: 'review it again', stage: 'REVIEW' }, { type: 'verdict', runId: 'rev2', head: H, verdict: 'PASS', findings: [] }], 'MERGE');
+  // The grant stage's own failed run, then a route back into it: a second attempt, as a retry is.
+  passes(advisory, [...AT_OWNER.slice(0, 4), { type: 'verification', head: H, checks: [{ name: 'post', result: 'FAIL' }] },
+    { type: 'owner_decision', action: 'route', head: H, reason: 'the forge was down', stage: 'MERGE' }], 'MERGE');
+  // The owner's FAIL goes through a plain command stage to one that posts the feedback.
+  const feedback = { ...ownerCheck, stages: { ...ownerCheck.stages, OWNER: { kind: 'human', transitions: { PASS: 'ACCEPTED', FAIL: 'NOTE' } }, NOTE: { kind: 'command', transitions: { PASS: 'POST' } }, POST: grant('ESCALATED') } } as Workflow;
+  passes(feedback, [...AT_OWNER, { type: 'request_changes', head: H }, { type: 'verification', head: H, checks: [{ name: 'note', result: 'PASS' }] }], 'POST');
+  // A FAIL the cycle has since passed: the stage's last outcome is a PASS, so a later route skips nothing.
+  const w = grantFlow([{ name: 'merge', command: ['true'] }]);
+  const twice = { ...w, stages: { ...w.stages, REVIEW: { ...w.stages.REVIEW, budget: 2, transitions: { PASS: 'OWNER', FAIL: 'DEV' } } } } as Workflow;
+  const H2 = 'c'.repeat(40);
+  passes(twice, [...AT_OWNER.slice(0, 3), { type: 'verdict', runId: 'rev1', head: H, verdict: 'FAIL', findings: ['f'] },
+    { type: 'claim', runId: 'dev2', base: 'b'.repeat(40), runtime: 'fake' }, { type: 'developer_result', runId: 'dev2', head: H2, artifacts: ['x'] },
+    { type: 'verification', head: H2, checks: [{ name: 'ok', result: 'PASS' }] }, { type: 'verdict', runId: 'rev2', head: H2, verdict: 'PASS', findings: [] },
+    { type: 'reject_dispatch', reason: 'paused' }, { type: 'owner_decision', action: 'route', head: H2, reason: 'merge it', stage: 'MERGE' }], 'MERGE');
 });
 
 test('decideAndDrive refuses an empty grant file at the stage the event leads to, writing nothing', async () => {

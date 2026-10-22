@@ -971,6 +971,14 @@ test('route to the human stage is accept with risk: nothing runs, then accept se
   assert.deepEqual(rows(db, cycleId).slice(-3), ['verification', 'owner_decision', 'accept']);
 });
 
+test('a move\'s reason reaches the terminal only escaped: a control character in it cannot drive the owner\'s terminal (11-d2, adversarial)', () => {
+  const { env, jobFile, head } = escalated((bin, root) => reviewerStub(bin, 'claude', 'nobody', join(root, 'outside')), [{ name: 'ok', command: ['false'] }]);
+  const r = sf(['route', jobFile, head, 'AWAITING_ACCEPTANCE', '--reason', 'shipping \u001b[2Jwith it'], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.stdout.includes('\u001b'), false, r.stdout);
+  assert.match(r.stdout, new RegExp(`^owner route to AWAITING_ACCEPTANCE ${head.slice(0, 7)}: shipping \\\\u\\{1b\\}\\[2Jwith it$`, 'm'));
+});
+
 test('a move is refused, writing nothing, without a reason, for another head, an unknown stage, a cycle with a child, or what preflight refuses (11-d2)', () => {
   const { env, jobFile, head, cycleId, db } = escalated((bin, root) => reviewerStub(bin, 'claude', 'nobody', join(root, 'outside')), [{ name: 'ok', command: ['false'] }]);
   const before = rows(db, cycleId);
