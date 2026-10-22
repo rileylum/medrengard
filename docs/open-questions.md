@@ -16,6 +16,7 @@ O-001 to O-010 moved here from `decisions.md` on 2026-10-18; the IDs are unchang
 | O-013 | The initial prompt for each role, the skills each role gets, and how a run records which versions it used ([below](#o-013-role-prompts-and-skills)) | Before the first real repository's tickets |
 | O-015 | Acceptance evidence (A-051): which tickets need it, which artifact type comes first, and when it gets a plan row ([below](#o-015-acceptance-evidence)) | When the stage gets a plan row |
 | O-017 | Which stages a grant stage requires. The default (11-d2): an owner move may not jump (enter a stage other than the one the cycle escalated from) past a stage whose last outcome is a FAIL (review verdicts, command stages' checks, the owner's `request_changes`) on the way to a grant stage, unless an owner accept came after the FAIL; paths the workflow declares from a FAIL run. A workflow key could relax it: a stage marked advisory (for example `blocking: false`), or a grant stage naming the stages it needs (for example `requires: ["SECURITY_REVIEW"]`). Until then a project that differs accepts each FAIL with risk. Build the key when a workflow the owner runs needs it (A-124). To revisit with it (11-d2 standard 5, owner): (1) the usual overrule after a dispute is a jump (into the review, escalated from the commit stage), so an advisory check FAIL earlier on the same head refuses the grant stage after the paid rerun, and a workflow with no human stage is left only cancel (fails closed; probe `/var/tmp/software_factory/11-d2/probes/std5/p1-jump-rule.ts` scenario 1). A narrower rule: a jump into stage T counts only FAILs recorded since the cycle last left T. (2) An owner accept at any human stage clears every earlier FAIL, including at a stage upstream of the failed review, whose accept may only mean "go on to review" (scenario 2b). A narrower rule: only an accept at a human stage the cycle reaches after the FAIL's stage clears it. | The first workflow with an advisory review, or a grant stage that needs only some reviews |
+| O-018 | Messaging defaults (A-144): who may message whom, which stages see messages and how, whether a message may ever count as evidence, live delivery or next run only, caps, how far observer messages are trusted, and where a run's listener lives ([below](#o-018-messaging-defaults)) | The first messaging ticket |
 
 ## O-005 Independent verification of "done when"
 
@@ -109,3 +110,21 @@ Raised 2026-10-19; principles agreed in A-054. **Answered:** items 1 and 2 in A-
 5. The observation stream: how observers get events (read the event log, or a push from the controller), and how a reaction comes back as a claim or command.
 6. Configuration layers: factory defaults, personal, repository, job.
 Items 1 and 2 answered in A-056. Plan order decided in A-055: the engine (row 9) and the extension host (row 10) before recovery (row 11).
+
+## O-018 Messaging defaults
+
+Raised 2026-10-22; the primitives are decided in A-144, the defaults are not. Research: `docs/research/2026-10-22-agent-messaging/REPORT.md`.
+
+**Why it matters.** A message carries one run's text into another run's context. Without defaults, a peer's "looks fine" can reach a reviewer as if it were evidence, a prompt injection in one repository can travel to every linked run, and two runs waiting on each other can stall. Prompt-level marking alone let most attacks through in the research (`protocols_and_threats.md`); the controls have to be structural.
+
+**Today.** Not built. Runs cannot reach the controller mid-run. Until A-106 lands, `--share-net` lets runs reach each other over host loopback and abstract sockets, which no message log would see. Observers can send `note` (A-074).
+
+**Would settle it.** The session's recommendation follows each item.
+1. Routing: who may message whom. Recommended: deny by default; allow only links the owner declares between work items, plus the owner and named observers.
+2. Visibility: which stages see messages, and how. Recommended: reviewers stay off the live channel and see only the recorded artifact, inside a nonce-delimited untrusted block; the adversarial reviewer may also get the thread. O-010 (the owner's answers in a herdr tab) takes the same route.
+3. Evidence: may a message ever count as evidence or approval? Recommended: never on its own; only a check stage counts, as with every other claim.
+4. Delivery: live mid-run, or at the next run only. Recommended: start with the next run (A-144 item 4); add live delivery when two linked tickets show waiting is too slow.
+5. Caps: message size, messages per cycle, and the deadline after which an unanswered question escalates to the owner; a question that would close a wait cycle is refused.
+6. Observer trust: observers are the owner's code, but may forward outside content (a Discord reply). Recommended: untrusted by default, like a peer message; an observer's grant (10-e) may mark its messages trusted.
+7. Runs that hold grants or network: kept out of messaging, or not.
+8. Where a run's listener lives: in the cycle's process or in a daemon (A-122, O-006).

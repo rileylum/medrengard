@@ -37,6 +37,20 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-144 — 2026-10-22 — Messaging primitives: a published artifact between cycles and a live channel per run, open to observers
+
+Owner, asking whether several agents can work at once and talk to each other while each stays sandboxed: “I have found it valuable to have streams work on dependent or linked work be able to communicate between each other to validate design etc. so it is a paradigm or a workflow that should be possible.” After the research (`docs/research/2026-10-22-agent-messaging/`), offered its ranking: (1) the upstream cycle publishes an interface file bound to its SHA and a downstream cycle checks against it, with no live channel; (2) a live channel, one controller-owned socket per run bound into its sandbox, with the controller recording each message as an event; (3) one VM per run on the home server. Owner: “Okay thats great, and pasta is already planned to be setup. My recommendation is to build the primitives to allows both option 1 and 2 - and there is no requirement for this to just be used for cross agent communication, then an observer extension could send messages through the same channels.”
+
+Effect: messaging is a core capability under A-113, with the policy left to workflows and extensions. The primitives, to be ticketed:
+
+1. A message is an event the controller records before delivery. The controller sets the sender and the sender's head; the body is a file with a hash, never argv.
+2. Every sender is known by the channel the message came in on: a run by its own socket, an observer through the observation stream (its `note`, A-074, becomes a message), the owner through a command.
+3. Each adapter may deliver a message mid-run (claude hooks, pi `steer`, a fixed herdr doorbell); a runtime with no way in gets its messages at its next run.
+4. A stage's SHA-bound output can be named as an input to a linked work item's cycle (extends A-117's declared inputs across cycles).
+5. Routing (who may message whom), visibility (which stages see messages) and caps are extension points; the observer is the first user of routing (A-124). The defaults are not decided (O-018).
+
+It builds on A-106 (pasta) and the egress proxy row, not before them. The VM option (3) is not adopted; D-019 stands. What is still open is O-018. Docs only; no test run.
+
 ### A-143 — 2026-10-21 — 11-d: the adversarial findings tested on the branch; a hand-run accept without a command ID accepted as a risk
 
 Asked, after 11-d's adversarial FAIL on `2be3768`: (1) the "major", no test sends the observer kit's cancel ID, so a kit that gave an accept and a cancel for one line one ID passed every test (a missing test for correct code, a minor under `docs/workflow.md`); (2) the minor, no test tells that `cancelWork` passes no `after`; (3) the note that an `accept` with no `--command-id` is not deduplicated, so on a workflow OWNER → MERGE → FINAL whose MERGE keeps the head a retyped `accept <sha>` would also accept FINAL. The session recommended adding both tests on the branch, each red on its mutant, without a further review (as A-137), and accepting (3) as designed, with a line in `docs/work/accepted-risks.md`. Owner: “Go as you recommend”.
