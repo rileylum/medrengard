@@ -936,7 +936,7 @@ test('live run 1: a reviewer FAIL, a developer dispute, then overrule reruns the
   assert.match(r.stdout, new RegExp(`^owner overrule ${head.slice(0, 7)}: ${MARK}: the check prints what it observed$`, 'm'));
   assert.doesNotMatch(r.stdout, /^Escalation:/m);
   assert.ok(r.stdout.includes(`accept ${jobFile} ${head}`), r.stdout);
-  assert.deepEqual(rows(db, cycleId).slice(-4), ['dispute', 'owner_decision', 'verdict', 'verdict']);
+  assert.deepEqual(rows(db, cycleId).slice(-6), ['dispute', 'owner_decision', 'run_started', 'verdict', 'run_started', 'verdict']);
 });
 
 test('retry reruns the stage the cycle escalated from, with the job\'s checks as they are now (11-d2)', () => {

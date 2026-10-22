@@ -42,13 +42,14 @@ test('outcomeRunId names the run of every outcome event', () => {
     dispute: { type: 'dispute', runId: 'r', head: 'H1', reason: 'x' },
     run_failed: { type: 'run_failed', runId: 'r', reason: 'x' },
     owner_decision: { type: 'owner_decision', action: 'retry', head: 'H1', reason: 'x' },
+    run_started: { type: 'run_started', runId: 'r', runtime: 'fake' },
   };
   assert.deepEqual(Object.keys(samples).sort(), [...EVENT_TYPES].sort());
   for (const e of Object.values(samples)) {
     assert.equal(isEvent(e), true, e.type);
     // An event whose shape requires a run ID is that run's outcome; the store keeps one per run.
-    // The claim is the exception: apply decides a redelivered claim.
-    const outcome = e.type !== 'claim' && !isEvent({ ...e, runId: undefined });
+    // A claim and a run_started are the exceptions: they start a run, and apply decides a redelivery.
+    const outcome = e.type !== 'claim' && e.type !== 'run_started' && !isEvent({ ...e, runId: undefined });
     assert.equal(outcomeRunId(e), outcome ? 'r' : undefined, e.type);
   }
 });
@@ -730,4 +731,37 @@ test('a move consumes every developer run with no outcome, so a late outcome is 
   }
   const next = run(cut, move('retry'), { type: 'claim', runId: 'dev3', base: 'B1', runtime: 'fake' });
   assert.equal(next.runs.at(-1)!.runId, 'dev3');
+});
+
+// Ticket 11-e: a reviewer run is on record before it starts (A-105 item 3), so recover can find it.
+test('run_started in a review stage records the run with the stage\'s role and keeps the stage; a redelivery changes nothing', () => {
+  const c = apply(toStandardReview(), { type: 'run_started', runId: 'R1', runtime: 'claude' });
+  assert.equal(c.stage, 'STANDARD_REVIEW');
+  assert.deepEqual(c.runs.at(-1), { runId: 'R1', role: 'standard_reviewer', runtime: 'claude', input: c.candidate });
+  const again = apply(c, { type: 'run_started', runId: 'R1', runtime: 'claude' });
+  assert.equal(again.stage, 'STANDARD_REVIEW');
+  assert.deepEqual(again.runs, c.runs);
+  // Its verdict consumes it, as a developer's result consumes the claimed run.
+  const v = apply(c, { type: 'verdict', runId: 'R1', head: c.candidate!.head, verdict: 'PASS' });
+  assert.ok(v.consumed.includes('R1'));
+});
+
+test('run_started outside a review stage escalates; a verdict with no run_started is applied as before 11-e', () => {
+  for (const c of [run(newCycle('c1', 'w1'), { type: 'claim', runId: 'D1', base: 'B1', runtime: 'fake' }), run(newCycle('c1', 'w1'), ...TO_STANDARD_REVIEW.slice(0, 2))]) {
+    const e = apply(c, { type: 'run_started', runId: 'R1', runtime: 'claude' });
+    assert.equal(e.stage, 'ESCALATED', c.stage);
+    assert.match(e.escalation ?? '', /run_started outside a review stage/);
+  }
+  const s = toStandardReview();
+  assert.equal(apply(s, { type: 'verdict', runId: 'R9', head: s.candidate!.head, verdict: 'PASS' }).stage, 'ADVERSARIAL_REVIEW');
+});
+
+test('run_started for a run that already has its outcome is ignored', () => {
+  const s = toStandardReview();
+  // The verdict moves the cycle on to the next review stage, where a late start must not add the run again.
+  const passed = apply(apply(s, { type: 'run_started', runId: 'R1', runtime: 'claude' }), { type: 'verdict', runId: 'R1', head: s.candidate!.head, verdict: 'PASS' });
+  assert.equal(passed.stage, 'ADVERSARIAL_REVIEW');
+  const late = apply(passed, { type: 'run_started', runId: 'R1', runtime: 'claude' });
+  assert.equal(late.stage, 'ADVERSARIAL_REVIEW');
+  assert.deepEqual(late.runs, passed.runs);
 });

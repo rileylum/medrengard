@@ -38,7 +38,7 @@ export function checkDeadline(deadlineMs: number): void {
     throw new Error(`deadlineMs must be a positive integer at or below ${MAX_TIMEOUT_MS}, got ${String(deadlineMs)}`);
 }
 
-/** Mint a run ID, claim the cycle for a developer, start the adapter, and record the outcome. */
+/** Mint a run ID, record its start (a claim for a developer, run_started for a reviewer), start the adapter, and record the outcome. */
 export async function execute(
   store: EventStore,
   cycleId: string,
@@ -57,6 +57,10 @@ export async function execute(
     if (!claimed.runs.some((r) => r.runId === runId)) return claimed;
   } else {
     requireStage(store, cycleId, req.role);
+    // Before the launch, so a run whose controller dies is always on record (11-e). As for a
+    // claim: a cycle that did not take the run (settled or escalated meanwhile) launches nothing.
+    const started = store.append(cycleId, { type: 'run_started', runId, runtime: adapter.name });
+    if (!started.runs.some((r) => r.runId === runId)) return started;
   }
   // A store that cannot be read is skipped for that tick: recording the outcome reads it again,
   // and its error surfaces there, not as an uncaught throw from a timer.

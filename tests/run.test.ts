@@ -79,8 +79,8 @@ test('happy path: develop, verify, standard PASS, adversarial PASS end in AWAITI
   assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation ?? r.error);
   assert.equal(r.error, undefined);
   assert.deepEqual([r.cycle.budgets.STANDARD_REVIEW ?? 0, r.cycle.budgets.ADVERSARIAL_REVIEW ?? 0], [1, 1]);
-  assert.equal(r.cycle.runs.length, 1);
-  assert.deepEqual(types(store, r.cycle.cycleId), ['claim', 'developer_result', 'verification', 'verdict', 'verdict']);
+  assert.deepEqual(r.cycle.runs.map((x) => x.role), ['developer', 'standard_reviewer', 'adversarial_reviewer']);
+  assert.deepEqual(types(store, r.cycle.cycleId), ['claim', 'developer_result', 'verification', 'run_started', 'verdict', 'run_started', 'verdict']);
   assert.equal(r.branch, `sf/${r.cycle.cycleId}`);
   assert.equal(r.worktree, join(runsDir, r.cycle.cycleId));
   const head = r.cycle.candidate!.head;
@@ -103,8 +103,8 @@ test('a standard FAIL runs the fix, verifies the new head and reviews it again: 
   const r = await run(store, adapters(dev, standard, adversarial), job(repo), opts(runsDir));
   assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation ?? r.error);
   assert.deepEqual([r.cycle.budgets.STANDARD_REVIEW ?? 0, r.cycle.budgets.ADVERSARIAL_REVIEW ?? 0], [2, 1]);
-  assert.equal(r.cycle.runs.length, 2);
-  assert.deepEqual(types(store, r.cycle.cycleId), ['claim', 'developer_result', 'verification', 'verdict', 'claim', 'developer_result', 'verification', 'verdict', 'verdict']);
+  assert.equal(r.cycle.runs.filter((x) => x.role === 'developer').length, 2);
+  assert.deepEqual(types(store, r.cycle.cycleId), ['claim', 'developer_result', 'verification', 'run_started', 'verdict', 'claim', 'developer_result', 'verification', 'run_started', 'verdict', 'run_started', 'verdict']);
   const [first, second] = store.events(r.cycle.cycleId).filter((e) => e.type === 'verification') as { head: string }[];
   const head = r.cycle.candidate!.head;
   assert.notEqual(first!.head, second!.head);
@@ -137,7 +137,7 @@ test('an adversarial FAIL, a second standard FAIL and a failing check each stop 
     assert.equal(r.cycle.stage, 'ESCALATED');
     assert.deepEqual([r.cycle.budgets.STANDARD_REVIEW ?? 0, r.cycle.budgets.ADVERSARIAL_REVIEW ?? 0], [2, 0]);
     assert.match(r.cycle.escalation ?? '', /STANDARD_REVIEW FAIL at budget limit/);
-    assert.equal(r.cycle.runs.length, 2);
+    assert.equal(r.cycle.runs.filter((x) => x.role === 'developer').length, 2);
     assert.equal(adversarial.requests.length, 0);
     store.close();
   }
@@ -334,7 +334,7 @@ test('another workflow runs from open to its own human stage, with its own role 
   const r = await run(store, { writer, reviewer }, job(repo), opts(runsDir));
   assert.equal(r.cycle.stage, 'OWNER', r.cycle.escalation);
   assert.equal(r.error, undefined);
-  assert.deepEqual(types(store, r.cycle.cycleId), ['claim', 'developer_result', 'verification', 'verdict']);
+  assert.deepEqual(types(store, r.cycle.cycleId), ['claim', 'developer_result', 'verification', 'run_started', 'verdict']);
   assert.deepEqual(reviewer.requests.map((q) => q.role), ['reviewer']);
   assert.deepEqual(writer.requests.map((q) => q.role), ['writer']);
   store.close();
@@ -655,7 +655,7 @@ test('a command stage between a review FAIL and the fix runs: the fix still has 
   const store = new EventStore(join(root, 'notes.sqlite'), afterFail({ kind: 'command', run: [{ name: 'notes', command: ['true'] }], transitions: { PASS: 'DEVELOPING' } }));
   const r = await run(store, adapters(fake(claude), scripted('FAIL', 'PASS'), scripted('PASS')), job(repo), opts(runsDir));
   assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation ?? r.error);
-  assert.equal(r.cycle.runs.length, 2);
+  assert.equal(r.cycle.runs.filter((x) => x.role === 'developer').length, 2);
   store.close();
 });
 
@@ -668,7 +668,7 @@ test('a human stage between a review FAIL and the fix: run stops there, and resu
   store.append(first.cycle.cycleId, { type: 'accept', head: first.cycle.candidate!.head });
   const r = await drive(store, first.cycle.cycleId, roles, job(repo), opts(runsDir));
   assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation ?? r.error);
-  assert.equal(r.cycle.runs.length, 2);
+  assert.equal(r.cycle.runs.filter((x) => x.role === 'developer').length, 2);
   store.close();
 });
 

@@ -280,9 +280,11 @@ for (const spec of [claude, pi]) {
     assert.notEqual(head2, head);
     assert.equal(fixed.cycle.candidate!.base, base);
     assert.equal(fixed.cycle.budgets.STANDARD_REVIEW ?? 0, 1);
-    assert.equal(fixed.cycle.runs.length, 2);
-    assert.deepEqual(fixed.cycle.runs[1]!.input, { head, base });
-    assert.equal(fixed.cycle.runs[1]!.runtime, spec.name);
+    // Between the two developer runs sits the reviewer's, recorded by its run_started (11-e).
+    const developers = fixed.cycle.runs.filter((x) => x.role === 'developer');
+    assert.equal(developers.length, 2);
+    assert.deepEqual(developers[1]!.input, { head, base });
+    assert.equal(developers[1]!.runtime, spec.name);
     assert.equal(git(repo, 'rev-parse', branch), head2);
     assert.equal(git(worktree, 'rev-parse', '--abbrev-ref', 'HEAD'), branch);
     assert.deepEqual(store.load(cycleId), fixed.cycle);

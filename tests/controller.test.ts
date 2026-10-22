@@ -408,3 +408,38 @@ test('a store that cannot be read during the watch skips that tick; the run is a
   assert.equal((store.events('c1').at(-1) as { reason: string }).reason, 'cancelled');
   store.close();
 });
+
+// Ticket 11-e: a reviewer run is on record before it starts, so a run whose controller died can be found.
+test('a reviewer run records run_started with its run ID and runtime before the adapter starts', async () => {
+  const store = fresh();
+  await dev(store, { outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['a'] } } });
+  store.append('c1', { type: 'verification', head: 'H1', checks: PASS_CHECKS });
+  const reviewer = fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', verdict: 'PASS', findings: [] } } });
+  let atStart: string[] = [];
+  const watched = { ...reviewer, start: (r: Parameters<typeof reviewer.start>[0], s: AbortSignal) => { atStart = store.events('c1').map((e) => e.type); return reviewer.start(r, s); } };
+  const c = await execute(store, 'c1', watched, { ...req, role: 'standard_reviewer' }, { deadlineMs: 5000 });
+  assert.equal(atStart.at(-1), 'run_started');
+  const runId = reviewer.requests[0]!.runId;
+  assert.deepEqual(store.events('c1').filter((e) => e.type === 'run_started'), [{ type: 'run_started', runId, runtime: 'fake' }]);
+  assert.deepEqual(c.runs.at(-1), { runId, role: 'standard_reviewer', runtime: 'fake', input: { head: 'H1', base: 'B1' } });
+  assert.ok(c.consumed.includes(runId));
+});
+
+test('a reviewer run the cycle no longer takes when run_started lands launches nothing', async () => {
+  const path = join(dir, `${n++}.sqlite`);
+  // An owner's cancel that lands between execute's stage check and its run_started.
+  class Racing extends EventStore {
+    override append(...args: Parameters<EventStore['append']>) {
+      if (args[1].type === 'run_started') super.append(args[0], { type: 'cancel' });
+      return super.append(...args);
+    }
+  }
+  const store = new Racing(path);
+  store.open('c1', 'w1');
+  await dev(store, { outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['a'] } } });
+  store.append('c1', { type: 'verification', head: 'H1', checks: PASS_CHECKS });
+  const reviewer = fakeAdapter({ outcome: { status: 'completed', claim: { head: 'H1', verdict: 'PASS', findings: [] } } });
+  const c = await execute(store, 'c1', reviewer, { ...req, role: 'standard_reviewer' }, { deadlineMs: 5000 });
+  assert.equal(c.stage, 'CANCELLED');
+  assert.equal(reviewer.requests.length, 0);
+});

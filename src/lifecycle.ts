@@ -119,7 +119,7 @@ export interface Candidate {
 export interface Run {
   runId: string;
   role: Role;
-  /** Which runtime ran it (the adapter's name); spec Run record. Set by the claim; reviewers follow in step 6. */
+  /** Which runtime ran it (the adapter's name); spec Run record. Set by the claim, or by a reviewer's run_started (11-e). */
   runtime?: string;
   /** Candidate the run was given as input; undefined for the first developer run. */
   input?: Candidate;
@@ -128,6 +128,12 @@ export interface Run {
 /** `step` names the stage an event belongs to; without it the event belongs to the current stage. */
 export type Event = (
   | { type: 'claim'; runId: string; base: string; runtime: string }
+  /**
+   * A reviewer run, recorded before it starts (11-e, A-105 item 3), so recovery can find a run whose
+   * controller died. A developer run's start is its claim. A verdict needs none: logs from before
+   * 11-e replay unchanged.
+   */
+  | { type: 'run_started'; runId: string; runtime: string }
   | ({ type: 'developer_result'; runId: string; head?: string; artifacts: string[] } & Partial<RunVersions>)
   /** `files`: each file argument a command ran, by its path beside the workflow, to the SHA-256 of what ran (10-c). */
   /** `grants`: the names the stage held, never the values (10-e). */
@@ -175,6 +181,7 @@ const isCheck = (v: unknown) => obj(v) && str(v.name) && ['PASS', 'FAIL', 'MISSI
 // is the sender's business. Extra fields are tolerated so an older controller can read newer logs.
 const SHAPE: Record<Event['type'], (e: Record<string, unknown>) => boolean> = {
   claim: (e) => str(e.runId) && str(e.base) && str(e.runtime),
+  run_started: (e) => str(e.runId) && str(e.runtime),
   developer_result: (e) => str(e.runId) && arr(e.artifacts, str) && (e.head === undefined || typeof e.head === 'string') && versions(e),
   verification: (e) => str(e.head) && arr(e.checks, isCheck) && (e.grants === undefined || arr(e.grants, str)),
   verdict: (e) => str(e.runId) && str(e.head) && (e.verdict === 'PASS' || e.verdict === 'FAIL') && versions(e),
@@ -459,12 +466,19 @@ export function apply(c: Cycle, e: Event, w: Workflow = defaultWorkflow): Cycle 
       if (c.stage !== 'QUEUED' && !takes(def, 'commit')) return escalate(c, e, 'claim outside QUEUED or a commit stage');
       const target = w.stages[to];
       if (!takes(target, 'commit')) return escalate(c, e, `claim: start stage ${to} does not take a developer run`);
-      // Only claims create runs, so every run here is a commit stage's.
+      // A reviewer's run_started creates a run too, but its verdict, its run_failed or an owner's move
+      // consumes it before the cycle reaches a commit stage again.
       if (c.runs.some((r) => !c.consumed.includes(r.runId)))
         return record(c, e, c.stage, {}, 'ignored: developer run already active');
       const run: Run = { runId: e.runId, role: target.role, runtime: e.runtime, input: c.candidate };
       const patch = { runs: [...c.runs, run], candidate: c.candidate ?? { head: '', base: e.base } };
       return to === c.stage ? record(c, e, to, patch) : enter(w, c, e, to, patch);
+    }
+
+    case 'run_started': {
+      if (c.consumed.includes(e.runId) || c.runs.some((r) => r.runId === e.runId)) return record(c, e, c.stage, {}, 'ignored: run already started');
+      if (!takes(def, 'verdict')) return escalate(c, e, `run_started outside a review stage (in ${c.stage})`);
+      return record(c, e, c.stage, { runs: [...c.runs, { runId: e.runId, role: def.role, runtime: e.runtime, input: c.candidate }] });
     }
 
     case 'developer_result': {
