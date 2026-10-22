@@ -386,6 +386,24 @@ test('readRun polled in a tight loop while the wrapper writes exit sees no statu
   }
 });
 
+test('with a run folder and a 2 MB prompt: a command that exits leaving a descendant on its stdin resolves at once with its own code, and the descendant is dead (11-e2)', async () => {
+  const runDir = join(dir, 'runs', 'stdin-held');
+  const pidFile = join(dir, 'stdin-held.pid');
+  // A background job in a non-interactive sh gets /dev/null as stdin unless it is redirected
+  // explicitly, so the descendant takes fd 0 through fd 3. It reads nothing, so cat stays blocked
+  // on the 2 MB that the pipe cannot hold.
+  const started = Date.now();
+  const r = await spawnRuntime({ command: 'sh', args: ['-c', `exec 3<&0; (sleep 10) <&3 & echo $! > ${pidFile}; exit 4`], prompt: 'x'.repeat(2 * 1024 * 1024), cwd: dir, dir: runDir });
+  const took = Date.now() - started;
+  assert.equal(r.exitCode, 4);
+  assert.ok(took < 1000, `took ${took}ms`);
+  const pid = Number(readFileSync(pidFile, 'utf8'));
+  // Killed, it may stay a zombie a moment before its new parent reaps it.
+  const alive = () => { try { return !/^\d+ \(.*\) Z/.test(readFileSync(`/proc/${pid}/stat`, 'utf8')); } catch { return false; } };
+  for (const end = Date.now() + 1000; alive() && Date.now() < end;) await new Promise((res) => setTimeout(res, 20));
+  assert.equal(alive(), false, `descendant ${pid} is alive`);
+});
+
 test('with a run folder: output past maxOutputBytes stops the run inside the grace bound and reports overflow with nothing kept', async () => {
   const started = Date.now();
   const r = await spawnRuntime({ command: process.execPath, args: [fixture('flood.ts')], prompt: '', cwd: dir, graceMs: 300, maxOutputBytes: 65536, dir: join(dir, 'runs', 'flood') });
