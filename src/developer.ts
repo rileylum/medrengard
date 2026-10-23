@@ -12,7 +12,7 @@ import type { Adapter } from './adapter.ts';
 import { checkDeadline, execute } from './controller.ts';
 import { bounded, git, stopped } from './git.ts';
 import { cyclePaths, mirrorPath, runsRoot } from './layout.ts';
-import { lastVerdictAt, type Cycle, type Event } from './lifecycle.ts';
+import { lastVerdictAt, type Cycle, type Event, type Run } from './lifecycle.ts';
 import { developerPrompt } from './prompt.ts';
 import { checkSandbox, wrap, type Sandbox } from './sandbox.ts';
 import type { EventStore } from './store.ts';
@@ -132,10 +132,7 @@ export async function fix(store: EventStore, adapter: DeveloperAdapter, cycleId:
   const sandbox = opts.sandbox ?? { backend: 'bwrap' };
   checkSandbox(sandbox);
   if (!existsSync(join(worktree, '.git'))) throw new Error(`no clone at ${worktree}; the cycle's branch has nowhere to be fixed`);
-  // A clone made before 11-b2 has every object itself and no mirror to bind; bwrap refuses to bind
-  // a path that does not exist.
-  const objects = join(mirrorPath(opts.runsDir, job.repo), 'objects');
-  const read = existsSync(objects) ? [objects] : [];
+  const read = mirrorRead(job.repo, opts.runsDir);
   // The tip must be the candidate: anything else is a head change outside a fix run, which the
   // spec gives to the owner, not to a run that would quietly build on it.
   const tip = cloneGit(sandbox, worktree, read, opts.deadlineMs, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`);
@@ -277,6 +274,39 @@ function land(repo: string, clone: string, read: string[], branch: string, cycle
 const cut = (head: string) => (head.length <= 64 ? head : `${head.slice(0, 64)} [... ${head.length - 64} characters cut]`);
 
 const shellQuote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
+
+/** The mirror's objects, bound read-only for git in the clone; none for a clone made before 11-b2, which bwrap could not bind. */
+function mirrorRead(repo: string, runsDir: string | undefined): string[] {
+  const objects = join(mirrorPath(runsDir, repo), 'objects');
+  return existsSync(objects) ? [objects] : [];
+}
+
+/**
+ * The check a developer run's claim had at launch, rebuilt from the store for a run that recover
+ * receives (11-f): the base and the previous candidate are the run's input, the clone the layout's.
+ */
+export function landing(job: Job, cycle: Cycle, run: Run, opts: DevelopOptions): (claim: unknown) => string | undefined {
+  const { clone, branch } = cyclePaths(opts.runsDir, cycle.cycleId);
+  const read = mirrorRead(job.repo, opts.runsDir);
+  const base = run.input?.base ?? cycle.candidate!.base;
+  return (claim) => land(job.repo, clone, read, branch, cycle.cycleId, base, run.input?.head, opts.sandbox ?? { backend: 'bwrap' }, opts.deadlineMs, claim);
+}
+
+/**
+ * Keeps the clone's branch tip under `refs/sf-recovery/<runId>` before a gone run is failed
+ * (A-105 item 3), so what it committed survives whatever runs on the branch next. False when there
+ * is no clone or no branch. The clone is writable here, its hooks off: they are the developer's.
+ */
+export function pinTip(job: Job, cycleId: string, runId: string, opts: DevelopOptions): boolean {
+  const { clone, branch } = cyclePaths(opts.runsDir, cycleId);
+  if (!existsSync(join(clone, '.git'))) return false;
+  const args = ['-c', 'core.hooksPath=/dev/null', 'update-ref', `refs/sf-recovery/${runId}`, `refs/heads/${branch}`];
+  const [cmd, argv] = wrap(opts.sandbox ?? { backend: 'bwrap' }, { cwd: clone, write: [clone], read: mirrorRead(job.repo, opts.runsDir), network: false }, 'git', args);
+  const r = spawnSync(cmd, argv, { cwd: clone, stdio: 'ignore', ...bounded(opts.deadlineMs) });
+  const why = stopped(r, opts.deadlineMs);
+  if (why) throw new Error(`git update-ref in ${clone} ${why}`);
+  return r.status === 0;
+}
 
 /**
  * git in the clone through the sandbox, the clone read-only: its config, hooks and fsmonitor are

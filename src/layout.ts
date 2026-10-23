@@ -13,6 +13,9 @@ export const runsRoot = (runsDir: string | undefined): string => resolve(runsDir
 
 export const storeFile = (runsDir: string): string => join(runsDir, 'events.sqlite');
 
+/** Which process drives or recovers each work (11-f). Apart from the store, which keeps one table and no leases. */
+export const lockFile = (runsDir: string | undefined): string => join(runsRoot(runsDir), 'locks.sqlite');
+
 export function cyclePaths(runsDir: string | undefined, cycleId: string) {
   const root = runsRoot(runsDir);
   return {

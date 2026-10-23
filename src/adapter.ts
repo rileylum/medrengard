@@ -38,6 +38,16 @@ export type RunOutcome =
   /** Aborted by us and stopped. */
   | { status: 'cancelled' };
 
+/**
+ * What a started run left, seen by a process that is not its controller (11-f). `stopped`: it
+ * was running and `look` ended it. `gone`: no exit, and nothing holds the run any more.
+ */
+export type Left =
+  | { state: 'running' }
+  | { state: 'stopped' }
+  | { state: 'finished'; outcome: RunOutcome }
+  | { state: 'gone' };
+
 export interface Adapter {
   /** Recorded as `runtime` on the Run by the claim event, and on every outcome event (10-a): `claude`, `pi`, an extension's name, or a test double's. */
   name: string;
@@ -48,4 +58,10 @@ export interface Adapter {
    * way, so an adapter that ignores abort only leaks its own process; it cannot hold a cycle.
    */
   start(req: RunRequest, signal: AbortSignal): Promise<RunOutcome>;
+  /**
+   * Reads a run whose controller is gone from its folder, parsed as `start` would have; with
+   * `stop`, ends a running one first. Absent on an adapter whose runs cannot outlive the
+   * controller (the in-process test doubles): recover takes their runs as gone (11-f).
+   */
+  look?(runId: string, runDir: string, stop: boolean): Promise<Left>;
 }

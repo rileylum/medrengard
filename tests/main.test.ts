@@ -1009,3 +1009,21 @@ test('a move is refused, writing nothing, without a reason, for another head, an
   refused(['retry', jobFile, head, '--reason', 'x'], new RegExp(`cycle ${cycleId} is the parent of cycle child`));
   assert.deepEqual(rows(db, cycleId), before);
 });
+
+// Ticket 11-f: `recover <job.json>` records what the work's started runs left and launches nothing.
+test('recover: no store is nothing to do; a reviewer run that left nothing is failed and the cycle escalates; extra words are refused', () => {
+  const { jobFile, db } = scratch();
+  const none = sf(['recover', jobFile]);
+  assert.equal(none.status, 0, none.stdout + none.stderr);
+  assert.match(none.stdout, /^No event store at .*: nothing to recover$/m);
+  seed(db, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'run_started', runId: 'std9', runtime: 'claude' }]);
+  const r = sf(['recover', jobFile]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Cycle c1: run std9 failed; now ESCALATED$/m);
+  assert.equal(look(db, 'c1').stage, 'ESCALATED');
+  const again = sf(['recover', jobFile]);
+  assert.equal(again.status, 0, again.stdout + again.stderr);
+  assert.match(again.stdout, /^Cycle c1: no started run waiting; ESCALATED$/m);
+  assert.equal(look(db, 'c1').events, 5);
+  assert.equal(sf(['recover', jobFile, 'now']).status, 2);
+});

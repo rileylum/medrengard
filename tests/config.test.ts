@@ -445,3 +445,20 @@ test('a repository workflow at the head of an unmerged branch the owner made, or
   assert.deepEqual((await loadConfig(jobFile, env)).workflow, ownerCheck);
   assert.ok(existsSync(marker));
 });
+
+// Ticket 11-f: whether recover receives a run that finished with no controller (A-122) is the
+// owner's: the personal and job layers set it, a repository may not.
+test('adopt comes from the personal or job layer; a repository layer is refused; a non-boolean is refused', async () => {
+  const a = scratch();
+  assert.equal((await loadConfig(a.jobFile, a.env)).spec.adopt, undefined);
+  writeJson(a.personal, { adopt: false });
+  assert.equal((await loadConfig(a.jobFile, a.env)).spec.adopt, false);
+  writeJson(a.jobFile, { workId: 'w', ticket: 'x', repo: 'repo', adopt: true });
+  assert.equal((await loadConfig(a.jobFile, a.env)).spec.adopt, true);
+  const b = scratch();
+  commitRepoLayer(b.repo, { adopt: false });
+  await assert.rejects(loadConfig(b.jobFile, b.env), /: adopt may not be set here; allowed: checks, workflow, runtime$/);
+  const c = scratch();
+  writeJson(c.jobFile, { workId: 'w', ticket: 'x', repo: 'repo', adopt: 'yes' });
+  await assert.rejects(loadConfig(c.jobFile, c.env), /adopt must be true or false/);
+});
