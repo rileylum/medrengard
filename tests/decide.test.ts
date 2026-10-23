@@ -699,7 +699,7 @@ test('cycles lists a cycle the store cannot replay with the reason, and open sti
     assert.equal(c0!.cycleId, 'c0');
     assert.equal(c0!.stage, undefined);
     assert.match(c0!.refused ?? '', /row 1 \(claim\) was recorded at ACCEPTED/);
-    assert.throws(() => store.open('c1', 'w'), /c0/);
+    assert.throws(() => store.open('c1', 'w'), /^Error: work w has cycle c0, which the store cannot replay: cycle c0 row 1/);
     assert.deepEqual(store.cycles('w').map((c) => c.cycleId), ['c0']);
   } finally {
     store.close();
