@@ -54,8 +54,16 @@ export async function recover(store: EventStore, workId: string, adapterFor: (ru
   }
   try {
     const out: Recovered[] = [];
-    // One cycle the store cannot replay is the owner's; it hides none of the others.
-    for (const c of cycles) out.push(c.refused === undefined ? await resolve(store, c.cycleId, adapterFor, job, opts) : { cycleId: c.cycleId, did: 'refused', reason: c.refused });
+    // One cycle the store cannot replay, or whose recovery throws (a workflow mismatch, an adapter
+    // that cannot be built, git past its deadline), is the owner's; it hides none of the others.
+    for (const c of cycles) {
+      if (c.refused !== undefined) { out.push({ cycleId: c.cycleId, did: 'refused', reason: c.refused }); continue; }
+      try {
+        out.push(await resolve(store, c.cycleId, adapterFor, job, opts));
+      } catch (err) {
+        out.push({ cycleId: c.cycleId, did: 'refused', reason: err instanceof Error ? err.message : String(err) });
+      }
+    }
     return out;
   } finally {
     release();
@@ -63,9 +71,14 @@ export async function recover(store: EventStore, workId: string, adapterFor: (ru
 }
 
 async function resolve(store: EventStore, cycleId: string, adapterFor: Parameters<typeof recover>[2], job: Job, opts: RecoverOptions): Promise<Recovered> {
-  const cycle = store.load(cycleId)!;
-  const waiting = cycle.runs.filter((r) => !cycle.consumed.includes(r.runId));
+  // drivable, not load: an outcome recorded under another workflow would be counted against stages
+  // the cycle does not have, so a mismatch is refused before anything is looked at.
+  const cycle = store.drivable(cycleId);
   let done: Recovered = { cycleId, did: 'nothing', stage: cycle.stage };
+  // Only an agent stage waits on its run. Anywhere else (ESCALATED, a human stage) a run can still be
+  // listed unconsumed, but the cycle is the owner's: nothing is looked at, stopped or recorded.
+  if (store.workflow.stages[cycle.stage]?.kind !== 'agent') return done;
+  const waiting = cycle.runs.filter((r) => !cycle.consumed.includes(r.runId));
   for (const run of waiting) {
     const found = run.runtime === undefined ? undefined : adapterFor(run.runtime, run.role);
     if (!found) return { cycleId, did: 'refused', runId: run.runId, reason: `run ${run.runId}: runtime ${run.runtime ?? '(none recorded)'} is not in the registry` };
@@ -80,10 +93,12 @@ async function resolve(store: EventStore, cycleId: string, adapterFor: Parameter
       done = { cycleId, did: 'received', runId: run.runId, stage: receive(store, cycleId, run.runId, run.role, left.outcome, accept, versions).stage };
       continue;
     }
-    // What a gone developer run committed survives the next run on its branch (A-105 item 3).
-    if (left.state === 'gone' && commit) pinTip(job, cycleId, run.runId, opts);
+    // What a developer run committed survives the next run on its branch, whatever ended it with no
+    // outcome (A-105 item 3); a tip that could not be pinned is said, not silently skipped.
+    const unpinned = commit ? pinTip(job, cycleId, run.runId, opts) : undefined;
     const reason = left.state === 'finished' ? 'controller died; adoption is off' : left.state === 'stopped' ? 'stopped by recover' : 'controller died; the run left no exit';
-    done = { cycleId, did: 'failed', runId: run.runId, stage: store.append(cycleId, { type: 'run_failed', runId: run.runId, reason, ...versions }).stage };
+    const stage = store.append(cycleId, { type: 'run_failed', runId: run.runId, reason, ...versions }).stage;
+    done = { cycleId, did: 'failed', runId: run.runId, stage, ...(unpinned === undefined ? {} : { reason: `no branch tip pinned: ${unpinned}` }) };
   }
   return done;
 }

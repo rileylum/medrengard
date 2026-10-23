@@ -17,6 +17,7 @@ import { readRun } from '../src/runtime/spawn.ts';
 import { EventStore } from '../src/store.ts';
 import { holder, kill } from './lock-holder.ts';
 import { toStandardReview } from './scenarios.ts';
+import { ownerCheck } from './workflows.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-recover-');
@@ -242,13 +243,17 @@ execute(new EventStore(o.db), 'c1', cliAdapter({ ...claude, command: 'sh', args:
     const store = new EventStore(db);
     const runId = store.load('c1')!.runs.at(-1)!.runId;
     await finished(runDir(runsDir, runId));
-    const [r] = await recover(store, 'w1', () => cliAdapter({ ...claude, command: 'false', args: [] }, { isolation }), job, options(runsDir));
+    const parse = () => cliAdapter({ ...claude, command: 'false', args: [] }, { isolation });
+    const [r] = await recover(store, 'w1', parse, job, options(runsDir));
     assert.deepEqual(r, { cycleId: 'c1', did: 'received', runId, stage: 'ADVERSARIAL_REVIEW' });
+    const length = store.events('c1').length;
+    assert.deepEqual(await recover(store, 'w1', parse, job, options(runsDir)), [{ cycleId: 'c1', did: 'nothing', stage: 'ADVERSARIAL_REVIEW' }]);
+    assert.equal(store.events('c1').length, length);
     store.close();
   });
 }
 
-test('a developer run gone with its controller: the clone\'s branch tip is pinned under refs/sf-recovery/<runId>, then run_failed', async () => {
+for (const [left, adopt, reason] of [[undefined, true, /controller died; the run left no exit/], [{ state: 'stopped' }, true, /stopped by recover/], [{ state: 'finished', outcome: { status: 'completed', claim: {} } }, false, /adoption is off/]] as const) test(`a developer run failed by recover (${left?.state ?? 'gone'}${adopt ? '' : ', adopt off'}): the clone's branch tip is pinned under refs/sf-recovery/<runId>, then run_failed`, async () => {
   const { repo, db, runsDir, base } = scratch();
   const j: Job = { workId: 'w1', ticket: 'x', repo };
   // An in-process adapter: the run dies with its controller and leaves no folder (parked 05-b).
@@ -260,10 +265,60 @@ develop(new EventStore(o.db), { name: 'gone', start: () => process.kill(process.
   const [{ cycleId }] = store.cycles('w1');
   const runId = store.load(cycleId!)!.runs[0]!.runId;
   assert.equal(existsSync(runDir(runsDir, runId)), false);
-  const [r] = await recover(store, 'w1', () => ({ name: 'gone', start: () => { throw new Error('recover started a run'); } }), j, options(runsDir));
+  const adapter: Adapter = left === undefined ? { name: 'gone', start: () => { throw new Error('recover started a run'); } } : looking(left as Left);
+  const [r] = await recover(store, 'w1', () => adapter, j, options(runsDir, { adopt, stop: left?.state === 'stopped' }));
   assert.deepEqual(r, { cycleId, did: 'failed', runId, stage: 'ESCALATED' });
-  assert.match(store.load(cycleId!)!.escalation ?? '', /controller died; the run left no exit/);
+  assert.match(store.load(cycleId!)!.escalation ?? '', reason);
   assert.equal(git(cyclePaths(runsDir, cycleId!).clone, 'rev-parse', `refs/sf-recovery/${runId}`), base);
   assert.deepEqual(readdirSync(runsDir).filter((e) => e === 'runs'), []);
   store.close();
+});
+
+// Standard 1: a cycle a driver no longer runs is the owner's, whatever runs it still lists.
+test('an ESCALATED cycle with a started run and no outcome is left untouched: nothing is looked at or recorded', async () => {
+  const { store, runsDir } = reviewing();
+  store.append('c1', { type: 'base_changed', base: 'B2' });
+  assert.equal(store.load('c1')!.stage, 'ESCALATED');
+  const length = store.events('c1').length;
+  const a = looking({ state: 'finished', outcome: pass });
+  for (let i = 0; i < 2; i++) assert.deepEqual(await recover(store, 'w1', () => a, job, options(runsDir, { stop: true })), [{ cycleId: 'c1', did: 'nothing', stage: 'ESCALATED' }]);
+  assert.deepEqual(a.calls, []);
+  assert.equal(store.events('c1').length, length);
+  store.close();
+});
+
+test('a gone developer run with no clone is failed, and the result says no tip was pinned', async () => {
+  const root = join(dir, String(n++));
+  mkdirSync(root, { recursive: true });
+  const store = new EventStore(join(root, 'events.sqlite'));
+  store.open('c1', 'w1');
+  store.append('c1', toStandardReview[0]!);
+  const [r] = await recover(store, 'w1', () => looking({ state: 'gone' }), { ...job, repo: root }, options(join(root, 'runs')));
+  assert.deepEqual(r, { cycleId: 'c1', did: 'failed', runId: 'dev1', stage: 'ESCALATED', reason: 'no branch tip pinned: no clone' });
+  store.close();
+});
+
+test('a cycle whose recovery throws (an adapter that cannot be built, a workflow mismatch) is refused, and the work\'s other cycles still run', async () => {
+  const root = join(dir, String(n++));
+  mkdirSync(root, { recursive: true });
+  const store = new EventStore(join(root, 'events.sqlite'));
+  store.open('c0', 'w1');
+  store.append('c0', toStandardReview[0]!);
+  store.append('c0', { type: 'run_failed', runId: 'dev1', reason: 'x' });
+  store.open('c1', 'w1', 'c0');
+  for (const e of toStandardReview) store.append('c1', e);
+  store.append('c1', { type: 'run_started', runId: 'sr1', runtime: 'fake' });
+  const out = await recover(store, 'w1', () => { throw new Error('cgroup isolation needs systemd-run --user --scope'); }, job, options(join(root, 'runs')));
+  assert.deepEqual(out, [{ cycleId: 'c0', did: 'nothing', stage: 'ESCALATED' }, { cycleId: 'c1', did: 'refused', reason: 'cgroup isolation needs systemd-run --user --scope' }]);
+  store.close();
+  // Opened under the default workflow, recovered by a store that runs another: each cycle is
+  // refused with the mismatch, and nothing is looked at or recorded.
+  const other = new EventStore(join(root, 'events.sqlite'), ownerCheck);
+  const a = looking({ state: 'finished', outcome: pass });
+  const mismatched = await recover(other, 'w1', () => a, job, options(join(root, 'runs')));
+  assert.deepEqual(mismatched.map((r) => r.did), ['refused', 'refused']);
+  assert.match(mismatched[1]!.reason ?? '', /was opened under workflow/);
+  assert.deepEqual(a.calls, []);
+  assert.equal(other.events('c1').length, toStandardReview.length + 1);
+  other.close();
 });

@@ -147,10 +147,12 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
 }
 
 /**
- * The processes holding `file` open, by a scan of /proc/<pid>/fd: under process-group isolation
- * the one sign that a run whose wrapper died is still going (11-f probe: a holder inside bwrap's
- * PID namespace or in its own session shows the host path; about 25 ms for 4,000 descriptors).
- * Only this user's processes are readable, which are the only ones a run can be.
+ * The processes holding `file` open for writing, by a scan of /proc/<pid>/fd: under process-group
+ * isolation the one sign that a run whose wrapper died is still going (11-f probe: a holder inside
+ * bwrap's PID namespace or in its own session shows the host path; about 25 ms for 4,000
+ * descriptors). Writers only: the run's processes inherit the file as their stdout, opened for
+ * writing, and a reader (the owner tailing it) is neither the run nor a process to kill. Only this
+ * user's processes are readable, which are the only ones a run can be.
  */
 function holders(file: string): number[] {
   const pids: number[] = [];
@@ -158,9 +160,15 @@ function holders(file: string): number[] {
     if (!/^\d+$/.test(pid)) continue;
     let fds: string[];
     try { fds = readdirSync(`/proc/${pid}/fd`); } catch { continue; }
-    if (fds.some((fd) => { try { return readlinkSync(`/proc/${pid}/fd/${fd}`) === file; } catch { return false; } })) pids.push(Number(pid));
+    if (fds.some((fd) => { try { return readlinkSync(`/proc/${pid}/fd/${fd}`) === file && writes(pid, fd); } catch { return false; } })) pids.push(Number(pid));
   }
   return pids;
+}
+
+/** Whether descriptor `fd` of `pid` is open for writing: O_WRONLY or O_RDWR in fdinfo's octal `flags`. */
+function writes(pid: string, fd: string): boolean {
+  const flags = /^flags:\s*([0-7]+)$/m.exec(readFileSync(`/proc/${pid}/fdinfo/${fd}`, 'utf8'))?.[1];
+  return flags !== undefined && (parseInt(flags, 8) & 0o3) !== 0;
 }
 
 /** Processes in a unit, by name: `scopePath` is beside this process's cgroup, which need not be the controller's. */

@@ -588,3 +588,20 @@ test('clearEmptyUnits resets a named scope systemd stopped at its time limit, le
     spawnSync('systemctl', ['--user', 'reset-failed', `${prefix}-live.scope`, `${prefix}-failed.scope`, `${prefix}-other.scope`]);
   }
 });
+
+test('look: a process that only reads stdout (the owner tailing it) is not the run: a folder with no writer is gone, and stop leaves the reader alone (11-f, standard 1)', async () => {
+  const runDir = join(dir, 'look', 'tailed');
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, 'stdout'), '');
+  const read = openSync(join(runDir, 'stdout'), 'r');
+  const reader = spawn('sleep', ['30'], { detached: true, stdio: [read, 'ignore', 'ignore'] });
+  closeSync(read);
+  reader.unref();
+  try {
+    assert.deepEqual(await lookAt().look!('tailed', runDir, false), { state: 'gone' });
+    assert.deepEqual(await lookAt().look!('tailed', runDir, true), { state: 'gone' });
+    assert.ok(alive(reader.pid!), 'stop killed a process that only read the run\'s output');
+  } finally {
+    if (alive(reader.pid!)) process.kill(reader.pid!, 'SIGKILL');
+  }
+});

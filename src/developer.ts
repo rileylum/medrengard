@@ -293,19 +293,19 @@ export function landing(job: Job, cycle: Cycle, run: Run, opts: DevelopOptions):
 }
 
 /**
- * Keeps the clone's branch tip under `refs/sf-recovery/<runId>` before a gone run is failed
- * (A-105 item 3), so what it committed survives whatever runs on the branch next. False when there
- * is no clone or no branch. The clone is writable here, its hooks off: they are the developer's.
+ * Keeps the clone's branch tip under `refs/sf-recovery/<runId>` before a run recover ends is failed
+ * (A-105 item 3), so what it committed survives whatever runs on the branch next. Returns why no
+ * ref was made, undefined once it is. The clone is writable here, its hooks off: they are the developer's.
  */
-export function pinTip(job: Job, cycleId: string, runId: string, opts: DevelopOptions): boolean {
+export function pinTip(job: Job, cycleId: string, runId: string, opts: DevelopOptions): string | undefined {
   const { clone, branch } = cyclePaths(opts.runsDir, cycleId);
-  if (!existsSync(join(clone, '.git'))) return false;
+  if (!existsSync(join(clone, '.git'))) return 'no clone';
   const args = ['-c', 'core.hooksPath=/dev/null', 'update-ref', `refs/sf-recovery/${runId}`, `refs/heads/${branch}`];
   const [cmd, argv] = wrap(opts.sandbox ?? { backend: 'bwrap' }, { cwd: clone, write: [clone], read: mirrorRead(job.repo, opts.runsDir), network: false }, 'git', args);
   const r = spawnSync(cmd, argv, { cwd: clone, stdio: 'ignore', ...bounded(opts.deadlineMs) });
   const why = stopped(r, opts.deadlineMs);
   if (why) throw new Error(`git update-ref in ${clone} ${why}`);
-  return r.status === 0;
+  return r.status === 0 ? undefined : `git update-ref exited ${r.status} (no ${branch}?)`;
 }
 
 /**
