@@ -7,7 +7,7 @@
 import type { Adapter } from './adapter.ts';
 import { develop, fix, type DeveloperAdapter, type Job } from './developer.ts';
 import { cyclePaths } from './layout.ts';
-import { holdWork, waitForWork } from './lock.ts';
+import { holdWork, Locked, waitForWork } from './lock.ts';
 import { apply, type Cycle, type Event, type Role, type Stage, type Workflow } from './lifecycle.ts';
 import { review } from './review.ts';
 import { checkSandbox, type Sandbox } from './sandbox.ts';
@@ -111,8 +111,18 @@ export async function decideAndDrive(store: EventStore, cycleId: string, event: 
   const def = w.stages[next.stage];
   if (def?.kind === 'command' && (def.grants ?? []).length > 0) headGate(next, w);
   // Before the write, so a refusal writes nothing, as for preflight. Waited for, as the store's
-  // write lock is: a second delivery of the same command must still get the store's answer.
-  const release = await waitForWork(opts.runsDir, now.workId, OWNER_WAIT_MS);
+  // write lock is. A drive outlasts the wait (a fix or review run takes minutes), so a delivery
+  // still locked out gets the store's answer first: "already recorded" for a command it holds,
+  // StaleLoad for a load the cycle has left; only a new command meets the lock (11-f, standard 2).
+  let release: () => void;
+  try {
+    release = await waitForWork(opts.runsDir, now.workId, OWNER_WAIT_MS);
+  } catch (err) {
+    if (!(err instanceof Locked)) throw err;
+    const held = store.answer(cycleId, event, loaded);
+    if (held) return { cycle: held, written: false };
+    throw err;
+  }
   try {
     const { cycle, written } = store.write(cycleId, event, loaded);
     // Not written: another delivery of the same command recorded it first and drives the cycle.

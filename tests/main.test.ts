@@ -1046,3 +1046,45 @@ test('recover clears the failed unit of a run under its runsDir, by the run fold
     spawnSync('systemctl', ['--user', 'reset-failed', `sf-${runId}.scope`]);
   }
 });
+
+// 11-f standard 2: the work's lock waits 5 s, but a drive (a fix or review run) takes minutes. A
+// delivery still waiting when the wait ends gets the store's answer, not the lock's.
+const SLOW_MERGES = `sleep 7; ${MERGES}`;
+const deliver = (jobFile: string, head: string, env: NodeJS.ProcessEnv, extra: string[] = []) => new Promise<{ code: number | null; out: string }>((done) => {
+  const child = spawn(process.execPath, [MAIN, 'accept', jobFile, head, ...extra], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  child.stdout.on('data', (d) => (out += d));
+  child.stderr.on('data', (d) => (out += d));
+  child.on('close', (code) => done({ code, out }));
+});
+
+test('a command ID delivered again while its first delivery drives past the lock wait is "Already recorded", exit 0 (11-f, standard 2)', async () => {
+  const { env, jobFile, head, db, cycleId } = atOwnerBeforeGrant(SLOW_MERGES);
+  const lock = new DatabaseSync(db);
+  lock.exec('BEGIN IMMEDIATE');
+  const both = Promise.all([deliver(jobFile, head, env, ['--command-id', 'same']), deliver(jobFile, head, env, ['--command-id', 'same'])]);
+  await new Promise((r) => setTimeout(r, 2500));
+  lock.exec('COMMIT');
+  lock.close();
+  const results = await both;
+  const all = results.map((r) => r.out).join('\n---\n');
+  for (const r of results) assert.equal(r.code, 0, all);
+  assert.equal(results.filter((r) => /^Already recorded: command same$/m.test(r.out)).length, 1, all);
+  assert.deepEqual(rows(db, cycleId).filter((t) => t === 'accept'), ['accept']);
+  assert.equal(look(db, cycleId).stage, 'ACCEPTED');
+});
+
+test('of two different accepts, the one still waiting when the other drives past the lock wait gets "run the command again", not the lock (11-f, standard 2)', async () => {
+  const { env, jobFile, head, db, cycleId } = atOwnerBeforeGrant(SLOW_MERGES);
+  const lock = new DatabaseSync(db);
+  lock.exec('BEGIN IMMEDIATE');
+  const both = Promise.all([deliver(jobFile, head, env), deliver(jobFile, head, env)]);
+  await new Promise((r) => setTimeout(r, 2500));
+  lock.exec('COMMIT');
+  lock.close();
+  const results = (await both).sort((a, b) => (a.code ?? 9) - (b.code ?? 9));
+  assert.equal(results[0]!.code, 0, results[0]!.out);
+  assert.equal(results[1]!.code, 2, results[1]!.out);
+  assert.match(results[1]!.out, new RegExp(`cycle ${cycleId} moved since it was loaded: \\d+ events, not \\d+; nothing was written; run the command again`));
+  assert.deepEqual(rows(db, cycleId).filter((t) => t === 'accept'), ['accept']);
+});
