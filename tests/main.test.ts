@@ -10,6 +10,9 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Event } from '../src/lifecycle.ts';
 import { EventStore } from '../src/store.ts';
 import { reviewerStub } from './stub-cli.ts';
+import { holder, kill } from './lock-holder.ts';
+import { develop } from '../src/developer.ts';
+import { claude, cliAdapter } from '../src/runtime/cli-adapter.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-main-');
@@ -1087,4 +1090,68 @@ test('of two different accepts, the one still waiting when the other drives past
   assert.equal(results[1]!.code, 2, results[1]!.out);
   assert.match(results[1]!.out, new RegExp(`cycle ${cycleId} moved since it was loaded: \\d+ events, not \\d+; nothing was written; run the command again`));
   assert.deepEqual(rows(db, cycleId).filter((t) => t === 'accept'), ['accept']);
+});
+
+// Ticket 11-f2: resume drives the work's open cycle on from its stage, and only there: a human stage
+// or an escalated cycle is the owner's, and a started run with no outcome is recover's.
+test('resume at a human stage prints the next steps and drives nothing; on an escalated cycle it prints the owner\'s moves', () => {
+  const { jobFile, db } = scratch();
+  seed(db, 'c0', ESCALATE);
+  const esc = sf(['resume', jobFile]);
+  assert.equal(esc.status, 1, esc.stdout + esc.stderr);
+  assert.match(esc.stdout, /^Stage: ESCALATED$/m);
+  assert.match(esc.stdout, /^Escalation: run failed: timeout$/m);
+  for (const move of ['retry', 'overrule', 'route', 'cancel']) assert.match(esc.stdout, new RegExp(`^  node \\S+ ${move} ${jobFile}`, 'm'));
+  assert.equal(look(db, 'c0').events, ESCALATE.length);
+  seed(db, 'c1', TO_ACCEPTANCE, 'c0');
+  const human = sf(['resume', jobFile]);
+  assert.equal(human.status, 0, human.stdout + human.stderr);
+  assert.match(human.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+  assert.ok(human.stdout.includes(`accept ${jobFile} ${H}`), human.stdout);
+  assert.equal(look(db, 'c1').events, TO_ACCEPTANCE.length);
+  assert.equal(sf(['resume', jobFile, 'now']).status, 2);
+});
+
+test('resume refuses a cycle with a started run and no outcome, saying to run recover, and with no cycle says there is nothing to resume', () => {
+  const { jobFile, db } = scratch();
+  const none = sf(['resume', jobFile]);
+  assert.equal(none.status, 2, none.stdout + none.stderr);
+  assert.match(none.stderr, /^nothing to resume for work w in /m);
+  seed(db, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'run_started', runId: 'std9', runtime: 'claude' }]);
+  const r = sf(['resume', jobFile]);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /run std9 started and has no outcome; run recover/);
+  assert.equal(look(db, 'c1').events, 4);
+});
+
+test('resume drives a cycle left at VERIFYING to its human stage, refusing first a changed ticket and a work another process holds', async () => {
+  const { root, repo, runsDir, jobFile, db } = scratch();
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+  const store = new EventStore(db);
+  const dev = cliAdapter({ ...claude, command: join(bin, 'claude') }, { isolation: 'process-group' });
+  const opened = await develop(store, dev, { workId: 'w', ticket: 'x', repo, checks: [{ name: 'ok', command: ['true'] }] }, { deadlineMs: 20_000, runsDir });
+  store.close();
+  assert.equal(opened.cycle.stage, 'VERIFYING', opened.cycle.escalation);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...job, ticket: 'y' }));
+  const changed = sf(['resume', jobFile], env);
+  assert.equal(changed.status, 2, changed.stdout + changed.stderr);
+  assert.match(changed.stderr, /the job's ticket changed since the cycle opened/);
+  writeFileSync(jobFile, JSON.stringify(job));
+  const child = await holder(runsDir, 'w');
+  try {
+    const locked = sf(['resume', jobFile], env);
+    assert.equal(locked.status, 2, locked.stdout + locked.stderr);
+    assert.match(locked.stderr, new RegExp(`^work w is held by process ${child.pid}`, 'm'));
+  } finally {
+    await kill(child);
+  }
+  assert.equal(look(db, opened.cycle.cycleId).stage, 'VERIFYING');
+  const r = sf(['resume', jobFile], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+  assert.match(r.stdout, /^verification [0-9a-f]{7}: ok PASS$/m);
 });

@@ -15,6 +15,7 @@
 // command takes `--command-id`, which the store records once per cycle.
 // Ticket 11-d2: `retry`, `overrule` and `route` move an escalated cycle on, with the owner's reason.
 // Ticket 11-f: `recover <job.json> [--stop]` records what the work's started runs left; it never launches one.
+// Ticket 11-f2: `resume <job.json>` drives the work's open cycle on from its stage; it never relaunches a started run.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { join, resolve } from 'node:path';
@@ -23,16 +24,16 @@ import { acceptEvent, cancelWork, humanStages, moveEvent, requestChangesEvent, t
 import { oneLine, type Job } from './developer.ts';
 import { printable } from './prompt.ts';
 import { cyclePaths, storeFile } from './layout.ts';
-import { defaultWorkflow, isSource, MOVE_ACTIONS, producedBy, type Cycle, type MoveAction, type Workflow } from './lifecycle.ts';
+import { defaultWorkflow, isSource, MOVE_ACTIONS, producedBy, STOPPED, type Cycle, type MoveAction, type Workflow } from './lifecycle.ts';
 import { recover, type Recovered } from './recover.ts';
-import { decideAndDrive, ROLE_ALIASES, run, type Adapters, type RunOptions, type RunResult } from './run.ts';
+import { decideAndDrive, resume, ROLE_ALIASES, run, type Adapters, type RunOptions, type RunResult } from './run.ts';
 import { clearEmptyUnits } from './runtime/cli-adapter.ts';
 import { runtimeFor, type RuntimeEntry } from './runtime/registry.ts';
 import type { Sandbox } from './sandbox.ts';
 import { EventStore, openings, StaleLoad, workflowHash } from './store.ts';
 import { FOLLOW_MS, openStream, storeReady } from './stream.ts';
 
-const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> [--source <name>] [--command-id <id>] | request-changes <job.json> <sha> [--source <name>] [--command-id <id>] | cancel <job.json> [--source <name>] [--command-id <id>] | retry <job.json> <sha> --reason <text> [--source <name>] [--command-id <id>] | overrule <job.json> <sha> --reason <text> [--source <name>] [--command-id <id>] | route <job.json> <sha> <stage> --reason <text> [--source <name>] [--command-id <id>] | events <job.json | runsDir> [--after <seq>] [--follow] | recover <job.json> [--stop]';
+const USAGE = 'usage: node src/main.ts <job.json> | accept <job.json> <sha> [--source <name>] [--command-id <id>] | request-changes <job.json> <sha> [--source <name>] [--command-id <id>] | cancel <job.json> [--source <name>] [--command-id <id>] | retry <job.json> <sha> --reason <text> [--source <name>] [--command-id <id>] | overrule <job.json> <sha> --reason <text> [--source <name>] [--command-id <id>] | route <job.json> <sha> <stage> --reason <text> [--source <name>] [--command-id <id>] | events <job.json | runsDir> [--after <seq>] [--follow] | recover <job.json> [--stop] | resume <job.json>';
 
 /** One adapter per agent role, from `runtime[role]` or the alias that names the role. */
 function adaptersFor(w: Workflow, registry: Record<string, RuntimeEntry>, runtime: JobFile['runtime'], sandbox: Sandbox): Adapters {
@@ -325,6 +326,42 @@ async function recoverWork(file: string, stop: boolean): Promise<number> {
   }
 }
 
+/**
+ * Drives the work's open cycle on from its stage (11-f2): the command a controller that died
+ * leaves the owner, once recover has recorded what its runs left. A human stage or an escalated
+ * cycle is printed with the owner's next commands and not driven; they build no adapter.
+ */
+async function resumeWork(file: string): Promise<number> {
+  const config = await decisionConfig(file);
+  const { path, spec, runsDir, workflow, registry, sandbox } = config;
+  const store = existingStore(runsDir, workflow);
+  try {
+    const all = store?.cycles(spec.workId) ?? [];
+    const target = all.find((c) => c.stage !== undefined && !STOPPED.includes(c.stage)) ?? all.findLast((c) => c.stage === 'ESCALATED');
+    if (!store || !target) throw new Error(`nothing to resume for work ${spec.workId} in ${runsDir}`);
+    const { cycleId, stage } = target;
+    // QUEUED goes to drive, which says why it cannot continue one.
+    const kind = workflow.stages[stage!]?.kind;
+    if (kind !== 'agent' && kind !== 'command' && stage !== 'QUEUED') {
+      const { clone, branch } = cyclePaths(runsDir, cycleId);
+      const cycle = store.load(cycleId)!;
+      const code = report({ cycle, worktree: clone, branch }, config);
+      if (stage !== 'ESCALATED') return code;
+      const head = cycle.candidate?.head || '<sha>';
+      console.log('');
+      console.log('The cycle is yours to move on, or to cancel:');
+      for (const action of MOVE_ACTIONS) console.log(`  node ${process.argv[1]} ${action} ${path} ${head}${action === 'route' ? ' <stage>' : ''} --reason <text>`);
+      console.log(`  node ${process.argv[1]} cancel ${path}`);
+      return code;
+    }
+    const r = await resume(store, cycleId, adaptersFor(workflow, registry, spec.runtime, sandbox), jobOf(config), optionsOf(config));
+    if (r.warning) console.log(`Warning: ${r.warning}`);
+    return report(r, config);
+  } finally {
+    store?.close();
+  }
+}
+
 /** Runs one command; returns its exit code, or throws a message for the owner. */
 export async function main(argv: string[]): Promise<number> {
   const [first, ...rest] = argv;
@@ -345,6 +382,10 @@ export async function main(argv: string[]): Promise<number> {
   if (first === 'recover') {
     if (rest.length === 0 || rest.length > 2 || (rest.length === 2 && rest[1] !== '--stop')) throw new Error(USAGE);
     return recoverWork(rest[0]!, rest.length === 2);
+  }
+  if (first === 'resume') {
+    if (rest.length !== 1) throw new Error(USAGE);
+    return resumeWork(rest[0]!);
   }
   // Extra words are refused, not ignored: `job.json cancel` would otherwise start a paid run.
   if (!first || rest.length !== 0) throw new Error(USAGE);
