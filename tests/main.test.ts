@@ -1027,3 +1027,22 @@ test('recover: no store is nothing to do; a reviewer run that left nothing is fa
   assert.equal(look(db, 'c1').events, 5);
   assert.equal(sf(['recover', jobFile, 'now']).status, 2);
 });
+
+test('recover clears the failed unit of a run under its runsDir, by the run folder\'s name (parked 04-e, 11-e)', async (t) => {
+  if (spawnSync('systemd-run', ['--user', '--scope', '-q', 'true']).status !== 0) return void t.skip('no user systemd');
+  const { jobFile, runsDir } = scratch();
+  const runId = `test-${process.pid}-main-recover`;
+  mkdirSync(join(runsDir, 'runs', runId), { recursive: true });
+  const show = () => spawnSync('systemctl', ['--user', 'show', `sf-${runId}.scope`, '-p', 'ActiveState', '-p', 'LoadState'], { encoding: 'utf8' }).stdout;
+  try {
+    spawnSync('systemd-run', ['--user', '--scope', '-q', `--unit=sf-${runId}`, '-p', 'RuntimeMaxSec=1', '--', 'sleep', '30']);
+    for (const end = Date.now() + 3000; Date.now() < end && !/^ActiveState=failed$/m.test(show()); ) await new Promise((res) => setTimeout(res, 50));
+    seed(join(runsDir, 'events.sqlite'), 'c1', TO_ACCEPTANCE.slice(0, 3));
+    const r = sf(['recover', jobFile]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, new RegExp(`^Cleared empty units: sf-${runId}\\.scope$`, 'm'));
+    assert.match(show(), /^LoadState=not-found$/m);
+  } finally {
+    spawnSync('systemctl', ['--user', 'reset-failed', `sf-${runId}.scope`]);
+  }
+});

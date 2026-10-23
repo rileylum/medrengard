@@ -566,23 +566,25 @@ test('cgroup look: a scope with tasks is running even when nothing holds stdout;
 
 const unit = (runId: string) => spawnSync('systemctl', ['--user', 'show', `sf-${runId}.scope`, '-p', 'ActiveState', '-p', 'LoadState'], { encoding: 'utf8' }).stdout;
 
-test('clearEmptyUnits resets a scope systemd stopped at its time limit and leaves one with tasks running (parked 04-e, 11-e2)', async (t) => {
+test('clearEmptyUnits resets a named scope systemd stopped at its time limit, leaves a named one with tasks running and one not named alone (parked 04-e, 11-e2)', async (t) => {
   if (!hasUserSystemd) return void t.skip('no user systemd');
   const prefix = `sf-test-${process.pid}-clear`;
   const timedOut = spawn('systemd-run', ['--user', '--scope', '-q', `--unit=${prefix}-failed`, '-p', 'RuntimeMaxSec=1', '--', 'sleep', '30'], { stdio: 'ignore' });
+  const other = spawn('systemd-run', ['--user', '--scope', '-q', `--unit=${prefix}-other`, '-p', 'RuntimeMaxSec=1', '--', 'sleep', '30'], { stdio: 'ignore' });
   const live = spawn('systemd-run', ['--user', '--scope', '-q', `--unit=${prefix}-live`, '--', 'sleep', '30'], { detached: true, stdio: 'ignore' });
   live.unref();
   const show = (name: string) => spawnSync('systemctl', ['--user', 'show', `${name}.scope`, '-p', 'ActiveState', '-p', 'LoadState'], { encoding: 'utf8' }).stdout;
   try {
-    await new Promise((res) => timedOut.once('exit', res));
+    await Promise.all([timedOut, other].map((c) => new Promise((res) => c.once('exit', res))));
     for (const end = Date.now() + 3000; Date.now() < end && !/^ActiveState=failed$/m.test(show(`${prefix}-failed`)); ) await new Promise((res) => setTimeout(res, 50));
     assert.match(show(`${prefix}-failed`), /^ActiveState=failed$/m);
-    const cleared = clearEmptyUnits(`${prefix}-*`);
+    const cleared = clearEmptyUnits([`${prefix}-failed.scope`, `${prefix}-live.scope`, `${prefix}-absent.scope`]);
     assert.deepEqual(cleared, [`${prefix}-failed.scope`]);
     assert.match(show(`${prefix}-failed`), /^LoadState=not-found$/m);
     assert.match(show(`${prefix}-live`), /^ActiveState=active$/m);
+    assert.match(show(`${prefix}-other`), /^ActiveState=failed$/m);
   } finally {
-    spawnSync('systemctl', ['--user', 'stop', `${prefix}-live.scope`, `${prefix}-failed.scope`]);
-    spawnSync('systemctl', ['--user', 'reset-failed', `${prefix}-live.scope`, `${prefix}-failed.scope`]);
+    spawnSync('systemctl', ['--user', 'stop', `${prefix}-live.scope`, `${prefix}-failed.scope`, `${prefix}-other.scope`]);
+    spawnSync('systemctl', ['--user', 'reset-failed', `${prefix}-live.scope`, `${prefix}-failed.scope`, `${prefix}-other.scope`]);
   }
 });

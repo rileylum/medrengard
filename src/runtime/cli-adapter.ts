@@ -172,18 +172,20 @@ function scopeTasks(unit: string): number {
 }
 
 /**
- * Stops each scope matching `pattern` that holds no process, and resets each failed one: a cancel
- * in systemd-run's start-up window leaves an empty scope active or failed (04-e), and a scope
- * stopped at its time limit stays failed (11-e). A scope with no task holds no run, so this cannot
- * touch one, whichever store started it. Returns the units cleared; nothing without user systemd.
+ * Of the named units (`sf-<runId>.scope`), stops each one that holds no process and resets each
+ * failed one: a cancel in systemd-run's start-up window leaves an empty scope active or failed
+ * (04-e), and a scope stopped at its time limit stays failed (11-e). Named, not every `sf-*`: a
+ * failed unit may still be read by whoever started it, another store's controller or a test.
+ * Returns the units cleared; nothing without user systemd.
  */
-export function clearEmptyUnits(pattern = 'sf-*'): string[] {
-  const list = spawnSync('systemctl', ['--user', 'list-units', '--all', '--type=scope', '--output=json', pattern], { encoding: 'utf8', timeout: 5000 });
+export function clearEmptyUnits(names: string[]): string[] {
+  const wanted = new Set(names);
+  const list = spawnSync('systemctl', ['--user', 'list-units', '--all', '--type=scope', '--output=json', 'sf-*'], { encoding: 'utf8', timeout: 5000 });
   let units: { unit: string; active: string }[];
   try { units = JSON.parse(list.stdout); } catch { return []; }
   const cleared: string[] = [];
   for (const { unit, active } of units) {
-    if (active === 'active' && scopeTasks(unit) !== 0) continue;
+    if (!wanted.has(unit) || (active === 'active' && scopeTasks(unit) !== 0)) continue;
     if (active !== 'active' && active !== 'failed') continue;
     if (active === 'active') spawnSync('systemctl', ['--user', 'stop', unit], { timeout: 5000 });
     spawnSync('systemctl', ['--user', 'reset-failed', unit], { timeout: 5000 });

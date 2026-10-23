@@ -15,7 +15,7 @@
 // command takes `--command-id`, which the store records once per cycle.
 // Ticket 11-d2: `retry`, `overrule` and `route` move an escalated cycle on, with the owner's reason.
 // Ticket 11-f: `recover <job.json> [--stop]` records what the work's started runs left; it never launches one.
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { join, resolve } from 'node:path';
 import { loadConfig, storeOf, type Config, type JobFile } from './config.ts';
@@ -299,8 +299,8 @@ function recovered(r: Recovered): string {
 
 /**
  * Exit 0 once every started run has an outcome; 1 while one is running, the work is locked or a
- * cycle is refused, so a timer can tell "try again" from "done". Empty `sf-*` units are cleared
- * either way (11-f).
+ * cycle is refused, so a timer can tell "try again" from "done". The empty units of this
+ * runsDir's runs are cleared either way (11-f).
  */
 async function recoverWork(file: string, stop: boolean): Promise<number> {
   const config = await decisionConfig(file);
@@ -315,7 +315,9 @@ async function recoverWork(file: string, stop: boolean): Promise<number> {
       Object.hasOwn(registry, runtime) ? registry[runtime]!.adapter({ sandbox, writes: producedBy(workflow, role) === 'commit' }) : undefined;
     const out = await recover(store, spec.workId, adapterFor, jobOf(config), { runsDir, adopt: spec.adopt ?? true, stop, deadlineMs: spec.deadlineMs ?? 120_000, sandbox });
     for (const r of out) console.log(recovered(r));
-    const cleared = clearEmptyUnits();
+    // The units of the runs this runsDir started, each named after its run folder (11-e).
+    const runs = join(runsDir, 'runs');
+    const cleared = clearEmptyUnits(existsSync(runs) ? readdirSync(runs).map((id) => `sf-${id}.scope`) : []);
     if (cleared.length > 0) console.log(`Cleared empty units: ${cleared.join(', ')}`);
     return out.some((r) => r.did === 'running' || r.did === 'locked' || r.did === 'refused') ? 1 : 0;
   } finally {
