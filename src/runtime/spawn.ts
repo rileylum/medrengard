@@ -42,6 +42,8 @@ export interface SpawnOptions {
    * the one that records the outcome; this one is the backstop.
    */
   maxRuntimeMs?: number;
+  /** With `dir`: written to the folder as `launch` with `stdin`, for whoever reads the run after its controller died (11-f2). */
+  launch?: string;
 }
 
 export interface RunResult {
@@ -78,7 +80,7 @@ export function scopePath(unit: string): string {
 }
 
 /** The files a run folder holds (11-e). */
-export const runFiles = (dir: string) => ({ stdin: join(dir, 'stdin'), stdout: join(dir, 'stdout'), stderr: join(dir, 'stderr'), exit: join(dir, 'exit') });
+export const runFiles = (dir: string) => ({ stdin: join(dir, 'stdin'), stdout: join(dir, 'stdout'), stderr: join(dir, 'stderr'), exit: join(dir, 'exit'), launch: join(dir, 'launch') });
 
 // Runs outside any sandbox, between the scope and the command. The status goes to a temporary
 // name and is renamed, so `exit` is absent or whole. `trap :` rather than `trap ''`: an ignored
@@ -189,6 +191,7 @@ export function spawnRuntime(opts: SpawnOptions): Run {
       mkdirSync(opts.dir);
       // Read-only, as a record: the run never holds it, the wrapper's `cat` does.
       writeFileSync(files.stdin, opts.prompt, { mode: 0o400 });
+      if (opts.launch !== undefined) writeFileSync(files.launch, opts.launch, { mode: 0o400 });
       stdio = [openSync('/dev/null', 'r'), openSync(files.stdout, 'wx'), openSync(files.stderr, 'wx')];
     } catch (err) {
       return neverStarted(`run folder ${opts.dir}: ${(err as Error).message}`);

@@ -86,7 +86,9 @@ async function resolve(store: EventStore, cycleId: string, adapterFor: Parameter
     const left: Left = adapter.look ? await adapter.look(run.runId, runDir(opts.runsDir, run.runId), opts.stop) : { state: 'gone' };
     if (left.state === 'running') return { cycleId, did: 'running', runId: run.runId, stage: cycle.stage };
     const commit = producedBy(store.workflow, run.role) === 'commit';
-    const versions = { runtime: adapter.name, ...(adapter.moduleHash === undefined ? {} : { moduleHash: adapter.moduleHash }) };
+    // The hash kept at launch; a folder from before 11-f2 kept none, and the module now is all there is.
+    const moduleHash = (left.state === 'running' ? undefined : left.moduleHash) ?? adapter.moduleHash;
+    const versions = { runtime: adapter.name, ...(moduleHash === undefined ? {} : { moduleHash }) };
     if (left.state === 'finished' && opts.adopt) {
       // The live run's claim check, so an adopted head lands exactly as a received one would.
       const accept = commit ? landing(job, store.load(cycleId)!, run, opts) : undefined;
