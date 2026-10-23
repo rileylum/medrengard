@@ -387,7 +387,13 @@ export class EventStore {
       .all(workId)
       .map((r) => {
         const cycleId = r.cycle_id as string;
-        try { return { cycleId, stage: this.load(cycleId)!.stage }; } catch (err) { return { cycleId, refused: (err as Error).message }; }
+        try {
+          return { cycleId, stage: this.load(cycleId)!.stage };
+        } catch (err) {
+          // The store failing (busy past its timeout, closed) says nothing about this cycle.
+          if ((err as { code?: unknown }).code === 'ERR_SQLITE_ERROR') throw err;
+          return { cycleId, refused: (err as Error).message };
+        }
       });
   }
 

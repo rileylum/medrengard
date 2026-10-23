@@ -361,14 +361,24 @@ async function resumeWork(file: string): Promise<number> {
       const code = Math.max(report({ cycle, worktree: clone, branch }, config), unread);
       if (stage !== 'ESCALATED') return code;
       const head = cycle.candidate?.head || '<sha>';
+      // The store refuses a move on a cycle with a child (moveAllowed): only cancel is offered then.
+      const child = all.find((c) => store.opened(c.cycleId)?.parentCycleId === cycleId)?.cycleId;
       console.log('');
-      console.log('The cycle is yours to move on, or to cancel:');
-      for (const action of MOVE_ACTIONS) console.log(`  node ${process.argv[1]} ${action} ${path} ${head}${action === 'route' ? ' <stage>' : ''} --reason <text>`);
+      if (child === undefined) {
+        console.log('The cycle is yours to move on, or to cancel:');
+        for (const action of MOVE_ACTIONS) console.log(`  node ${process.argv[1]} ${action} ${path} ${head}${action === 'route' ? ' <stage>' : ''} --reason <text>`);
+      } else console.log(`The cycle has a child, ${child}, so it cannot be moved; to cancel the work:`);
       console.log(`  node ${process.argv[1]} cancel ${path}`);
       return code;
     }
-    const r = await resume(store, cycleId, adaptersFor(workflow, registry, spec.runtime, sandbox), jobOf(config), optionsOf(config), (w) => console.log(`Warning: ${w}`));
-    return Math.max(report(r, config), unread);
+    // The layers at this cycle's own base, which gave the job it recorded: decisionConfig reads the
+    // work's first base that serves every cycle, and the repository layer may have set other checks
+    // there (standard 2). A base that no longer loads them, or gives another workflow, falls back.
+    const base = store.opened(cycleId)?.base;
+    const own = base === undefined ? undefined : await loadConfig(file, process.env, { base }).catch(() => undefined);
+    const at = own && workflowHash(own.workflow) === workflowHash(workflow) ? own : config;
+    const r = await resume(store, cycleId, adaptersFor(workflow, at.registry, at.spec.runtime, at.sandbox), jobOf(at), optionsOf(at), (w) => console.log(`Warning: ${w}`));
+    return Math.max(report(r, at), unread);
   } finally {
     store?.close();
   }

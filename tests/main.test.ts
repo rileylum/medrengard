@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Event } from '../src/lifecycle.ts';
 import { EventStore } from '../src/store.ts';
+import { jobRecord } from '../src/developer.ts';
 import { reviewerStub } from './stub-cli.ts';
 import { runDir } from '../src/layout.ts';
 import { holder, kill } from './lock-holder.ts';
@@ -1150,7 +1151,8 @@ test('resume drives a cycle left at VERIFYING to its human stage, refusing first
   } finally {
     await kill(child);
   }
-  assert.equal(look(db, opened.cycle.cycleId).stage, 'VERIFYING');
+  // Nothing appended, not only no stage moved (11-f2 standard 2).
+  assert.deepEqual(look(db, opened.cycle.cycleId), { stage: 'VERIFYING', events: opened.cycle.history.length });
   const r = sf(['resume', jobFile], env);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
@@ -1228,4 +1230,47 @@ test('resume names a cycle the store cannot replay, with the reason: alone it is
   const r = sf(['resume', alone.jobFile]);
   assert.equal(r.status, 2, r.stdout + r.stderr);
   assert.match(r.stderr, /^nothing to resume for work w in .*; cycle c1: the store cannot replay it: cycle c1 row 1/m);
+});
+
+// 11-f2 standard 2: each cycle keeps the job its own base gave it. The repository layer may set the
+// checks, so a child opened at a later base is resumed under that base's layers, not the first one's.
+test('resume reads the layers at the resumed cycle\'s own base: a child opened where the repository\'s checks changed is driven, not refused', () => {
+  const { root, repo, runsDir, jobFile, db } = scratch();
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+  const layer = (name: string) => {
+    mkdirSync(join(repo, '.factory'), { recursive: true });
+    writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ checks: [{ name, command: ['true'] }] }));
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', `checks ${name}`);
+    return git(repo, 'rev-parse', 'HEAD');
+  };
+  const B0 = layer('a');
+  const B1 = layer('b');
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+  delete job.checks;
+  writeFileSync(jobFile, JSON.stringify(job));
+  const store = new EventStore(db);
+  store.open('c0', 'w', undefined, B0, jobRecord({ workId: 'w', ticket: 'x', repo, checks: [{ name: 'a', command: ['true'] }] }));
+  for (const e of ESCALATE) store.append('c0', e);
+  store.open('c1', 'w', 'c0', B1, jobRecord({ workId: 'w', ticket: 'x', repo, checks: [{ name: 'b', command: ['true'] }] }));
+  store.append('c1', { type: 'claim', runId: 'dev1', base: B0, runtime: 'claude' });
+  store.append('c1', { type: 'developer_result', runId: 'dev1', head: B1, artifacts: ['.factory/config.json'] });
+  store.close();
+  const r = sf(['resume', jobFile], { ...process.env, PATH: `${bin}:${process.env.PATH}` });
+  assert.doesNotMatch(r.stderr, /changed since the cycle opened/);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^verification [0-9a-f]{7}: b PASS$/m);
+  assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+});
+
+// 11-f2 standard 2: the store refuses a move on a cycle with a child, so resume does not offer one.
+test('resume on an escalated parent whose child the store cannot replay offers only cancel', () => {
+  const { jobFile } = divergedChild();
+  const r = sf(['resume', jobFile]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Cycle c1: not resumed;/m);
+  assert.doesNotMatch(r.stdout, / (retry|overrule|route) /);
+  assert.match(r.stdout, new RegExp(`^  node \\S+ cancel ${jobFile}$`, 'm'));
 });

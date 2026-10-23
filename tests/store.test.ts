@@ -888,3 +888,13 @@ test('a child open and a retry on its parent, from two processes at once: one la
   // Not asserted: which process wins is SQLite's choice; the log says which orders ran.
   console.log(`race orders seen: ${[...seen].join(' | ')}`);
 });
+
+// 11-f2 standard 2: only a cycle the store cannot replay is listed as refused; the store itself
+// failing (busy past its timeout, closed) is thrown, as before, not reported as that cycle's state.
+test('cycles throws a store failure while loading a cycle, rather than listing the cycle as refused', () => {
+  const store = new EventStore(dbPath('cycles-sqlite-error'));
+  store.open('c1', 'w1');
+  store.load = () => { throw Object.assign(new Error('database is locked'), { code: 'ERR_SQLITE_ERROR' }); };
+  assert.throws(() => store.cycles('w1'), /database is locked/);
+  store.close();
+});
