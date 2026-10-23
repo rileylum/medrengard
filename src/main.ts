@@ -282,11 +282,20 @@ async function cancel(file: string, { source, commandId }: From): Promise<number
       console.log(`Stage: ${after.stage}`);
       if (after.stage !== 'CANCELLED') code = 1;
     }
+    // cancelWork skips them: a cancel cannot be appended to a cycle the store cannot replay.
+    for (const c of store!.cycles(spec.workId)) {
+      if (c.refused === undefined) continue;
+      console.log(`Cycle ${c.cycleId}: not cancelled; ${unreplayable(c.refused)}`);
+      code = 1;
+    }
     return code;
   } finally {
     store?.close();
   }
 }
+
+/** Why a cycle is left alone, for the owner's terminal. */
+const unreplayable = (reason: string) => `the store cannot replay it: ${printable(oneLine(reason))}`;
 
 /** One line per cycle recover looked at. */
 function recovered(r: Recovered): string {
@@ -338,14 +347,18 @@ async function resumeWork(file: string): Promise<number> {
   try {
     const all = store?.cycles(spec.workId) ?? [];
     const target = all.find((c) => c.stage !== undefined && !STOPPED.includes(c.stage)) ?? all.findLast((c) => c.stage === 'ESCALATED');
-    if (!store || !target) throw new Error(`nothing to resume for work ${spec.workId} in ${runsDir}`);
+    // A cycle the store cannot replay is the owner's; said, so no other answer reads as the whole work.
+    const refused = all.filter((c) => c.refused !== undefined).map((c) => `cycle ${c.cycleId}: ${unreplayable(c.refused!)}`);
+    if (!store || !target) throw new Error([`nothing to resume for work ${spec.workId} in ${runsDir}`, ...refused].join('; '));
+    for (const c of all) if (c.refused !== undefined) console.log(`Cycle ${c.cycleId}: not resumed; ${unreplayable(c.refused)}`);
+    const unread = refused.length > 0 ? 1 : 0;
     const { cycleId, stage } = target;
     // QUEUED goes to drive, which says why it cannot continue one.
     const kind = workflow.stages[stage!]?.kind;
     if (kind !== 'agent' && kind !== 'command' && stage !== 'QUEUED') {
       const { clone, branch } = cyclePaths(runsDir, cycleId);
       const cycle = store.load(cycleId)!;
-      const code = report({ cycle, worktree: clone, branch }, config);
+      const code = Math.max(report({ cycle, worktree: clone, branch }, config), unread);
       if (stage !== 'ESCALATED') return code;
       const head = cycle.candidate?.head || '<sha>';
       console.log('');
@@ -354,9 +367,8 @@ async function resumeWork(file: string): Promise<number> {
       console.log(`  node ${process.argv[1]} cancel ${path}`);
       return code;
     }
-    const r = await resume(store, cycleId, adaptersFor(workflow, registry, spec.runtime, sandbox), jobOf(config), optionsOf(config));
-    if (r.warning) console.log(`Warning: ${r.warning}`);
-    return report(r, config);
+    const r = await resume(store, cycleId, adaptersFor(workflow, registry, spec.runtime, sandbox), jobOf(config), optionsOf(config), (w) => console.log(`Warning: ${w}`));
+    return Math.max(report(r, config), unread);
   } finally {
     store?.close();
   }

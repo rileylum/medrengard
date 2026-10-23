@@ -281,15 +281,15 @@ async function loop(store: EventStore, opened: Cycle, roles: Adapters, job: Job,
 /**
  * drive, for the owner's resume command, only under the job the cycle was opened with (A-105 item
  * 2): its reviews and checks so far were bound to that ticket and those checks. A cycle opened
- * before 11-f2 recorded none, and resumes with a warning.
+ * before 11-f2 recorded none, and resumes after `warn`, called before anything is spent.
  */
-export async function resume(store: EventStore, cycleId: string, adapters: Adapters, job: Job, opts: RunOptions): Promise<RunResult & { warning?: string }> {
+export async function resume(store: EventStore, cycleId: string, adapters: Adapters, job: Job, opts: RunOptions, warn: (message: string) => void = () => {}): Promise<RunResult> {
   const was = store.opened(cycleId)?.job;
   if (was) {
     const now = jobRecord(job);
     const changed = [...(was.ticket === now.ticket ? [] : ['ticket']), ...(JSON.stringify(was.checks) === JSON.stringify(now.checks) ? [] : ['checks'])];
     if (changed.length > 0) throw new Error(`cycle ${cycleId}: the job's ${changed.join(' and ')} changed since the cycle opened; cancel it and run the job again, or restore the job`);
   }
-  const r = await drive(store, cycleId, adapters, job, opts);
-  return was ? r : { ...r, warning: `cycle ${cycleId} was opened before jobs were recorded: its job could not be compared` };
+  if (!was) warn(`cycle ${cycleId} was opened before jobs were recorded: its job could not be compared`);
+  return drive(store, cycleId, adapters, job, opts);
 }

@@ -792,9 +792,10 @@ test('resume refuses a cycle whose ticket or checks changed since it opened, nam
   await assert.rejects(resume(store, id, roles(), job(repo, { checks: [] }), opts(runsDir)), (err: Error) => /checks/.test(err.message) && !/ticket/.test(err.message));
   await assert.rejects(resume(store, id, roles(), job(repo, { ticket: 'x', checks: [] }), opts(runsDir)), /ticket and checks/);
   assert.equal(store.events(id).length, before);
-  const r = await resume(store, id, roles(), job(repo), opts(runsDir));
+  const warned: string[] = [];
+  const r = await resume(store, id, roles(), job(repo), opts(runsDir), (w) => warned.push(w));
   assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation);
-  assert.equal(r.warning, undefined);
+  assert.deepEqual(warned, []);
   store.close();
 });
 
@@ -806,8 +807,23 @@ test('resume drives a cycle opened before 11-f2 recorded the job, with a warning
   const raw = new DatabaseSync(path);
   raw.prepare("UPDATE events SET body = json_remove(body, '$.job') WHERE seq = 0").run();
   raw.close();
-  const r = await resume(store, opened.cycle.cycleId, adapters(fake(claude), scripted('PASS'), scripted('PASS')), job(repo, { ticket: 'anything' }), opts(runsDir));
+  const warned: string[] = [];
+  const r = await resume(store, opened.cycle.cycleId, adapters(fake(claude), scripted('PASS'), scripted('PASS')), job(repo, { ticket: 'anything' }), opts(runsDir), (w) => warned.push(w));
   assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation);
-  assert.match(r.warning ?? '', /could not be compared/);
+  assert.deepEqual(warned.map((w) => /could not be compared/.test(w)), [true]);
+  store.close();
+});
+
+// 11-f2 standard 1, minor 3: the owner reads the warning before anything is spent, and also when
+// drive then refuses.
+test('resume warns of a job it could not compare before it drives, so also when drive refuses', async () => {
+  const { root, repo, runsDir, base } = scratch();
+  const path = join(root, 'events.sqlite');
+  const store = new EventStore(path);
+  store.open('c1', 'w1');
+  store.append('c1', { type: 'claim', runId: 'r-left', base, runtime: 'claude' });
+  const warned: string[] = [];
+  await assert.rejects(resume(store, 'c1', adapters(fake(claude), scripted(), scripted()), job(repo), opts(runsDir), (w) => warned.push(w)), /run r-left started and has no outcome/);
+  assert.deepEqual(warned.map((w) => /could not be compared/.test(w)), [true]);
   store.close();
 });

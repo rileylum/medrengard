@@ -1194,3 +1194,38 @@ test('recover exits 1 while a run is still going, the work is held, or a cycle i
   assert.equal(done.status, 0, done.stdout + done.stderr);
   assert.match(done.stdout, /^Cycle c1: run std9 failed; now ESCALATED$/m);
 });
+
+// 11-f2 standard 1, minors 1 and 2: a cycle the store cannot replay is skipped by cancel and resume,
+// and each says so, so the owner never reads "cancelled" or "nothing to resume" over it.
+function divergedChild() {
+  const s = scratch();
+  seed(s.db, 'c0', ESCALATE);
+  seed(s.db, 'c1', TO_ACCEPTANCE, 'c0');
+  const raw = new DatabaseSync(s.db);
+  raw.prepare("UPDATE events SET stage = 'ACCEPTED' WHERE cycle_id = 'c1' AND seq = 1").run();
+  raw.close();
+  return s;
+}
+
+test('cancel names a cycle the store cannot replay, with the reason, and exits 1 though it cancelled the others', () => {
+  const { jobFile, db } = divergedChild();
+  const r = sf(['cancel', jobFile]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Cycle c1: not cancelled; the store cannot replay it: cycle c1 row 1 \(claim\) was recorded at ACCEPTED/m);
+  assert.equal(look(db, 'c0').stage, 'CANCELLED');
+});
+
+test('resume names a cycle the store cannot replay, with the reason: alone it is refused, beside an escalated one it is listed', () => {
+  const { jobFile } = divergedChild();
+  const beside = sf(['resume', jobFile]);
+  assert.equal(beside.status, 1, beside.stdout + beside.stderr);
+  assert.match(beside.stdout, /^Cycle c1: not resumed; the store cannot replay it: cycle c1 row 1/m);
+  const alone = scratch();
+  seed(alone.db, 'c1', TO_ACCEPTANCE);
+  const raw = new DatabaseSync(alone.db);
+  raw.prepare("UPDATE events SET stage = 'ACCEPTED' WHERE cycle_id = 'c1' AND seq = 1").run();
+  raw.close();
+  const r = sf(['resume', alone.jobFile]);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /^nothing to resume for work w in .*; cycle c1: the store cannot replay it: cycle c1 row 1/m);
+});
