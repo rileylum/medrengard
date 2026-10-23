@@ -12,6 +12,7 @@ Done when:
 - The open row records `job`, a SHA-256 of the ticket text and `checks`. `resume` refuses a cycle whose ticket or checks changed, naming which. A cycle with no `job` resumes with a printed warning. Stores written before 11-f2 replay unchanged. Verified by test.
 - Parked row 48: `cycles(workId)` reports a cycle the store cannot replay instead of throwing for the whole work; `open` still refuses while one is listed; `accept`, `cancel` and moves on another cycle work. Verified by test.
 - Parked row 51: `moveEvent` loads only the cycle the move names, so a cycle under another workflow does not block it. Verified by test.
+- Parked 11-f adversarial rows: recover records `timeout` for a run that finished past its deadline; the `clearEmptyUnits` test stops each unit in its own call; tests for a finished run whose `stdout` is still held, and for `recover`'s exit code 1; an adopted outcome records the module hash kept at launch. Each verified by test (the first and last red first).
 
 Constraints: zero dependencies; no paid calls in tests. 11-f merged first.
 Non-goals: the config-hash form of the job check (Owner tools row); relaunching a crashed run.
