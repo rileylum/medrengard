@@ -56,7 +56,8 @@ export async function run(store: EventStore, adapters: Adapters, job: Job, opts:
   // checkWorkflow allows a start stage with no role; develop refuses it before using the adapter.
   const developer = roles[start?.kind === 'agent' ? start.role : ''] as DeveloperAdapter;
   // Held from before the cycle opens, so recover never sees its claim without a live holder (11-f).
-  const release = holdWork(opts.runsDir, job.workId);
+  // The owner's command, so it waits as a move does: a timer's recover holds the work for moments.
+  const release = await waitForWork(opts.runsDir, job.workId, OWNER_WAIT_MS);
   try {
     // A throw here propagates: develop cancels any cycle it opened, so there is nothing to record.
     const { cycle, worktree, branch } = await develop(store, developer, job, opts);

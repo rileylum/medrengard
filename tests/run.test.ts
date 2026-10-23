@@ -730,3 +730,18 @@ test('run and drive refuse a work another live process holds, naming its PID, an
   holdWork(runsDir, 'w1')();
   store.close();
 });
+
+// 11-f standard 3: the run command is the owner's too, so it waits for the lock as an owner's move
+// does: a holder that lets go within the wait (a timer's recover) does not fail it.
+test('run waits for a work whose holder lets go within the wait, then opens the cycle', async () => {
+  const { repo, store, runsDir } = scratch();
+  const child = await holder(runsDir, 'w1');
+  setTimeout(() => void kill(child), 500);
+  try {
+    const r = await run(store, adapters(fake(claude), scripted('PASS'), scripted('PASS')), job(repo), opts(runsDir));
+    assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation);
+  } finally {
+    await kill(child);
+    store.close();
+  }
+});
