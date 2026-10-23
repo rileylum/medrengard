@@ -1322,3 +1322,22 @@ test('resume offers each move the store would take on the escalated cycle, for i
   assert.match(some.stdout, new RegExp(`^  node \\S+ route ${failedReview.jobFile} ${H} <stage>`, 'm'));
   assert.doesNotMatch(some.stdout, / overrule /);
 });
+
+test('resume offers no move on an escalated parent with a candidate when it has a child: the store would refuse each', () => {
+  const { jobFile, db } = scratch();
+  seed(db, 'c0', [
+    ...TO_ACCEPTANCE.slice(0, 3),
+    { type: 'verdict', runId: 'std1', head: H, verdict: 'FAIL', findings: ['f1'] },
+    { type: 'claim', runId: 'dev2', base: 'b'.repeat(40), runtime: 'fake' },
+    { type: 'dispute', runId: 'dev2', head: H, reason: 'the finding is wrong' },
+  ]);
+  seed(db, 'c1', TO_ACCEPTANCE, 'c0');
+  const raw = new DatabaseSync(db);
+  raw.prepare("UPDATE events SET stage = 'ACCEPTED' WHERE cycle_id = 'c1' AND seq = 1").run();
+  raw.close();
+  const r = sf(['resume', jobFile]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Cycle: c0$/m);
+  assert.match(r.stdout, /^The cycle has a child, c1, so it cannot be moved\.$/m);
+  assert.doesNotMatch(r.stdout, / (retry|overrule|route) /);
+});
