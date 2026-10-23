@@ -19,6 +19,14 @@ export interface OpenRow {
   definition?: Workflow;
   /** The ENGINE_VERSION that opened the cycle (11-c). Absent before 11-c. */
   engine?: number;
+  /** The job the cycle was opened for (11-f2): resume refuses it under another. Absent before 11-f2. */
+  job?: JobRecord;
+}
+
+/** A job as an open row keeps it: the ticket's SHA-256 and the checks as given. */
+export interface JobRecord {
+  ticket: string;
+  checks: unknown;
 }
 
 /**
@@ -178,7 +186,7 @@ export class EventStore {
   }
 
   /** Create a cycle. Returns the initial Cycle. Throws if the ID is already in use. */
-  open(cycleId: string, workId: string, parentCycleId?: string, base?: string): Cycle {
+  open(cycleId: string, workId: string, parentCycleId?: string, base?: string, job?: JobRecord): Cycle {
     requireId(cycleId, 'cycle ID');
     requireId(workId, 'work ID');
     // The checks and the insert share one write lock, as in addPositions: otherwise two processes
@@ -198,7 +206,7 @@ export class EventStore {
       if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
       // Spec: a new cycle for the same work names its parent; an escalated cycle is waiting for one.
       if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
-      const row: OpenRow = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow, engine: ENGINE_VERSION };
+      const row: OpenRow = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow, engine: ENGINE_VERSION, job };
       // Fixed seq 0, not MAX+1: an open row that landed mid-log would reach apply, which has no
       // 'open' case.
       this.db
@@ -321,6 +329,12 @@ export class EventStore {
     if (!r) throw new Error(`cycle ${cycleId} not open`);
     if (r.opened.hash !== this.record.hash) throw this.mismatch(cycleId, r.opened);
     return r.cycle;
+  }
+
+  /** The cycle's open row, as written; undefined if it was never opened. */
+  opened(cycleId: string): OpenRow | undefined {
+    const head = this.rows(cycleId)[0]?.body;
+    return head?.type === 'open' ? head : undefined;
   }
 
   close(): void {

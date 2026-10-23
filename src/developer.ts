@@ -5,7 +5,7 @@
 // Ticket 08-c: the worktree is a clone of its own, which the developer's sandbox may write; the
 // controller fetches the branch back into the repository and judges the head there.
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Adapter } from './adapter.ts';
@@ -15,7 +15,7 @@ import { cyclePaths, mirrorPath, runsRoot } from './layout.ts';
 import { lastVerdictAt, type Cycle, type Event, type Run } from './lifecycle.ts';
 import { developerPrompt } from './prompt.ts';
 import { checkSandbox, wrap, type Sandbox } from './sandbox.ts';
-import type { EventStore } from './store.ts';
+import type { EventStore, JobRecord } from './store.ts';
 import type { Check } from './verify.ts';
 
 // main.ts and the tests import it from here, where it lived before the prompt moved (09-c).
@@ -36,6 +36,11 @@ export interface Job {
    * with the job, not read from the candidate: a file at the candidate SHA is the developer's to edit.
    */
   checks?: Check[];
+}
+
+/** What the open row keeps of a job (11-f2). No checks and an empty list run the same: both record `[]`. */
+export function jobRecord(job: Job): JobRecord {
+  return { ticket: createHash('sha256').update(job.ticket).digest('hex'), checks: job.checks ?? [] };
 }
 
 export interface DevelopOptions {
@@ -81,7 +86,7 @@ export async function develop(store: EventStore, adapter: DeveloperAdapter, job:
   const start = store.workflow.stages[store.workflow.start];
   if (start?.kind !== 'agent' || start.produces !== 'commit') throw new Error(`start stage ${store.workflow.start} is not a commit stage; develop cannot open the cycle`);
   const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
-  store.open(cycleId, job.workId, job.parentCycleId, base);
+  store.open(cycleId, job.workId, job.parentCycleId, base, jobRecord(job));
   try {
     mkdirSync(runsDir, { recursive: true });
     const mirror = mirrorPath(runsDir, job.repo);
