@@ -4,12 +4,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Event } from '../src/lifecycle.ts';
 import { EventStore } from '../src/store.ts';
 import { reviewerStub } from './stub-cli.ts';
+import { runDir } from '../src/layout.ts';
 import { holder, kill } from './lock-holder.ts';
 import { develop } from '../src/developer.ts';
 import { claude, cliAdapter } from '../src/runtime/cli-adapter.ts';
@@ -1154,4 +1155,42 @@ test('resume drives a cycle left at VERIFYING to its human stage, refusing first
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
   assert.match(r.stdout, /^verification [0-9a-f]{7}: ok PASS$/m);
+});
+
+// 11-f adversarial minor 4: a timer runs recover and reads its exit code. 1 is "try again": a run
+// still going, a work another process holds, or a cycle recover refused.
+test('recover exits 1 while a run is still going, the work is held, or a cycle is refused, and 0 once every run has an outcome', async () => {
+  const { jobFile, db, runsDir } = scratch();
+  seed(db, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'run_started', runId: 'std9', runtime: 'claude' }]);
+  // A run whose controller died while it ran: its stdout is still held for writing, and no exit.
+  const folder = runDir(runsDir, 'std9');
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, 'stdin'), 'p');
+  const out = openSync(join(folder, 'stdout'), 'w');
+  const run = spawn('sleep', ['30'], { detached: true, stdio: ['ignore', out, 'ignore'] });
+  closeSync(out);
+  run.unref();
+  try {
+    const going = sf(['recover', jobFile]);
+    assert.equal(going.status, 1, going.stdout + going.stderr);
+    assert.match(going.stdout, /^Cycle c1: run std9 still running; --stop ends it$/m);
+  } finally {
+    process.kill(run.pid!, 'SIGKILL');
+  }
+  const child = await holder(runsDir, 'w');
+  try {
+    const held = sf(['recover', jobFile]);
+    assert.equal(held.status, 1, held.stdout + held.stderr);
+    assert.match(held.stdout, new RegExp(`^Cycle c1: skipped; process ${child.pid} holds the work$`, 'm'));
+  } finally {
+    await kill(child);
+  }
+  const other = scratch();
+  seed(other.db, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'run_started', runId: 'std8', runtime: 'nobody' }]);
+  const refused = sf(['recover', other.jobFile]);
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  assert.match(refused.stdout, /^Cycle c1: run std8 refused: run std8: runtime nobody is not in the registry$/m);
+  const done = sf(['recover', jobFile]);
+  assert.equal(done.status, 0, done.stdout + done.stderr);
+  assert.match(done.stdout, /^Cycle c1: run std9 failed; now ESCALATED$/m);
 });
