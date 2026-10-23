@@ -19,3 +19,4 @@ Verification: `npm test` and `npm run test:learn`; the owner's pre-merge hook ru
 
 ## Log
 - 2026-10-23 — drafted on `feat/11-f-recover` with 11-f. Not READY until the owner answers 11-f's design questions and says go; built on its own branch `feat/11-f2-resume` after 11-f merges.
+- 2026-10-23 — owner took the design note's recommendations (11-f log). READY at Trust tier, to build after 11-f merges.

@@ -23,3 +23,4 @@ Verification: `npm test` and `npm run test:learn`; the owner's pre-merge hook ru
 
 ## Log
 - 2026-10-23 — drafted on `feat/11-f-recover` off main at `68110a5`. Owner: “Yes start 11-f”. Not READY until the owner answers the design note's questions and says go.
+- 2026-10-23 — owner: “Take all your recommendations”. Recover records and never launches; `resume` is 11-f2. A running run is reported, `--stop` ends it. Process-group liveness by the processes holding the run's `stdout`, after a probe. `adopt` in the personal and job layers, default true. A cycle with no job hash resumes with a warning. Parked rows: 21 and 26 here; 48 and 51 in 11-f2; 30 to the next `verify.ts` ticket, 49 to row 12, 50 to the Owner tools row; 46 dropped (`docs/work/parked.md` updated). READY at Trust tier.
