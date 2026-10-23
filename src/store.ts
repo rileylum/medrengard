@@ -306,7 +306,8 @@ export class EventStore {
     const child = this.db.prepare("SELECT cycle_id FROM events WHERE seq = 0 AND json_extract(body, '$.parentCycleId') = ? ORDER BY cycle_id").get(cycleId);
     if (child) throw new Error(`cycle ${cycleId} is the parent of cycle ${child.cycle_id as string}; a move on it would give work ${workId} two live cycles; nothing was written`);
     // The cycle itself is not a sibling: a move on it while open reaches apply, which escalates it.
-    const open = this.cycles(workId).find((c) => c.cycleId !== cycleId && !STOPPED.includes(c.stage))?.cycleId;
+    // A cycle the store cannot replay is driven by nothing, so it is not live here; open still counts it.
+    const open = this.cycles(workId).find((c) => c.cycleId !== cycleId && c.stage !== undefined && !STOPPED.includes(c.stage))?.cycleId;
     if (open !== undefined) throw new Error(`work ${workId} has an open cycle ${open}; a move on cycle ${cycleId} would give it two live cycles; nothing was written`);
   }
 
@@ -375,12 +376,19 @@ export class EventStore {
       .run(cycleId, type, runId, body, stage, cycleId).changes > 0;
   }
 
-  /** Every cycle of a work item with its replayed stage, ordered by cycle ID. */
-  cycles(workId: string): { cycleId: string; stage: Stage }[] {
+  /**
+   * Every cycle of a work item with its replayed stage, ordered by cycle ID. A cycle the store
+   * cannot replay (a diverged engine, an unknown workflow) is listed with the reason and no stage,
+   * so it is the owner's and hides none of the work's other cycles (parked row 48).
+   */
+  cycles(workId: string): { cycleId: string; stage?: Stage; refused?: string }[] {
     return this.db
       .prepare("SELECT cycle_id FROM events WHERE seq = 0 AND json_extract(body, '$.workId') = ? ORDER BY cycle_id")
       .all(workId)
-      .map((r) => ({ cycleId: r.cycle_id as string, stage: this.load(r.cycle_id as string)!.stage }));
+      .map((r) => {
+        const cycleId = r.cycle_id as string;
+        try { return { cycleId, stage: this.load(cycleId)!.stage }; } catch (err) { return { cycleId, refused: (err as Error).message }; }
+      });
   }
 
   /**
@@ -413,8 +421,11 @@ export class EventStore {
   // moveAllowed holds to the same rule.
   private cyclesFor(workId: string): { open?: string; escalated?: string } {
     const all = this.cycles(workId);
+    // Its stage is unknown, so it may be open: a new cycle beside it could give the work two.
+    const refused = all.find((c) => c.refused !== undefined);
+    if (refused) throw new Error(`work ${workId} has cycle ${refused.cycleId}, which the store cannot replay: ${refused.refused}`);
     return {
-      open: all.find((c) => !STOPPED.includes(c.stage))?.cycleId,
+      open: all.find((c) => !STOPPED.includes(c.stage!))?.cycleId,
       escalated: all.findLast((c) => c.stage === 'ESCALATED')?.cycleId,
     };
   }
