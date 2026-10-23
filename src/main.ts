@@ -346,7 +346,10 @@ async function resumeWork(file: string): Promise<number> {
   const store = existingStore(runsDir, workflow);
   try {
     const all = store?.cycles(spec.workId) ?? [];
-    const target = all.find((c) => c.stage !== undefined && !STOPPED.includes(c.stage)) ?? all.findLast((c) => c.stage === 'ESCALATED');
+    // The escalated cycle with no child is the newest, whatever the ID order: IDs are random UUIDs.
+    const childless = (id: string) => !all.some((c) => store!.opened(c.cycleId)?.parentCycleId === id);
+    const escalated = all.filter((c) => c.stage === 'ESCALATED');
+    const target = all.find((c) => c.stage !== undefined && !STOPPED.includes(c.stage)) ?? escalated.find((c) => childless(c.cycleId)) ?? escalated.at(-1);
     // A cycle the store cannot replay is the owner's; said, so no other answer reads as the whole work.
     const refused = all.filter((c) => c.refused !== undefined).map((c) => `cycle ${c.cycleId}: ${unreplayable(c.refused!)}`);
     if (!store || !target) throw new Error([`nothing to resume for work ${spec.workId} in ${runsDir}`, ...refused].join('; '));

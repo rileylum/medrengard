@@ -1274,3 +1274,26 @@ test('resume on an escalated parent whose child the store cannot replay offers o
   assert.doesNotMatch(r.stdout, / (retry|overrule|route) /);
   assert.match(r.stdout, new RegExp(`^  node \\S+ cancel ${jobFile}$`, 'm'));
 });
+
+// 11-f2 standard 3: cycle IDs are random UUIDs, so ID order is not age. A child whose ID sorts
+// before its parent's is still the cycle the owner moves on.
+test('resume reports the escalated cycle with no child, whatever the ID order, and offers its moves', () => {
+  const { jobFile, db } = scratch();
+  seed(db, 'z0', ESCALATE);
+  seed(db, 'a1', ESCALATE, 'z0');
+  const r = sf(['resume', jobFile]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Cycle: a1$/m);
+  assert.match(r.stdout, new RegExp(`^  node \\S+ retry ${jobFile}`, 'm'));
+});
+
+test('cancel names the work\'s only cycle when the store cannot replay it', () => {
+  const { jobFile, db } = scratch();
+  seed(db, 'c1', TO_ACCEPTANCE);
+  const raw = new DatabaseSync(db);
+  raw.prepare("UPDATE events SET stage = 'ACCEPTED' WHERE cycle_id = 'c1' AND seq = 1").run();
+  raw.close();
+  const r = sf(['cancel', jobFile]);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /^nothing to cancel for work w in .*; cycle c1: the store cannot replay it: cycle c1 row 1/m);
+});

@@ -133,24 +133,24 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
   };
 
   async function see(runId: string, runDir: string, stop: boolean, deadlineMs: number | undefined): Promise<Left> {
-      const unit = isolation === 'cgroup' ? `sf-${runId}.scope` : undefined;
-      const stdout = runFiles(runDir).stdout;
-      // By the path as created: the probe found a renamed file only under its new name.
-      const file = existsSync(stdout) ? realpathSync(stdout) : undefined;
-      const live = () => (unit !== undefined && scopeTasks(unit) > 0) || (file !== undefined && holders(file).length > 0);
-      // exit is read again after each liveness check: a run that ended in between wrote it first.
-      const finished = (): Left | undefined => {
-        const r = readRun(runDir, opts.maxOutputBytes);
-        // A live controller would have stopped it at the deadline and recorded why.
-        return r && { state: 'finished', outcome: overran(runDir, deadlineMs) ? { status: 'failed', reason: 'timeout' } : outcome(spec, r) };
-      };
-      if (!live()) return finished() ?? { state: 'gone' };
-      if (!stop) return finished() ?? { state: 'running' };
-      // SIGKILL, not the live cancel's SIGTERM and grace: the run is recorded failed either way.
-      if (unit) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', unit], { timeout: 5000 });
-      for (const pid of file === undefined ? [] : holders(file)) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
-      for (const end = Date.now() + (opts.graceMs ?? 5000); live() && Date.now() < end; ) await new Promise((res) => setTimeout(res, 50));
-      return finished() ?? (live() ? { state: 'running' } : { state: 'stopped' });
+    const unit = isolation === 'cgroup' ? `sf-${runId}.scope` : undefined;
+    const stdout = runFiles(runDir).stdout;
+    // By the path as created: the probe found a renamed file only under its new name.
+    const file = existsSync(stdout) ? realpathSync(stdout) : undefined;
+    const live = () => (unit !== undefined && scopeTasks(unit) > 0) || (file !== undefined && holders(file).length > 0);
+    // exit is read again after each liveness check: a run that ended in between wrote it first.
+    const finished = (): Left | undefined => {
+      const r = readRun(runDir, opts.maxOutputBytes);
+      // A live controller would have stopped it at the deadline and recorded why.
+      return r && { state: 'finished', outcome: overran(runDir, deadlineMs) ? { status: 'failed', reason: 'timeout' } : outcome(spec, r) };
+    };
+    if (!live()) return finished() ?? { state: 'gone' };
+    if (!stop) return finished() ?? { state: 'running' };
+    // SIGKILL, not the live cancel's SIGTERM and grace: the run is recorded failed either way.
+    if (unit) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', unit], { timeout: 5000 });
+    for (const pid of file === undefined ? [] : holders(file)) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
+    for (const end = Date.now() + (opts.graceMs ?? 5000); live() && Date.now() < end; ) await new Promise((res) => setTimeout(res, 50));
+    return finished() ?? (live() ? { state: 'running' } : { state: 'stopped' });
   }
 }
 

@@ -53,12 +53,15 @@ function humanDecision(type: 'accept' | 'request_changes', store: EventStore | u
 /** Cancel the work's open cycle, or with none open every ESCALATED one. Returns each cycle after its cancel. */
 export function cancelWork(store: EventStore | undefined, workId: string, source: string, where: Where, commandId?: string): Cycle[] {
   // A cycle the store cannot replay cannot take a cancel either: append replays it first.
-  const all = (store?.cycles(workId) ?? []).filter((c) => c.stage !== undefined);
+  const listed = store?.cycles(workId) ?? [];
+  const all = listed.filter((c) => c.stage !== undefined);
   const open = all.filter((c) => !STOPPED.includes(c.stage!));
   // With none open, every ESCALATED cycle: the store would ask a new cycle to name any of them
   // as its parent, so cancelling only one would not free the work ID.
   const targets = open.length > 0 ? open : all.filter((c) => c.stage === 'ESCALATED');
-  if (!store || targets.length === 0) throw new Error(`nothing to cancel for work ${workId} in ${where.runsDir}`);
+  // Named with the refusal, so "nothing to cancel" never reads as a work with no cycle.
+  const unreplayable = listed.filter((c) => c.refused !== undefined).map((c) => `cycle ${c.cycleId}: the store cannot replay it: ${c.refused}`);
+  if (!store || targets.length === 0) throw new Error([`nothing to cancel for work ${workId} in ${where.runsDir}`, ...unreplayable].join('; '));
   // No `after`: a cancel is meant to land whatever came between, a run in flight included (07-d).
   return targets.map(({ cycleId }) => store.append(cycleId, { type: 'cancel', source, ...(commandId === undefined ? {} : { commandId }) }));
 }
