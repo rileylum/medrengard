@@ -363,14 +363,22 @@ async function resumeWork(file: string): Promise<number> {
       const cycle = store.load(cycleId)!;
       const code = Math.max(report({ cycle, worktree: clone, branch }, config), unread);
       if (stage !== 'ESCALATED') return code;
-      const head = cycle.candidate?.head || '<sha>';
-      // The store refuses a move on a cycle with a child (moveAllowed): only cancel is offered then.
+      const head = cycle.candidate?.head;
+      // Only the moves the move command would take: moveEvent's refusals, and the store's for a
+      // cycle with a child (moveAllowed). route's depend on the stage the owner names, so it needs
+      // only the candidate.
       const child = all.find((c) => store.opened(c.cycleId)?.parentCycleId === cycleId)?.cycleId;
+      const takes = (action: MoveAction) => {
+        if (action === 'route') return true;
+        try { return moveEvent(store, spec.workId, { action, sha: head!, reason: 'resume', source: 'owner' }, { runsDir, file: path }).cycleId === cycleId; } catch { return false; }
+      };
+      const moves = child === undefined && head ? MOVE_ACTIONS.filter(takes) : [];
       console.log('');
-      if (child === undefined) {
-        console.log('The cycle is yours to move on, or to cancel:');
-        for (const action of MOVE_ACTIONS) console.log(`  node ${process.argv[1]} ${action} ${path} ${head}${action === 'route' ? ' <stage>' : ''} --reason <text>`);
-      } else console.log(`The cycle has a child, ${child}, so it cannot be moved; to cancel the work:`);
+      if (child !== undefined) console.log(`The cycle has a child, ${child}, so it cannot be moved.`);
+      console.log('Next:');
+      for (const action of moves) console.log(`  node ${process.argv[1]} ${action} ${path} ${head}${action === 'route' ? ' <stage>' : ''} --reason <text>`);
+      // A new cycle names this one as its parent; open refuses one beside a cycle it cannot replay.
+      if (unread === 0) console.log(`  set parentCycleId ${cycleId} in ${path}, then: node ${process.argv[1]} ${path}`);
       console.log(`  node ${process.argv[1]} cancel ${path}`);
       return code;
     }

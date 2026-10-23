@@ -1103,7 +1103,10 @@ test('resume at a human stage prints the next steps and drives nothing; on an es
   assert.equal(esc.status, 1, esc.stdout + esc.stderr);
   assert.match(esc.stdout, /^Stage: ESCALATED$/m);
   assert.match(esc.stdout, /^Escalation: run failed: timeout$/m);
-  for (const move of ['retry', 'overrule', 'route', 'cancel']) assert.match(esc.stdout, new RegExp(`^  node \\S+ ${move} ${jobFile}`, 'm'));
+  // No candidate (a dead developer run): no move can name one, so only a new cycle or cancel.
+  assert.doesNotMatch(esc.stdout, / (retry|overrule|route) /);
+  assert.match(esc.stdout, /parentCycleId c0/);
+  assert.match(esc.stdout, new RegExp(`^  node \\S+ cancel ${jobFile}$`, 'm'));
   assert.equal(look(db, 'c0').events, ESCALATE.length);
   seed(db, 'c1', TO_ACCEPTANCE, 'c0');
   const human = sf(['resume', jobFile]);
@@ -1284,7 +1287,7 @@ test('resume reports the escalated cycle with no child, whatever the ID order, a
   const r = sf(['resume', jobFile]);
   assert.equal(r.status, 1, r.stdout + r.stderr);
   assert.match(r.stdout, /^Cycle: a1$/m);
-  assert.match(r.stdout, new RegExp(`^  node \\S+ retry ${jobFile}`, 'm'));
+  assert.match(r.stdout, /parentCycleId a1/);
 });
 
 test('cancel names the work\'s only cycle when the store cannot replay it', () => {
@@ -1296,4 +1299,26 @@ test('cancel names the work\'s only cycle when the store cannot replay it', () =
   const r = sf(['cancel', jobFile]);
   assert.equal(r.status, 2, r.stdout + r.stderr);
   assert.match(r.stderr, /^nothing to cancel for work w in .*; cycle c1: the store cannot replay it: cycle c1 row 1/m);
+});
+
+// 11-f2 adversarial: resume offers only the moves the store would take, for the candidate head.
+test('resume offers each move the store would take on the escalated cycle, for its candidate head', () => {
+  const disputed = scratch();
+  seed(disputed.db, 'c1', [
+    ...TO_ACCEPTANCE.slice(0, 3),
+    { type: 'verdict', runId: 'std1', head: H, verdict: 'FAIL', findings: ['f1'] },
+    { type: 'claim', runId: 'dev2', base: 'b'.repeat(40), runtime: 'fake' },
+    { type: 'dispute', runId: 'dev2', head: H, reason: 'the finding is wrong' },
+  ]);
+  const all = sf(['resume', disputed.jobFile]);
+  assert.equal(all.status, 1, all.stdout + all.stderr);
+  for (const move of ['retry', 'overrule', 'route']) assert.match(all.stdout, new RegExp(`^  node \\S+ ${move} ${disputed.jobFile} ${H}`, 'm'));
+  assert.doesNotMatch(all.stdout, /<sha>/);
+  const failedReview = scratch();
+  seed(failedReview.db, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'run_started', runId: 'std1', runtime: 'claude' }, { type: 'run_failed', runId: 'std1', reason: 'timeout' }]);
+  const some = sf(['resume', failedReview.jobFile]);
+  assert.equal(some.status, 1, some.stdout + some.stderr);
+  assert.match(some.stdout, new RegExp(`^  node \\S+ retry ${failedReview.jobFile} ${H}`, 'm'));
+  assert.match(some.stdout, new RegExp(`^  node \\S+ route ${failedReview.jobFile} ${H} <stage>`, 'm'));
+  assert.doesNotMatch(some.stdout, / overrule /);
 });
