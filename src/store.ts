@@ -250,14 +250,10 @@ export class EventStore {
     try {
       const now = this.replay(cycleId);
       if (!now) throw new Error(`cycle ${cycleId} not open`);
-      // A redelivery is a no-op whatever its load: its first delivery already moved the cycle.
-      if (key !== null && this.db.prepare('SELECT 1 FROM events WHERE cycle_id = ? AND run_id = ?').get(cycleId, key) !== undefined) {
+      if (this.redelivered(cycleId, now.cycle, key, opts)) {
         this.db.exec('COMMIT');
         return { cycle: now.cycle, written: false };
       }
-      const length = now.cycle.history.length;
-      if (opts.after !== undefined && length !== opts.after)
-        throw new StaleLoad(`cycle ${cycleId} moved since it was loaded: ${length} events, not ${opts.after}; nothing was written`);
       if (parsed.type === 'owner_decision') this.moveAllowed(cycleId, now.cycle.workId);
       // The parsed body, not `event`: the cycle a later load replays from the row (02-c).
       const next = apply(now.cycle, parsed, now.workflow);
@@ -268,6 +264,29 @@ export class EventStore {
       this.db.exec('ROLLBACK');
       throw err;
     }
+  }
+
+  /**
+   * What `write` would answer before applying `event`, without writing (11-f): the cycle as it is
+   * for a command it already holds, StaleLoad for a load it has left, undefined when the event
+   * would be applied. For a writer that could not take the work's lock: its delivery still gets
+   * the store's answer, which a lock held by a long drive would otherwise hide (standard 2).
+   */
+  answer(cycleId: string, event: Event, opts: { after?: number } = {}): Cycle | undefined {
+    const parsed = JSON.parse(JSON.stringify(event)) as Event;
+    const now = this.replay(cycleId);
+    if (!now) throw new Error(`cycle ${cycleId} not open`);
+    return this.redelivered(cycleId, now.cycle, dedupKey(parsed), opts) ? now.cycle : undefined;
+  }
+
+  // A redelivery is a no-op whatever its load: its first delivery already moved the cycle. Any
+  // other event decided on a load the cycle has left throws StaleLoad (A-132).
+  private redelivered(cycleId: string, cycle: Cycle, key: string | null, opts: { after?: number }): boolean {
+    if (key !== null && this.db.prepare('SELECT 1 FROM events WHERE cycle_id = ? AND run_id = ?').get(cycleId, key) !== undefined) return true;
+    const length = cycle.history.length;
+    if (opts.after !== undefined && length !== opts.after)
+      throw new StaleLoad(`cycle ${cycleId} moved since it was loaded: ${length} events, not ${opts.after}; nothing was written`);
+    return false;
   }
 
   /**

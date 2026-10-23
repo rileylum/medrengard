@@ -17,6 +17,8 @@ import { checkWorkflow, defaultWorkflow, type Workflow } from '../src/lifecycle.
 import { ownerCheck } from './workflows.ts';
 import { reviewerStub } from './stub-cli.ts';
 import { fakeAdapter } from './fake-adapter.ts';
+import { holder, kill } from './lock-holder.ts';
+import { holdWork, Locked } from '../src/lock.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
 mkdirSync('/var/tmp/software_factory', { recursive: true });
@@ -700,6 +702,46 @@ test('a commit stage FAIL edge, which is never taken, and stages the start never
     const store = new EventStore(join(root, `case-${i}.sqlite`), w);
     const r = await run(store, adapters(fake(claude), scripted(...standard), scripted('PASS')), job(repo, { workId: `w-${i}` }), opts(runsDir));
     assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', `${label}: ${r.cycle.escalation ?? r.error}`);
+    store.close();
+  }
+});
+
+// Ticket 11-f: run and drive hold the work's lock while they drive, so recover never judges a run
+// a live controller is still starting, and two drivers never run one cycle at once.
+test('run and drive refuse a work another live process holds, naming its PID, and release the lock when they return', async () => {
+  const { repo, store, runsDir } = scratch();
+  const child = await holder(runsDir, 'w1');
+  try {
+    await assert.rejects(run(store, adapters(fake(claude), scripted('PASS'), scripted('PASS')), job(repo), opts(runsDir)), (err) => err instanceof Locked && err.pid === child.pid);
+    assert.deepEqual(store.cycles('w1'), []);
+  } finally {
+    await kill(child);
+  }
+  const opened = await develop(store, fake(claude), job(repo), opts(runsDir));
+  const other = await holder(runsDir, 'w1');
+  try {
+    await assert.rejects(drive(store, opened.cycle.cycleId, adapters(fake(claude), scripted('PASS'), scripted('PASS')), job(repo), opts(runsDir)), (err) => err instanceof Locked && err.pid === other.pid);
+    assert.equal(store.load(opened.cycle.cycleId)!.stage, 'VERIFYING');
+  } finally {
+    await kill(other);
+  }
+  const r = await drive(store, opened.cycle.cycleId, adapters(fake(claude), scripted('PASS'), scripted('PASS')), job(repo), opts(runsDir));
+  assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation);
+  holdWork(runsDir, 'w1')();
+  store.close();
+});
+
+// 11-f standard 3: the run command is the owner's too, so it waits for the lock as an owner's move
+// does: a holder that lets go within the wait (a timer's recover) does not fail it.
+test('run waits for a work whose holder lets go within the wait, then opens the cycle', async () => {
+  const { repo, store, runsDir } = scratch();
+  const child = await holder(runsDir, 'w1');
+  setTimeout(() => void kill(child), 500);
+  try {
+    const r = await run(store, adapters(fake(claude), scripted('PASS'), scripted('PASS')), job(repo), opts(runsDir));
+    assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation);
+  } finally {
+    await kill(child);
     store.close();
   }
 });

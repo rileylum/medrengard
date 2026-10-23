@@ -11,6 +11,8 @@ import { decideAndDrive, type Adapters } from '../src/run.ts';
 import { ownerCheck } from './workflows.ts';
 import { EventStore, StaleLoad } from '../src/store.ts';
 import { acceptCycle, cancelWork, moveEvent, requestChangesEvent, type Move } from '../src/decide.ts';
+import { Locked } from '../src/lock.ts';
+import { holder, kill } from './lock-holder.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-decide-');
@@ -653,6 +655,26 @@ test('a move through decideAndDrive drives the cycle on into the stage it enters
     const r = await decideAndDrive(store, routed.cycleId, routed.event, async () => { throw new Error('ready called'); }, routed.after);
     assert.deepEqual([r.written, r.cycle.stage], [true, 'OWNER']);
   } finally {
+    store.close();
+  }
+});
+
+// Ticket 11-f, standard 1: an owner's move that drives holds the work's lock, waiting as the
+// store's write lock does, and writes nothing when the wait ends with the work still held.
+test('decideAndDrive refuses a work another live process holds after its wait, and writes nothing', async () => {
+  const AFTER_OWNER = { ...ownerCheck, stages: { ...ownerCheck.stages, OWNER: { kind: 'human', transitions: { PASS: 'FINAL', FAIL: 'ESCALATED' } }, FINAL: { kind: 'command', run: [{ name: 'ok', command: ['true'] }], transitions: { PASS: 'ACCEPTED', FAIL: 'ESCALATED' } } } } as Workflow;
+  const store = fresh(AFTER_OWNER);
+  const runsDir = join(dir, `locked-${n++}`);
+  const child = await holder(runsDir, 'w');
+  try {
+    seed(store, 'c1', AT_OWNER);
+    // Preflight wants an adapter per role; neither runs, since FINAL is a command stage.
+    const unused = { name: 'unused', start: () => { throw new Error('a run started'); } };
+    const ready = async () => ({ adapters: { writer: unused, reviewer: unused }, job, opts: { deadlineMs: 1000, runsDir, sandbox: { backend: 'none' as const } } });
+    await assert.rejects(decideAndDrive(store, 'c1', ACCEPT, ready), (err) => err instanceof Locked && err.pid === child.pid);
+    assert.equal(store.events('c1').length, AT_OWNER.length);
+  } finally {
+    await kill(child);
     store.close();
   }
 });

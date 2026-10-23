@@ -24,6 +24,8 @@ export interface JobFile extends Omit<Job, 'ticket'> {
   runsDir?: string;
   /** Per stage. Default 120000. */
   deadlineMs?: number;
+  /** Whether recover receives a run that finished while no controller watched it (A-122). Default true; false keeps A-105 exactly. */
+  adopt?: boolean;
   /** Where checks, the developer and the reviewers run. Default bwrap; `none` must be written out. `read` is relative to the file that sets it. */
   sandbox?: Sandbox;
   /** By name, what a workflow's `grants` may ask for. `file` is relative to the file that sets it (10-e). */
@@ -113,7 +115,7 @@ const REPO_LAYER = '.factory/config.json';
  * show the sandbox `~/.ssh`.
  */
 const REPO_KEYS = ['checks', 'workflow', 'runtime'];
-const PERSONAL_KEYS = [...REPO_KEYS, 'runtimes', 'sandbox', 'deadlineMs', 'runsDir', 'grants'];
+const PERSONAL_KEYS = [...REPO_KEYS, 'runtimes', 'sandbox', 'deadlineMs', 'runsDir', 'grants', 'adopt'];
 // Which work and where: one job's, never a default a later job would inherit. `model` is read by
 // proto/job.ts and ignored here; refusing it would stop proto/board.ts accept and cancel on its own job files.
 const JOB_KEYS = ['workId', 'ticket', 'ticketFile', 'repo', 'base', 'parentCycleId', 'model', ...PERSONAL_KEYS];
@@ -218,6 +220,7 @@ export async function loadConfig(jobFile: string, env: NodeJS.ProcessEnv = proce
   const repoLayer = readRepoLayer(repo, base);
   const spec = { ...merge([DEFAULTS, readLayer(personalFile(env), PERSONAL_KEYS, true), repoLayer, job]), base } as unknown as JobFile;
   const runsDir = resolve(spec.runsDir!);
+  if (spec.adopt !== undefined && typeof spec.adopt !== 'boolean') throw new Error(`adopt must be true or false, got ${JSON.stringify(spec.adopt)}`);
   // The repository's path is relative to the repository; the job file's, already absolute, beats it.
   const fromRepo = repoLayer.workflow !== undefined && job.workflow === undefined;
   if (fromRepo) {

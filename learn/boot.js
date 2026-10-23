@@ -8,7 +8,7 @@
   const imports = {
     'node:fs': s + 'node/fs.js', 'node:path': s + 'node/path.js', 'node:child_process': s + 'node/child_process.js',
     'node:os': s + 'node/os.js', 'node:crypto': s + 'node/crypto.js',
-    '/src/store.ts': s + 'store.js', '/src/runtime/spawn.ts': s + 'spawn.js',
+    '/src/store.ts': s + 'store.js', '/src/runtime/spawn.ts': s + 'spawn.js', '/src/lock.ts': s + 'lock.js',
   };
   if (document.currentScript.hasAttribute('data-sim')) {
     Object.assign(imports, { '/src/developer.ts': s + 'sim-developer.js', '/src/verify.ts': s + 'sim-verify.js', '/src/review.ts': s + 'sim-review.js' });

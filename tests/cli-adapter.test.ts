@@ -3,13 +3,13 @@
 // shapes recorded in docs/work/03-a-findings.md; live against the real CLIs under RUNTIME_SPIKE=1.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { RunOutcome } from '../src/adapter.ts';
 import { execute } from '../src/controller.ts';
-import { checkScopes, claude, cliAdapter, extensionSpec, pi, scopeHint, type CliSpec } from '../src/runtime/cli-adapter.ts';
+import { checkScopes, claude, clearEmptyUnits, cliAdapter, extensionSpec, pi, scopeHint, type CliSpec } from '../src/runtime/cli-adapter.ts';
 import { EventStore } from '../src/store.ts';
 
 const LIVE = process.env.RUNTIME_SPIKE === '1';
@@ -493,5 +493,115 @@ test('sandboxed adapter: a run cannot rewrite its kept prompt through /proc/self
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Ticket 11-f: look reads a run whose controller is gone: finished from its folder, running while
+// anything holds it, gone otherwise; with stop it ends a running one first.
+const lookAt = (isolation: 'cgroup' | 'process-group' = 'process-group') => cliAdapter(fake(claude, 'ping'), { isolation, graceMs: 300 });
+// A killed child of this test stays a zombie until reaped, and kill(pid, 0) still finds it.
+const alive = (pid: number) => { try { return !/^\S+ \(.*\) Z/.test(readFileSync(`/proc/${pid}/stat`, 'utf8')); } catch { return false; } };
+
+/** A run folder with no exit, held only by a detached `sleep` in its own session: the wrapper died. */
+function orphan(name: string) {
+  const runDir = join(dir, 'look', name);
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, 'stdin'), 'p');
+  const out = openSync(join(runDir, 'stdout'), 'w');
+  const child = spawn('sleep', ['30'], { detached: true, stdio: ['ignore', out, 'ignore'] });
+  closeSync(out);
+  child.unref();
+  return { runDir, pid: child.pid! };
+}
+
+test('look: a folder with exit is finished, parsed as the live run would be', async () => {
+  const store = fresh();
+  const runsDir = join(dir, 'look-finished');
+  const c = await execute(store, 'c1', lookAt(), { role: 'developer', prompt: 'ping', cwd: dir }, { deadlineMs: 10_000, base: 'B1', runsDir });
+  const runId = c.runs[0]!.runId;
+  const left = await lookAt().look!(runId, join(runsDir, 'runs', runId), false);
+  assert.deepEqual(left, { state: 'finished', outcome: { status: 'completed', claim: { head: 'H1', artifacts: ['result.json'] }, sessionId: 'c0ffee00-0000-4000-8000-000000000001' } });
+  store.close();
+});
+
+test('look: no folder, or a folder with no exit that nothing holds, is gone', async () => {
+  assert.deepEqual(await lookAt().look!('none', join(dir, 'look', 'none'), false), { state: 'gone' });
+  const runDir = join(dir, 'look', 'empty');
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, 'stdout'), '');
+  assert.deepEqual(await lookAt().look!('empty', runDir, false), { state: 'gone' });
+});
+
+test('process-group look: a setsid process holding stdout is running; stop kills it and it is stopped; then gone', async () => {
+  const { runDir, pid } = orphan('held');
+  try {
+    assert.deepEqual(await lookAt().look!('held', runDir, false), { state: 'running' });
+    assert.ok(alive(pid));
+    assert.deepEqual(await lookAt().look!('held', runDir, true), { state: 'stopped' });
+    assert.equal(alive(pid), false, 'the holder outlived stop');
+    assert.deepEqual(await lookAt().look!('held', runDir, false), { state: 'gone' });
+  } finally {
+    if (alive(pid)) process.kill(pid, 'SIGKILL');
+  }
+});
+
+test('cgroup look: a scope with tasks is running even when nothing holds stdout; stop empties it', async (t) => {
+  if (!hasUserSystemd) return void t.skip('no user systemd');
+  const runId = `test-${process.pid}-look`;
+  const runDir = join(dir, 'look', 'scoped');
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, 'stdout'), '');
+  const child = spawn('systemd-run', ['--user', '--scope', '-q', `--unit=sf-${runId}`, '--', 'sleep', '30'], { detached: true, stdio: 'ignore' });
+  child.unref();
+  try {
+    for (const end = Date.now() + 3000; Date.now() < end && !/^ActiveState=active$/m.test(unit(runId)); ) await new Promise((res) => setTimeout(res, 50));
+    assert.deepEqual(await lookAt('cgroup').look!(runId, runDir, false), { state: 'running' });
+    assert.deepEqual(await lookAt('cgroup').look!(runId, runDir, true), { state: 'stopped' });
+    assert.doesNotMatch(unit(runId), /^ActiveState=active$/m);
+  } finally {
+    spawnSync('systemctl', ['--user', 'stop', `sf-${runId}.scope`]);
+    spawnSync('systemctl', ['--user', 'reset-failed', `sf-${runId}.scope`]);
+  }
+});
+
+const unit = (runId: string) => spawnSync('systemctl', ['--user', 'show', `sf-${runId}.scope`, '-p', 'ActiveState', '-p', 'LoadState'], { encoding: 'utf8' }).stdout;
+
+test('clearEmptyUnits resets a named scope systemd stopped at its time limit, leaves a named one with tasks running and one not named alone (parked 04-e, 11-e2)', async (t) => {
+  if (!hasUserSystemd) return void t.skip('no user systemd');
+  const prefix = `sf-test-${process.pid}-clear`;
+  const timedOut = spawn('systemd-run', ['--user', '--scope', '-q', `--unit=${prefix}-failed`, '-p', 'RuntimeMaxSec=1', '--', 'sleep', '30'], { stdio: 'ignore' });
+  const other = spawn('systemd-run', ['--user', '--scope', '-q', `--unit=${prefix}-other`, '-p', 'RuntimeMaxSec=1', '--', 'sleep', '30'], { stdio: 'ignore' });
+  const live = spawn('systemd-run', ['--user', '--scope', '-q', `--unit=${prefix}-live`, '--', 'sleep', '30'], { detached: true, stdio: 'ignore' });
+  live.unref();
+  const show = (name: string) => spawnSync('systemctl', ['--user', 'show', `${name}.scope`, '-p', 'ActiveState', '-p', 'LoadState'], { encoding: 'utf8' }).stdout;
+  try {
+    await Promise.all([timedOut, other].map((c) => new Promise((res) => c.once('exit', res))));
+    for (const end = Date.now() + 3000; Date.now() < end && !/^ActiveState=failed$/m.test(show(`${prefix}-failed`)); ) await new Promise((res) => setTimeout(res, 50));
+    assert.match(show(`${prefix}-failed`), /^ActiveState=failed$/m);
+    const cleared = clearEmptyUnits([`${prefix}-failed.scope`, `${prefix}-live.scope`, `${prefix}-absent.scope`]);
+    assert.deepEqual(cleared, [`${prefix}-failed.scope`]);
+    assert.match(show(`${prefix}-failed`), /^LoadState=not-found$/m);
+    assert.match(show(`${prefix}-live`), /^ActiveState=active$/m);
+    assert.match(show(`${prefix}-other`), /^ActiveState=failed$/m);
+  } finally {
+    spawnSync('systemctl', ['--user', 'stop', `${prefix}-live.scope`, `${prefix}-failed.scope`, `${prefix}-other.scope`]);
+    spawnSync('systemctl', ['--user', 'reset-failed', `${prefix}-live.scope`, `${prefix}-failed.scope`, `${prefix}-other.scope`]);
+  }
+});
+
+test('look: a process that only reads stdout (the owner tailing it) is not the run: a folder with no writer is gone, and stop leaves the reader alone (11-f, standard 1)', async () => {
+  const runDir = join(dir, 'look', 'tailed');
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, 'stdout'), '');
+  const read = openSync(join(runDir, 'stdout'), 'r');
+  const reader = spawn('sleep', ['30'], { detached: true, stdio: [read, 'ignore', 'ignore'] });
+  closeSync(read);
+  reader.unref();
+  try {
+    assert.deepEqual(await lookAt().look!('tailed', runDir, false), { state: 'gone' });
+    assert.deepEqual(await lookAt().look!('tailed', runDir, true), { state: 'gone' });
+    assert.ok(alive(reader.pid!), 'stop killed a process that only read the run\'s output');
+  } finally {
+    if (alive(reader.pid!)) process.kill(reader.pid!, 'SIGKILL');
   }
 });

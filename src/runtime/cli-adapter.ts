@@ -4,12 +4,12 @@
 // Ticket 10-a: an extension runtime is one more CliSpec, `node <module>` speaking JSON.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { Adapter, RunOutcome, RunRequest } from '../adapter.ts';
+import type { Adapter, Left, RunOutcome, RunRequest } from '../adapter.ts';
 import { checkSandbox, confines, executables, wrap, type Sandbox } from '../sandbox.ts';
-import { scopePath, spawnRuntime, type RunResult } from './spawn.ts';
+import { readRun, runFiles, scopePath, spawnRuntime, type RunResult } from './spawn.ts';
 
 export interface CliSpec {
   name: string;
@@ -124,7 +124,82 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
         if (tmp) removeTmp(tmp);
       }
     },
+    async look(runId, runDir, stop) {
+      const unit = isolation === 'cgroup' ? `sf-${runId}.scope` : undefined;
+      const stdout = runFiles(runDir).stdout;
+      // By the path as created: the probe found a renamed file only under its new name.
+      const file = existsSync(stdout) ? realpathSync(stdout) : undefined;
+      const live = () => (unit !== undefined && scopeTasks(unit) > 0) || (file !== undefined && holders(file).length > 0);
+      // exit is read again after each liveness check: a run that ended in between wrote it first.
+      const finished = (): Left | undefined => {
+        const r = readRun(runDir, opts.maxOutputBytes);
+        return r && { state: 'finished', outcome: outcome(spec, r) };
+      };
+      if (!live()) return finished() ?? { state: 'gone' };
+      if (!stop) return finished() ?? { state: 'running' };
+      // SIGKILL, not the live cancel's SIGTERM and grace: the run is recorded failed either way.
+      if (unit) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', unit], { timeout: 5000 });
+      for (const pid of file === undefined ? [] : holders(file)) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
+      for (const end = Date.now() + (opts.graceMs ?? 5000); live() && Date.now() < end; ) await new Promise((res) => setTimeout(res, 50));
+      return finished() ?? (live() ? { state: 'running' } : { state: 'stopped' });
+    },
   };
+}
+
+/**
+ * The processes holding `file` open for writing, by a scan of /proc/<pid>/fd: under process-group
+ * isolation the one sign that a run whose wrapper died is still going (11-f probe: a holder inside
+ * bwrap's PID namespace or in its own session shows the host path; about 25 ms for 4,000
+ * descriptors). Writers only: the run's processes inherit the file as their stdout, opened for
+ * writing, and a reader (the owner tailing it) is neither the run nor a process to kill. Only this
+ * user's processes are readable, which are the only ones a run can be.
+ */
+function holders(file: string): number[] {
+  const pids: number[] = [];
+  for (const pid of readdirSync('/proc')) {
+    if (!/^\d+$/.test(pid)) continue;
+    let fds: string[];
+    try { fds = readdirSync(`/proc/${pid}/fd`); } catch { continue; }
+    if (fds.some((fd) => { try { return readlinkSync(`/proc/${pid}/fd/${fd}`) === file && writes(pid, fd); } catch { return false; } })) pids.push(Number(pid));
+  }
+  return pids;
+}
+
+/** Whether descriptor `fd` of `pid` is open for writing: O_WRONLY or O_RDWR in fdinfo's octal `flags`. */
+function writes(pid: string, fd: string): boolean {
+  const flags = /^flags:\s*([0-7]+)$/m.exec(readFileSync(`/proc/${pid}/fdinfo/${fd}`, 'utf8'))?.[1];
+  return flags !== undefined && (parseInt(flags, 8) & 0o3) !== 0;
+}
+
+/** Processes in a unit, by name: `scopePath` is beside this process's cgroup, which need not be the controller's. */
+function scopeTasks(unit: string): number {
+  const show = spawnSync('systemctl', ['--user', 'show', unit, '-p', 'ActiveState', '-p', 'TasksCurrent'], { encoding: 'utf8', timeout: 5000 }).stdout ?? '';
+  if (!/^ActiveState=(active|activating|deactivating|reloading)$/m.test(show)) return 0;
+  // Task accounting off reads `[not set]`: an active unit then counts as running, not gone.
+  return Number(/^TasksCurrent=(\d+)$/m.exec(show)?.[1] ?? 1);
+}
+
+/**
+ * Of the named units (`sf-<runId>.scope`), stops each one that holds no process and resets each
+ * failed one: a cancel in systemd-run's start-up window leaves an empty scope active or failed
+ * (04-e), and a scope stopped at its time limit stays failed (11-e). Named, not every `sf-*`: a
+ * failed unit may still be read by whoever started it, another store's controller or a test.
+ * Returns the units cleared; nothing without user systemd.
+ */
+export function clearEmptyUnits(names: string[]): string[] {
+  const wanted = new Set(names);
+  const list = spawnSync('systemctl', ['--user', 'list-units', '--all', '--type=scope', '--output=json', 'sf-*'], { encoding: 'utf8', timeout: 5000 });
+  let units: { unit: string; active: string }[];
+  try { units = JSON.parse(list.stdout); } catch { return []; }
+  const cleared: string[] = [];
+  for (const { unit, active } of units) {
+    if (!wanted.has(unit) || (active === 'active' && scopeTasks(unit) !== 0)) continue;
+    if (active !== 'active' && active !== 'failed') continue;
+    if (active === 'active') spawnSync('systemctl', ['--user', 'stop', unit], { timeout: 5000 });
+    spawnSync('systemctl', ['--user', 'reset-failed', unit], { timeout: 5000 });
+    cleared.push(unit);
+  }
+  return cleared;
 }
 
 /**

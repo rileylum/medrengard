@@ -1009,3 +1009,82 @@ test('a move is refused, writing nothing, without a reason, for another head, an
   refused(['retry', jobFile, head, '--reason', 'x'], new RegExp(`cycle ${cycleId} is the parent of cycle child`));
   assert.deepEqual(rows(db, cycleId), before);
 });
+
+// Ticket 11-f: `recover <job.json>` records what the work's started runs left and launches nothing.
+test('recover: no store is nothing to do; a reviewer run that left nothing is failed and the cycle escalates; extra words are refused', () => {
+  const { jobFile, db } = scratch();
+  const none = sf(['recover', jobFile]);
+  assert.equal(none.status, 0, none.stdout + none.stderr);
+  assert.match(none.stdout, /^No event store at .*: nothing to recover$/m);
+  seed(db, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'run_started', runId: 'std9', runtime: 'claude' }]);
+  const r = sf(['recover', jobFile]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Cycle c1: run std9 failed; now ESCALATED$/m);
+  assert.equal(look(db, 'c1').stage, 'ESCALATED');
+  const again = sf(['recover', jobFile]);
+  assert.equal(again.status, 0, again.stdout + again.stderr);
+  assert.match(again.stdout, /^Cycle c1: no started run waiting; ESCALATED$/m);
+  assert.equal(look(db, 'c1').events, 5);
+  assert.equal(sf(['recover', jobFile, 'now']).status, 2);
+});
+
+test('recover clears the failed unit of a run under its runsDir, by the run folder\'s name (parked 04-e, 11-e)', async (t) => {
+  if (spawnSync('systemd-run', ['--user', '--scope', '-q', 'true']).status !== 0) return void t.skip('no user systemd');
+  const { jobFile, runsDir } = scratch();
+  const runId = `test-${process.pid}-main-recover`;
+  mkdirSync(join(runsDir, 'runs', runId), { recursive: true });
+  const show = () => spawnSync('systemctl', ['--user', 'show', `sf-${runId}.scope`, '-p', 'ActiveState', '-p', 'LoadState'], { encoding: 'utf8' }).stdout;
+  try {
+    spawnSync('systemd-run', ['--user', '--scope', '-q', `--unit=sf-${runId}`, '-p', 'RuntimeMaxSec=1', '--', 'sleep', '30']);
+    for (const end = Date.now() + 3000; Date.now() < end && !/^ActiveState=failed$/m.test(show()); ) await new Promise((res) => setTimeout(res, 50));
+    seed(join(runsDir, 'events.sqlite'), 'c1', TO_ACCEPTANCE.slice(0, 3));
+    const r = sf(['recover', jobFile]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, new RegExp(`^Cleared empty units: sf-${runId}\\.scope$`, 'm'));
+    assert.match(show(), /^LoadState=not-found$/m);
+  } finally {
+    spawnSync('systemctl', ['--user', 'reset-failed', `sf-${runId}.scope`]);
+  }
+});
+
+// 11-f standard 2: the work's lock waits 5 s, but a drive (a fix or review run) takes minutes. A
+// delivery still waiting when the wait ends gets the store's answer, not the lock's.
+const SLOW_MERGES = `sleep 7; ${MERGES}`;
+const deliver = (jobFile: string, head: string, env: NodeJS.ProcessEnv, extra: string[] = []) => new Promise<{ code: number | null; out: string }>((done) => {
+  const child = spawn(process.execPath, [MAIN, 'accept', jobFile, head, ...extra], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  child.stdout.on('data', (d) => (out += d));
+  child.stderr.on('data', (d) => (out += d));
+  child.on('close', (code) => done({ code, out }));
+});
+
+test('a command ID delivered again while its first delivery drives past the lock wait is "Already recorded", exit 0 (11-f, standard 2)', async () => {
+  const { env, jobFile, head, db, cycleId } = atOwnerBeforeGrant(SLOW_MERGES);
+  const lock = new DatabaseSync(db);
+  lock.exec('BEGIN IMMEDIATE');
+  const both = Promise.all([deliver(jobFile, head, env, ['--command-id', 'same']), deliver(jobFile, head, env, ['--command-id', 'same'])]);
+  await new Promise((r) => setTimeout(r, 2500));
+  lock.exec('COMMIT');
+  lock.close();
+  const results = await both;
+  const all = results.map((r) => r.out).join('\n---\n');
+  for (const r of results) assert.equal(r.code, 0, all);
+  assert.equal(results.filter((r) => /^Already recorded: command same$/m.test(r.out)).length, 1, all);
+  assert.deepEqual(rows(db, cycleId).filter((t) => t === 'accept'), ['accept']);
+  assert.equal(look(db, cycleId).stage, 'ACCEPTED');
+});
+
+test('of two different accepts, the one still waiting when the other drives past the lock wait gets "run the command again", not the lock (11-f, standard 2)', async () => {
+  const { env, jobFile, head, db, cycleId } = atOwnerBeforeGrant(SLOW_MERGES);
+  const lock = new DatabaseSync(db);
+  lock.exec('BEGIN IMMEDIATE');
+  const both = Promise.all([deliver(jobFile, head, env), deliver(jobFile, head, env)]);
+  await new Promise((r) => setTimeout(r, 2500));
+  lock.exec('COMMIT');
+  lock.close();
+  const results = (await both).sort((a, b) => (a.code ?? 9) - (b.code ?? 9));
+  assert.equal(results[0]!.code, 0, results[0]!.out);
+  assert.equal(results[1]!.code, 2, results[1]!.out);
+  assert.match(results[1]!.out, new RegExp(`cycle ${cycleId} moved since it was loaded: \\d+ events, not \\d+; nothing was written; run the command again`));
+  assert.deepEqual(rows(db, cycleId).filter((t) => t === 'accept'), ['accept']);
+});

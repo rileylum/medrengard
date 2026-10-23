@@ -7,6 +7,7 @@
 import type { Adapter } from './adapter.ts';
 import { develop, fix, type DeveloperAdapter, type Job } from './developer.ts';
 import { cyclePaths } from './layout.ts';
+import { holdWork, Locked, waitForWork } from './lock.ts';
 import { apply, type Cycle, type Event, type Role, type Stage, type Workflow } from './lifecycle.ts';
 import { review } from './review.ts';
 import { checkSandbox, type Sandbox } from './sandbox.ts';
@@ -54,9 +55,16 @@ export async function run(store: EventStore, adapters: Adapters, job: Job, opts:
   const start = store.workflow.stages[store.workflow.start];
   // checkWorkflow allows a start stage with no role; develop refuses it before using the adapter.
   const developer = roles[start?.kind === 'agent' ? start.role : ''] as DeveloperAdapter;
-  // A throw here propagates: develop cancels any cycle it opened, so there is nothing to record.
-  const { cycle, worktree, branch } = await develop(store, developer, job, opts);
-  return loop(store, cycle, roles, job, opts, worktree, branch);
+  // Held from before the cycle opens, so recover never sees its claim without a live holder (11-f).
+  // The owner's command, so it waits as a move does: a timer's recover holds the work for moments.
+  const release = await waitForWork(opts.runsDir, job.workId, OWNER_WAIT_MS);
+  try {
+    // A throw here propagates: develop cancels any cycle it opened, so there is nothing to record.
+    const { cycle, worktree, branch } = await develop(store, developer, job, opts);
+    return await loop(store, cycle, roles, job, opts, worktree, branch);
+  } finally {
+    release();
+  }
 }
 
 /** Continue a cycle from its stored stage, as run would after develop. Settled cycles come back unchanged. */
@@ -65,7 +73,13 @@ export async function drive(store: EventStore, cycleId: string, adapters: Adapte
   // Nothing has run, so there is no clone to continue from; recovery (row 11) owns this case.
   if (cycle.stage === 'QUEUED') throw new Error(`cycle ${cycleId} is QUEUED: no run started; cancel it and run the job again`);
   const roles = preflight(store.workflow, adapters, job, opts);
-  return loop(store, cycle, roles, job, opts, ...cloneOf(opts, cycleId));
+  const release = holdWork(opts.runsDir, cycle.workId);
+  try {
+    // Reloaded under the lock: a holder that just let go may have moved the cycle on.
+    return await loop(store, store.drivable(cycleId), roles, job, opts, ...cloneOf(opts, cycleId));
+  } finally {
+    release();
+  }
 }
 
 /** What drive needs, built only when an owner's event leads to a stage the loop runs. */
@@ -97,11 +111,31 @@ export async function decideAndDrive(store: EventStore, cycleId: string, event: 
   // verify's gate, on the cycle as it will be: refused now, the owner may fix and accept again.
   const def = w.stages[next.stage];
   if (def?.kind === 'command' && (def.grants ?? []).length > 0) headGate(next, w);
-  const { cycle, written } = store.write(cycleId, event, loaded);
-  // Not written: another delivery of the same command recorded it first and drives the cycle.
-  if (!written) return { cycle, written };
-  return { cycle, written, driven: await loop(store, cycle, roles, job, opts, ...cloneOf(opts, cycleId)) };
+  // Before the write, so a refusal writes nothing, as for preflight. Waited for, as the store's
+  // write lock is. A drive outlasts the wait (a fix or review run takes minutes), so a delivery
+  // still locked out gets the store's answer first: "already recorded" for a command it holds,
+  // StaleLoad for a load the cycle has left; only a new command meets the lock (11-f, standard 2).
+  let release: () => void;
+  try {
+    release = await waitForWork(opts.runsDir, now.workId, OWNER_WAIT_MS);
+  } catch (err) {
+    if (!(err instanceof Locked)) throw err;
+    const held = store.answer(cycleId, event, loaded);
+    if (held) return { cycle: held, written: false };
+    throw err;
+  }
+  try {
+    const { cycle, written } = store.write(cycleId, event, loaded);
+    // Not written: another delivery of the same command recorded it first and drives the cycle.
+    if (!written) return { cycle, written };
+    return { cycle, written, driven: await loop(store, cycle, roles, job, opts, ...cloneOf(opts, cycleId)) };
+  } finally {
+    release();
+  }
 }
+
+/** How long an owner's command waits for the work's lock: the store's own busy timeout. */
+const OWNER_WAIT_MS = 5000;
 
 /** Where develop put the cycle's clone, and its branch. */
 const cloneOf = (opts: RunOptions, cycleId: string) => { const p = cyclePaths(opts.runsDir, cycleId); return [p.clone, p.branch] as const; };
