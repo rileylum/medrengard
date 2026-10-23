@@ -745,3 +745,35 @@ test('run waits for a work whose holder lets go within the wait, then opens the 
     store.close();
   }
 });
+
+// Ticket 11-f2: a started run with no outcome may still be going, or may have finished while no
+// controller watched; only recover may decide which. Driving on would launch a second run at its stage.
+test('drive refuses a cycle with a started run and no outcome, naming the run and recover, and writes and launches nothing', async () => {
+  const { repo, store, runsDir, base } = scratch();
+  store.open('c1', 'w1');
+  store.append('c1', { type: 'claim', runId: 'r-left', base, runtime: 'claude' });
+  const before = store.events('c1').length;
+  const dev = recording(fake(claude));
+  const standard = scripted('PASS');
+  await assert.rejects(drive(store, 'c1', adapters(dev, standard, scripted('PASS')), job(repo), opts(runsDir)), /run r-left started and has no outcome; run recover/);
+  assert.equal(store.events('c1').length, before);
+  assert.equal(store.load('c1')!.stage, 'DEVELOPING');
+  assert.equal(dev.requests.length + standard.requests.length, 0);
+  holdWork(runsDir, 'w1')();
+  store.close();
+});
+
+// 11-f2: resume drives through drive, and the owner runs it, so drive waits for the lock as run does.
+test('drive waits for a work whose holder lets go within the wait, then drives the cycle on', async () => {
+  const { repo, store, runsDir } = scratch();
+  const opened = await develop(store, fake(claude), job(repo), opts(runsDir));
+  const child = await holder(runsDir, 'w1');
+  setTimeout(() => void kill(child), 500);
+  try {
+    const r = await drive(store, opened.cycle.cycleId, adapters(fake(claude), scripted('PASS'), scripted('PASS')), job(repo), opts(runsDir));
+    assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation);
+  } finally {
+    await kill(child);
+    store.close();
+  }
+});
