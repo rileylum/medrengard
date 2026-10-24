@@ -194,8 +194,8 @@ export class Controller {
     } catch (e) { this.#db.exec('ROLLBACK'); throw e; }
     const observed = frozen(copy({ ...event, id, position } as Event));
     for (const fn of this.#observers) {
-      // Observation is isolated from control: a broken observer cannot veto a committed event.
-      try { void Promise.resolve(observer.run(true, () => fn(observed))).catch(() => {}); } catch {}
+      // Returned thenables execute code too; keep assimilation inside the observation guard.
+      try { observer.run(true, () => { void Promise.resolve(fn(observed)).catch(() => {}); }); } catch {}
     }
   }
   #version(id: string): number { return this.events().filter(e => e.id === id).length; }

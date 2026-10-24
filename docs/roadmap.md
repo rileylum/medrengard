@@ -13,7 +13,8 @@ The stop rule measured whether another simplification was justified, not
 whether every product requirement was met.
 
 The final suite passed 54/54 tests, but the final adversarial review found an
-unfixed observer mutation/order defect. The refactor removed substantial
+observer mutation/order defect, subsequently fixed in
+[ticket 12](work/12-observer-isolation.md). The refactor removed substantial
 capability alongside duplication: provider adapters, CLI and layered config,
 durable run adoption, grants, frontends and their tests. A generic JSON
 process adapter and a fake code-host proof do not constitute a real factory.
@@ -22,6 +23,20 @@ See the [final report](refactor/log.md#final-report--2026-10-24) and
 
 Stop optimizing for source-line reduction. Build one real delivery path and
 let its concrete requirements identify the next core changes.
+
+## Development loop
+
+On 2026-10-24 the owner agreed to develop the remaining product by defining a
+user journey or agentic workflow, trying to build it on the existing primitives,
+and deciding whether any missing support is worth adding. The quoted reply is
+in [ticket 12](work/12-observer-isolation.md#log).
+
+For each increment, name the journey and its observable completion criteria,
+implement it using the public API, and identify concrete gaps. Prefer workflow
+or integration code when that is sufficient; add a core mechanism when the
+journey needs it and prove the behavior at the public boundary. Use the working
+journey to choose the next increment. The milestones below remain finish lines,
+not a requirement to implement all proposed primitives in advance.
 
 ## Three completion boundaries
 

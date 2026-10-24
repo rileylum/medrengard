@@ -35,7 +35,8 @@ README and obsolete-document cleanup are complete. The final integration
 gate passed, but the final adversarial review returned **FAIL**: an observer's
 returned thenable can escape the observation guard, create work and reorder
 notifications (`src/primitives.ts:198`). No implementation fixes followed the
-review, as required by the prompt. The finding is unfixed and not accepted.
+review, as required by the prompt. The finding remained unfixed at the end of
+that run; the subsequent authorized fix is recorded below.
 
 ## Forward scope — 2026-10-24
 
@@ -56,16 +57,33 @@ refactor round worktrees. The remaining branches are `main`, `refactor/core`
 and `docs/factory-roadmap`. Older worktrees were preserved; the agent-kit and
 core-docs worktrees now remain detached at their previous commits.
 
-Next action: read the roadmap, then prepare the M1 observer-fix follow-up ticket
-with a public-API regression and review plan. The fix is still outstanding; the
-documentation request did not itself execute or approve all future milestones.
-The completed refactor's stop rule and final-review freeze remain its historical
-record; subsequent implementation belongs to new work.
-
-After M1, build M2's first real provider-to-PR path. Settle the recovery promise
-and provider access boundary when designing the relevant implementation; do not
-silently inherit removed capabilities or invent owner approvals.
-
-This session changed documentation only. Local Markdown links and diff
+That session changed documentation only. Local Markdown links and diff
 whitespace were checked; application tests were not rerun. The last implementation
-gate remains 54/54 passing, with the separate adversarial FAIL above.
+gate at that point was 54/54 passing, with the separate adversarial FAIL above.
+
+## Observer follow-up — 2026-10-24
+
+The owner authorized closing the defect in
+[ticket 12](work/12-observer-isolation.md), on `feat/12-observer-isolation`,
+worktree `/tmp/medrengard-m1-observer`, based on `docs/factory-roadmap` at
+`e4e6c0b`. Returned thenable handling now stays inside the observation guard,
+including deferred callbacks and nested thenables. Public-API regressions
+verify refusal, absence of observer-created work, notification order and
+continued owner control. The original refactor review remains unchanged.
+
+Validation: three new regressions failed before the fix and passed afterward;
+the full real-bubblewrap gate passed **57/57**, zero failures/skips/todos
+(18.1 s). Implementer review found no remaining issue in the changed path;
+no independent review was run in this follow-up. The resolved finding was
+removed from `work/parked.md`. This closes the reported defect, not core v1.
+
+The owner also agreed to the roadmap's development loop: define a user journey
+or agentic workflow, try to build it, and decide whether missing primitive
+support is worth adding. No provider or recovery policy was selected by that
+reply. Current recovery still escalates interrupted runs without result adoption
+or a continuation command; provider access and real publication remain unbuilt.
+
+Next action: define M2's first real provider-to-PR journey and its acceptance
+evidence. Resolve the recovery promise and provider network/credential boundary
+as part of that implementation design. The owner merges local branches; no
+paid run, push or merge is part of this follow-up.
