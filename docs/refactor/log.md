@@ -40,3 +40,19 @@ UTF-8 decoding changed invalid path bytes and could certify the wrong tree;
 workflow edges could retry a failed gate on the same subject automatically;
 the process runtime omitted approved-spec and review artifacts. Worker repair
 requested before integration. Reproductions are under `/tmp/r00-review-*.mts`.
+
+Foundation repair `8c97663`: full gate 676 tests, 652 pass, zero fail,
+19 skips, five todos; guide six pass; 24 new e2e/contract cases pass.
+Foundation review 2: FAIL, one reproduced storage invariant. A subsequent
+developer run could orphan and prune the previous accepted commit from its
+writable clone, leaving an artifact SHA with no retained objects. Reproduction:
+`/tmp/r00-review-retention.mts`. Worker must preserve accepted commits outside
+candidate-writable storage before round 00 integrates. The capped simplification
+rounds in the prompt begin after the foundation proof.
+
+Foundation retention repair `d2e0b14`: validated commit packs are retained in
+controller-owned repositories outside candidate-write mounts; later snapshots
+read retained objects. Regression prunes the old candidate object, refuses
+candidate writes to retained storage, and checks the retained SHA after the
+candidate gitdir is removed. Full gate: 677 tests, 653 pass, zero fail,
+19 skips, five todos. E2E: 25 pass. Guide: six pass. Review 3 pending.
