@@ -55,7 +55,7 @@ Review tiers (A-125), written from what the owner has chosen since row 9:
 | Tier | Applies to | Reviews |
 | --- | --- | --- |
 | Trust | Seams that hold trust: the store, the controller and engine, the sandbox, grants, git over candidate trees, anything that reads candidate output outside a sandbox | Two standard and one adversarial through `claude -p`, with probes |
-| Light | Refactors with no behaviour change, docs, the guide (`learn/`) | One review, in session or through `claude -p` |
+| Light | Refactors with no behaviour change, docs | One review, in session or through `claude -p` |
 
 The owner may move a ticket to another tier; the ticket records which. A missing test for correct code is a minor finding, not a major one.
 
@@ -63,7 +63,7 @@ Budget per Trust ticket: two standard reviews, one adversarial. Spent budget doe
 
 ## Reviews
 
-Reviews run in a fresh session through `claude -p` with the prompt in a file. Do not use the `dispatch` skill: it runs the session in a herdr tab, where the owner can talk to the reviewer, and the review must rest only on the prompt. herdr is used only by the experimental TUI in `proto/` (A-046), never for ticket reviews. The reviewer prompt contains the ticket, the diff against main, the SHA, the test output and AGENTS.md. It must not contain the implementer's reasoning or this conversation. The reviewer returns:
+Reviews run in a fresh session through `claude -p` with the prompt in a file. Do not use the `dispatch` skill: it runs the session in a herdr tab, where the owner can talk to the reviewer, and the review must rest only on the prompt. The reviewer prompt contains the ticket, the diff against main, the SHA, the test output and AGENTS.md. It must not contain the implementer's reasoning or this conversation. The reviewer returns:
 
 ```
 Verdict: PASS | FAIL

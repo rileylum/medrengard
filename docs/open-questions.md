@@ -10,7 +10,7 @@ O-001 to O-010 moved here from `decisions.md` on 2026-10-18; the IDs are unchang
 | O-006 | Foreground process or daemon. (Remote and merge mechanism decided in A-052: the owner merges on the code host, and the next sync records it.) A-122: no daemon now; the owner's long-term goal is a daemon, for example one on a VM serving another computer. Revisit when a tracker needs webhooks pushed to a listening socket, a UI must update faster than a poll, or pools make the one-second watch too costly | First of: webhooks, a live UI, pools, a remote host |
 | O-007 | Backpressure: max outstanding PRs, cost and time limits | Before unattended runs |
 | O-009 | Staging and deployment ownership | Release tracking |
-| O-010 | How an owner's answer to an agent in its herdr tab becomes evidence the reviewers can see ([work/herdr-findings.md](work/herdr-findings.md)) | The herdr frontend |
+| O-010 | How an owner's answer to an agent in its herdr tab becomes evidence the reviewers can see | The herdr frontend |
 | O-011 | What a cycle that runs out of review budget should lead to: what a child cycle inherits, and when the owner rewrites the ticket instead ([below](#o-011-what-to-do-when-a-cycle-runs-out-of-review-budget)) | Before unattended runs |
 | O-012 | Whether and when the Design Studio gets a plan row, and which part comes first ([below](#o-012-the-design-studio)) | After plan row 11 (recovery) |
 | O-013 | The initial prompt for each role, the skills each role gets, and how a run records which versions it used ([below](#o-013-role-prompts-and-skills)) | Before the first real repository's tickets |

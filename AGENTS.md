@@ -26,8 +26,7 @@ design, read `docs/decisions.md` (latest entry wins) and
   branch; docs on `docs/<slug>`. Branches stay local; the owner merges with
   `git merge --no-ff`, which runs `scripts/pre-merge-commit`. Push only when
   the owner asks.
-- **Checks:** `npm test`; `npm run test:learn` when `src/` exports change (the
-  guide's stand-ins in `learn/shims/` must match).
+- **Checks:** `npm test`.
 - **End of session:** append to the ticket log and update `docs/STATUS.md`:
   what changed, which tests ran and their result, the next action. Parked
   findings go to `docs/work/parked.md`, accepted risks to
