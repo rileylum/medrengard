@@ -23,6 +23,8 @@ Worker: `refactor/r00`, isolated worktree. Establish all eleven cases in
 Legacy code assumes commit-first cycles, so document-first workflows require
 a primitives controller; sandbox and process-containment code is reused.
 
-Baseline validation in progress. The restricted shell cannot run all sandbox
-and systemd tests; the real gate uses a systemd user scope outside that shell
-restriction. No tests are skipped to accommodate this environment.
+Baseline: `systemd-run --user --scope --quiet npm test` passed: 652 tests,
+628 pass, zero fail, 19 pre-existing live skips, five pre-existing todo cases
+(69.5 seconds). Output: `/tmp/refactor-baseline-scope.log`. The restricted
+shell attempt could not run all sandbox/systemd tests; no gate was weakened
+to accommodate it.
