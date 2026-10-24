@@ -584,8 +584,11 @@ test('clearEmptyUnits resets a named scope systemd stopped at its time limit, le
     assert.match(show(`${prefix}-live`), /^ActiveState=active$/m);
     assert.match(show(`${prefix}-other`), /^ActiveState=failed$/m);
   } finally {
-    spawnSync('systemctl', ['--user', 'stop', `${prefix}-live.scope`, `${prefix}-failed.scope`, `${prefix}-other.scope`]);
-    spawnSync('systemctl', ['--user', 'reset-failed', `${prefix}-live.scope`, `${prefix}-failed.scope`, `${prefix}-other.scope`]);
+    // One call per unit: a stop naming a unit already gone fails whole, and would leave -live running.
+    for (const name of ['live', 'failed', 'other']) {
+      spawnSync('systemctl', ['--user', 'stop', `${prefix}-${name}.scope`]);
+      spawnSync('systemctl', ['--user', 'reset-failed', `${prefix}-${name}.scope`]);
+    }
   }
 });
 
@@ -603,5 +606,19 @@ test('look: a process that only reads stdout (the owner tailing it) is not the r
     assert.ok(alive(reader.pid!), 'stop killed a process that only read the run\'s output');
   } finally {
     if (alive(reader.pid!)) process.kill(reader.pid!, 'SIGKILL');
+  }
+});
+
+// 11-f adversarial minor 3: a run can write exit while something still holds its stdout (the
+// wrapper's group dying, a descendant); look reads exit again after the liveness check, so it is finished.
+test('look: a folder with exit whose stdout a process still holds for writing is finished, not running', async () => {
+  const { runDir, pid } = orphan('held-finished');
+  try {
+    writeFileSync(join(runDir, 'exit'), '0\n');
+    const left = await lookAt().look!('held-finished', runDir, false);
+    assert.equal(left.state, 'finished');
+    assert.ok(alive(pid), 'look without stop ended a process');
+  } finally {
+    if (alive(pid)) process.kill(pid, 'SIGKILL');
   }
 });

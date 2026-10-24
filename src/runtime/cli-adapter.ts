@@ -4,7 +4,7 @@
 // Ticket 10-a: an extension runtime is one more CliSpec, `node <module>` speaking JSON.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Adapter, Left, RunOutcome, RunRequest } from '../adapter.ts';
@@ -116,6 +116,7 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
           // Past the controller's own deadline and grace, so the live controller always stops the
           // run first and records why; this one ends a run whose controller died.
           maxRuntimeMs: req.deadlineMs === undefined ? undefined : req.deadlineMs + (opts.graceMs ?? 5000),
+          launch: JSON.stringify({ deadlineMs: req.deadlineMs, moduleHash }),
         });
         signal.addEventListener('abort', () => run.cancel(), { once: true });
         const r = await run;
@@ -125,25 +126,52 @@ export function cliAdapter(spec: CliSpec, opts: CliAdapterOptions = {}): Adapter
       }
     },
     async look(runId, runDir, stop) {
-      const unit = isolation === 'cgroup' ? `sf-${runId}.scope` : undefined;
-      const stdout = runFiles(runDir).stdout;
-      // By the path as created: the probe found a renamed file only under its new name.
-      const file = existsSync(stdout) ? realpathSync(stdout) : undefined;
-      const live = () => (unit !== undefined && scopeTasks(unit) > 0) || (file !== undefined && holders(file).length > 0);
-      // exit is read again after each liveness check: a run that ended in between wrote it first.
-      const finished = (): Left | undefined => {
-        const r = readRun(runDir, opts.maxOutputBytes);
-        return r && { state: 'finished', outcome: outcome(spec, r) };
-      };
-      if (!live()) return finished() ?? { state: 'gone' };
-      if (!stop) return finished() ?? { state: 'running' };
-      // SIGKILL, not the live cancel's SIGTERM and grace: the run is recorded failed either way.
-      if (unit) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', unit], { timeout: 5000 });
-      for (const pid of file === undefined ? [] : holders(file)) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
-      for (const end = Date.now() + (opts.graceMs ?? 5000); live() && Date.now() < end; ) await new Promise((res) => setTimeout(res, 50));
-      return finished() ?? (live() ? { state: 'running' } : { state: 'stopped' });
+      const kept = launched(runDir);
+      const left = await see(runId, runDir, stop, kept.deadlineMs);
+      return left.state === 'running' || kept.moduleHash === undefined ? left : { ...left, moduleHash: kept.moduleHash };
     },
   };
+
+  async function see(runId: string, runDir: string, stop: boolean, deadlineMs: number | undefined): Promise<Left> {
+    const unit = isolation === 'cgroup' ? `sf-${runId}.scope` : undefined;
+    const stdout = runFiles(runDir).stdout;
+    // By the path as created: the probe found a renamed file only under its new name.
+    const file = existsSync(stdout) ? realpathSync(stdout) : undefined;
+    const live = () => (unit !== undefined && scopeTasks(unit) > 0) || (file !== undefined && holders(file).length > 0);
+    // exit is read again after each liveness check: a run that ended in between wrote it first.
+    const finished = (): Left | undefined => {
+      const r = readRun(runDir, opts.maxOutputBytes);
+      // A live controller would have stopped it at the deadline and recorded why.
+      return r && { state: 'finished', outcome: overran(runDir, deadlineMs) ? { status: 'failed', reason: 'timeout' } : outcome(spec, r) };
+    };
+    if (!live()) return finished() ?? { state: 'gone' };
+    if (!stop) return finished() ?? { state: 'running' };
+    // SIGKILL, not the live cancel's SIGTERM and grace: the run is recorded failed either way.
+    if (unit) spawnSync('systemctl', ['--user', 'kill', '--signal=SIGKILL', unit], { timeout: 5000 });
+    for (const pid of file === undefined ? [] : holders(file)) { try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } }
+    for (const end = Date.now() + (opts.graceMs ?? 5000); live() && Date.now() < end; ) await new Promise((res) => setTimeout(res, 50));
+    return finished() ?? (live() ? { state: 'running' } : { state: 'stopped' });
+  }
+}
+
+/** What the run folder kept at launch (11-f2): nothing for a folder from before it, or one that cannot be read. */
+function launched(runDir: string): { deadlineMs?: number; moduleHash?: string } {
+  let o: { deadlineMs?: unknown; moduleHash?: unknown };
+  try { o = JSON.parse(readFileSync(runFiles(runDir).launch, 'utf8')); } catch { return {}; }
+  return {
+    ...(typeof o?.deadlineMs === 'number' ? { deadlineMs: o.deadlineMs } : {}),
+    ...(typeof o?.moduleHash === 'string' ? { moduleHash: o.moduleHash } : {}),
+  };
+}
+
+/**
+ * Whether the run wrote `exit` more than `deadlineMs` after its prompt was written, the moment
+ * before launch. The live controller's clock starts a little earlier, so this errs towards adopting.
+ */
+function overran(runDir: string, deadlineMs: number | undefined): boolean {
+  if (deadlineMs === undefined) return false;
+  const files = runFiles(runDir);
+  try { return statSync(files.exit).mtimeMs - statSync(files.stdin).mtimeMs > deadlineMs; } catch { return false; }
 }
 
 /**

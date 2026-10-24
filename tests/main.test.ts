@@ -4,12 +4,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Event } from '../src/lifecycle.ts';
 import { EventStore } from '../src/store.ts';
+import { jobRecord } from '../src/developer.ts';
 import { reviewerStub } from './stub-cli.ts';
+import { runDir } from '../src/layout.ts';
+import { holder, kill } from './lock-holder.ts';
+import { develop } from '../src/developer.ts';
+import { claude, cliAdapter } from '../src/runtime/cli-adapter.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-main-');
@@ -1087,4 +1092,252 @@ test('of two different accepts, the one still waiting when the other drives past
   assert.equal(results[1]!.code, 2, results[1]!.out);
   assert.match(results[1]!.out, new RegExp(`cycle ${cycleId} moved since it was loaded: \\d+ events, not \\d+; nothing was written; run the command again`));
   assert.deepEqual(rows(db, cycleId).filter((t) => t === 'accept'), ['accept']);
+});
+
+// Ticket 11-f2: resume drives the work's open cycle on from its stage, and only there: a human stage
+// or an escalated cycle is the owner's, and a started run with no outcome is recover's.
+test('resume at a human stage prints the next steps and drives nothing; on an escalated cycle it prints the owner\'s moves', () => {
+  const { jobFile, db } = scratch();
+  seed(db, 'c0', ESCALATE);
+  const esc = sf(['resume', jobFile]);
+  assert.equal(esc.status, 1, esc.stdout + esc.stderr);
+  assert.match(esc.stdout, /^Stage: ESCALATED$/m);
+  assert.match(esc.stdout, /^Escalation: run failed: timeout$/m);
+  // No candidate (a dead developer run): no move can name one, so only a new cycle or cancel.
+  assert.doesNotMatch(esc.stdout, / (retry|overrule|route) /);
+  assert.match(esc.stdout, /parentCycleId c0/);
+  assert.match(esc.stdout, new RegExp(`^  node \\S+ cancel ${jobFile}$`, 'm'));
+  assert.equal(look(db, 'c0').events, ESCALATE.length);
+  seed(db, 'c1', TO_ACCEPTANCE, 'c0');
+  const human = sf(['resume', jobFile]);
+  assert.equal(human.status, 0, human.stdout + human.stderr);
+  assert.match(human.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+  assert.ok(human.stdout.includes(`accept ${jobFile} ${H}`), human.stdout);
+  assert.equal(look(db, 'c1').events, TO_ACCEPTANCE.length);
+  assert.equal(sf(['resume', jobFile, 'now']).status, 2);
+});
+
+test('resume refuses a cycle with a started run and no outcome, saying to run recover, and with no cycle says there is nothing to resume', () => {
+  const { jobFile, db } = scratch();
+  const none = sf(['resume', jobFile]);
+  assert.equal(none.status, 2, none.stdout + none.stderr);
+  assert.match(none.stderr, /^nothing to resume for work w in /m);
+  seed(db, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'run_started', runId: 'std9', runtime: 'claude' }]);
+  const r = sf(['resume', jobFile]);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /run std9 started and has no outcome; run recover/);
+  assert.equal(look(db, 'c1').events, 4);
+});
+
+test('resume drives a cycle left at VERIFYING to its human stage, refusing first a changed ticket and a work another process holds', async () => {
+  const { root, repo, runsDir, jobFile, db } = scratch();
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+  const store = new EventStore(db);
+  const dev = cliAdapter({ ...claude, command: join(bin, 'claude') }, { isolation: 'process-group' });
+  const opened = await develop(store, dev, { workId: 'w', ticket: 'x', repo, checks: [{ name: 'ok', command: ['true'] }] }, { deadlineMs: 20_000, runsDir });
+  store.close();
+  assert.equal(opened.cycle.stage, 'VERIFYING', opened.cycle.escalation);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+  writeFileSync(jobFile, JSON.stringify({ ...job, ticket: 'y' }));
+  const changed = sf(['resume', jobFile], env);
+  assert.equal(changed.status, 2, changed.stdout + changed.stderr);
+  assert.match(changed.stderr, /the job's ticket changed since the cycle opened/);
+  writeFileSync(jobFile, JSON.stringify(job));
+  const child = await holder(runsDir, 'w');
+  try {
+    const locked = sf(['resume', jobFile], env);
+    assert.equal(locked.status, 2, locked.stdout + locked.stderr);
+    assert.match(locked.stderr, new RegExp(`^work w is held by process ${child.pid}`, 'm'));
+  } finally {
+    await kill(child);
+  }
+  // Nothing appended, not only no stage moved (11-f2 standard 2).
+  assert.deepEqual(look(db, opened.cycle.cycleId), { stage: 'VERIFYING', events: opened.cycle.history.length });
+  const r = sf(['resume', jobFile], env);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+  assert.match(r.stdout, /^verification [0-9a-f]{7}: ok PASS$/m);
+});
+
+// 11-f adversarial minor 4: a timer runs recover and reads its exit code. 1 is "try again": a run
+// still going, a work another process holds, or a cycle recover refused.
+test('recover exits 1 while a run is still going, the work is held, or a cycle is refused, and 0 once every run has an outcome', async () => {
+  const { jobFile, db, runsDir } = scratch();
+  seed(db, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'run_started', runId: 'std9', runtime: 'claude' }]);
+  // A run whose controller died while it ran: its stdout is still held for writing, and no exit.
+  const folder = runDir(runsDir, 'std9');
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, 'stdin'), 'p');
+  const out = openSync(join(folder, 'stdout'), 'w');
+  const run = spawn('sleep', ['30'], { detached: true, stdio: ['ignore', out, 'ignore'] });
+  closeSync(out);
+  run.unref();
+  try {
+    const going = sf(['recover', jobFile]);
+    assert.equal(going.status, 1, going.stdout + going.stderr);
+    assert.match(going.stdout, /^Cycle c1: run std9 still running; --stop ends it$/m);
+  } finally {
+    process.kill(run.pid!, 'SIGKILL');
+  }
+  const child = await holder(runsDir, 'w');
+  try {
+    const held = sf(['recover', jobFile]);
+    assert.equal(held.status, 1, held.stdout + held.stderr);
+    assert.match(held.stdout, new RegExp(`^Cycle c1: skipped; process ${child.pid} holds the work$`, 'm'));
+  } finally {
+    await kill(child);
+  }
+  const other = scratch();
+  seed(other.db, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'run_started', runId: 'std8', runtime: 'nobody' }]);
+  const refused = sf(['recover', other.jobFile]);
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  assert.match(refused.stdout, /^Cycle c1: run std8 refused: run std8: runtime nobody is not in the registry$/m);
+  const done = sf(['recover', jobFile]);
+  assert.equal(done.status, 0, done.stdout + done.stderr);
+  assert.match(done.stdout, /^Cycle c1: run std9 failed; now ESCALATED$/m);
+});
+
+// 11-f2 standard 1, minors 1 and 2: a cycle the store cannot replay is skipped by cancel and resume,
+// and each says so, so the owner never reads "cancelled" or "nothing to resume" over it.
+function divergedChild() {
+  const s = scratch();
+  seed(s.db, 'c0', ESCALATE);
+  seed(s.db, 'c1', TO_ACCEPTANCE, 'c0');
+  const raw = new DatabaseSync(s.db);
+  raw.prepare("UPDATE events SET stage = 'ACCEPTED' WHERE cycle_id = 'c1' AND seq = 1").run();
+  raw.close();
+  return s;
+}
+
+test('cancel names a cycle the store cannot replay, with the reason, and exits 1 though it cancelled the others', () => {
+  const { jobFile, db } = divergedChild();
+  const r = sf(['cancel', jobFile]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Cycle c1: not cancelled; the store cannot replay it: cycle c1 row 1 \(claim\) was recorded at ACCEPTED/m);
+  assert.equal(look(db, 'c0').stage, 'CANCELLED');
+});
+
+test('resume names a cycle the store cannot replay, with the reason: alone it is refused, beside an escalated one it is listed', () => {
+  const { jobFile } = divergedChild();
+  const beside = sf(['resume', jobFile]);
+  assert.equal(beside.status, 1, beside.stdout + beside.stderr);
+  assert.match(beside.stdout, /^Cycle c1: not resumed; the store cannot replay it: cycle c1 row 1/m);
+  const alone = scratch();
+  seed(alone.db, 'c1', TO_ACCEPTANCE);
+  const raw = new DatabaseSync(alone.db);
+  raw.prepare("UPDATE events SET stage = 'ACCEPTED' WHERE cycle_id = 'c1' AND seq = 1").run();
+  raw.close();
+  const r = sf(['resume', alone.jobFile]);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /^nothing to resume for work w in .*; cycle c1: the store cannot replay it: cycle c1 row 1/m);
+});
+
+// 11-f2 standard 2: each cycle keeps the job its own base gave it. The repository layer may set the
+// checks, so a child opened at a later base is resumed under that base's layers, not the first one's.
+test('resume reads the layers at the resumed cycle\'s own base: a child opened where the repository\'s checks changed is driven, not refused', () => {
+  const { root, repo, runsDir, jobFile, db } = scratch();
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  reviewerStub(bin, 'claude', 'nobody', join(root, 'outside'));
+  const layer = (name: string) => {
+    mkdirSync(join(repo, '.factory'), { recursive: true });
+    writeFileSync(join(repo, '.factory', 'config.json'), JSON.stringify({ checks: [{ name, command: ['true'] }] }));
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', `checks ${name}`);
+    return git(repo, 'rev-parse', 'HEAD');
+  };
+  const B0 = layer('a');
+  const B1 = layer('b');
+  const job = JSON.parse(readFileSync(jobFile, 'utf8'));
+  delete job.checks;
+  writeFileSync(jobFile, JSON.stringify(job));
+  const store = new EventStore(db);
+  store.open('c0', 'w', undefined, B0, jobRecord({ workId: 'w', ticket: 'x', repo, checks: [{ name: 'a', command: ['true'] }] }));
+  for (const e of ESCALATE) store.append('c0', e);
+  store.open('c1', 'w', 'c0', B1, jobRecord({ workId: 'w', ticket: 'x', repo, checks: [{ name: 'b', command: ['true'] }] }));
+  store.append('c1', { type: 'claim', runId: 'dev1', base: B0, runtime: 'claude' });
+  store.append('c1', { type: 'developer_result', runId: 'dev1', head: B1, artifacts: ['.factory/config.json'] });
+  store.close();
+  const r = sf(['resume', jobFile], { ...process.env, PATH: `${bin}:${process.env.PATH}` });
+  assert.doesNotMatch(r.stderr, /changed since the cycle opened/);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^verification [0-9a-f]{7}: b PASS$/m);
+  assert.match(r.stdout, /^Stage: AWAITING_ACCEPTANCE$/m);
+});
+
+// 11-f2 standard 2: the store refuses a move on a cycle with a child, so resume does not offer one.
+test('resume on an escalated parent whose child the store cannot replay offers only cancel', () => {
+  const { jobFile } = divergedChild();
+  const r = sf(['resume', jobFile]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Cycle c1: not resumed;/m);
+  assert.doesNotMatch(r.stdout, / (retry|overrule|route) /);
+  assert.match(r.stdout, new RegExp(`^  node \\S+ cancel ${jobFile}$`, 'm'));
+});
+
+// 11-f2 standard 3: cycle IDs are random UUIDs, so ID order is not age. A child whose ID sorts
+// before its parent's is still the cycle the owner moves on.
+test('resume reports the escalated cycle with no child, whatever the ID order, and offers its moves', () => {
+  const { jobFile, db } = scratch();
+  seed(db, 'z0', ESCALATE);
+  seed(db, 'a1', ESCALATE, 'z0');
+  const r = sf(['resume', jobFile]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Cycle: a1$/m);
+  assert.match(r.stdout, /parentCycleId a1/);
+});
+
+test('cancel names the work\'s only cycle when the store cannot replay it', () => {
+  const { jobFile, db } = scratch();
+  seed(db, 'c1', TO_ACCEPTANCE);
+  const raw = new DatabaseSync(db);
+  raw.prepare("UPDATE events SET stage = 'ACCEPTED' WHERE cycle_id = 'c1' AND seq = 1").run();
+  raw.close();
+  const r = sf(['cancel', jobFile]);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /^nothing to cancel for work w in .*; cycle c1: the store cannot replay it: cycle c1 row 1/m);
+});
+
+// 11-f2 adversarial: resume offers only the moves the store would take, for the candidate head.
+test('resume offers each move the store would take on the escalated cycle, for its candidate head', () => {
+  const disputed = scratch();
+  seed(disputed.db, 'c1', [
+    ...TO_ACCEPTANCE.slice(0, 3),
+    { type: 'verdict', runId: 'std1', head: H, verdict: 'FAIL', findings: ['f1'] },
+    { type: 'claim', runId: 'dev2', base: 'b'.repeat(40), runtime: 'fake' },
+    { type: 'dispute', runId: 'dev2', head: H, reason: 'the finding is wrong' },
+  ]);
+  const all = sf(['resume', disputed.jobFile]);
+  assert.equal(all.status, 1, all.stdout + all.stderr);
+  for (const move of ['retry', 'overrule', 'route']) assert.match(all.stdout, new RegExp(`^  node \\S+ ${move} ${disputed.jobFile} ${H}`, 'm'));
+  assert.doesNotMatch(all.stdout, /<sha>/);
+  const failedReview = scratch();
+  seed(failedReview.db, 'c1', [...TO_ACCEPTANCE.slice(0, 3), { type: 'run_started', runId: 'std1', runtime: 'claude' }, { type: 'run_failed', runId: 'std1', reason: 'timeout' }]);
+  const some = sf(['resume', failedReview.jobFile]);
+  assert.equal(some.status, 1, some.stdout + some.stderr);
+  assert.match(some.stdout, new RegExp(`^  node \\S+ retry ${failedReview.jobFile} ${H}`, 'm'));
+  assert.match(some.stdout, new RegExp(`^  node \\S+ route ${failedReview.jobFile} ${H} <stage>`, 'm'));
+  assert.doesNotMatch(some.stdout, / overrule /);
+});
+
+test('resume offers no move on an escalated parent with a candidate when it has a child: the store would refuse each', () => {
+  const { jobFile, db } = scratch();
+  seed(db, 'c0', [
+    ...TO_ACCEPTANCE.slice(0, 3),
+    { type: 'verdict', runId: 'std1', head: H, verdict: 'FAIL', findings: ['f1'] },
+    { type: 'claim', runId: 'dev2', base: 'b'.repeat(40), runtime: 'fake' },
+    { type: 'dispute', runId: 'dev2', head: H, reason: 'the finding is wrong' },
+  ]);
+  seed(db, 'c1', TO_ACCEPTANCE, 'c0');
+  const raw = new DatabaseSync(db);
+  raw.prepare("UPDATE events SET stage = 'ACCEPTED' WHERE cycle_id = 'c1' AND seq = 1").run();
+  raw.close();
+  const r = sf(['resume', jobFile]);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Cycle: c0$/m);
+  assert.match(r.stdout, /^The cycle has a child, c1, so it cannot be moved\.$/m);
+  assert.doesNotMatch(r.stdout, / (retry|overrule|route) /);
 });

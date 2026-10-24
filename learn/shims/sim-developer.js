@@ -3,7 +3,7 @@
 // the developer commits on the clone's branch (refs/clone/<cycleId>), the prompt is the real
 // developerPrompt from src/prompt.ts, and the claim's guard is the real `refuse`, read from
 // src/developer.ts, judging that branch as the real `land` does.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { checkDeadline, execute } from '/src/controller.ts';
 import { lastVerdictAt } from '/src/lifecycle.ts';
@@ -16,6 +16,8 @@ export const DEFAULT_RUNS_DIR = RUNS;
 
 const cloneRef = (cycleId) => `refs/clone/${cycleId}`;
 
+export const jobRecord = (job) => ({ ticket: createHash('sha256').update(job.ticket).digest('hex'), checks: job.checks ?? [] });
+
 export async function develop(store, adapter, job, opts) {
   const base = world.git(job.repo, 'rev-parse', '--verify', '--end-of-options', `${job.base ?? 'HEAD'}^{commit}`);
   const cycleId = randomUUID();
@@ -27,7 +29,7 @@ export async function develop(store, adapter, job, opts) {
   const start = store.workflow.stages[store.workflow.start];
   if (start?.kind !== 'agent' || start.produces !== 'commit') throw new Error(`start stage ${store.workflow.start} is not a commit stage; develop cannot open the cycle`);
   const developer = typeof adapter === 'function' ? adapter(worktree) : adapter;
-  store.open(cycleId, job.workId, job.parentCycleId, base);
+  store.open(cycleId, job.workId, job.parentCycleId, base, jobRecord(job));
   world.repo.refs.set(cloneRef(cycleId), base);
   world.ui.stage('develop', { cycleId, branch, base, worktree });
   const { text, ...versions } = developerPrompt(start, job.ticket);

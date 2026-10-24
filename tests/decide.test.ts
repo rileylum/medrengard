@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { apply, newCycle, type Event, type Workflow } from '../src/lifecycle.ts';
 import { headGate } from '../src/verify.ts';
 import type { Job } from '../src/developer.ts';
@@ -675,6 +676,87 @@ test('decideAndDrive refuses a work another live process holds after its wait, a
     assert.equal(store.events('c1').length, AT_OWNER.length);
   } finally {
     await kill(child);
+    store.close();
+  }
+});
+
+// Parked row 48 (11-c adversarial): a cycle whose replay diverges from its stored stages, such as an
+// escalated parent after an engine change, is the owner's; it must not stop every command on the work.
+function divergeAt(path: string, cycleId: string) {
+  const raw = new DatabaseSync(path);
+  raw.prepare("UPDATE events SET stage = 'ACCEPTED' WHERE cycle_id = ? AND seq = 1").run(cycleId);
+  raw.close();
+}
+
+test('cycles lists a cycle the store cannot replay with the reason, and open still refuses while it is listed (parked row 48)', () => {
+  const path = join(dir, `${n++}.sqlite`);
+  const store = new EventStore(path);
+  try {
+    seed(store, 'c0', ESCALATE);
+    divergeAt(path, 'c0');
+    const [c0, ...rest] = store.cycles('w');
+    assert.deepEqual(rest, []);
+    assert.equal(c0!.cycleId, 'c0');
+    assert.equal(c0!.stage, undefined);
+    assert.match(c0!.refused ?? '', /row 1 \(claim\) was recorded at ACCEPTED/);
+    assert.throws(() => store.open('c1', 'w'), /^Error: work w has cycle c0, which the store cannot replay: cycle c0 row 1/);
+    assert.deepEqual(store.cycles('w').map((c) => c.cycleId), ['c0']);
+  } finally {
+    store.close();
+  }
+});
+
+test('accept, cancel and a move act on the work\'s other cycle while one cannot be replayed (parked row 48)', () => {
+  const path = join(dir, `${n++}.sqlite`);
+  const store = new EventStore(path);
+  try {
+    seed(store, 'c0', ESCALATE);
+    seed(store, 'c1', TO_ACCEPTANCE, 'c0');
+    divergeAt(path, 'c0');
+    assert.equal(acceptCycle(store, 'w', H, 'owner', where).stage, 'ACCEPTED');
+  } finally {
+    store.close();
+  }
+  const path2 = join(dir, `${n++}.sqlite`);
+  const s2 = new EventStore(path2);
+  try {
+    seed(s2, 'c0', ESCALATE);
+    seed(s2, 'c1', TO_ACCEPTANCE, 'c0');
+    divergeAt(path2, 'c0');
+    assert.deepEqual(cancelWork(s2, 'w', 'owner', where).map((c) => [c.cycleId, c.stage]), [['c1', 'CANCELLED']]);
+  } finally {
+    s2.close();
+  }
+  const path3 = join(dir, `${n++}.sqlite`);
+  const s3 = new EventStore(path3);
+  try {
+    seed(s3, 'c0', ESCALATE);
+    seed(s3, 'c1', DISPUTED, 'c0');
+    divergeAt(path3, 'c0');
+    const { cycleId, event, after } = moveEvent(s3, 'w', mv('overrule'), where);
+    assert.equal(cycleId, 'c1');
+    assert.equal(s3.append(cycleId, event, { after }).stage, 'STANDARD_REVIEW');
+  } finally {
+    s3.close();
+  }
+});
+
+// Parked row 51 (11-d2 adversarial): a move names one cycle by its head; an escalated sibling
+// opened under another workflow is not the one moved, so it must not block the move.
+test('moveEvent loads only the cycle the move names: an escalated cycle under another workflow does not block it (parked row 51)', () => {
+  const path = join(dir, `${n++}.sqlite`);
+  const other = new EventStore(path, ownerCheck);
+  other.open('c0', 'w');
+  other.append('c0', { type: 'claim', runId: 'dev0', base: 'b'.repeat(40), runtime: 'fake' });
+  other.append('c0', { type: 'run_failed', runId: 'dev0', reason: 'timeout' });
+  other.close();
+  const store = new EventStore(path);
+  try {
+    seed(store, 'c1', DISPUTED, 'c0');
+    const { cycleId, event, after } = moveEvent(store, 'w', mv('overrule'), where);
+    assert.equal(cycleId, 'c1');
+    assert.equal(store.append(cycleId, event, { after }).stage, 'STANDARD_REVIEW');
+  } finally {
     store.close();
   }
 });

@@ -12,7 +12,7 @@ import type { Adapter, Left } from '../src/adapter.ts';
 import type { Job } from '../src/developer.ts';
 import { cyclePaths, runDir } from '../src/layout.ts';
 import { recover, type RecoverOptions } from '../src/recover.ts';
-import { claude, cliAdapter } from '../src/runtime/cli-adapter.ts';
+import { claude, cliAdapter, extensionSpec } from '../src/runtime/cli-adapter.ts';
 import { readRun } from '../src/runtime/spawn.ts';
 import { EventStore } from '../src/store.ts';
 import { holder, kill } from './lock-holder.ts';
@@ -321,4 +321,41 @@ test('a cycle whose recovery throws (an adapter that cannot be built, a workflow
   assert.deepEqual(a.calls, []);
   assert.equal(other.events('c1').length, toStandardReview.length + 1);
   other.close();
+});
+
+// 11-f adversarial minors 1 and 5 (11-f2): the run folder keeps what the launch knew, so recover
+// records what the live controller would have: a timeout past the deadline, the module run.
+
+/** Runs `adapter` as reviewer run sr1 to its end with no controller watching, leaving its folder. */
+async function ranUnwatched(adapter: Adapter, runsDir: string, deadlineMs: number, prompt = '') {
+  await adapter.start({ runId: 'sr1', role: 'standard_reviewer', prompt, cwd: dirname(runsDir), runDir: runDir(runsDir, 'sr1'), deadlineMs }, new AbortController().signal);
+}
+
+test('a run that finished past its deadline with no controller watching is recorded as a timeout, as a live controller would', async () => {
+  const { store, runsDir } = reviewing();
+  const prompt = '```json\n{"head":"H1","verdict":"PASS","findings":[]}\n```';
+  // slow sleeps 1 s before the run answers: past a 300 ms deadline.
+  await ranUnwatched(cliAdapter({ ...claude, command: 'sh', args: ['-c', slow('echo-prompt')] }, { isolation: 'process-group' }), runsDir, 300, prompt);
+  const parse = cliAdapter({ ...claude, command: 'false', args: [] }, { isolation: 'process-group' });
+  const [r] = await recover(store, 'w1', () => parse, job, options(runsDir));
+  // Received: the outcome is the run's, a timeout, as the live controller's bound would give it.
+  assert.deepEqual(r, { cycleId: 'c1', did: 'received', runId: 'sr1', stage: 'ESCALATED' });
+  assert.match(store.load('c1')!.escalation ?? '', /run failed: timeout/);
+  store.close();
+});
+
+test('an adopted outcome records the module hash the run was launched with, not the one at recovery', async () => {
+  const { store, runsDir } = reviewing();
+  const mod = join(dirname(runsDir), 'ext.ts');
+  const answer = (note: string) => `// ${note}\nprocess.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ status: 'completed', claim: { head: 'H1', verdict: 'PASS', findings: [] } })));\n`;
+  writeFileSync(mod, answer('as launched'));
+  const launched = cliAdapter(extensionSpec('fake', mod), { isolation: 'process-group' });
+  await ranUnwatched(launched, runsDir, 10_000);
+  writeFileSync(mod, answer('edited while the controller was down'));
+  const now = cliAdapter(extensionSpec('fake', mod), { isolation: 'process-group' });
+  assert.notEqual(now.moduleHash, launched.moduleHash);
+  const [r] = await recover(store, 'w1', () => now, job, options(runsDir));
+  assert.deepEqual(r, { cycleId: 'c1', did: 'received', runId: 'sr1', stage: 'ADVERSARIAL_REVIEW' });
+  assert.equal((store.events('c1').at(-1) as { moduleHash?: string }).moduleHash, launched.moduleHash);
+  store.close();
 });

@@ -41,12 +41,14 @@ export type RunOutcome =
 /**
  * What a started run left, seen by a process that is not its controller (11-f). `stopped`: it
  * was running and `look` ended it. `gone`: no exit, and nothing holds the run any more.
+ * `moduleHash`: the extension module's hash when the run was launched, if the folder kept it
+ * (11-f2); the module may have been edited since.
  */
 export type Left =
   | { state: 'running' }
-  | { state: 'stopped' }
-  | { state: 'finished'; outcome: RunOutcome }
-  | { state: 'gone' };
+  | { state: 'stopped'; moduleHash?: string }
+  | { state: 'finished'; outcome: RunOutcome; moduleHash?: string }
+  | { state: 'gone'; moduleHash?: string };
 
 export interface Adapter {
   /** Recorded as `runtime` on the Run by the claim event, and on every outcome event (10-a): `claude`, `pi`, an extension's name, or a test double's. */

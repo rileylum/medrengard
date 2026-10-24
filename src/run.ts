@@ -5,9 +5,9 @@
 // read from the store; adapters are chosen by the stage's role. Ticket 11-a: `drive` is the one
 // entry point for a cycle already open; `run` opens one first.
 import type { Adapter } from './adapter.ts';
-import { develop, fix, type DeveloperAdapter, type Job } from './developer.ts';
+import { develop, fix, jobRecord, type DeveloperAdapter, type Job } from './developer.ts';
 import { cyclePaths } from './layout.ts';
-import { holdWork, Locked, waitForWork } from './lock.ts';
+import { Locked, waitForWork } from './lock.ts';
 import { apply, type Cycle, type Event, type Role, type Stage, type Workflow } from './lifecycle.ts';
 import { review } from './review.ts';
 import { checkSandbox, type Sandbox } from './sandbox.ts';
@@ -73,10 +73,16 @@ export async function drive(store: EventStore, cycleId: string, adapters: Adapte
   // Nothing has run, so there is no clone to continue from; recovery (row 11) owns this case.
   if (cycle.stage === 'QUEUED') throw new Error(`cycle ${cycleId} is QUEUED: no run started; cancel it and run the job again`);
   const roles = preflight(store.workflow, adapters, job, opts);
-  const release = holdWork(opts.runsDir, cycle.workId);
+  // resume, the owner's command, drives through here: it waits as run does (11-f2).
+  const release = await waitForWork(opts.runsDir, cycle.workId, OWNER_WAIT_MS);
   try {
     // Reloaded under the lock: a holder that just let go may have moved the cycle on.
-    return await loop(store, store.drivable(cycleId), roles, job, opts, ...cloneOf(opts, cycleId));
+    const now = store.drivable(cycleId);
+    // A started run with no outcome may still be going, or may have finished unwatched: only recover
+    // reads which (11-f). Driving on would launch a second run at its stage (A-105 item 1).
+    const left = loopRuns(store.workflow, now.stage) ? now.runs.find((r) => !now.consumed.includes(r.runId)) : undefined;
+    if (left) throw new Error(`run ${left.runId} started and has no outcome; run recover`);
+    return await loop(store, now, roles, job, opts, ...cloneOf(opts, cycleId));
   } finally {
     release();
   }
@@ -270,4 +276,20 @@ async function loop(store: EventStore, opened: Cycle, roles: Adapters, job: Job,
       return { cycle: store.append(cycleId, { type: 'reject_dispatch', reason: error }), worktree, branch, error };
     }
   }
+}
+
+/**
+ * drive, for the owner's resume command, only under the job the cycle was opened with (A-105 item
+ * 2): its reviews and checks so far were bound to that ticket and those checks. A cycle opened
+ * before 11-f2 recorded none, and resumes after `warn`, called before anything is spent.
+ */
+export async function resume(store: EventStore, cycleId: string, adapters: Adapters, job: Job, opts: RunOptions, warn: (message: string) => void = () => {}): Promise<RunResult> {
+  const was = store.opened(cycleId)?.job;
+  if (was) {
+    const now = jobRecord(job);
+    const changed = [...(was.ticket === now.ticket ? [] : ['ticket']), ...(JSON.stringify(was.checks) === JSON.stringify(now.checks) ? [] : ['checks'])];
+    if (changed.length > 0) throw new Error(`cycle ${cycleId}: the job's ${changed.join(' and ')} changed since the cycle opened; cancel it and run the job again, or restore the job`);
+  }
+  if (!was) warn(`cycle ${cycleId} was opened before jobs were recorded: its job could not be compared`);
+  return drive(store, cycleId, adapters, job, opts);
 }

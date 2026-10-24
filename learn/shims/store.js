@@ -5,8 +5,8 @@
 // child or an open sibling is refused; an append decided on a load
 // the cycle has since left throws StaleLoad; each row gets a store-wide `pos`, a time `at` and the stage apply
 // gave it; load replays the log through the real apply under the workflow the cycle recorded,
-// refuses one whose replay disagrees with a stored stage, and drivable refuses a cycle opened under
-// another workflow. Keep it in step with src/store.ts; learn/learn.test.ts checks that it exports
+// refuses one whose replay disagrees with a stored stage (cycles lists it with the reason), and
+// drivable refuses a cycle opened under another workflow. Keep it in step with src/store.ts; learn/learn.test.ts checks that it exports
 // what src/ imports from there.
 import { createHash } from 'node:crypto';
 import { apply, checkWorkflow, defaultWorkflow, ENGINE_VERSION, isEvent, newCycle, outcomeRunId, replayCheck, SETTLED, STOPPED } from '/src/lifecycle.ts';
@@ -48,7 +48,7 @@ export class EventStore {
   subscribe(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   emit(change) { for (const fn of this.listeners) fn(change); }
 
-  open(cycleId, workId, parentCycleId, base) {
+  open(cycleId, workId, parentCycleId, base, job) {
     requireId(cycleId, 'cycle ID');
     requireId(workId, 'work ID');
     if (this.exists(cycleId)) throw new Error(`cycle ${cycleId} already open`);
@@ -61,7 +61,7 @@ export class EventStore {
     const { open, escalated } = this.cyclesFor(workId);
     if (open !== undefined) throw new Error(`work ${workId} already has an open cycle ${open}`);
     if (parentCycleId === undefined && escalated !== undefined) throw new Error(`work ${workId} has an ESCALATED cycle ${escalated}; name it as the parent`);
-    const row = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow, engine: ENGINE_VERSION };
+    const row = { type: 'open', workId, parentCycleId, workflow: this.record, base, definition: this.workflow, engine: ENGINE_VERSION, job };
     this.insert(cycleId, 0, 'open', null, JSON.stringify(row), 'QUEUED');
     this.emit({ kind: 'open', cycleId });
     return newCycle(cycleId, workId, parentCycleId);
@@ -103,7 +103,7 @@ export class EventStore {
     const child = this.table.filter((r) => r.seq === 0 && JSON.parse(r.body).parentCycleId === cycleId).map((r) => r.cycle_id).sort()[0];
     if (child) throw new Error(`cycle ${cycleId} is the parent of cycle ${child}; a move on it would give work ${workId} two live cycles; nothing was written`);
     // The cycle itself is not a sibling: a move on it while open reaches apply, which escalates it.
-    const open = this.cycles(workId).find((c) => c.cycleId !== cycleId && !STOPPED.includes(c.stage))?.cycleId;
+    const open = this.cycles(workId).find((c) => c.cycleId !== cycleId && c.stage !== undefined && !STOPPED.includes(c.stage))?.cycleId;
     if (open !== undefined) throw new Error(`work ${workId} has an open cycle ${open}; a move on cycle ${cycleId} would give it two live cycles; nothing was written`);
   }
 
@@ -156,15 +156,24 @@ export class EventStore {
     return new Error(`cycle ${cycleId} was opened under workflow ${opened.name} (${opened.hash.slice(0, 12)}), this store runs ${this.record.name} (${this.record.hash.slice(0, 12)})`);
   }
 
+  opened(cycleId) {
+    const row = this.table.find((r) => r.cycle_id === cycleId && r.seq === 0);
+    return row && JSON.parse(row.body);
+  }
+
   close() {}
 
   cycles(workId) {
     return this.table.filter((r) => r.seq === 0 && JSON.parse(r.body).workId === workId)
-      .map((r) => r.cycle_id).sort().map((cycleId) => ({ cycleId, stage: this.load(cycleId).stage }));
+      .map((r) => r.cycle_id).sort().map((cycleId) => {
+        try { return { cycleId, stage: this.load(cycleId).stage }; } catch (err) { return { cycleId, refused: err.message }; }
+      });
   }
 
   cyclesFor(workId) {
     const all = this.cycles(workId);
+    const refused = all.find((c) => c.refused !== undefined);
+    if (refused) throw new Error(`work ${workId} has cycle ${refused.cycleId}, which the store cannot replay: ${refused.refused}`);
     return {
       open: all.find((c) => !STOPPED.includes(c.stage))?.cycleId,
       escalated: all.findLast((c) => c.stage === 'ESCALATED')?.cycleId,

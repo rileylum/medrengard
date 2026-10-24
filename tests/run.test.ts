@@ -8,10 +8,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { dirname, join } from 'node:path';
 import type { Adapter, RunRequest } from '../src/adapter.ts';
 import { EventStore } from '../src/store.ts';
+import { DatabaseSync } from 'node:sqlite';
 import { claude, cliAdapter, type CliSpec } from '../src/runtime/cli-adapter.ts';
 import type { DeveloperAdapter, Job } from '../src/developer.ts';
 import { run, type Adapters, type RunOptions } from '../src/run.ts';
-import { drive } from '../src/run.ts';
+import { drive, resume } from '../src/run.ts';
 import { develop } from '../src/developer.ts';
 import { checkWorkflow, defaultWorkflow, type Workflow } from '../src/lifecycle.ts';
 import { ownerCheck } from './workflows.ts';
@@ -744,4 +745,85 @@ test('run waits for a work whose holder lets go within the wait, then opens the 
     await kill(child);
     store.close();
   }
+});
+
+// Ticket 11-f2: a started run with no outcome may still be going, or may have finished while no
+// controller watched; only recover may decide which. Driving on would launch a second run at its stage.
+test('drive refuses a cycle with a started run and no outcome, naming the run and recover, and writes and launches nothing', async () => {
+  const { repo, store, runsDir, base } = scratch();
+  store.open('c1', 'w1');
+  store.append('c1', { type: 'claim', runId: 'r-left', base, runtime: 'claude' });
+  const before = store.events('c1').length;
+  const dev = recording(fake(claude));
+  const standard = scripted('PASS');
+  await assert.rejects(drive(store, 'c1', adapters(dev, standard, scripted('PASS')), job(repo), opts(runsDir)), /run r-left started and has no outcome; run recover/);
+  assert.equal(store.events('c1').length, before);
+  assert.equal(store.load('c1')!.stage, 'DEVELOPING');
+  assert.equal(dev.requests.length + standard.requests.length, 0);
+  holdWork(runsDir, 'w1')();
+  store.close();
+});
+
+// 11-f2: resume drives through drive, and the owner runs it, so drive waits for the lock as run does.
+test('drive waits for a work whose holder lets go within the wait, then drives the cycle on', async () => {
+  const { repo, store, runsDir } = scratch();
+  const opened = await develop(store, fake(claude), job(repo), opts(runsDir));
+  const child = await holder(runsDir, 'w1');
+  setTimeout(() => void kill(child), 500);
+  try {
+    const r = await drive(store, opened.cycle.cycleId, adapters(fake(claude), scripted('PASS'), scripted('PASS')), job(repo), opts(runsDir));
+    assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation);
+  } finally {
+    await kill(child);
+    store.close();
+  }
+});
+
+// Ticket 11-f2 (A-105 item 2): a cycle resumes only under the job it was opened with. The reviews
+// and checks so far were bound to that ticket and those checks.
+test('resume refuses a cycle whose ticket or checks changed since it opened, naming which, and drives one that did not', async () => {
+  const { root, repo, runsDir } = scratch();
+  const store = new EventStore(join(root, 'events.sqlite'));
+  const opened = await develop(store, fake(claude), job(repo), opts(runsDir));
+  const id = opened.cycle.cycleId;
+  const before = store.events(id).length;
+  const roles = () => adapters(fake(claude), scripted('PASS'), scripted('PASS'));
+  await assert.rejects(resume(store, id, roles(), job(repo, { ticket: 'Create other.txt.' }), opts(runsDir)), (err: Error) => /ticket/.test(err.message) && !/checks/.test(err.message));
+  await assert.rejects(resume(store, id, roles(), job(repo, { checks: [] }), opts(runsDir)), (err: Error) => /checks/.test(err.message) && !/ticket/.test(err.message));
+  await assert.rejects(resume(store, id, roles(), job(repo, { ticket: 'x', checks: [] }), opts(runsDir)), /ticket and checks/);
+  assert.equal(store.events(id).length, before);
+  const warned: string[] = [];
+  const r = await resume(store, id, roles(), job(repo), opts(runsDir), (w) => warned.push(w));
+  assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation);
+  assert.deepEqual(warned, []);
+  store.close();
+});
+
+test('resume drives a cycle opened before 11-f2 recorded the job, with a warning that it could not be compared', async () => {
+  const { root, repo, runsDir } = scratch();
+  const path = join(root, 'events.sqlite');
+  const store = new EventStore(path);
+  const opened = await develop(store, fake(claude), job(repo), opts(runsDir));
+  const raw = new DatabaseSync(path);
+  raw.prepare("UPDATE events SET body = json_remove(body, '$.job') WHERE seq = 0").run();
+  raw.close();
+  const warned: string[] = [];
+  const r = await resume(store, opened.cycle.cycleId, adapters(fake(claude), scripted('PASS'), scripted('PASS')), job(repo, { ticket: 'anything' }), opts(runsDir), (w) => warned.push(w));
+  assert.equal(r.cycle.stage, 'AWAITING_ACCEPTANCE', r.cycle.escalation);
+  assert.deepEqual(warned.map((w) => /could not be compared/.test(w)), [true]);
+  store.close();
+});
+
+// 11-f2 standard 1, minor 3: the owner reads the warning before anything is spent, and also when
+// drive then refuses.
+test('resume warns of a job it could not compare before it drives, so also when drive refuses', async () => {
+  const { root, repo, runsDir, base } = scratch();
+  const path = join(root, 'events.sqlite');
+  const store = new EventStore(path);
+  store.open('c1', 'w1');
+  store.append('c1', { type: 'claim', runId: 'r-left', base, runtime: 'claude' });
+  const warned: string[] = [];
+  await assert.rejects(resume(store, 'c1', adapters(fake(claude), scripted(), scripted()), job(repo), opts(runsDir), (w) => warned.push(w)), /run r-left started and has no outcome/);
+  assert.deepEqual(warned.map((w) => /could not be compared/.test(w)), [true]);
+  store.close();
 });

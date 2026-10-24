@@ -101,16 +101,22 @@ test('cancel after the child exited but a grandchild holds the pipe still resolv
 });
 
 test('a child that died by its own signal before cancel is reported exited, not cancelled', async () => {
+  // The grandchild writes the marker once its parent is gone (its ppid changes): a fixed wait was
+  // too short under the full suite's load, and cancel then landed on a live child (11-f2).
+  const marker = join(dir, 'segv-dead');
+  const watch = `const p = process.ppid; setInterval(() => { if (process.ppid !== p) require('fs').writeFileSync(${JSON.stringify(marker)}, ''); }, 10); setTimeout(() => process.exit(), 3000);`;
   const run = spawnRuntime({
     // sh, not node: node writes a diagnostic report on SIGSEGV and takes most of a second to die.
     // The backgrounded grandchild holds stdout so the run is still pending when cancel() lands.
     command: 'sh',
-    args: ['-c', `"${process.execPath}" -e "setTimeout(() => {}, 3000)" & echo ready; kill -SEGV $$`],
+    args: ['-c', `"${process.execPath}" -e ${JSON.stringify(watch).replace(/\$/g, '\\$')} & echo ready; kill -SEGV $$`],
     prompt: '',
     cwd: dir,
   });
   await run.ready;
-  await new Promise((res) => setTimeout(res, 300));
+  for (const end = Date.now() + 10_000; !existsSync(marker) && Date.now() < end; ) await new Promise((res) => setTimeout(res, 10));
+  // This process hears of the death through SIGCHLD; give its event loop a moment to take it.
+  await new Promise((res) => setTimeout(res, 100));
   const started = Date.now();
   run.cancel();
   const r = await run;

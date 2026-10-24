@@ -38,7 +38,7 @@ export function requestChangesEvent(store: EventStore | undefined, workId: strin
 }
 
 function humanDecision(type: 'accept' | 'request_changes', store: EventStore | undefined, workId: string, sha: string, source: string, where: Where, commandId?: string): Decided {
-  const open = store?.cycles(workId).find((c) => !STOPPED.includes(c.stage));
+  const open = store?.cycles(workId).find((c) => c.stage !== undefined && !STOPPED.includes(c.stage));
   if (!store || !open) throw new Error(`no open cycle for work ${workId} in ${where.runsDir}`);
   const cycle = store.drivable(open.cycleId);
   const human = humanStages(store.workflow);
@@ -52,12 +52,16 @@ function humanDecision(type: 'accept' | 'request_changes', store: EventStore | u
 
 /** Cancel the work's open cycle, or with none open every ESCALATED one. Returns each cycle after its cancel. */
 export function cancelWork(store: EventStore | undefined, workId: string, source: string, where: Where, commandId?: string): Cycle[] {
-  const all = store?.cycles(workId) ?? [];
-  const open = all.filter((c) => !STOPPED.includes(c.stage));
+  // A cycle the store cannot replay cannot take a cancel either: append replays it first.
+  const listed = store?.cycles(workId) ?? [];
+  const all = listed.filter((c) => c.stage !== undefined);
+  const open = all.filter((c) => !STOPPED.includes(c.stage!));
   // With none open, every ESCALATED cycle: the store would ask a new cycle to name any of them
   // as its parent, so cancelling only one would not free the work ID.
   const targets = open.length > 0 ? open : all.filter((c) => c.stage === 'ESCALATED');
-  if (!store || targets.length === 0) throw new Error(`nothing to cancel for work ${workId} in ${where.runsDir}`);
+  // Named with the refusal, so "nothing to cancel" never reads as a work with no cycle.
+  const unreplayable = listed.filter((c) => c.refused !== undefined).map((c) => `cycle ${c.cycleId}: the store cannot replay it: ${c.refused}`);
+  if (!store || targets.length === 0) throw new Error([`nothing to cancel for work ${workId} in ${where.runsDir}`, ...unreplayable].join('; '));
   // No `after`: a cancel is meant to land whatever came between, a run in flight included (07-d).
   return targets.map(({ cycleId }) => store.append(cycleId, { type: 'cancel', source, ...(commandId === undefined ? {} : { commandId }) }));
 }
@@ -85,10 +89,11 @@ type Verification = Extract<Event, { type: 'verification' }>;
  */
 export function moveEvent(store: EventStore | undefined, workId: string, move: Move, where: Where): Decided {
   if (move.reason === '') throw new Error('a move needs a reason');
-  const escalated = (store?.cycles(workId) ?? []).filter((c) => c.stage === 'ESCALATED').map((c) => store!.drivable(c.cycleId));
+  // load, not drivable: a sibling opened under another workflow is not the one moved (parked row 51).
+  const escalated = (store?.cycles(workId) ?? []).filter((c) => c.stage === 'ESCALATED').map((c) => store!.load(c.cycleId)!);
   if (!store || escalated.length === 0) throw new Error(`no escalated cycle for work ${workId} in ${where.runsDir}`);
   // A parent and its child may both be escalated; the SHA names the one the owner read.
-  const cycle = escalated.find((c) => c.candidate?.head === move.sha) ?? escalated.at(-1)!;
+  const cycle = store.drivable((escalated.find((c) => c.candidate?.head === move.sha) ?? escalated.at(-1)!).cycleId);
   const { action, sha: head, reason, stage, source, commandId } = move;
   const event: Event = { type: 'owner_decision', action, head, reason, ...(stage === undefined ? {} : { stage }), source, ...(commandId === undefined ? {} : { commandId }) };
   // apply is pure, so this is the cycle the move leads to, before anything is written.
