@@ -56,3 +56,15 @@ read retained objects. Regression prunes the old candidate object, refuses
 candidate writes to retained storage, and checks the retained SHA after the
 candidate gitdir is removed. Full gate: 677 tests, 653 pass, zero fail,
 19 skips, five todos. E2E: 25 pass. Guide: six pass. Review 3 pending.
+
+Foundation review 3: FAIL, one transport defect. A valid 150,000-byte
+specification fit the artifact limit but exceeded the operating system's
+single-argument limit in the process runtime (`spawn E2BIG`). Request data
+is being moved to stdin, with byte-count/hash verification. The reviewer
+reported no other concrete blocking findings in the full five-file diff.
+
+Round 00 final candidate `19a6898`: reviewer 3 repair recheck PASS. Independent
+large-spec reproduction reaches DONE with complete content. Full gate: 678
+tests, 654 pass, zero fail, 19 live skips, five todos; e2e 26 pass; guide six
+pass. Net change: 794 lines added, zero removed. Src: 5,821 lines; tests:
+12,776 lines; public exports: 13. Verdict: PASS; ready for integration.
