@@ -68,3 +68,16 @@ large-spec reproduction reaches DONE with complete content. Full gate: 678
 tests, 654 pass, zero fail, 19 live skips, five todos; e2e 26 pass; guide six
 pass. Net change: 794 lines added, zero removed. Src: 5,821 lines; tests:
 12,776 lines; public exports: 13. Verdict: PASS; ready for integration.
+
+Integrated round 00 as `5585512` with `--no-ff`; the pre-merge gate passed.
+
+## Round 01 — remove cut frontends (in progress)
+
+Remove `learn/`, `proto/`, and supporting scripts/docs. Neither is imported
+by the core; both are explicitly cut by core.md. Worker branch `refactor/r01`.
+
+Round 01 `5460def`: +5 / −6,501 lines across 78 files. Src: 5,821
+lines; tests: 12,776 lines; public exports: 13. Gate: 678 tests, 654 pass,
+zero fail, 19 skips, five todos. Fresh review PASS, no findings: explicitly
+cut frontends and supporting material removed; core/test implementation
+unchanged. Verdict: simpler, PASS.

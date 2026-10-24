@@ -7,10 +7,11 @@ with [core.md](core.md) taking precedence over the history below.
 Integration branch: `refactor/core`, worktree
 `/var/tmp/software_factory/refactor/core`. Main is unchanged.
 
-Round 0 is establishing the eleven MVP cases through one public entry point.
-Baseline gate: 652 tests, 628 pass, zero fail, 19 live skips, five todos.
-Next action: finish and gate round 0, then simplify in independently reviewed
-rounds. [Run log](refactor/log.md).
+Round 0 merged at `5585512`: eleven MVP cases through one public entry
+point, with 26 e2e/contract tests. Final gate: 678 tests, 654 pass, zero fail,
+19 live skips, five todos; guide six pass. Foundation review PASS after
+repairs recorded in the log. Next action: round 01 removes the explicitly
+cut frontends, then independently reviewed simplification rounds continue. [Run log](refactor/log.md).
 
 ## Where we are
 
