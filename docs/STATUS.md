@@ -1,5 +1,17 @@
 # Current status
 
+## Core refactor — 2026-10-24
+
+Active work follows [the unattended refactor prompt](refactor/prompt.md),
+with [core.md](core.md) taking precedence over the history below.
+Integration branch: `refactor/core`, worktree
+`/var/tmp/software_factory/refactor/core`. Main is unchanged.
+
+Round 0 is establishing the eleven MVP cases through one public entry point.
+Baseline gate: 652 tests, 628 pass, zero fail, 19 live skips, five todos.
+Next action: finish and gate round 0, then simplify in independently reviewed
+rounds. [Run log](refactor/log.md).
+
 ## Where we are
 
 Design iteration stopped (A-016). Implementing [core lifecycle v1](specs/core-lifecycle-v1.md).
