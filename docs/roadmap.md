@@ -38,6 +38,78 @@ journey needs it and prove the behavior at the public boundary. Use the working
 journey to choose the next increment. The milestones below remain finish lines,
 not a requirement to implement all proposed primitives in advance.
 
+## First user journey — agreed 2026-10-24
+
+**Idea → approved plan/spec → implement → check and review/fix → owner
+acceptance for publication → PR.** The owner's agreement and documentation
+request are recorded in [A-145](decisions.md#a-145--2026-10-24--first-user-journey-with-human-approval-and-feedback).
+This is the intended M2 experience; untested behavior below is prospective,
+not a claim that the current implementation provides it.
+
+### Scope and experience
+
+Start with one owner, one existing repository and one small change at a time.
+Use one provider initially, with separate developer and reviewer runs. A short
+document combines the plan and specification; a larger discovery process,
+ticket decomposition, multiple concurrent workers and a dashboard are outside
+this first journey. The provider and operator interface remain to be selected.
+
+1. The owner supplies an idea and repository. The planning stage inspects the
+   relevant context and proposes intended behavior, acceptance checks, exclusions
+   and an implementation outline. Questions address ambiguities that materially
+   affect the work.
+2. The owner can clarify or request changes to the plan/spec, receive a revised
+   version, and explicitly approve its current document hash before development.
+3. Development, checks and distinct reviewer runs advance automatically between
+   machine stages. Review findings feed a bounded fix/review loop; exhausted
+   budgets or unclassified results stop for the owner. Exact counts and failure
+   routes belong to the workflow; this journey does not silently authorize
+   retrying failed quality gates.
+4. The owner receives the result, evidence against the acceptance criteria and
+   limitations. The owner can request a revision in ordinary language. The
+   feedback is recorded durably and reaches the subsequent developer run;
+   changed code is checked and reviewed again before returning to the owner.
+5. The owner explicitly approves publication of the current reviewed commit.
+   The resulting real PR carries that exact SHA and its relevant evidence.
+   Merging the PR remains a separate decision.
+
+Human approval is part of both feedback loops: plan/spec refinement before
+implementation, and result revision before publication. Human gates are policy
+in the first owner workflow, not new mandatory core stages. The owner should
+not have to prompt each automatic stage to begin.
+
+### Failure path and acceptance evidence
+
+When execution stops or the controller restarts, the owner can inspect what
+happened and what was retained, then take a supported continuation or
+abandonment action. The recovery promise and exact actions still need design;
+replay alone does not establish preservation of unrecorded paid work.
+
+Demonstrate a real PR the owner would consider merging, plan/spec feedback
+followed by approval of the revised document, a bounded review/fix cycle,
+owner-requested result revision followed by renewed review and approval, and
+an interruption/escalation path with an explicit next action. Prove feedback
+survives restart and reaches the intended stage; stale approval must not approve
+a newer document or commit. Publication reconciliation must prevent duplicate
+PRs after an ambiguous response. Assess both reliable workflow execution and
+whether the delivered change meets its acceptance criteria.
+
+### Next design step
+
+Define exactly what the owner supplies at entry and what is presented for
+plan/spec approval, using a concrete small repository change. The JSON-output
+example discussed in the session is illustrative, not a selected ticket or
+repository. Then map the journey to the existing public API, workflow and
+integrations, identify demonstrated gaps, and prepare the first bounded
+implementation ticket with public-boundary acceptance evidence. Build a new
+primitive only when the journey exposes a worthwhile need.
+
+Select the first provider and its network/credential boundary, resolve the
+recovery guarantee and durable feedback/owner-command identity, and choose the
+smallest useful operator interface at their implementation boundaries. This
+agreement records the journey; it is not authorization for a paid scenario,
+external publication or implementation during this documentation session.
+
 ## Three completion boundaries
 
 ### Core v1
