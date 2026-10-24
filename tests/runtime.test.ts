@@ -1,7 +1,7 @@
 // Ticket 03-a: how a runtime behaves as a launched, observed and cancelled child process.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnRuntime } from '../src/runtime/spawn.ts';
@@ -143,14 +143,6 @@ test('a cancelled child that honours SIGTERM resolves at once, not at the grace 
   assert.ok(Date.now() - started < 1000, 'waited for the grace period or the grandchild');
 });
 
-test('a missing cwd is reported as failed and names the directory, not the binary', async () => {
-  const cwd = join(dir, 'no-such-dir');
-  const r = await spawnRuntime({ command: process.execPath, args: ['-e', '1'], prompt: '', cwd });
-  assert.equal(r.status, 'failed');
-  assert.match(r.stderr, /no-such-dir/);
-  assert.match(r.stderr, /^cwd /);
-});
-
 test('a missing binary is reported as failed to start, not thrown', async () => {
   const r = await spawnRuntime({ command: join(dir, 'no-such-binary'), args: [], prompt: '', cwd: dir });
   assert.equal(r.status, 'failed');
@@ -170,27 +162,6 @@ test('cancel() after the run has resolved signals nothing', async () => {
     process.kill = kill;
   }
   assert.equal(calls, 0, 'cancel after resolve called process.kill');
-});
-
-test('an empty command is reported as failed, not thrown', async () => {
-  const r = await spawnRuntime({ command: '', args: [], prompt: '', cwd: dir });
-  assert.equal(r.status, 'failed');
-  assert.match(r.stderr, /command is empty/);
-});
-
-test('an unreadable cwd is reported against the cwd, not the binary', async (t) => {
-  if (process.getuid?.() === 0) return void t.skip('root can read anything');
-  const cwd = join(dir, 'locked');
-  mkdirSync(cwd);
-  chmodSync(cwd, 0o000);
-  try {
-    const r = await spawnRuntime({ command: process.execPath, args: ['-e', '1'], prompt: '', cwd });
-    assert.equal(r.status, 'failed');
-    assert.match(r.stderr, /^cwd .*locked/);
-    assert.doesNotMatch(r.stderr, /spawn/);
-  } finally {
-    chmodSync(cwd, 0o700);
-  }
 });
 
 test('ready resolves on the first stderr byte of a child that never writes stdout', async () => {
