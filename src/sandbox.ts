@@ -1,7 +1,4 @@
-// Ticket 08-a: the sandbox seam (A-035). A stage builds a Policy for what it spawns; `wrap` turns
-// the command into the argv that runs it inside the owner's chosen backend. spawnRuntime is not
-// involved: the wrapped argv goes into the systemd scope like any other command. Ticket 10-a: each
-// backend is an entry in BACKENDS; Docker, a VM or a cloud runner would be further entries.
+// A stage builds a Policy; `wrap` turns its command into sandbox argv for the process supervisor.
 import { spawnSync } from 'node:child_process';
 import { accessSync, chmodSync, constants, existsSync, lstatSync, readdirSync, readlinkSync, realpathSync } from 'node:fs';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
@@ -79,9 +76,8 @@ export function wrap(sandbox: Sandbox, policy: Policy, command: string, args: st
 function wrapBwrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]] {
   const lang = process.env.LANG;
   return ['bwrap', [
-    // --die-with-parent: the scope's cgroup.kill already ends everything, but in process-group
-    // isolation a killed bwrap must still take the sandbox with it. --unshare-all includes the
-    // PID namespace, so a background child dies when the command's init does.
+    // Parent death ends bwrap; --unshare-all includes the PID namespace, so its
+    // descendants die with the namespace init even after starting a new session.
     '--die-with-parent', '--unshare-all', ...(policy.network ? ['--share-net'] : []),
     // A new session: the command cannot push input into the controller's terminal (TIOCSTI).
     '--new-session',

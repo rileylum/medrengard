@@ -30,6 +30,9 @@ text matter before deliberate malice (A-037, A-115). See
 - Controller-executed processes always have `network: false`. Bwrap clears
   the environment and defaults HOME to its temporary directory. Owners must
   choose `sandbox.read` deliberately: anything mounted is readable by the run.
+- Process-group cancellation ends bwrap. Its PID namespace and parent-death
+  behavior also end descendants that start a new session, including when the
+  controller dies. Interrupted processes are not adopted on restart.
 - SQLite is the event record. Replay reconstructs state; interrupted work
   escalates without spending again. Historical `events` databases are refused,
   not migrated or silently treated as empty.
@@ -46,5 +49,5 @@ The full clone exposes all fetched refs. Snapshots use stored bytes without
 attributes or LFS conversion. There are no memory/disk quotas, global spend
 limits or command-ID deduplication for owner decisions. Process output caps,
 stage deadlines and finite workflow budgets do not substitute for those
-limits. The lower-level process supervisor retains optional systemd scopes
-and run folders, but the public controller does not use them to adopt runs.
+limits. The process supervisor captures bounded output through pipes; there
+are no durable run folders or independent systemd runtime deadlines.
