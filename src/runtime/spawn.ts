@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { accessSync, constants, statSync } from 'node:fs';
 
 export interface SpawnOptions {
   command: string;
@@ -7,7 +6,6 @@ export interface SpawnOptions {
   /** Written to the child's stdin, then stdin is closed. */
   prompt: string;
   cwd: string;
-  env?: NodeJS.ProcessEnv;
   /** How long SIGTERM gets before SIGKILL on cancel. */
   graceMs?: number;
   /**
@@ -54,34 +52,11 @@ export function spawnRuntime(opts: SpawnOptions): Run {
   let markReady!: () => void;
   const ready = new Promise<void>((res) => (markReady = res));
 
-  const neverStarted = (why: string): Run => {
-    markReady();
-    const run = Promise.resolve<RunResult>({
-      status: 'failed', exitCode: null, signal: null, stdout: '', stderr: why, wallMs: Date.now() - started,
-    }) as Run;
-    run.ready = ready;
-    run.cancel = () => {};
-    return run;
-  };
-
-  // spawn('') throws synchronously; every other failure to start is a resolved `failed`, so this
-  // one is too.
-  if (opts.command === '') return neverStarted('command is empty');
-  // Node reports a missing or unreadable cwd as ENOENT/EACCES on the binary, which a controller
-  // would read as "runtime not installed". Check it first so the two stay distinguishable.
-  try {
-    if (!statSync(opts.cwd).isDirectory()) throw new Error('not a directory');
-    accessSync(opts.cwd, constants.R_OK | constants.X_OK);
-  } catch (err) {
-    return neverStarted(`cwd ${opts.cwd}: ${(err as Error).message}`);
-  }
-
   // `detached` puts the child in its own process group so cancel can signal the whole tree:
   // a CLI with tools on spawns grandchildren, and one of them holding our stdout pipe would
   // otherwise keep `close` from firing after the child itself is dead.
   const child = spawn(opts.command, opts.args, {
     cwd: opts.cwd,
-    env: opts.env ?? process.env,
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: true,
   });
