@@ -1,5 +1,33 @@
 # Current status
 
+## Current next action — first user journey, 2026-10-24
+
+The owner merged the refactor, roadmap and reviewed observer fix into main at
+`ce7c8a0` (`Merge branch 'feat/12-observer-isolation'`). The pending-merge notes
+below describe earlier sessions. The core is still a candidate, not core v1.
+
+The owner agreed to **idea → approved plan/spec → implement → check and
+review/fix → owner acceptance for publication → PR**, with human feedback and
+approval during both planning and result revision. The canonical journey,
+scope and acceptance evidence are in [the roadmap](roadmap.md#first-user-journey--agreed-2026-10-24);
+the quoted agreement is [A-145](decisions.md#a-145--2026-10-24--first-user-journey-with-human-approval-and-feedback),
+with the session log in [M2 journey definition](work/m2-first-journey.md).
+
+Next session: define the owner's starting input and plan/spec approval
+experience for a concrete small repository change. Map that journey to the
+existing primitives and integrations, identify concrete gaps, and prepare the
+first bounded implementation ticket. Provider choice, network/credential
+boundary, recovery promise and operator interface remain unresolved. The
+agreed approach is to try building a workflow and add primitive support only
+when a worthwhile need appears.
+
+This session is documentation only on `docs/first-user-journey`, worktree
+`/var/tmp/software_factory/first-journey`, based on main `ce7c8a0`. No product
+code, paid run or external publication was requested or performed. Markdown
+links and `git diff --check` are checked; application tests are not rerun.
+The last independent implementation gate remains 57/57 passing plus 12
+additional observer probes. The owner merges this documentation branch.
+
 ## Core refactor — 2026-10-24
 
 The run followed [the refactor prompt](refactor/prompt.md) and stopped after

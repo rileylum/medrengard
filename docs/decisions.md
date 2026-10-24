@@ -37,6 +37,33 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-145 — 2026-10-24 — First user journey with human approval and feedback
+
+Owner: “Okay yeah thats pretty much my idea, idea -> plan/spec -> implement ->
+review -> PR.” After discussing plan refinement, bounded reviewer/fix loops,
+owner-requested result revisions and human approval before implementation and
+publication: “And yes you're right we need to have the feedback loop - at this
+stage with the human in the loop to approve. Lets lock that in, document it
+where it makes sense including the handoff so the next session knows what to
+do.” The discussion was explicitly documentation-only: “Okay, lets not
+implement anything here, but lets talk about that first user journey”.
+
+Effect: [the first journey](roadmap.md#first-user-journey--agreed-2026-10-24)
+is the M2 target. One small change in an existing repository goes through an
+owner-approved plan/spec, automatic development/check/review stages with a
+bounded fix loop, owner revision and approval of the reviewed result, then
+real PR publication. Feedback is durable; human approval gates remain in the
+owner workflow. One provider initially, distinct developer/reviewer runs, and
+a supported stopped/interrupted path keep the first delivery bounded. PR merge
+is separate from publication approval.
+
+Next, define the owner's entry input and plan/spec approval experience and map
+that journey onto the existing public API before proposing new primitives.
+Provider choice, access boundary, recovery guarantees, operator interface and
+exact failure/review policy remain to be designed. No code, paid run or external
+publication is authorized by this documentation request. Work log:
+[M2 journey definition](work/m2-first-journey.md).
+
 ### A-144 — 2026-10-22 — Messaging primitives: a published artifact between cycles and a live channel per run, open to observers
 
 Owner, asking whether several agents can work at once and talk to each other while each stays sandboxed: “I have found it valuable to have streams work on dependent or linked work be able to communicate between each other to validate design etc. so it is a paradigm or a workflow that should be possible.” After the research (`docs/research/2026-10-22-agent-messaging/`), offered its ranking: (1) the upstream cycle publishes an interface file bound to its SHA and a downstream cycle checks against it, with no live channel; (2) a live channel, one controller-owned socket per run bound into its sandbox, with the controller recording each message as an event; (3) one VM per run on the home server. Owner: “Okay thats great, and pasta is already planned to be setup. My recommendation is to build the primitives to allows both option 1 and 2 - and there is no requirement for this to just be used for cross agent communication, then an observer extension could send messages through the same channels.”
