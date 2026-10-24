@@ -38,7 +38,7 @@ export interface Artifact { kind: 'commit' | 'document' | 'verdict'; hash: strin
 export interface StageContext {
   subject?: string;
   artifacts: Artifact[];
-  execute(argv: string[], signal?: AbortSignal): Promise<RunResult>;
+  execute(argv: string[], options?: { signal?: AbortSignal; input?: string }): Promise<RunResult>;
 }
 /** State is rebuilt from the event log; evidence contains only the current subject. */
 export interface State {
@@ -230,11 +230,11 @@ export class Controller {
     const { state, version } = this.#read(id);
     if (state.pending) this.#write(id, { type: 'escalated', reason: 'interrupted run needs the owner', runId: state.pending }, version);
   }
-  async #execute(workspace: string, argv: string[], writable: boolean, sandbox: Sandbox, signal: AbortSignal, read: string[] = []): Promise<RunResult> {
+  async #execute(workspace: string, argv: string[], writable: boolean, sandbox: Sandbox, signal: AbortSignal, read: string[] = [], input = ''): Promise<RunResult> {
     if (!confines(sandbox)) throw new Error('candidate execution requires a confining sandbox');
     const policy = { cwd: workspace, write: writable ? [workspace] : [], read: [...read, ...(writable ? [] : [workspace])], network: false };
     const [command, args] = wrap(sandbox, policy, argv[0], argv.slice(1));
-    const run = spawnRuntime({ command, args, cwd: workspace, prompt: '', env: spawnEnv(policy) });
+    const run = spawnRuntime({ command, args, cwd: workspace, prompt: input, env: spawnEnv(policy) });
     const abort = () => run.cancel(); signal.addEventListener('abort', abort, { once: true });
     if (signal.aborted) abort();
     try { return await run; } finally { signal.removeEventListener('abort', abort); }
@@ -317,10 +317,10 @@ export class Controller {
           const snapshot = await this.#execute(workspace, [process.execPath, '-e', SNAPSHOT, commit.repository!, state.subject!, workspace], true, { backend: 'bwrap' }, abort.signal, [commit.repository!, process.execPath]);
           if (snapshot.exitCode !== 0) throw new Error(`cannot materialize commit: ${snapshot.stderr}`);
         }
-        const context: StageContext = frozen({ subject: state.subject, artifacts: copy(state.artifacts), execute: (argv: string[], signal?: AbortSignal) => {
+        const context: StageContext = frozen({ subject: state.subject, artifacts: copy(state.artifacts), execute: (argv: string[], options: { signal?: AbortSignal; input?: string } = {}) => {
           if (!active || abort.signal.aborted) return Promise.reject(new Error('stage execution has ended'));
           if (!Array.isArray(argv) || !argv.length || !argv.every(a => typeof a === 'string')) return Promise.reject(new Error('invalid command'));
-          return this.#execute(workspace, argv, stage.produces === 'commit', agent?.sandbox ?? { backend: 'bwrap' }, signal ? AbortSignal.any([signal, abort.signal]) : abort.signal);
+          return this.#execute(workspace, argv, stage.produces === 'commit', agent?.sandbox ?? { backend: 'bwrap' }, options.signal ? AbortSignal.any([options.signal, abort.signal]) : abort.signal, [], options.input ?? '');
         } });
         let result: any;
         const operation = async () => {

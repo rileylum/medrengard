@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 import { Controller, commandRuntime, type Runtime, type StageContext, type Options } from '../../src/index.ts';
 
 function fixture(t: any, runtime: Runtime, input = 'success', overrides: Partial<Options> = {}) {
@@ -27,7 +28,7 @@ function fake(): Runtime {
     async *events() { yield { type: 'progress' }; },
   };
 }
-const command = ['node', '-e', "const r=JSON.parse(process.argv[1]); if(r.input==='failure') process.exit(1); else if(r.input==='wait') setInterval(()=>{},1000); else console.log(JSON.stringify({outcome:'done',artifact:{kind:'document',content:'document'}}));"];
+const command = ['node', '-e', "const r=JSON.parse(require('fs').readFileSync(0,'utf8')); if(r.input==='failure') process.exit(1); else if(r.input==='wait') setInterval(()=>{},1000); else console.log(JSON.stringify({outcome:'done',artifact:{kind:'document',content:'document'}}));"];
 for (const [name, factory] of [['fake', fake], ['process', () => commandRuntime(command)]] as const) {
   for (const input of ['success', 'failure', 'wait']) test(`${name} runtime contract: ${input}`, async t => {
     const { controller } = fixture(t, factory(), input);
@@ -110,7 +111,7 @@ test('process developer and fix consume approved specification and exact review 
   const finding = 'Replace the original greeting with corrected-violet-27.';
   let reviews = 0;
   const runtime = commandRuntime(['node', '-e', `
-    const r=JSON.parse(process.argv[1]); const fs=require('fs'); const g=(...a)=>require('child_process').execFileSync('git',a);
+    const r=JSON.parse(require('fs').readFileSync(0,'utf8')); const fs=require('fs'); const g=(...a)=>require('child_process').execFileSync('git',a);
     const spec=r.artifacts.find(a=>a.kind==='document' && a.stage==='spec').content;
     const fail=r.artifacts.findLast(a=>a.kind==='verdict' && a.verdict==='FAIL');
     fs.writeFileSync('spec.txt',spec); fs.writeFileSync('findings.json',JSON.stringify(fail?.findings ?? []));
@@ -174,4 +175,24 @@ test('accepted commit objects survive a later candidate replacing and pruning it
   controller.decide('work', 'accept', state.subject!); await controller.advance('work');
   assert.equal(controller.state('work').stage, 'DONE', controller.state('work').reason);
   assert.equal(controller.state('work').evidence[0].verdict, 'PASS');
+});
+
+
+test('process runtime receives the entire large specification through stdin', async t => {
+  const spec = 'header\n' + 'x'.repeat(150000) + '\ntail';
+  const runtime = commandRuntime(['node', '-e', `
+    const request=JSON.parse(require('fs').readFileSync(0,'utf8'));
+    const content=request.artifacts[0].content;
+    const received={bytes:Buffer.byteLength(content),sha256:require('crypto').createHash('sha256').update(content).digest('hex')};
+    console.log(JSON.stringify({outcome:'done',artifact:{kind:'document',content:JSON.stringify(received)}}));
+  `]);
+  const { controller } = fixture(t, runtime, 'consume the approved specification', { deadlineMs: 2000,
+    workflows: [{ name: 'one', start: 'spec', stages: {
+      spec: { kind: 'command', extension: 'spec', produces: 'document', budget: 1, on: { done: 'consume' } },
+      consume: { kind: 'agent', agent: 'one', produces: 'document', budget: 1, on: { done: 'DONE' } },
+    } }], extensions: { spec: async () => ({ outcome: 'done', artifact: { kind: 'document', content: spec } }) },
+  });
+  await controller.advance('work'); const state = controller.state('work');
+  assert.equal(state.stage, 'DONE', state.reason);
+  assert.deepEqual(JSON.parse(state.artifacts[1].content!), { bytes: Buffer.byteLength(spec), sha256: createHash('sha256').update(spec).digest('hex') });
 });

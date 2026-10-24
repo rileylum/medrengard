@@ -186,7 +186,7 @@ test('9. observers see every ordered event and cannot mutate state or reenter co
 });
 
 test('10. runtime swap preserves workflow and role, skill, MCP definitions', async t => {
-  const processRuntime = commandRuntime(['node', '-e', "const request=JSON.parse(process.argv[1]); console.log(JSON.stringify({outcome:'done',artifact:{kind:'document',content:JSON.stringify(request.agent)}}))"]);
+  const processRuntime = commandRuntime(['node', '-e', "const request=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log(JSON.stringify({outcome:'done',artifact:{kind:'document',content:JSON.stringify(request.agent)}}))"]);
   const states = [];
   for (const runtime of [new Stub(), processRuntime]) {
     const { controller, options } = setup(t, runtime as Stub);
