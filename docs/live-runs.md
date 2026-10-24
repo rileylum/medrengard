@@ -39,8 +39,8 @@ network and credential design before a paid run is possible.
 
 ## Local verification
 
-`systemd-run --user --scope --quiet npm test` exercises stub runtimes, the real
-JSON process adapter, bwrap and the optional lower-level systemd supervisor.
-Starting inside the user manager makes the supervisor's cgroup path tests
-valid when the login shell otherwise lives in an SSH session scope. This
-command uses no model provider and incurs no model spend.
+`npm test` exercises stub runtimes, the real JSON process adapter and bwrap.
+The public controller tests start a descendant in a new session and verify
+that it cannot outlive a stage deadline or controller death. The suite needs
+working unprivileged user namespaces; it uses no model provider and incurs
+no model spend.
