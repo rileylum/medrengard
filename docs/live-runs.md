@@ -9,7 +9,7 @@ The shipped `commandRuntime(argv)` is a generic JSON process adapter: it sends
 `AgentRequest` plus `artifacts` on stdin, expects one JSON result containing
 `outcome` and `artifact` on stdout, and records its exit event. It executes
 through `StageContext.execute` in bwrap. All controller execution currently
-uses `network: false`, with no provider credentials provisioned. This supports
+disables network access, with no provider credentials provisioned. This supports
 local commands and stubs; a provider-backed integration needs an explicit
 network and credential design before a paid run is possible.
 
