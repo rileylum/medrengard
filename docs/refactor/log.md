@@ -169,3 +169,21 @@ no findings: launch guard was unreachable at the public boundary, cwd
 preflight specialized obsolete diagnostics, and the environment override
 had no caller. Cancellation/output behavior unchanged. Verdict: simpler,
 PASS; the consecutive no-change count resets to zero.
+
+Integrated round 06 as `398905b` with `--no-ff`; pre-merge gate passed.
+
+## Round 07 — consolidate sandbox setup validation (in progress)
+
+Inspection found repeated backend checks and stage probes of only the
+default sandbox, while the agent's actual declared read paths were never
+validated by the controller. Consolidate configuration and availability
+checks before dispatch; trust checked internal callers thereafter. Retain
+all confinement behavior and prove invalid paths refuse before any work
+record or runtime dispatch. Worker branch `refactor/r07`.
+
+Round 07 `149f06c3`: +88 / −37 lines overall; source alone +10 / −20.
+Src: 601 lines; tests: 1,036 lines; public exports: 13. Relative/missing
+read-path tests failed before the change and passed afterward. Full gate:
+56/56 pass, no skips/todos. Fresh review PASS, no findings; reviewer also
+ran setup and confinement tests independently (13/13 pass). Verdict:
+simpler validation boundary, PASS.
