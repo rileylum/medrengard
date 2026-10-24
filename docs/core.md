@@ -1,9 +1,8 @@
 # Core
 
 The one page of what Medrengard is and what its core must hold. It overrides
-the historical plans, specifications, designs, workflow guide and
-`docs/decisions.md` wherever they disagree. Deleted documents remain in Git
-history; the decision register, research and architecture remain unchanged.
+`docs/plan.md`, `docs/decisions.md`, `docs/specs/`, `docs/design/` and
+`docs/workflow.md` wherever they disagree; those are history.
 
 ## What it is
 

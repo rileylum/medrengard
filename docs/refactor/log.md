@@ -223,3 +223,35 @@ scan. No substantive simplification resulted. Gate: 54/54 pass, no skips or
 todos. Src: 513 lines; tests: 893 lines; public exports: 13 (recounted from
 the entry point). Fresh reviewer FAIL — empty diff, no change to approve
 as simpler; not a code defect. No merge. First consecutive no-change round.
+
+## Round 10 — independent simplification assessment
+
+No change (+0 / −0). Worker independently rejected removing the real/fake
+runtime seam, merging containment with controller state, deleting the sandbox
+discriminator, adding failure bookkeeping to replay, moving invariants into
+policy, deleting retention/materialization/old-log refusal, and cosmetic
+helper/copy rearrangements. Gate: 54/54 pass, no skips/todos. Src: 513 lines;
+tests: 893 lines; public exports: 13. Fresh reviewer FAIL — empty diff, no
+change to approve as simpler; not a code defect. No merge.
+
+## Stop and finish preparation
+
+Stop rule met: rounds 09 and 10 consecutively produced no approved
+simplification. Eleven numbered rounds were considered (00–10); eight were
+integrated and three made no change. No invariant exception or invented owner
+approval was used to continue.
+
+README rewritten around the retained API, default workflow, execution model
+and actual limits. STATUS replaced obsolete implementation history with the
+current result; Git retains that history. Deleted-code docs were removed in
+rounds 01–03. Decisions, research and architecture remain unchanged. The
+final integration gate and required adversarial review follow; no code fixes
+will be made after that review.
+
+Final integration gate: 54/54 pass, zero failures/skips/todos, 17.8 seconds
+(`/tmp/refactor-final-test.log`). `git diff --check` passed. Main is clean
+at `5ed0e56`. Protected decisions/research/architecture are byte-for-byte
+unchanged. The core document was restored verbatim during the final audit;
+its only intervening change had been introductory references to deleted docs,
+not normative rules. Final pre-review counts: src 513 lines (four files),
+tests 893 lines (seven files), default workflow 21 lines, 13 public exports.
