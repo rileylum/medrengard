@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { checkSandbox, confines, spawnEnv, wrap, type Sandbox } from './sandbox.ts';
+import { checkSandbox, confines, wrap, type Sandbox } from './sandbox.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
 
 type Destination = string | { workflow: string };
@@ -233,9 +233,9 @@ export class Controller {
   }
   async #execute(workspace: string, argv: string[], writable: boolean, sandbox: Sandbox, signal: AbortSignal, read: string[] = [], input = ''): Promise<RunResult> {
     if (!confines(sandbox)) throw new Error('candidate execution requires a confining sandbox');
-    const policy = { cwd: workspace, write: writable ? [workspace] : [], read: [...read, ...(writable ? [] : [workspace])], network: false };
+    const policy = { cwd: workspace, write: writable ? [workspace] : [], read: [...read, ...(writable ? [] : [workspace])] };
     const [command, args] = wrap(sandbox, policy, argv[0], argv.slice(1));
-    const run = spawnRuntime({ command, args, cwd: workspace, prompt: input, env: spawnEnv(policy) });
+    const run = spawnRuntime({ command, args, cwd: workspace, prompt: input });
     const abort = () => run.cancel(); signal.addEventListener('abort', abort, { once: true });
     if (signal.aborted) abort();
     try { return await run; } finally { signal.removeEventListener('abort', abort); }

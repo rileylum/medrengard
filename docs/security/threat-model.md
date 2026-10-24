@@ -27,8 +27,8 @@ text matter before deliberate malice (A-037, A-115). See
 - Candidate Git operations execute inside bwrap with hooks and replacement
   objects disabled. The initial clone uses the owner's trusted repository.
   Snapshot materialization reads raw objects rather than candidate attributes.
-- Controller-executed processes always have `network: false`. Bwrap clears
-  the environment and defaults HOME to its temporary directory. Owners must
+- Controller-executed processes always run without network access. Bwrap clears
+  the environment and sets HOME to its private temporary directory. Owners must
   choose `sandbox.read` deliberately: anything mounted is readable by the run.
 - Process-group cancellation ends bwrap. Its PID namespace and parent-death
   behavior also end descendants that start a new session, including when the

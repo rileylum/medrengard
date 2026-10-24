@@ -1,13 +1,13 @@
-// Ticket 08-a: the sandbox seam. `wrap` turns a command and a policy into the argv to spawn;
+// The sandbox seam. `wrap` turns a command and a policy into the argv to spawn;
 // under bwrap the command writes only its write roots, reads only the system directories and
-// its read roots, has no network unless asked and none of the controller's environment.
+// its read roots, has no network and none of the controller's environment.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer, type AddressInfo } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { checkSandbox, spawnEnv, wrap, type Policy, type Sandbox } from '../src/sandbox.ts';
+import { checkSandbox, wrap, type Policy, type Sandbox } from '../src/sandbox.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-sandbox-');
@@ -39,14 +39,9 @@ function run(sandbox: Sandbox, policy: Policy, command: string, args: string[], 
 }
 const sh = (sandbox: Sandbox, policy: Policy, script: string, env?: NodeJS.ProcessEnv) => run(sandbox, policy, 'sh', ['-c', script], env);
 
-test('backend none returns the command unchanged', () => {
-  const policy: Policy = { cwd: '/x', write: ['/x'], read: [], network: false };
-  assert.deepEqual(wrap({ backend: 'none' }, policy, 'npm', ['test']), ['npm', ['test']]);
-});
-
 test('bwrap: the command writes in its write root and nowhere else', async () => {
   const { root, work } = scratch();
-  const policy: Policy = { cwd: work, write: [work], read: [], network: false };
+  const policy: Policy = { cwd: work, write: [work], read: [] };
   const r = await sh(BWRAP, policy, `echo in > in.txt; echo out > ${root}/out.txt; true`);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(readFileSync(join(work, 'in.txt'), 'utf8'), 'in\n');
@@ -65,7 +60,7 @@ test('bwrap: an undeclared path is not readable; a declared read root is, and is
   const shared = join(root, 'shared');
   mkdirSync(shared);
   writeFileSync(join(shared, 'secret.txt'), 'secret\n');
-  const without: Policy = { cwd: work, write: [work], read: [], network: false };
+  const without: Policy = { cwd: work, write: [work], read: [] };
   const hidden = await sh(BWRAP, without, `cat ${shared}/secret.txt`);
   assert.notEqual(hidden.code, 0);
   assert.doesNotMatch(hidden.stdout, /secret/);
@@ -83,7 +78,7 @@ test('bwrap: nested roots keep their own mode whichever way they nest (08-a stan
   const rw = join(work, 'vendor', 'cache');
   mkdirSync(rw, { recursive: true });
   // A read root inside a write root stays read-only; a write root inside that read root stays writable.
-  for (const policy of [{ cwd: work, write: [work, rw], read: [ro], network: false }, { cwd: work, write: [rw, work], read: [ro], network: false }]) {
+  for (const policy of [{ cwd: work, write: [work, rw], read: [ro] }, { cwd: work, write: [rw, work], read: [ro] }]) {
     const r = await sh(BWRAP, policy, `touch ${ro}/f; touch ${rw}/g; touch ${work}/h; true`);
     assert.equal(r.code, 0, r.stderr);
     assert.ok(!existsSync(join(ro, 'f')), 'the read root under a write root is read-only');
@@ -96,66 +91,38 @@ test('bwrap: nested roots keep their own mode whichever way they nest (08-a stan
 
 test('bwrap: the controller environment is cleared to PATH, HOME=/tmp and LANG; /tmp is private', async () => {
   const { work } = scratch();
-  const policy: Policy = { cwd: work, write: [work], read: [], network: false };
+  const policy: Policy = { cwd: work, write: [work], read: [] };
   const r = await sh(BWRAP, policy, 'echo "secret=${SF_SANDBOX_SECRET:-unset} home=$HOME"; test -n "$PATH"; ls -A /tmp | wc -l', { SF_SANDBOX_SECRET: 'leaked' });
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /^secret=unset home=\/tmp$/m);
   assert.match(r.stdout, /^0$/m);
 });
 
-test('bwrap: secrets reach the command through the spawn environment, never argv; the rest of the controller environment is still cleared (10-e)', async () => {
-  const { work } = scratch();
-  const policy: Policy = { cwd: work, write: [work], read: [], network: false, env: { SF_REQUEST: '/req' }, secrets: { GH_TOKEN: 'sf-secret-value' } };
-  process.env.SF_SANDBOX_OTHER = 'leaked';
-  try {
-    const [cmd, argv] = wrap(BWRAP, policy, 'sh', ['-c', 'echo "token=$GH_TOKEN other=${SF_SANDBOX_OTHER:-unset} req=$SF_REQUEST home=$HOME"; env | cut -d= -f1 | sort']);
-    // /proc/<pid>/cmdline is world-readable: no value may be in argv.
-    assert.ok(![cmd, ...argv].some((a) => a.includes('sf-secret-value')), 'the secret is not in argv');
-    const r = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
-      const child = spawn(cmd, argv, { cwd: work, env: spawnEnv(policy), stdio: ['ignore', 'pipe', 'pipe'] });
-      let stdout = '';
-      let stderr = '';
-      child.stdout.setEncoding('utf8').on('data', (d) => (stdout += d));
-      child.stderr.setEncoding('utf8').on('data', (d) => (stderr += d));
-      child.on('close', (code) => resolve({ code, stdout, stderr }));
-    });
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /^token=sf-secret-value other=unset req=\/req home=\/tmp$/m);
-    const names = r.stdout.split('\n').slice(1).filter(Boolean);
-    // sh adds PWD, SHLVL and _ itself.
-    assert.deepEqual(names.filter((k) => !['PWD', 'SHLVL', '_', 'OLDPWD'].includes(k)), ['GH_TOKEN', 'HOME', ...(process.env.LANG ? ['LANG'] : []), 'PATH', 'SF_REQUEST']);
-  } finally {
-    delete process.env.SF_SANDBOX_OTHER;
-  }
-});
-
 test('bwrap: the command runs in a session of its own, so it cannot push input into the controller terminal', async () => {
   const { work } = scratch();
   // Field 6 of stat is the session ID; a session led from outside the PID namespace reads as 0.
-  const r = await sh(BWRAP, { cwd: work, write: [work], read: [], network: false }, 'cut -d" " -f6 /proc/$$/stat');
+  const r = await sh(BWRAP, { cwd: work, write: [work], read: [] }, 'cut -d" " -f6 /proc/$$/stat');
   assert.equal(r.code, 0, r.stderr);
   assert.notEqual(r.stdout.trim(), '0');
 });
 
-test('bwrap: no network unless the policy asks for it', async () => {
+test('bwrap: no network', async () => {
   const { work } = scratch();
   const server = createServer((s) => s.end());
   await new Promise<void>((res) => server.listen(0, '127.0.0.1', res));
   const port = (server.address() as AddressInfo).port;
   const connect = `require('node:net').connect(${port}, '127.0.0.1').on('connect', () => process.exit(0)).on('error', () => process.exit(7))`;
   try {
-    const policy: Policy = { cwd: work, write: [work], read: [NODE_PREFIX], network: false };
+    const policy: Policy = { cwd: work, write: [work], read: [NODE_PREFIX] };
     const off = await run(BWRAP, policy, process.execPath, ['-e', connect]);
     assert.equal(off.code, 7, off.stderr);
-    const on = await run(BWRAP, { ...policy, network: true }, process.execPath, ['-e', connect]);
-    assert.equal(on.code, 0, on.stderr);
   } finally {
     server.close();
   }
 });
 
-test('checkSandbox: passes for none and for a working bwrap; throws naming none when bwrap cannot start or a read path is wrong', () => {
-  checkSandbox({ backend: 'none' });
+test('checkSandbox: requires working bwrap and valid read paths', () => {
+  assert.throws(() => checkSandbox({ backend: 'none' }), /backend/);
   checkSandbox(BWRAP);
   checkSandbox({ backend: 'bwrap', read: [NODE_PREFIX] });
   assert.throws(() => checkSandbox({ backend: 'bwrap', read: ['relative/path'] }), /absolute/);
@@ -164,57 +131,8 @@ test('checkSandbox: passes for none and for a working bwrap; throws naming none 
   const path = process.env.PATH;
   process.env.PATH = join(dir, 'empty-path');
   try {
-    assert.throws(() => checkSandbox(BWRAP), /"none"/);
+    assert.throws(() => checkSandbox(BWRAP), /bwrap cannot start/);
   } finally {
     process.env.PATH = path;
   }
-});
-
-// Ticket 08-c: what a runtime's policy adds. pi needs to write its config directory but must not
-// keep the writes (08-c-findings.md); a runtime finds its config under the owner's HOME; each
-// run's /tmp is its own corner on disk, not the shared RAM tmpfs (A-038).
-test('bwrap: an overlay directory takes writes inside and leaves the host directory unchanged', async () => {
-  const { root, work } = scratch();
-  const config = join(root, 'config');
-  mkdirSync(config);
-  writeFileSync(join(config, 'settings.json'), 'original\n');
-  const policy: Policy = { cwd: work, write: [work], read: [], overlay: [config], network: false };
-  const r = await sh(BWRAP, policy, `mkdir ${config}/settings.json.lock && echo changed > ${config}/settings.json && cat ${config}/settings.json`);
-  assert.equal(r.code, 0, r.stderr);
-  assert.equal(r.stdout, 'changed\n');
-  assert.equal(readFileSync(join(config, 'settings.json'), 'utf8'), 'original\n');
-  assert.ok(!existsSync(join(config, 'settings.json.lock')));
-});
-
-// 08-g: pi refreshes its login into auth.json inside the overlay; the new refresh token must outlive the run.
-test('bwrap: a writeOver file inside an overlay keeps its writes; the rest of the overlay is still dropped', async () => {
-  const { root, work } = scratch();
-  const config = join(root, 'config');
-  mkdirSync(config);
-  writeFileSync(join(config, 'auth.json'), 'old\n');
-  writeFileSync(join(config, 'settings.json'), 'original\n');
-  const policy: Policy = { cwd: work, write: [work], read: [], overlay: [config], writeOver: [join(config, 'auth.json')], network: false };
-  const r = await sh(BWRAP, policy, `mkdir ${config}/auth.json.lock && echo new > ${config}/auth.json && echo changed > ${config}/settings.json`);
-  assert.equal(r.code, 0, r.stderr);
-  assert.equal(readFileSync(join(config, 'auth.json'), 'utf8'), 'new\n');
-  assert.equal(readFileSync(join(config, 'settings.json'), 'utf8'), 'original\n');
-  assert.ok(!existsSync(join(config, 'auth.json.lock')));
-});
-
-test('bwrap: home sets HOME; tmp binds a host directory at /tmp', async () => {
-  const { root, work } = scratch();
-  const tmp = join(root, 'run-tmp');
-  mkdirSync(tmp);
-  const policy: Policy = { cwd: work, write: [work], read: [], network: false, home: root, tmp };
-  const r = await sh(BWRAP, policy, 'echo "home=$HOME"; echo x > /tmp/marker');
-  assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, new RegExp(`^home=${root}$`, 'm'));
-  assert.equal(readFileSync(join(tmp, 'marker'), 'utf8'), 'x\n');
-});
-
-test('bwrap: with network, the resolver directory is bound read-only for DNS; without, it is not', () => {
-  const policy: Policy = { cwd: '/x', write: ['/x'], read: [], network: false };
-  const has = (argv: string[]) => argv.some((a, i) => a === '--ro-bind' && argv[i + 1] === '/run/systemd/resolve');
-  assert.ok(!has(wrap(BWRAP, policy, 'true', [])[1]));
-  assert.equal(has(wrap(BWRAP, { ...policy, network: true }, 'true', [])[1]), existsSync('/run/systemd/resolve'));
 });
