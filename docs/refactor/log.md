@@ -187,3 +187,22 @@ read-path tests failed before the change and passed afterward. Full gate:
 56/56 pass, no skips/todos. Fresh review PASS, no findings; reviewer also
 ran setup and confinement tests independently (13/13 pass). Verdict:
 simpler validation boundary, PASS.
+
+Integrated round 07 as `412dcfa` with `--no-ff`; pre-merge gate passed.
+
+## Round 08 — assess sandbox execution collapse (in progress)
+
+The fresh worker identified that the generic process supervisor now has one
+production caller, always bwrap. Unlike a file-only merge, a sandbox-specific
+execution module may remove unused generic lifecycle machinery. Prove normal
+exit, output overflow, input delivery, cancellation and descendant cleanup
+before deleting it. Worker branch `refactor/r08`.
+
+Round 08 `caa43fd` (implementation `4ee5aac`): +187 / −415 lines across
+17 files. Src: four files / 513 lines; tests: 893 lines; public exports: 13.
+Gate: 54/54 pass, no skips/todos. Fresh review PASS, no findings. Additional
+reviewer probes passed exact output caps, overflow during drain, early stdin
+closure, inherited pipes, cancellation, pre-aborted signals, missing/self-
+signalled commands and spawn failure. Four public containment cases prove
+descendant cleanup on deadline, crash, normal exit and overflow. Verdict:
+simpler, PASS.
