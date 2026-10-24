@@ -124,3 +124,20 @@ records changed after the reviewed implementation commit; no new application
 test run was needed for those documentation changes. Next: owner acceptance of
 the refactor's overall scope and limitations, then owner merge of the local
 branch. No paid run, push or merge occurred.
+
+### 2026-10-24 — Owner acceptance
+
+Owner: “Accept”.
+
+The reply followed the independent PASS report and the request for acceptance
+of the overall refactor. The owner accepts the refactor, roadmap and reviewed
+observer fix on `feat/12-observer-isolation` at `cb0e92c` (implementation
+`bbd92de`). This accepts the current foundation and its documented limitations;
+it does not declare core v1 or change the unresolved recovery/provider decisions.
+
+Recorded acceptance and updated STATUS; `git diff --check` passed. No code
+changed and application tests were not rerun; the independent 57/57 gate and
+12 additional probes remain the validation evidence. Next: the owner runs
+`git merge --no-ff feat/12-observer-isolation` from the main checkout, including
+this acceptance record. Then define M2's first real provider-to-PR journey.
+No merge, push or paid run occurred in this session.

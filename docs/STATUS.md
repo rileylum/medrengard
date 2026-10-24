@@ -87,10 +87,16 @@ support is worth adding. No provider or recovery policy was selected by that
 reply. Current recovery still escalates interrupted runs without result adoption
 or a continuation command; provider access and real publication remain unbuilt.
 
-Next action: owner acceptance of the refactor's overall scope and limitations,
-then owner merge of `feat/12-observer-isolation`, which includes the refactor,
-roadmap and reviewed fix. Main remains unchanged; only review documentation
-changed after the reviewed implementation commit. Then define M2's first real
+Owner acceptance on 2026-10-24: “Accept”, following the independent PASS report
+and request for acceptance of the overall refactor. The quoted reply and scope
+are recorded in ticket 12. Acceptance covers the refactor, roadmap and reviewed
+fix at `cb0e92c`; it does not declare core v1 or settle recovery/provider policy.
+
+Next action: owner merge of `feat/12-observer-isolation`, which includes the
+refactor, roadmap, reviewed fix and acceptance record. Main remains unchanged;
+only review and acceptance documentation changed after the reviewed
+implementation commit. `git diff --check` passed for the acceptance update;
+application tests were not rerun for documentation only. Then define M2's first real
 provider-to-PR journey and its acceptance evidence. Resolve the recovery promise
 and provider network/credential boundary as part of that implementation design.
 No paid run, push or merge is part of this follow-up.
