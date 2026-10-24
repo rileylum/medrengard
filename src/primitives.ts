@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { checkSandbox, confines, spawnEnv, wrap, type Sandbox } from './sandbox.ts';
@@ -33,7 +33,7 @@ export interface Runtime {
   events(runId: string): AsyncIterable<unknown>;
 }
 /** An immutable, hashed output; evidence always names the exact subject it concerns. */
-export interface Artifact { kind: 'commit' | 'document' | 'verdict'; hash: string; stage: string; sha?: string; content?: string; subject?: string; verdict?: 'PASS' | 'FAIL'; findings?: string[] }
+export interface Artifact { kind: 'commit' | 'document' | 'verdict'; hash: string; stage: string; sha?: string; repository?: string; content?: string; subject?: string; verdict?: 'PASS' | 'FAIL'; findings?: string[] }
 /** Stage implementations receive data and confined execution, never a state writer. */
 export interface StageContext {
   subject?: string;
@@ -244,15 +244,29 @@ export class Controller {
     if (result.status !== 'exited' || result.exitCode !== 0) throw new Error(`candidate git failed: ${result.stderr}`);
     return result.stdout.trim();
   }
+  async #retain(state: State, sha: string, signal: AbortSignal): Promise<string> {
+    // Separate sandboxes: candidate configuration sees no writable storage, and the importer sees no candidate files.
+    // lazy: the process output cap bounds a retained pack; stream binary packs when a workflow exceeds that cap.
+    const exported = await this.#execute(state.workspace, ['sh', '-c', 'printf \'%s\\n\' "$1" | git --no-replace-objects -c core.hooksPath=/dev/null pack-objects --stdout --revs | base64', 'export', sha], false, { backend: 'bwrap' }, signal);
+    if (exported.status !== 'exited' || exported.exitCode !== 0) throw new Error(`cannot export commit: ${exported.stderr}`);
+    const repository = join(this.#options.directory, randomUUID()); mkdirSync(repository);
+    const pack = join(repository, 'incoming.pack');
+    writeFileSync(pack, Buffer.from(exported.stdout, 'base64'));
+    try {
+      const imported = await this.#execute(repository, ['sh', '-c', 'git init --bare -q . && git index-pack --strict --stdin < incoming.pack && test "$(git cat-file -t "$1")" = commit && git update-ref "refs/artifacts/$1" "$1" && git fsck --full --no-reflogs', 'retain', sha], true, { backend: 'bwrap' }, signal);
+      if (imported.status !== 'exited' || imported.exitCode !== 0) throw new Error(`cannot retain commit: ${imported.stderr}`);
+      return repository;
+    } finally { rmSync(pack); }
+  }
   async #artifact(value: unknown, stage: Stage, state: State, signal: AbortSignal): Promise<Artifact> {
     const a = data(value);
     if (!a || !['commit', 'document', 'verdict'].includes(a.kind) || (stage.produces && a.kind !== stage.produces)) throw new Error('invalid artifact kind');
     if (a.kind === 'document' && (typeof a.content !== 'string' || !a.content.length)) throw new Error('missing document content');
     if (a.kind === 'commit') {
       if (typeof a.sha !== 'string' || !/^[a-f0-9]{40}$/.test(a.sha)) throw new Error('invalid commit SHA');
-      await this.#git(state, ['fsck', '--full', '--no-reflogs'], signal);
-      if (await this.#git(state, ['rev-parse', 'HEAD'], signal) !== a.sha || await this.#git(state, ['cat-file', '-t', a.sha], signal) !== 'commit') throw new Error('commit claim differs from workspace HEAD');
+      if (await this.#git(state, ['rev-parse', 'HEAD'], signal) !== a.sha) throw new Error('commit claim differs from workspace HEAD');
       if (a.sha === state.subject) throw new Error('commit did not change');
+      a.repository = await this.#retain(state, a.sha, signal);
     }
     if (a.kind === 'verdict' && (!['PASS', 'FAIL'].includes(a.verdict) || !state.subject || a.subject !== state.subject || !Array.isArray(a.findings) || !a.findings.every((s: unknown) => typeof s === 'string'))) throw new Error('invalid or stale verdict');
     if (a.subject !== undefined && a.subject !== state.subject) throw new Error('stale artifact subject');
@@ -297,9 +311,10 @@ export class Controller {
         }
         const agent = stage.agent ? this.#options.agents[stage.agent] : undefined;
         let workspace = state.workspace;
-        if (stage.produces !== 'commit' && state.artifacts.some(a => a.kind === 'commit' && a.sha === state.subject)) {
+        const commit = state.artifacts.findLast(a => a.kind === 'commit' && a.sha === state.subject);
+        if (stage.produces !== 'commit' && commit) {
           workspace = join(this.#options.directory, randomUUID()); mkdirSync(workspace);
-          const snapshot = await this.#execute(workspace, [process.execPath, '-e', SNAPSHOT, state.workspace, state.subject!, workspace], true, { backend: 'bwrap' }, abort.signal, [state.workspace, process.execPath]);
+          const snapshot = await this.#execute(workspace, [process.execPath, '-e', SNAPSHOT, commit.repository!, state.subject!, workspace], true, { backend: 'bwrap' }, abort.signal, [commit.repository!, process.execPath]);
           if (snapshot.exitCode !== 0) throw new Error(`cannot materialize commit: ${snapshot.stderr}`);
         }
         const context: StageContext = frozen({ subject: state.subject, artifacts: copy(state.artifacts), execute: (argv: string[], signal?: AbortSignal) => {
@@ -320,7 +335,6 @@ export class Controller {
           }
           if (stage.extension) return this.#options.extensions![stage.extension](context);
           if (!state.subject || !state.artifacts.some(a => a.kind === 'commit' && a.sha === state.subject)) throw new Error('command needs a commit');
-          if (await this.#git(state, ['rev-parse', 'HEAD'], abort.signal) !== state.subject) throw new Error('candidate head changed');
           const command = await context.execute(stage.command!);
           if (command.status !== 'exited' || command.exitCode === null) throw new Error('command did not finish');
           const verdict = command.exitCode === 0 ? 'PASS' : 'FAIL';

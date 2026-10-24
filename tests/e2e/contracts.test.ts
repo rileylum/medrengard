@@ -138,3 +138,40 @@ test('process developer and fix consume approved specification and exact review 
   assert.equal(file(commits[1].sha!, 'spec.txt'), spec);
   assert.deepEqual(JSON.parse(file(commits[1].sha!, 'findings.json')), [finding]);
 });
+
+test('accepted commit objects survive a later candidate replacing and pruning its history', async t => {
+  let count = 0; let result: unknown;
+  const runtime: Runtime = {
+    async start(_request, context) {
+      const previous = context.artifacts.find(a => a.kind === 'commit');
+      if (previous?.repository) {
+        const attempt = await context.execute(['node', '-e', "try { require('fs').writeFileSync(process.argv[1]+'/config','corrupt'); process.exit(1) } catch {}", previous.repository!]);
+        assert.equal(attempt.exitCode, 0, 'candidate can write retained artifact storage');
+      }
+      const command = ++count === 1
+        ? "printf original > answer; git add answer; git -c user.name=A -c user.email=a@test commit -qm original; git rev-parse HEAD"
+        : "set -e; original_branch=$(git symbolic-ref --short HEAD); git checkout --orphan replacement; printf replacement > answer; git add answer; git -c user.name=A -c user.email=a@test commit -qm replacement; git update-ref -d refs/heads/$original_branch; git reflog expire --expire=now --all; git gc --prune=now; git rev-parse HEAD";
+      const run = await context.execute(['sh', '-c', command]); assert.equal(run.exitCode, 0, run.stderr);
+      result = { outcome: 'done', artifact: { kind: 'commit', sha: run.stdout.trim() } };
+    }, async result() { return result; }, async cancel() {}, async *events() {},
+  };
+  const { controller } = fixture(t, runtime, '', { deadlineMs: 3000,
+    workflows: [{ name: 'one', start: 'develop', stages: {
+      develop: { kind: 'agent', agent: 'one', produces: 'commit', budget: 1, on: { done: 'fix' } },
+      fix: { kind: 'agent', agent: 'one', produces: 'commit', budget: 1, on: { done: 'inspect' } },
+      inspect: { kind: 'human', on: { accept: 'check' } },
+      check: { kind: 'command', command: ['node', '-e', "if(require('fs').readFileSync('answer','utf8')!=='replacement') process.exit(1)"], budget: 1, on: { PASS: 'DONE', FAIL: 'ESCALATED' } },
+    } }],
+  });
+  await controller.advance('work'); const state = controller.state('work');
+  assert.equal(state.stage, 'inspect', state.reason);
+  const commits = state.artifacts.filter(a => a.kind === 'commit'); assert.equal(commits.length, 2);
+  assert.throws(() => execFileSync('git', ['-C', state.workspace, 'cat-file', '-t', commits[0].sha!], { stdio: 'pipe' }));
+  assert.equal(typeof commits[0].repository, 'string', 'commit artifact has no retained object store');
+  assert.equal(execFileSync('git', ['-C', commits[0].repository!, 'show', `${commits[0].sha}:answer`], { encoding: 'utf8' }), 'original');
+  assert.equal(execFileSync('git', ['-C', commits[1].repository!, 'show', `${commits[1].sha}:answer`], { encoding: 'utf8' }), 'replacement');
+  rmSync(join(state.workspace, '.git'), { recursive: true });
+  controller.decide('work', 'accept', state.subject!); await controller.advance('work');
+  assert.equal(controller.state('work').stage, 'DONE', controller.state('work').reason);
+  assert.equal(controller.state('work').evidence[0].verdict, 'PASS');
+});
