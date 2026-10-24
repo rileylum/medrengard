@@ -55,17 +55,20 @@ export interface Options {
   deadlineMs?: number;
 }
 // Plumbing reads raw tree/blob objects, avoiding candidate filters, hooks, index flags and dirty files.
+// lazy: non-UTF-8 paths and links are refused; preserve their bytes when a workflow needs such trees.
 const SNAPSHOT = `
 const {execFileSync}=require('node:child_process');
 const {mkdirSync,writeFileSync,symlinkSync}=require('node:fs');
 const {join,dirname}=require('node:path');
+const {isUtf8}=require('node:buffer');
+const text=bytes=>{if(!isUtf8(bytes)) throw Error('snapshot requires UTF-8 paths and symlink targets'); return bytes.toString('utf8')};
 const [source,sha,target]=process.argv.slice(1);
 const git=(...args)=>execFileSync('git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-C',source,...args],{maxBuffer:64*1024*1024,timeout:5000});
-for(const row of git('ls-tree','-rz','--full-tree',sha).toString('utf8').split('\\0').filter(Boolean)) {
+for(const row of text(git('ls-tree','-rz','--full-tree',sha)).split('\\0').filter(Boolean)) {
  const tab=row.indexOf('\\t'); const [mode,type,oid]=row.slice(0,tab).split(' '); const name=row.slice(tab+1);
  if(type!=='blob' || !name || name.split('/').some(p=>!p || p==='.' || p==='..' || p==='.git') || name.startsWith('/')) throw Error('unsupported tree entry');
  const path=join(target,name); mkdirSync(dirname(path),{recursive:true}); const bytes=git('cat-file','blob',oid);
- if(mode==='120000') symlinkSync(bytes.toString(),path); else writeFileSync(path,bytes,{mode:mode==='100755'?0o755:0o644});
+ if(mode==='120000') symlinkSync(text(bytes),path); else writeFileSync(path,bytes,{mode:mode==='100755'?0o755:0o644});
 }
 `;
 const observer = new AsyncLocalStorage<boolean>();
@@ -255,6 +258,17 @@ export class Controller {
     if (a.subject !== undefined && a.subject !== state.subject) throw new Error('stale artifact subject');
     return { ...a, stage: state.stage, hash: hash(JSON.stringify(a)) };
   }
+  #failedWithoutOwner(id: string, state: State): boolean {
+    let workflow: unknown;
+    let failed = false;
+    for (const event of this.events().filter(e => e.id === id)) {
+      const artifact = event.artifact as Artifact | undefined;
+      if (event.type === 'completed' && workflow === state.workflow && artifact?.stage === state.stage && artifact.subject === state.subject && artifact.kind === 'verdict' && artifact.verdict === 'FAIL') failed = true;
+      if (event.type === 'decision' && event.subject === state.subject) failed = false;
+      if (event.workflow) workflow = event.workflow;
+    }
+    return failed;
+  }
   /** Drive automatic stages until a human, terminal state or in-flight run is reached. */
   async advance(id: string): Promise<State> {
     if (observer.getStore()) throw new Error('observer cannot change state');
@@ -264,6 +278,7 @@ export class Controller {
       const stage = this.#workflows.get(state.workflow)!.stages[state.stage];
       if (stage.kind === 'human') return state;
       if ((state.spent[state.stage] ?? 0) >= stage.budget!) { this.#write(id, { type: 'escalated', reason: `budget exhausted at ${state.stage}` }, version); return this.state(id); }
+      if (this.#failedWithoutOwner(id, state)) { this.#write(id, { type: 'escalated', reason: `failed stage ${state.stage} needs a new subject or the owner before retry` }, version); return this.state(id); }
       const runId = randomUUID();
       this.#write(id, { type: 'started', runId, stage: state.stage }, version++);
       state = this.state(id);

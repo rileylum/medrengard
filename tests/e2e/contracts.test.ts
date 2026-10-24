@@ -7,14 +7,14 @@ import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { Controller, commandRuntime, type Runtime, type StageContext, type Options } from '../../src/index.ts';
 
-function fixture(t: any, runtime: Runtime, input = 'success') {
+function fixture(t: any, runtime: Runtime, input = 'success', overrides: Partial<Options> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'factory-contract-'));
   const repo = join(dir, 'repo');
   execFileSync('git', ['init', '-q', repo]);
   execFileSync('git', ['-C', repo, '-c', 'user.name=Owner', '-c', 'user.email=owner@example.test', 'commit', '--allow-empty', '-qm', 'base']);
   const options: Options = { path: join(dir, 'events.sqlite'), directory: join(dir, 'runs'), repository: repo, deadlineMs: 200,
     workflows: [{ name: 'one', start: 'agent', stages: { agent: { kind: 'agent', agent: 'one', produces: 'document', budget: 1, on: { done: 'DONE' } } } }],
-    agents: { one: { runtime: 'runtime', role: 'role', skills: ['skill'], mcpServers: {}, sandbox: { backend: 'bwrap' } } }, runtimes: { runtime } };
+    agents: { one: { runtime: 'runtime', role: 'role', skills: ['skill'], mcpServers: {}, sandbox: { backend: 'bwrap' } } }, runtimes: { runtime }, ...overrides };
   const controller = new Controller(options);
   t.after(() => { controller.close(); rmSync(dir, { recursive: true, force: true }); });
   controller.open('work', 'one', input);
@@ -59,4 +59,82 @@ test('legacy event databases are refused rather than treated as empty work', t =
   const legacy = join(options.directory, 'legacy.sqlite');
   const db = new DatabaseSync(legacy); db.exec('CREATE TABLE events(body TEXT)'); db.close();
   assert.throws(() => new Controller({ ...options, path: legacy }), /legacy.*migration/);
+});
+
+for (const entry of ['path', 'symlink']) test(`invalid UTF-8 ${entry} bytes cannot produce evidence for a different tree`, async t => {
+  let result: unknown; let checks = 0;
+  const runtime: Runtime = {
+    async start(_request, context) {
+      const code = entry === 'path'
+        ? "require('fs').writeFileSync(Buffer.from([98,97,100,255]),'forbidden')"
+        : "require('fs').symlinkSync(Buffer.from([98,97,100,255]),'link')";
+      const run = await context.execute(['node', '-e', `${code}; const g=(...a)=>require('child_process').execFileSync('git',a);g('add','-A');g('-c','user.name=Stub','-c','user.email=stub@example.test','commit','-qm','bytes');process.stdout.write(g('rev-parse','HEAD'));`]);
+      assert.equal(run.exitCode, 0, run.stderr);
+      result = { outcome: 'done', artifact: { kind: 'commit', sha: run.stdout.trim() } };
+    }, async result() { return result; }, async cancel() {}, async *events() {},
+  };
+  const { controller } = fixture(t, runtime, 'bytes', { deadlineMs: 2000,
+    workflows: [{ name: 'one', start: 'develop', stages: {
+      develop: { kind: 'agent', agent: 'one', produces: 'commit', budget: 1, on: { done: 'check' } },
+      check: { kind: 'command', extension: 'check', produces: 'verdict', budget: 1, on: { PASS: 'DONE' } },
+    } }], extensions: { check: async context => { checks++; return { outcome: 'PASS', artifact: { kind: 'verdict', verdict: 'PASS', subject: context.subject, findings: [] } }; } },
+  });
+  await controller.advance('work');
+  assert.equal(controller.state('work').stage, 'ESCALATED');
+  assert.equal(checks, 0);
+  assert.equal(controller.state('work').evidence.length, 0);
+});
+
+for (const owner of [false, true]) test(`same-subject failed gate requires owner authorization: ${owner}`, async t => {
+  let gates = 0;
+  const { controller } = fixture(t, fake(), 'success', {
+    workflows: [{ name: 'one', start: 'agent', stages: {
+      agent: { kind: 'agent', agent: 'one', produces: 'document', budget: 1, on: { done: 'gate' } },
+      gate: { kind: 'command', extension: 'gate', produces: 'verdict', budget: 2, on: { FAIL: [owner ? 'owner' : 'gate', 'DONE'] } },
+      owner: { kind: 'human', on: { retry: 'gate' } },
+    } }], extensions: { gate: async context => { gates++; return { outcome: 'FAIL', artifact: { kind: 'verdict', verdict: 'FAIL', subject: context.subject, findings: ['gate failed'] } }; } },
+  });
+  await controller.advance('work');
+  assert.equal(gates, 1);
+  assert.equal(controller.state('work').spent.gate, 1);
+  if (owner) {
+    assert.equal(controller.state('work').stage, 'owner');
+    controller.decide('work', 'retry', controller.state('work').subject!);
+    await controller.advance('work'); assert.equal(gates, 2);
+    assert.equal(controller.state('work').stage, 'DONE');
+  } else assert.equal(controller.state('work').stage, 'ESCALATED');
+});
+
+test('process developer and fix consume approved specification and exact review findings', async t => {
+  const spec = 'The approved secret is violet-27; initial idea does not contain it.';
+  const finding = 'Replace the original greeting with corrected-violet-27.';
+  let reviews = 0;
+  const runtime = commandRuntime(['node', '-e', `
+    const r=JSON.parse(process.argv[1]); const fs=require('fs'); const g=(...a)=>require('child_process').execFileSync('git',a);
+    const spec=r.artifacts.find(a=>a.kind==='document' && a.stage==='spec').content;
+    const fail=r.artifacts.findLast(a=>a.kind==='verdict' && a.verdict==='FAIL');
+    fs.writeFileSync('spec.txt',spec); fs.writeFileSync('findings.json',JSON.stringify(fail?.findings ?? []));
+    g('add','-A'); g('-c','user.name=Stub','-c','user.email=stub@example.test','commit','-qm','consume context');
+    console.log(JSON.stringify({outcome:'done',artifact:{kind:'commit',sha:g('rev-parse','HEAD').toString().trim()}}));
+  `]);
+  const { controller } = fixture(t, runtime, 'a vague initial idea', { deadlineMs: 2000,
+    workflows: [{ name: 'one', start: 'spec', stages: {
+      spec: { kind: 'command', extension: 'spec', produces: 'document', budget: 1, on: { done: 'approve' } },
+      approve: { kind: 'human', on: { accept: 'develop' } },
+      develop: { kind: 'agent', agent: 'one', produces: 'commit', budget: 2, on: { done: 'review' } },
+      review: { kind: 'command', extension: 'review', produces: 'verdict', budget: 2, on: { FAIL: 'develop', PASS: 'DONE' } },
+    } }], extensions: {
+      spec: async () => ({ outcome: 'done', artifact: { kind: 'document', content: spec } }),
+      review: async context => { const verdict = ++reviews === 1 ? 'FAIL' : 'PASS'; return { outcome: verdict, artifact: { kind: 'verdict', verdict, subject: context.subject, findings: verdict === 'FAIL' ? [finding] : [] } }; },
+    },
+  });
+  await controller.advance('work'); controller.decide('work', 'accept', controller.state('work').subject!);
+  await controller.advance('work'); const state = controller.state('work');
+  assert.equal(state.stage, 'DONE', state.reason);
+  const commits = state.artifacts.filter(a => a.kind === 'commit'); assert.equal(commits.length, 2);
+  const file = (sha: string, name: string) => execFileSync('git', ['-C', state.workspace, 'show', `${sha}:${name}`], { encoding: 'utf8' });
+  assert.equal(file(commits[0].sha!, 'spec.txt'), spec);
+  assert.deepEqual(JSON.parse(file(commits[0].sha!, 'findings.json')), []);
+  assert.equal(file(commits[1].sha!, 'spec.txt'), spec);
+  assert.deepEqual(JSON.parse(file(commits[1].sha!, 'findings.json')), [finding]);
 });
