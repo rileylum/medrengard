@@ -135,3 +135,22 @@ lines; tests: 1,004 lines; public exports: 13. Gate: 53/53 pass, no skips or
 todos. Fresh review PASS, no findings: bwrap flags, read-path validation,
 mount ordering, cleared environment and network denial retained. E2E and
 real-process confinement files unchanged. Verdict: simpler, PASS.
+
+Integrated round 04 as `ebea36e` with `--no-ff`; pre-merge gate passed.
+
+## Round 05 — assess remaining simplification (in progress)
+
+A fresh worker inspects the reduced implementation for a substantive further
+change, without speculative features or cosmetic churn. If none is justified,
+the round will record no change rather than manufacturing a diff. Worker
+branch `refactor/r05`.
+
+Round 05: no code change (+0 / −0). Worker considered merging controller
+with runtime, sandbox with supervisor, or entry point with implementation;
+none removed meaningful implementation and each blurred a useful boundary.
+Moving invariant checks to workflows or removing retained snapshots would
+break core.md. Deleting the two unused environment-option lines alone was
+not a substantive refactor. Gate: 53/53 pass, no skips/todos. Src: 636 lines;
+tests: 1,004 lines; public exports: 13. Fresh reviewer: FAIL — empty diff,
+no change to approve as simpler; no code defect findings. No merge. This is
+the first consecutive round without an approved simplification.
