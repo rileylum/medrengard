@@ -154,3 +154,18 @@ not a substantive refactor. Gate: 53/53 pass, no skips/todos. Src: 636 lines;
 tests: 1,004 lines; public exports: 13. Fresh reviewer: FAIL — empty diff,
 no change to approve as simpler; no code defect findings. No merge. This is
 the first consecutive round without an approved simplification.
+
+## Round 06 — remove obsolete launch preflight (in progress)
+
+An independent worker found an internal launch preflight and synthetic failed
+run constructor that served the retired CLI's diagnostic policy. The active
+controller always supplies bwrap and its own directory. Remove the duplicated
+preflight and unused environment override, retaining actual launch-failure,
+cancellation, output-limit and containment behavior. Worker `refactor/r06`.
+
+Round 06 `b8b8d38`: +1 / −55 lines. Src: 611 lines; tests: 975 lines;
+public exports: 13. Gate: 50/50 pass, no skips/todos. Fresh review PASS,
+no findings: launch guard was unreachable at the public boundary, cwd
+preflight specialized obsolete diagnostics, and the environment override
+had no caller. Cancellation/output behavior unchanged. Verdict: simpler,
+PASS; the consecutive no-change count resets to zero.
