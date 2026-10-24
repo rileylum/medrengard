@@ -3,8 +3,9 @@
 Medrengard, a software delivery factory (`README.md`). The owner is the user.
 
 Read first: `docs/core.md` (what the core is; it overrides every other doc),
-`docs/STATUS.md` (the next action), and `docs/refactor/prompt.md` (the core
-refactor rounds, reviews and integration workflow). Historical tickets and
+`docs/STATUS.md` (the next action), and `docs/roadmap.md` (forward scope and
+completion milestones). `docs/refactor/prompt.md` records the completed one-off
+refactor; do not restart it as the ongoing workflow. Historical tickets and
 the former workflow guide remain in Git history. Before proposing a design,
 read `docs/decisions.md` (latest entry wins) and
 `docs/open-questions.md`; before a run with real runtimes, `docs/live-runs.md`.

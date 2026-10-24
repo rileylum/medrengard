@@ -37,6 +37,35 @@ returned thenable can escape the observation guard, create work and reorder
 notifications (`src/primitives.ts:198`). No implementation fixes followed the
 review, as required by the prompt. The finding is unfixed and not accepted.
 
-Next action: the owner reviews [the final report](refactor/log.md#final-report--2026-10-24)
-and decides on a follow-up fix before merging. The report includes the
-reproduction, before/after counts, coverage limits and remaining questions.
+## Forward scope — 2026-10-24
+
+The owner requested a next-agent handoff and a durable scope/milestones document
+after discussing what completion means. [The roadmap](roadmap.md) defines three
+finish lines: core v1, local factory v1 and the broader factory vision. The
+current implementation is a core candidate. Further line reduction is not the
+next objective; one real delivery path is.
+
+Documentation branch: `docs/factory-roadmap`, based on `refactor/core` at
+`7785418`, worktree `/var/tmp/software_factory/refactor/roadmap`. Root
+`HANDOFF.md` is local and untracked; copies in the launch and refactor worktrees
+point here. Main and the integration branch remain unchanged; nothing pushed.
+
+At the owner's request, removed 49 redundant local branches after checking
+their commits were contained in preserved history, plus the 11 clean temporary
+refactor round worktrees. The remaining branches are `main`, `refactor/core`
+and `docs/factory-roadmap`. Older worktrees were preserved; the agent-kit and
+core-docs worktrees now remain detached at their previous commits.
+
+Next action: read the roadmap, then prepare the M1 observer-fix follow-up ticket
+with a public-API regression and review plan. The fix is still outstanding; the
+documentation request did not itself execute or approve all future milestones.
+The completed refactor's stop rule and final-review freeze remain its historical
+record; subsequent implementation belongs to new work.
+
+After M1, build M2's first real provider-to-PR path. Settle the recovery promise
+and provider access boundary when designing the relevant implementation; do not
+silently inherit removed capabilities or invent owner approvals.
+
+This session changed documentation only. Local Markdown links and diff
+whitespace were checked; application tests were not rerun. The last implementation
+gate remains 54/54 passing, with the separate adversarial FAIL above.

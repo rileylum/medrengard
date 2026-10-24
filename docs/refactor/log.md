@@ -362,3 +362,31 @@ research and architecture are unchanged from the baseline.
    the new API first? The old provider integrations were deliberately cut.
 3. Before real unattended work, which of historical-log migration, owner-
    command identity/deduplication and resource quotas is required next?
+
+## Post-refactor scope and handoff — 2026-10-24
+
+Owner: “Okay, please record this in both a handoff which should detail whats
+next for the agent that works here next, and detail the scope and milestones
+going forward in another document (that the handoff can reference).”
+
+Recorded the discussion in `docs/roadmap.md` on `docs/factory-roadmap`, based
+on integration `7785418`. It separates core v1, local factory v1 and the
+broader vision, with responsibility boundaries, milestone exit criteria and
+unresolved recovery/provider decisions. STATUS and AGENTS point the next
+session to it. The local root HANDOFF points from the launch worktree to this
+branch and the first observer-fix ticket. No implementation or approval record
+was changed; the final adversarial finding remains outstanding.
+
+Validation: local Markdown file links and `git diff --check`; no application
+test rerun for documentation-only changes. The prior 54/54 gate and separate
+adversarial FAIL remain the implementation evidence.
+
+Owner subsequently asked: “Can you also clean up the local branches?” Removed
+49 redundant local branches, each checked as an ancestor of `refactor/core`
+before deletion with `git branch -d`. Removed only the 11 clean `r00`–`r10`
+worktrees created during this refactor, after checking tracked, untracked and
+ignored files. Older worktrees remain; `agent-kit` and `core-docs` were detached
+at their existing commits so their merged branch names could be deleted without
+removing files. Remaining branches: `main`, `refactor/core`,
+`docs/factory-roadmap`. Main and integration tips are unchanged; no push, merge
+or history rewrite occurred. Local detail: `/tmp/software-factory-branch-cleanup.json`.
