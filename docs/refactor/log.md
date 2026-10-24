@@ -103,3 +103,20 @@ exports: 13. Gate: 77 tests, all pass, zero skipped/todo. Fresh review PASS,
 no findings: owner-authorized budgets remain policy outside the core and
 automatic handoff cycles remain refused. Protected history unchanged.
 Verdict: simpler, PASS.
+
+Integrated round 02 as `03e3a25` with `--no-ff`; pre-merge gate passed.
+
+## Round 03 — remove unused supervision (in progress)
+
+The public controller uses piped process-group execution inside bwrap, not
+the legacy supervisor's optional scopes or durable output folders. Remove
+those unused branches and their dedicated tests/docs. Before deletion, prove
+at the active public boundary that sandboxed descendants cannot outlive
+cancellation/deadline or a killed controller. Worker branch `refactor/r03`.
+
+Round 03 `dfe71c1`: +142 / −516 lines across ten files. Src: 734
+lines; tests: 1,086 lines; public exports: 13. Gate: 59/59 pass, no skips or
+todos. Both new public containment cases pass normally and fail on a
+deliberately broken confinement mutant at the surviving-marker assertion.
+Fresh review PASS, no findings; piped execution semantics preserved while
+unused supervision disappears. Verdict: simpler, PASS.
