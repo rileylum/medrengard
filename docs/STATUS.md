@@ -73,9 +73,13 @@ continued owner control. The original refactor review remains unchanged.
 
 Validation: three new regressions failed before the fix and passed afterward;
 the full real-bubblewrap gate passed **57/57**, zero failures/skips/todos
-(18.1 s). Implementer review found no remaining issue in the changed path;
-no independent review was run in this follow-up. The resolved finding was
-removed from `work/parked.md`. This closes the reported defect, not core v1.
+(18.1 s). A subsequently requested fresh independent review of `bbd92de`
+returned **PASS**, no actionable findings. It independently passed the full
+57/57 gate (18.33 s), confirmed all three regressions fail on the parent for
+the intended reason, replayed the original reproduction before and after the
+fix, and passed 12 additional public-API probes. The detailed review and scope
+are in the ticket log. The resolved finding was removed from `work/parked.md`.
+This closes the reported defect, not core v1.
 
 The owner also agreed to the roadmap's development loop: define a user journey
 or agentic workflow, try to build it, and decide whether missing primitive
@@ -83,7 +87,10 @@ support is worth adding. No provider or recovery policy was selected by that
 reply. Current recovery still escalates interrupted runs without result adoption
 or a continuation command; provider access and real publication remain unbuilt.
 
-Next action: define M2's first real provider-to-PR journey and its acceptance
-evidence. Resolve the recovery promise and provider network/credential boundary
-as part of that implementation design. The owner merges local branches; no
-paid run, push or merge is part of this follow-up.
+Next action: owner acceptance of the refactor's overall scope and limitations,
+then owner merge of `feat/12-observer-isolation`, which includes the refactor,
+roadmap and reviewed fix. Main remains unchanged; only review documentation
+changed after the reviewed implementation commit. Then define M2's first real
+provider-to-PR journey and its acceptance evidence. Resolve the recovery promise
+and provider network/credential boundary as part of that implementation design.
+No paid run, push or merge is part of this follow-up.
