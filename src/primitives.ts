@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { checkSandbox, confines, wrap, type Sandbox } from './sandbox.ts';
+import { checkSandbox, wrap, type Sandbox } from './sandbox.ts';
 import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
 
 type Destination = string | { workflow: string };
@@ -126,7 +126,6 @@ export class Controller {
       if (s.kind === 'agent') {
         const a = options.agents[s.agent!];
         if (!a || !options.runtimes[a.runtime]) errors.push(`workflow agent ${s.agent} is missing`);
-        else if (!confines(a.sandbox)) errors.push(`workflow agent ${s.agent} needs a confining sandbox`);
       }
       if (s.extension && !options.extensions?.[s.extension]) errors.push(`workflow extension ${s.extension} is missing`);
     }
@@ -143,6 +142,7 @@ export class Controller {
     };
     for (const name of this.#workflows.keys()) visit(name);
     if (errors.length) throw new Error(errors.join('; '));
+    checkSandbox(...Object.values(options.agents).map(a => a.sandbox));
     this.#options = { ...options, workflows: frozen(copy(options.workflows)), directory: resolve(options.directory), repository: options.repository ? resolve(options.repository) : undefined, agents: frozen(copy(options.agents)) };
     mkdirSync(this.#options.directory, { recursive: true });
     this.#db = new DatabaseSync(options.path);
@@ -232,7 +232,6 @@ export class Controller {
     if (state.pending) this.#write(id, { type: 'escalated', reason: 'interrupted run needs the owner', runId: state.pending }, version);
   }
   async #execute(workspace: string, argv: string[], writable: boolean, sandbox: Sandbox, signal: AbortSignal, read: string[] = [], input = ''): Promise<RunResult> {
-    if (!confines(sandbox)) throw new Error('candidate execution requires a confining sandbox');
     const policy = { cwd: workspace, write: writable ? [workspace] : [], read: [...read, ...(writable ? [] : [workspace])] };
     const [command, args] = wrap(sandbox, policy, argv[0], argv.slice(1));
     const run = spawnRuntime({ command, args, cwd: workspace, prompt: input });
@@ -302,7 +301,6 @@ export class Controller {
       let runtime: Runtime | undefined;
       let active = true;
       try {
-        checkSandbox({ backend: 'bwrap' });
         // The clone has its own object database and gitdir: candidate writes cannot affect the source repository.
         mkdirSync(state.workspace, { recursive: true });
         if (stage.produces === 'commit' && !this.events().some(e => e.id === id && e.type === 'workspace' && e.repository)) {
