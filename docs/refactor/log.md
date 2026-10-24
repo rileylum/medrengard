@@ -28,3 +28,15 @@ Baseline: `systemd-run --user --scope --quiet npm test` passed: 652 tests,
 (69.5 seconds). Output: `/tmp/refactor-baseline-scope.log`. The restricted
 shell attempt could not run all sandbox/systemd tests; no gate was weakened
 to accommodate it.
+
+Round 00 candidate `0716546`: adds 629 lines, removes zero. Counts: src
+5,792 lines; tests 12,640 lines; public entry exports 13 (three values, ten
+types). `npm test`: 671 tests, 647 pass, zero fail, 19 live skips, five todos;
+`npm run test:learn`: six pass. All 19 new e2e/contract cases pass, including
+the eleven MVP cases. Independent foundation review pending before merge.
+
+Foundation review 1: FAIL on `0716546`, three reproduced findings. Snapshot
+UTF-8 decoding changed invalid path bytes and could certify the wrong tree;
+workflow edges could retry a failed gate on the same subject automatically;
+the process runtime omitted approved-spec and review artifacts. Worker repair
+requested before integration. Reproductions are under `/tmp/r00-review-*.mts`.
