@@ -206,3 +206,20 @@ closure, inherited pipes, cancellation, pre-aborted signals, missing/self-
 signalled commands and spawn failure. Four public containment cases prove
 descendant cleanup on deadline, crash, normal exit and overflow. Verdict:
 simpler, PASS.
+
+Integrated round 08 as `88b0696` with `--no-ff`; pre-merge gate passed.
+
+## Round 09 — assess remaining simplification (in progress)
+
+A fresh worker inspects the four-file implementation independently. Current
+policy already lives in the default workflow; proposed removals must preserve
+artifact, budget, observation and confinement guarantees. Worker `refactor/r09`.
+
+Round 09: no change (+0 / −0). Worker rejected moving invariant checks
+into policy, deleting artifact retention/materialization, removing only the
+backend discriminator, inlining mount helpers, folding the runtime adapter
+into the controller, and adding replay bookkeeping to replace a focused
+scan. No substantive simplification resulted. Gate: 54/54 pass, no skips or
+todos. Src: 513 lines; tests: 893 lines; public exports: 13 (recounted from
+the entry point). Fresh reviewer FAIL — empty diff, no change to approve
+as simpler; not a code defect. No merge. First consecutive no-change round.
