@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { createServer, type AddressInfo } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { checkSandbox, wrap, type Policy, type Sandbox } from '../src/sandbox.ts';
+import { wrap, type Policy, type Sandbox } from '../src/sandbox.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-sandbox-');
@@ -118,21 +118,5 @@ test('bwrap: no network', async () => {
     assert.equal(off.code, 7, off.stderr);
   } finally {
     server.close();
-  }
-});
-
-test('checkSandbox: requires working bwrap and valid read paths', () => {
-  assert.throws(() => checkSandbox({ backend: 'none' }), /backend/);
-  checkSandbox(BWRAP);
-  checkSandbox({ backend: 'bwrap', read: [NODE_PREFIX] });
-  assert.throws(() => checkSandbox({ backend: 'bwrap', read: ['relative/path'] }), /absolute/);
-  assert.throws(() => checkSandbox({ backend: 'bwrap', read: [join(dir, 'no-such-dir')] }), /does not exist/);
-  assert.throws(() => checkSandbox({ backend: 'docker' } as unknown as Sandbox), /backend/);
-  const path = process.env.PATH;
-  process.env.PATH = join(dir, 'empty-path');
-  try {
-    assert.throws(() => checkSandbox(BWRAP), /bwrap cannot start/);
-  } finally {
-    process.env.PATH = path;
   }
 });

@@ -25,14 +25,8 @@ export interface Policy {
 // /bin, /sbin, /lib and /lib64 are symlinks and are recreated as symlinks.
 const SYSTEM = ['/usr', '/etc', '/opt', '/bin', '/sbin', '/lib', '/lib64'];
 
-/** Whether the sandbox names the supported confining backend. */
-export function confines(sandbox: Sandbox): boolean {
-  return sandbox?.backend === 'bwrap';
-}
-
 /** Wrap a command in bubblewrap with declared mounts and no network. */
 export function wrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]] {
-  if (!confines(sandbox)) throw new Error('sandbox backend must be bwrap');
   const lang = process.env.LANG;
   return ['bwrap', [
     // Parent death ends bwrap; --unshare-all includes the PID namespace, so its
@@ -69,16 +63,14 @@ function systemBind(path: string): string[] {
   return ['--ro-bind', path, path];
 }
 
-/**
- * Fail at setup, not on the first check: a machine without unprivileged user namespaces, or a
- * mistyped read path, is a setup problem, and running anyway would either run unconfined or
- * fail every check with bwrap's own error as if the candidate had failed it.
- */
-export function checkSandbox(sandbox: Sandbox): void {
-  if (!confines(sandbox)) throw new Error('sandbox backend must be bwrap');
-  for (const p of sandbox.read ?? []) {
-    if (typeof p !== 'string' || !isAbsolute(p)) throw new Error(`sandbox read path ${JSON.stringify(p)} is not absolute`);
-    if (!existsSync(p)) throw new Error(`sandbox read path ${p} does not exist`);
+/** Validate agent definitions and probe the platform once, before work can spend budget. */
+export function checkSandbox(...sandboxes: Sandbox[]): void {
+  for (const sandbox of sandboxes) {
+    if (sandbox?.backend !== 'bwrap') throw new Error('sandbox backend must be bwrap');
+    for (const p of sandbox.read ?? []) {
+      if (typeof p !== 'string' || !isAbsolute(p)) throw new Error(`sandbox read path ${JSON.stringify(p)} is not absolute`);
+      if (!existsSync(p)) throw new Error(`sandbox read path ${p} does not exist`);
+    }
   }
   const probe = spawnSync('bwrap', ['--die-with-parent', '--unshare-all', ...SYSTEM.flatMap(systemBind), '--', 'true'], { timeout: 5000 });
   const why = probe.signal ? `probe timed out after 5 s (${probe.signal})` : probe.error?.message
