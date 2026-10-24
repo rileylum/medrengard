@@ -1,13 +1,12 @@
-// The sandbox seam. `wrap` turns a command and a policy into the argv to spawn;
+// The sandbox executes a command with the declared mounts;
 // under bwrap the command writes only its write roots, reads only the system directories and
 // its read roots, has no network and none of the controller's environment.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { createServer, type AddressInfo } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { wrap, type Policy, type Sandbox } from '../src/sandbox.ts';
+import { execute, type Policy, type Sandbox } from '../src/sandbox.ts';
 
 mkdirSync('/var/tmp/software_factory', { recursive: true });
 const dir = mkdtempSync('/var/tmp/software_factory/sf-sandbox-');
@@ -25,17 +24,11 @@ function scratch() {
   return { root, work };
 }
 
-// Async, not spawnSync: the network test's listener must keep accepting while the child runs.
 function run(sandbox: Sandbox, policy: Policy, command: string, args: string[], env: NodeJS.ProcessEnv = {}) {
-  const [cmd, argv] = wrap(sandbox, policy, command, args);
-  return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
-    const child = spawn(cmd, argv, { cwd: policy.cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', (d) => (stdout += d));
-    child.stderr.setEncoding('utf8').on('data', (d) => (stderr += d));
-    child.on('close', (code) => resolve({ code, stdout, stderr }));
-  });
+  const previous = { ...process.env };
+  Object.assign(process.env, env);
+  try { return execute(sandbox, policy, [command, ...args], AbortSignal.timeout(5000)); }
+  finally { process.env = previous; }
 }
 const sh = (sandbox: Sandbox, policy: Policy, script: string, env?: NodeJS.ProcessEnv) => run(sandbox, policy, 'sh', ['-c', script], env);
 
@@ -43,15 +36,15 @@ test('bwrap: the command writes in its write root and nowhere else', async () =>
   const { root, work } = scratch();
   const policy: Policy = { cwd: work, write: [work], read: [] };
   const r = await sh(BWRAP, policy, `echo in > in.txt; echo out > ${root}/out.txt; true`);
-  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.exitCode, 0, r.stderr);
   assert.equal(readFileSync(join(work, 'in.txt'), 'utf8'), 'in\n');
   assert.ok(!existsSync(join(root, 'out.txt')), 'a sibling of the write root is not writable');
   const ro = await sh(BWRAP, policy, 'touch /usr/sf-sandbox-probe');
-  assert.notEqual(ro.code, 0);
+  assert.notEqual(ro.exitCode, 0);
   assert.ok(!existsSync('/usr/sf-sandbox-probe'));
   // bwrap's own root is a tmpfs; remounted read-only, nothing outside the binds takes a write.
   const top = await sh(BWRAP, policy, 'touch /sf-sandbox-root-probe');
-  assert.notEqual(top.code, 0);
+  assert.notEqual(top.exitCode, 0);
   assert.match(top.stderr, /Read-only file system/);
 });
 
@@ -62,7 +55,7 @@ test('bwrap: an undeclared path is not readable; a declared read root is, and is
   writeFileSync(join(shared, 'secret.txt'), 'secret\n');
   const without: Policy = { cwd: work, write: [work], read: [] };
   const hidden = await sh(BWRAP, without, `cat ${shared}/secret.txt`);
-  assert.notEqual(hidden.code, 0);
+  assert.notEqual(hidden.exitCode, 0);
   assert.doesNotMatch(hidden.stdout, /secret/);
   // The owner's read list (Sandbox.read) and the stage's own (Policy.read) both bind read-only.
   for (const [sandbox, policy] of [[{ backend: 'bwrap', read: [shared] }, without], [BWRAP, { ...without, read: [shared] }]] as [Sandbox, Policy][]) {
@@ -80,7 +73,7 @@ test('bwrap: nested roots keep their own mode whichever way they nest (08-a stan
   // A read root inside a write root stays read-only; a write root inside that read root stays writable.
   for (const policy of [{ cwd: work, write: [work, rw], read: [ro] }, { cwd: work, write: [rw, work], read: [ro] }]) {
     const r = await sh(BWRAP, policy, `touch ${ro}/f; touch ${rw}/g; touch ${work}/h; true`);
-    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.exitCode, 0, r.stderr);
     assert.ok(!existsSync(join(ro, 'f')), 'the read root under a write root is read-only');
     assert.ok(existsSync(join(rw, 'g')), 'the write root under a read root is writable');
     assert.ok(existsSync(join(work, 'h')));
@@ -93,7 +86,7 @@ test('bwrap: the controller environment is cleared to PATH, HOME=/tmp and LANG; 
   const { work } = scratch();
   const policy: Policy = { cwd: work, write: [work], read: [] };
   const r = await sh(BWRAP, policy, 'echo "secret=${SF_SANDBOX_SECRET:-unset} home=$HOME"; test -n "$PATH"; ls -A /tmp | wc -l', { SF_SANDBOX_SECRET: 'leaked' });
-  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.exitCode, 0, r.stderr);
   assert.match(r.stdout, /^secret=unset home=\/tmp$/m);
   assert.match(r.stdout, /^0$/m);
 });
@@ -102,7 +95,7 @@ test('bwrap: the command runs in a session of its own, so it cannot push input i
   const { work } = scratch();
   // Field 6 of stat is the session ID; a session led from outside the PID namespace reads as 0.
   const r = await sh(BWRAP, { cwd: work, write: [work], read: [] }, 'cut -d" " -f6 /proc/$$/stat');
-  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.exitCode, 0, r.stderr);
   assert.notEqual(r.stdout.trim(), '0');
 });
 
@@ -115,7 +108,7 @@ test('bwrap: no network', async () => {
   try {
     const policy: Policy = { cwd: work, write: [work], read: [NODE_PREFIX] };
     const off = await run(BWRAP, policy, process.execPath, ['-e', connect]);
-    assert.equal(off.code, 7, off.stderr);
+    assert.equal(off.exitCode, 7, off.stderr);
   } finally {
     server.close();
   }

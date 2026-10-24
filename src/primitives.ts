@@ -4,8 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { checkSandbox, wrap, type Sandbox } from './sandbox.ts';
-import { spawnRuntime, type RunResult } from './runtime/spawn.ts';
+import { checkSandbox, execute, type Sandbox, type RunResult } from './sandbox.ts';
 
 type Destination = string | { workflow: string };
 type Transition = Destination | Destination[];
@@ -233,11 +232,7 @@ export class Controller {
   }
   async #execute(workspace: string, argv: string[], writable: boolean, sandbox: Sandbox, signal: AbortSignal, read: string[] = [], input = ''): Promise<RunResult> {
     const policy = { cwd: workspace, write: writable ? [workspace] : [], read: [...read, ...(writable ? [] : [workspace])] };
-    const [command, args] = wrap(sandbox, policy, argv[0], argv.slice(1));
-    const run = spawnRuntime({ command, args, cwd: workspace, prompt: input });
-    const abort = () => run.cancel(); signal.addEventListener('abort', abort, { once: true });
-    if (signal.aborted) abort();
-    try { return await run; } finally { signal.removeEventListener('abort', abort); }
+    return execute(sandbox, policy, argv, signal, input);
   }
   async #git(state: State, args: string[], signal: AbortSignal): Promise<string> {
     const result = await this.#execute(state.workspace, ['git', '--no-replace-objects', '-c', 'core.hooksPath=/dev/null', ...args], false, { backend: 'bwrap' }, signal);

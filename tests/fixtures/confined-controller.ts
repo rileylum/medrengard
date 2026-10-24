@@ -19,8 +19,23 @@ const agent = `
 const {spawn} = require('node:child_process');
 const {readFileSync} = require('node:fs');
 const {workspace} = JSON.parse(readFileSync(0, 'utf8'));
-spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}, workspace + '/late', workspace + '/ready', process.argv[1]], {detached: true, stdio: 'ignore'});
-setInterval(() => {}, 1000);
+spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}, workspace + '/late', workspace + '/ready', process.argv[1]], {detached: true, stdio: 'ignore'}).unref();
+const mode = ${JSON.stringify(mode)};
+if (mode === 'exit' || mode === 'overflow') {
+  const timer = setInterval(() => {
+    if (!require('node:fs').existsSync(workspace + '/ready')) return;
+    clearInterval(timer);
+    if (mode === 'exit') {
+      const sha = require('node:child_process').execFileSync('git', ['rev-parse', 'HEAD'], {encoding:'utf8'}).trim();
+      console.log(JSON.stringify({outcome:'done',artifact:{kind:'commit',sha}}));
+    } else {
+      process.on('SIGTERM', () => {});
+      const chunk = 'x'.repeat(65536);
+      function flood() { while (process.stdout.write(chunk)) {} process.stdout.once('drain', flood); }
+      flood();
+    }
+  }, 10);
+} else setInterval(() => {}, 1000);
 `;
 const controller = new Controller({
   path: join(directory, 'events.sqlite'), directory: join(directory, 'runs'), repository: join(directory, 'repo'),

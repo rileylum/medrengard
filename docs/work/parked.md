@@ -14,8 +14,9 @@ in Git history; [decisions.md](../decisions.md) preserves the owner's decisions.
 | Core refactor, trusted extensions | Runtime adapters, extension functions and observer callbacks execute trusted owner TypeScript in the controller process. Synchronous hangs cannot be interrupted by its timer, and trusted code can access host resources. | Before accepting any third-party implementation as untrusted code. |
 | Core refactor, artifact limits | JSON artifacts are capped at 1 MiB; retained packs share the process output cap; snapshots refuse non-UTF-8 paths/links and unsupported tree entries such as submodules. | When a real workflow needs larger artifacts or those tree forms. |
 
-The public controller uses process-group supervision around bwrap. Public API
-tests verify that its PID namespace and parent-death behavior end a descendant
-in a new session after a stage deadline or controller death. The unused systemd
-and run-folder mechanisms were removed; the wrapper-only 11-e2 finding retired
-with the wrapper.
+The sandbox owns command execution and sends SIGKILL directly to bwrap on
+cancellation or output overflow, without a grace period. Public API tests verify
+that its PID namespace and parent-death behavior end a descendant in a new
+session after normal exit, overflow, a stage deadline or controller death. The
+unused process-group supervisor, systemd and run-folder mechanisms were removed;
+the wrapper-only 11-e2 finding retired with the wrapper.

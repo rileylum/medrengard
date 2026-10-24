@@ -41,6 +41,7 @@ network and credential design before a paid run is possible.
 
 `npm test` exercises stub runtimes, the real JSON process adapter and bwrap.
 The public controller tests start a descendant in a new session and verify
-that it cannot outlive a stage deadline or controller death. The suite needs
-working unprivileged user namespaces; it uses no model provider and incurs
-no model spend.
+that it cannot outlive normal command exit, output overflow, a stage deadline
+or controller death. Sandbox cancellation sends SIGKILL directly to bwrap,
+without a grace period. The suite needs working unprivileged user namespaces;
+it uses no model provider and incurs no model spend.

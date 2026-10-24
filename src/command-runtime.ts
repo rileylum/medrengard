@@ -1,5 +1,5 @@
 import type { Runtime, AgentRequest, StageContext } from './primitives.ts';
-import type { RunResult } from './runtime/spawn.ts';
+import type { RunResult } from './sandbox.ts';
 
 /** A portable JSON runtime: a sandboxed command receives the request and artifacts as JSON on stdin. */
 export function commandRuntime(command: string[]): Runtime {

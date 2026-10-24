@@ -14,7 +14,7 @@ async function until(check: () => boolean, message: () => string): Promise<void>
   }
 }
 
-for (const mode of ['deadline', 'crash']) {
+for (const mode of ['deadline', 'crash', 'exit', 'overflow']) {
   test(`public controller ${mode} ends a sandbox descendant that called setsid`, { timeout: 20000 }, async t => {
     const directory = mkdtempSync(join(tmpdir(), 'factory-confinement-'));
     const repo = join(directory, 'repo');
@@ -48,10 +48,11 @@ for (const mode of ['deadline', 'crash']) {
       await closed;
       assert.equal(child.signalCode, 'SIGKILL');
     } else {
-      await until(() => existsSync(join(directory, 'result')), () => `deadline did not end the stage: ${errors}`);
+      await until(() => existsSync(join(directory, 'result')), () => `${mode} did not end the stage: ${errors}`);
       const state = JSON.parse(readFileSync(join(directory, 'result'), 'utf8'));
-      assert.equal(state.stage, 'ESCALATED');
-      assert.match(state.reason, /stage deadline exceeded/);
+      assert.equal(state.stage, mode === 'exit' ? 'DONE' : 'ESCALATED', state.reason);
+      if (mode === 'deadline') assert.match(state.reason, /stage deadline exceeded/);
+      if (mode === 'overflow') assert.match(state.reason, /overflow/);
     }
     await delay(Math.max(0, attemptAt - Date.now()) + 300);
     assert.equal(existsSync(marker), false, `setsid descendant survived controller ${mode}`);
