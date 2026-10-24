@@ -120,3 +120,18 @@ todos. Both new public containment cases pass normally and fail on a
 deliberately broken confinement mutant at the surviving-marker assertion.
 Fresh review PASS, no findings; piped execution semantics preserved while
 unused supervision disappears. Verdict: simpler, PASS.
+
+Integrated round 03 as `f16345a` with `--no-ff`; pre-merge gate passed.
+
+## Round 04 — collapse the sandbox implementation (in progress)
+
+The public controller uses bwrap with read/write mounts, a cleared environment,
+a private temporary directory and no network. Remove unused backend dispatch
+and policy branches while preserving those boundaries and the confinement
+proof. Worker branch `refactor/r04`.
+
+Round 04 `dd12744`: +34 / −214 lines across five files. Src: 636
+lines; tests: 1,004 lines; public exports: 13. Gate: 53/53 pass, no skips or
+todos. Fresh review PASS, no findings: bwrap flags, read-path validation,
+mount ordering, cleared environment and network denial retained. E2E and
+real-process confinement files unchanged. Verdict: simpler, PASS.
