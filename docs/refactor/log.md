@@ -255,3 +255,110 @@ unchanged. The core document was restored verbatim during the final audit;
 its only intervening change had been introductory references to deleted docs,
 not normative rules. Final pre-review counts: src 513 lines (four files),
 tests 893 lines (seven files), default workflow 21 lines, 13 public exports.
+
+## Final adversarial review — FAIL
+
+Reviewed head: `7bb2f3929e521f65979b403ca200a6114dde0d5b`. One fresh
+reviewer was used. Its first turn was interrupted by a service content
+filter; the same reviewer resumed with local synthetic correctness checks.
+No implementation changes followed the review.
+
+**P1 / high — observer return values escape the observation guard.**
+`src/primitives.ts:198` invokes the callback within `observer.run(true, ...)`
+but passes its return value to `Promise.resolve` outside that context. A
+returned thenable's `then` getter can call `Controller.open` successfully.
+A second observer then receives nested events out of order.
+
+Reproduction (temporary synthetic data; working bwrap namespaces required):
+
+```sh
+node /var/tmp/software_factory/refactor-adversarial/observer.mts
+```
+
+Expected: the attempted observer mutation throws; only the original work
+exists; the second observer sees positions `[1]`. Actual: both works exist
+and the second observer sees `[2, 1]`. This violates the observation invariant
+and MVP case 9 without direct database access, private fields or host-resource
+access. The current passing suite does not cover this returned-thenable case.
+The finding remains **unfixed and unaccepted**, as the prompt requires no
+fixes after this review.
+
+Review validation: existing confinement/process tests 24/24 pass; ten
+additional synthetic validation/replay/concurrency checks pass, including
+malformed/missing/oversized claims, stale subjects, concurrent advances and
+recovery, no duplicate runs/spending, ordinary asynchronous observer guards,
+workflow cycles and budgets. Additional snapshot checks pass for raw Git bytes
+under CRLF attributes, dirty-file exclusion, symlinks, Unicode filenames,
+executable modes and retained SHA identity. Reproductions:
+`/var/tmp/software_factory/refactor-adversarial/correctness.mts` and
+`/var/tmp/software_factory/refactor-adversarial/snapshot.mts`.
+
+No other new defect was confirmed. Initial clone handling was inspected but
+host Git configurations were not dynamically exercised. Arbitrary hostile
+host modules are outside the trusted-owner-TypeScript boundary. No paid
+providers, real code hosts or global configuration changes were used.
+
+## Final report — 2026-10-24
+
+**Result:** the refactor run reached its stop rule, but the final adversarial
+review found an unresolved core-invariant defect. The branch is a reviewable
+local result, not an invariant-clean merge candidate. The owner must decide
+on the observer finding before relying on observer isolation or ordered
+notification. No fixes were made after the final review.
+
+The codebase now has one public entry point, a SQLite-backed controller for
+workflows/stages/artifacts/budgets/replay/observation, a generic JSON process
+runtime, and one bwrap execution module. Accepted commits are retained outside
+candidate-writable storage; checks/reviewers use stored-byte snapshots. The
+shipped default workflow keeps design approval, review counts, owner revision
+and PR policy outside the core. The eleven MVP cases remain in public-entry-
+point e2e tests, supplemented by runtime, retention, setup and containment
+proofs. The observer finding shows the limit of that passing suite.
+
+| Count | Before (`5ed0e56`) | After |
+| --- | ---: | ---: |
+| `src/` files / lines | 25 / 5,436 | 4 / 513 |
+| `tests/` files / lines, including fixtures | 75 / 12,367 | 7 / 893 |
+| `learn/` files / lines | 64 / 5,487 | 0 / 0 |
+| `proto/` files / lines | 7 / 833 | 0 / 0 |
+| Default workflow beside core | none | 1 file / 21 lines |
+| Named exports from the public entry point | no entry point | 13 (3 values, 10 types) |
+
+Line counts use newline records across all files, including fixtures, as in
+the baseline. Source shrank 90.6%. The old modules contained 178 export
+declarations without a single public entry point; that is a different metric
+from the 13 explicitly exported names now.
+
+Baseline gate: 652 tests, 628 pass, 19 live skips, five todos. Final integration
+gate: **54/54 pass, zero failures/skips/todos**, 17.8 seconds. Removed tests
+served deleted code; the eleven MVP cases were not weakened. Final adversarial
+verdict: **FAIL**, one confirmed P1 finding above.
+
+Rounds 00–10: eight integration merges (00, 01, 02, 03, 04, 06, 07, 08),
+three no-change rounds (05, 09, 10). Every implementation merge used `--no-ff`
+and passed its pre-merge gate. Two consecutive rounds without an approved
+simplification (09 and 10) ended the run; no review-budget or invariant waiver
+was invented. README and current documentation describe what remains.
+
+The old CLI, Claude/Pi integrations, layered configuration, frontends and
+unused supervisor are gone. This is a generic local primitives library, not
+a provider-connected factory yet. Network/credential integration, code-host
+implementation, old-log migration, interrupted-run adoption, owner-command
+deduplication and resource quotas remain outside the implementation. Existing
+and new limits are distinguished in `docs/work/accepted-risks.md` and
+`docs/work/parked.md`; none of the new findings is an owner approval.
+
+**Delivery:** `refactor/core` at `/var/tmp/software_factory/refactor/core`.
+Main is clean and remains at `5ed0e56`; nothing was pushed. Worker worktrees
+and local review reproductions remain available. The core contract, decisions,
+research and architecture are unchanged from the baseline.
+
+**Questions for the owner:**
+
+1. Authorize a follow-up fix and regression for the returned-observer-thenable
+   finding before merging? Recommended: fix it before treating this branch as
+   satisfying the observation invariant.
+2. Which provider runtime and network/credential boundary should be built on
+   the new API first? The old provider integrations were deliberately cut.
+3. Before real unattended work, which of historical-log migration, owner-
+   command identity/deduplication and resource quotas is required next?

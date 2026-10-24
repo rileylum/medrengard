@@ -32,6 +32,11 @@ setup validation and descendant death after deadline, controller crash,
 normal exit and overflow. No paid model runs were made.
 
 README and obsolete-document cleanup are complete. The final integration
-gate passed; the required adversarial review is next. No implementation fixes will
-follow that review; findings and the owner's questions will be recorded in
-[the refactor log](refactor/log.md).
+gate passed, but the final adversarial review returned **FAIL**: an observer's
+returned thenable can escape the observation guard, create work and reorder
+notifications (`src/primitives.ts:198`). No implementation fixes followed the
+review, as required by the prompt. The finding is unfixed and not accepted.
+
+Next action: the owner reviews [the final report](refactor/log.md#final-report--2026-10-24)
+and decides on a follow-up fix before merging. The report includes the
+reproduction, before/after counts, coverage limits and remaining questions.

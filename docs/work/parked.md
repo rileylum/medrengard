@@ -6,6 +6,7 @@ in Git history; [decisions.md](../decisions.md) preserves the owner's decisions.
 
 | Source | Finding | Revisit when |
 | --- | --- | --- |
+| Final refactor adversarial review, `7bb2f39`, P1 | An observer-returned thenable is processed outside the AsyncLocalStorage guard at `src/primitives.ts:198`; it can create work and deliver event positions `[2, 1]`. Reproduction and evidence are in [the final report](../refactor/log.md#final-adversarial-review--fail). Unfixed and not owner-accepted. | Before merging as an invariant-preserving refactor or relying on observer isolation/ordered notification. |
 | Existing sandbox limit; foundations research | No memory or disk quotas. Output caps and stage deadlines do not bound allocations, files, retained repositories or SQLite growth. | Before unattended or resource-intensive runs. |
 | Core refactor, repository isolation | The developer's independent full clone exposes all fetched refs and their history, including private branches. Clone isolation protects the source from writes, not confidentiality within the clone. | Before running on a repository whose refs have different access rules. |
 | Core refactor, owner decisions | `decide` binds a decision to the current subject but has no command ID, expected stage or delivery deduplication. A-143 accepted hand-run repetition only; this does not approve automated redelivery. | Before adding an automated owner-command transport or same-subject human stages. |
