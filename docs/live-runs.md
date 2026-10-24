@@ -1,30 +1,47 @@
 # Live runs
 
-A live run drives the factory with real runtimes (claude, pi) on a scratch repository, to check what the fake-runtime tests cannot: how a real agent reads a prompt, and the real sandbox, checks and evidence around it. Each agent run costs money, so a live run needs the owner's word and a plan of scenarios first.
+A paid model run needs the owner's approval of a concrete scenario plan and
+cost first. No paid runs are part of the core refactor. Historical Claude/Pi
+runs used integrations now deleted; they do not demonstrate provider support
+in the current API.
 
-## Steps
+The shipped `commandRuntime(argv)` is a generic JSON process adapter: it sends
+`AgentRequest` plus `artifacts` on stdin, expects one JSON result containing
+`outcome` and `artifact` on stdout, and records its exit event. It executes
+through `StageContext.execute` in bwrap. All controller execution currently
+disables network access, with no provider credentials provisioned. This supports
+local commands and stubs; a provider-backed integration needs an explicit
+network and credential design before a paid run is possible.
 
-1. **Plan.** List each scenario as a path through the workflow and what it proves, with the number of paid runs. Get the owner's yes to the plan and the cost.
-2. **Build the kit** under `/var/tmp/software_factory/live-N/`: one scratch repository per set of rules, a workflow module, one job file per scenario (one work ID each), and a fake grant token when a stage holds a grant. Write checks that print what they ran and what they saw: a silent `exit 0` reads to a reviewer as the script's own exit (live run 1).
-3. **Show the owner** the tickets, job files and workflow before the first paid run.
-4. **Seed** every state a scenario needs that an agent would only produce by chance: a reviewer FAIL, a dispute, a run that fails. See "Seeding" below. Spend paid runs only on the steps the scenario exists to test.
-5. **Run** each scenario. After each, read the report, the cycle's events (`node src/main.ts events <job.json>`) and the evidence folder, and compare with what the scenario expected.
-6. **Record** the results in the ticket log and `docs/STATUS.md`: per scenario, what ran, what happened, which steps were seeded, and the number of paid runs. A scenario that did not happen is reported as not happening, never forced.
+## Procedure
 
-Done when every scenario in the plan has a recorded result.
+1. Define scenarios, expected stage paths, artifacts and paid-run count; get
+   the owner's quoted approval of the plan and cost.
+2. Use a scratch repository and fresh SQLite path under
+   `/var/tmp/software_factory/live-N/`. Supply trusted TypeScript `Options`,
+   agent/runtime definitions and extensions to `Controller`. Import
+   `defaultWorkflows(checkArgv)` if its policy fits. There are no job JSON
+   files or `src/main.ts` commands.
+3. Show the owner the scenario inputs and definitions before paid execution.
+   Use a named fake runtime to seed deterministic failures through the same
+   controller API; record which stages were seeded. Do not edit the database.
+4. Call `open` and `advance`, inspect `state` and `events`, and call `decide`
+   only with the current subject. Approval of a spec uses its hash; owner
+   acceptance and changes use the reviewed SHA. The default owner changes
+   transition authorizes a new revision and fresh review budgets.
+5. Compare recorded outcomes and artifacts with expectations. On restart,
+   `recover` escalates pending work without relaunching or spending again;
+   it does not adopt an old process result. Historical event databases are
+   refused, not migrated.
+6. Record scenario results, seeded stages, actual paid-run count and the next
+   action in the work log and `docs/STATUS.md`. A path that did not occur is
+   reported as not occurring.
 
-## Seeding
+## Local verification
 
-A job file may add its own runtime: `"runtimes": { "seed": { "module": "seed/seed.ts" } }`, then name it per role in `"runtime"`. The module reads one RunRequest as JSON on stdin and prints one RunOutcome on stdout; `tests/fixtures/ext-runtime.ts` is the template. It tells roles apart by the prompt: a reviewer's prompt holds its role text (`reviewer for the change below`) and `Candidate SHA: <sha>`; a fix run's holds `FAILED. Fix these findings`. Check those strings against `src/prompt.ts` and `src/lifecycle.ts` first; they move with the prompts.
-
-Run the seed job to bring the cycle to the state, then send the live step with a second job file for the same work ID whose runtimes are real. The seeded steps go through the real loop, sandbox and checks, cost nothing, and are recorded on every outcome event with runtime `seed` and the module's hash, so the log never passes them off as an agent's.
-
-Example (live run 2, scenario 6): the seed developer committed a script, the seed reviewer FAILed it, the seed fix run disputed, and the cycle escalated as in live run 1. Then `overrule` with all-claude runtimes reran the real reviewer, which PASSed under the ruling's contract hash.
-
-To show that a live prompt carried a section, compare the outcome events' `contractHash`: a prompt with an owner's ruling has its own.
-
-## Environment
-
-- Start runs, moves and merges inside the user manager. From an SSH login the shell sits in `session-N.scope`, and cgroup isolation refuses (`docs/work/parked.md`). Prefix the command with `systemd-run --user --scope --quiet`, or start the shell that way.
-- A fake grant script that compares against the token's value holds that value itself, so a search of the evidence finds it in the stage's copy of the script. Its output must show only `[grant <name>]`.
-- Live runs so far took about a minute per scenario: one developer run and two reviews.
+`npm test` exercises stub runtimes, the real JSON process adapter and bwrap.
+The public controller tests start a descendant in a new session and verify
+that it cannot outlive normal command exit, output overflow, a stage deadline
+or controller death. Sandbox cancellation sends SIGKILL directly to bwrap,
+without a grace period. The suite needs working unprivileged user namespaces;
+it uses no model provider and incurs no model spend.

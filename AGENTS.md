@@ -3,10 +3,11 @@
 Medrengard, a software delivery factory (`README.md`). The owner is the user.
 
 Read first: `docs/core.md` (what the core is; it overrides every other doc),
-`docs/STATUS.md` (the next action), `docs/workflow.md` (tickets, branches,
-reviews, merges), your ticket under `docs/work/`. During the core refactor,
-`docs/refactor/prompt.md` replaces `docs/workflow.md`. Before proposing a
-design, read `docs/decisions.md` (latest entry wins) and
+`docs/STATUS.md` (the next action), and `docs/roadmap.md` (forward scope and
+completion milestones). `docs/refactor/prompt.md` records the completed one-off
+refactor; do not restart it as the ongoing workflow. Historical tickets and
+the former workflow guide remain in Git history. Before proposing a design,
+read `docs/decisions.md` (latest entry wins) and
 `docs/open-questions.md`; before a run with real runtimes, `docs/live-runs.md`.
 
 - **Ubiquitous language:** work, ticket, cycle, workflow, stage, artifact,
@@ -26,9 +27,9 @@ design, read `docs/decisions.md` (latest entry wins) and
   branch; docs on `docs/<slug>`. Branches stay local; the owner merges with
   `git merge --no-ff`, which runs `scripts/pre-merge-commit`. Push only when
   the owner asks.
-- **Checks:** `npm test`; `npm run test:learn` when `src/` exports change (the
-  guide's stand-ins in `learn/shims/` must match).
-- **End of session:** append to the ticket log and update `docs/STATUS.md`:
+- **Checks:** `npm test`.
+- **End of session:** append to `docs/refactor/log.md` during the refactor
+  (otherwise the current work log) and update `docs/STATUS.md`:
   what changed, which tests ran and their result, the next action. Parked
   findings go to `docs/work/parked.md`, accepted risks to
   `docs/work/accepted-risks.md`.
