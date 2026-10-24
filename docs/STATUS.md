@@ -10,8 +10,9 @@ Integration branch: `refactor/core`, worktree
 Round 0 merged at `5585512`: eleven MVP cases through one public entry
 point, with 26 e2e/contract tests. Final gate: 678 tests, 654 pass, zero fail,
 19 live skips, five todos; guide six pass. Foundation review PASS after
-repairs recorded in the log. Next action: round 01 removes the explicitly
-cut frontends, then independently reviewed simplification rounds continue. [Run log](refactor/log.md).
+repairs recorded in the log. Round 01 merged at `25684cb`, removing 6,501 lines of cut frontends and
+supporting material. Next action: round 02 removes the unused legacy engine
+and ships the default workflow beside the core, then review and gate it. [Run log](refactor/log.md).
 
 ## Where we are
 

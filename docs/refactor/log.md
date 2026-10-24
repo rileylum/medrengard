@@ -81,3 +81,25 @@ lines; tests: 12,776 lines; public exports: 13. Gate: 678 tests, 654 pass,
 zero fail, 19 skips, five todos. Fresh review PASS, no findings: explicitly
 cut frontends and supporting material removed; core/test implementation
 unchanged. Verdict: simpler, PASS.
+
+Integrated round 01 as `25684cb` with `--no-ff`; pre-merge gate passed.
+
+## Round 02 — retire the legacy engine (in progress)
+
+The public API depends only on its controller, generic process runtime,
+sandbox and process supervisor. Delete the unused legacy engine/CLI/vendor
+policy graph and its tests/docs. Ship the required default workflow beside
+the core as owner TypeScript. Human-authorized revision handoffs need the
+workflow checker to distinguish human waits from automatic handoff cycles;
+fully automatic cycles must remain rejected. Worker branch `refactor/r02`.
+
+Capability boundary: the old Claude/Pi-specific integrations are removed;
+the replacement has a tested generic JSON process runtime, not provider
+integrations. No paid agent runs are performed in this refactor.
+
+Round 02 `7a5c69a`: +278 / −20,990 lines across 180 files. Src: 909
+lines (five files); tests: 1,288 lines; default workflow: 21 lines; public
+exports: 13. Gate: 77 tests, all pass, zero skipped/todo. Fresh review PASS,
+no findings: owner-authorized budgets remain policy outside the core and
+automatic handoff cycles remain refused. Protected history unchanged.
+Verdict: simpler, PASS.
