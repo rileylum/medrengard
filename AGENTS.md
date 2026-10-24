@@ -3,10 +3,10 @@
 Medrengard, a software delivery factory (`README.md`). The owner is the user.
 
 Read first: `docs/core.md` (what the core is; it overrides every other doc),
-`docs/STATUS.md` (the next action), `docs/workflow.md` (tickets, branches,
-reviews, merges), your ticket under `docs/work/`. During the core refactor,
-`docs/refactor/prompt.md` replaces `docs/workflow.md`. Before proposing a
-design, read `docs/decisions.md` (latest entry wins) and
+`docs/STATUS.md` (the next action), and `docs/refactor/prompt.md` (the core
+refactor rounds, reviews and integration workflow). Historical tickets and
+the former workflow guide remain in Git history. Before proposing a design,
+read `docs/decisions.md` (latest entry wins) and
 `docs/open-questions.md`; before a run with real runtimes, `docs/live-runs.md`.
 
 - **Ubiquitous language:** work, ticket, cycle, workflow, stage, artifact,
@@ -27,7 +27,8 @@ design, read `docs/decisions.md` (latest entry wins) and
   `git merge --no-ff`, which runs `scripts/pre-merge-commit`. Push only when
   the owner asks.
 - **Checks:** `npm test`.
-- **End of session:** append to the ticket log and update `docs/STATUS.md`:
+- **End of session:** append to `docs/refactor/log.md` during the refactor
+  (otherwise the current work log) and update `docs/STATUS.md`:
   what changed, which tests ran and their result, the next action. Parked
   findings go to `docs/work/parked.md`, accepted risks to
   `docs/work/accepted-risks.md`.

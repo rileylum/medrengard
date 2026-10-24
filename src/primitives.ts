@@ -136,7 +136,8 @@ export class Controller {
       if (visited.has(name)) return;
       visiting.add(name);
       for (const s of Object.values(this.#workflows.get(name)?.stages ?? {})) for (const edge of Object.values(s.on ?? {})) for (const to of Array.isArray(edge) ? edge : [edge]) {
-        if (typeof to === 'object' && to) visit(to.workflow);
+        // Only an owner decision may authorize a fresh budget on a handoff cycle.
+        if (s.kind !== 'human' && typeof to === 'object' && to) visit(to.workflow);
       }
       visiting.delete(name); visited.add(name);
     };
