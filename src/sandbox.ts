@@ -1,5 +1,4 @@
-// A stage builds a Policy; `wrap` turns its command into sandbox argv for the process supervisor.
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readlinkSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 
@@ -25,8 +24,8 @@ export interface Policy {
 // /bin, /sbin, /lib and /lib64 are symlinks and are recreated as symlinks.
 const SYSTEM = ['/usr', '/etc', '/opt', '/bin', '/sbin', '/lib', '/lib64'];
 
-/** Wrap a command in bubblewrap with declared mounts and no network. */
-export function wrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]] {
+/** Build bubblewrap arguments with declared mounts and no network. */
+function wrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]] {
   const lang = process.env.LANG;
   return ['bwrap', [
     // Parent death ends bwrap; --unshare-all includes the PID namespace, so its
@@ -78,4 +77,58 @@ export function checkSandbox(...sandboxes: Sandbox[]): void {
   if (why !== undefined) {
     throw new Error(`sandbox bwrap cannot start (${why}); install bubblewrap and allow unprivileged user namespaces`);
   }
+}
+
+/** The bounded output and termination of a command executed in a sandbox. */
+export interface RunResult {
+  status: 'exited' | 'cancelled' | 'failed' | 'overflow';
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  wallMs: number;
+}
+
+/** Execute a confined command, ending its namespace on cancellation or output overflow. */
+export function execute(sandbox: Sandbox, policy: Policy, argv: string[], signal: AbortSignal, input = ''): Promise<RunResult> {
+  const [command, args] = wrap(sandbox, policy, argv[0], argv.slice(1));
+  const child = spawn(command, args, { cwd: policy.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+  const started = Date.now();
+  let status: RunResult['status'] = 'exited';
+  const output = { stdout: '', stderr: '' };
+  // lazy: each stream is capped at 8 MiB; stream artifacts when a workflow needs larger output.
+  const maxOutputBytes = 8 * 1024 * 1024;
+  const cancel = () => {
+    if (status !== 'exited' || child.exitCode !== null || child.signalCode !== null) return;
+    status = 'cancelled';
+    // Killing bwrap ends its PID namespace, including descendants that called setsid.
+    child.kill('SIGKILL');
+  };
+  for (const stream of ['stdout', 'stderr'] as const) {
+    let bytes = 0;
+    child[stream].setEncoding('utf8').on('data', (chunk: string) => {
+      if (status === 'overflow') return;
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > maxOutputBytes) {
+        status = 'overflow';
+        output.stdout = '';
+        output.stderr = `${stream} exceeded ${maxOutputBytes} bytes`;
+        child.kill('SIGKILL');
+      } else output[stream] += chunk;
+    });
+  }
+  // Early exit may close stdin before the request has been consumed.
+  child.stdin.on('error', () => {});
+  child.stdin.end(input);
+  return new Promise(resolve => {
+    const finish = (exitCode: number | null, exitSignal: NodeJS.Signals | null) => {
+      signal.removeEventListener('abort', cancel);
+      resolve({ status, exitCode, signal: exitSignal, ...output, wallMs: Date.now() - started });
+    };
+    child.on('error', error => { status = 'failed'; output.stderr += String(error); finish(null, null); });
+    // close drains both streams after bubblewrap and its namespace have ended.
+    child.on('close', finish);
+    signal.addEventListener('abort', cancel, { once: true });
+    if (signal.aborted) cancel();
+  });
 }
