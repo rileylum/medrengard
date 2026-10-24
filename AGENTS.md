@@ -2,14 +2,16 @@
 
 Medrengard, a software delivery factory (`README.md`). The owner is the user.
 
-Read first: `docs/STATUS.md` (the next action), `docs/workflow.md` (tickets,
-branches, reviews, merges; follow it), `docs/specs/core-lifecycle-v1.md` (the
-spec), your ticket under `docs/work/`. Before proposing a design, read
-`docs/decisions.md` (latest entry wins) and `docs/open-questions.md`; before a
-run with real runtimes, `docs/live-runs.md`.
+Read first: `docs/core.md` (what the core is; it overrides every other doc),
+`docs/STATUS.md` (the next action), `docs/workflow.md` (tickets, branches,
+reviews, merges), your ticket under `docs/work/`. During the core refactor,
+`docs/refactor/prompt.md` replaces `docs/workflow.md`. Before proposing a
+design, read `docs/decisions.md` (latest entry wins) and
+`docs/open-questions.md`; before a run with real runtimes, `docs/live-runs.md`.
 
-- **Ubiquitous language:** work, ticket, cycle, stage, workflow, candidate,
-  run, runtime, claim, evidence, verdict, budget, owner.
+- **Ubiquitous language:** work, ticket, cycle, workflow, stage, artifact,
+  agent, runtime, run, claim, evidence, verdict, budget, extension, observer,
+  owner.
 - **Cannot classify it?** Stop and ask the owner; do not invent a recovery path.
 - **Approvals** are the owner's quoted, dated reply, logged in the ticket log
   (in `docs/decisions.md` when the owner asks). Never invent one.
