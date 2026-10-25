@@ -37,6 +37,53 @@ Open questions, O-001 onwards, are in [open-questions.md](open-questions.md).
 
 ## Approval history
 
+### A-146 — 2026-10-25 — First run example, phase split, subscription token, factory layout and installer
+
+Example: “Let's go with the remove hit sounds, but split it in two. Leave the
+knife sounds and just focus on the guns”. Entry input, verbatim: “remove the
+hit sound from rifle hits, as they aren't heard over the fire and bolt sounds”.
+
+Phases: “I'd suggest instead splitting this into two phases the first is just
+the workflow interactive - then we can work out how to build the interactivity
+in a later slice”. Agreed reading: in phase 1 agents run headless and the owner
+interacts at the workflow's human gates through a CLI; interactive agent
+sessions in herdr tabs, with per-tool-call approval, are a later slice. Then:
+“Yes let's do that, and we'll use a subscription token.”
+
+Layout: “Should we split at medrengard core and then the personalized factory
+which is the workflows, also maybe extensions separately?” After the proposal:
+“Yes I think that's all right” and “Okay this all sounds good.” Direction, not
+current scope: “eventually a factory to be able to manage multiple projects and
+repos and have different workflows for different tasks. I'd also like to have
+core extensions (like the model adapters) and personal ones, in the factory.”
+
+Installation: “We can just install with a bash script, that deploys a folder
+structure that can be used and built within. Then the script run again would
+just update, so we'd need to maybe hide the core in a . medrengard directory”.
+Then: “Use your proposed placeholder, I'm fine with setting up a symlink for
+our active development but the final/real product should use the install
+script”.
+
+Effect: the first run is the rifle half of bolts_n_blades slice 4; the knife
+keeps its hit sounds. Phase 1 ends at an owner-approved plan
+([ticket 13](work/13-phase-1-plan.md)). Medrengard holds the core, core
+extensions (runtime adapters first) and the CLI. The owner's factory,
+`~/dev/medrengard-factory`, is a separate repository holding workflows, agents,
+prompt content and personal extensions, and imports only the public API. The
+product installs the core into the factory's `.medrengard/` with a script that
+updates on rerun; during active development `.medrengard` is a symlink to this
+checkout. The provider credential is a Claude Code subscription token.
+
+Risk: “As for the risk it's fine, but a follow up needs to be specific network
+access rather than a simple on/off”. The owner accepts, for phase 1, that a
+planner holding the token with unrestricted network could leak it through a
+prompt injection; a following ticket narrows network access to named
+destinations ([accepted risks](work/accepted-risks.md)).
+
+Not ruled: whether the shipped default workflow gains the plan `changes` loop
+in ticket 13. No implementation, paid run or external publication is
+authorized by this record.
+
 ### A-145 — 2026-10-24 — First user journey with human approval and feedback
 
 Owner: “Okay yeah thats pretty much my idea, idea -> plan/spec -> implement ->
