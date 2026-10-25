@@ -252,8 +252,8 @@ subject.
 
 `controller.observe(fn)` calls `fn` with each event as it is written; it
 cannot change state. The CLI does not expose it, so use it from your own
-script around `Controller`, as the [README](../README.md#use-the-primitives)
-does.
+script around `Controller`, as
+[`tests/e2e/observation.test.ts`](../tests/e2e/observation.test.ts) does.
 
 ### Recipes
 
