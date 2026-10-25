@@ -1,4 +1,14 @@
-import type { Workflow } from '../src/index.ts';
+import { readFileSync } from 'node:fs';
+import type { Agent, Workflow } from '../src/index.ts';
+
+const example = (name: string) => new URL(`example/${name}`, import.meta.url).pathname;
+
+/** The shipped planner: its role and the workflow guide, with the plan skill as a Claude Code plugin. */
+export function examplePlanner(runtime: string, sandbox: Agent['sandbox']): Agent {
+  const role = `${readFileSync(example('planner.md'), 'utf8')}\n${readFileSync(example('guide.md'), 'utf8')}`;
+  // The runtime loads the plugin from inside the sandbox, so the planner must be able to read it.
+  return { runtime, role, skills: [example('plan-skill')], mcpServers: {}, sandbox: { ...sandbox, read: [...sandbox.read ?? [], example('plan-skill')] } };
+}
 
 /** Idea to PR policy; the owner supplies agents, check argv and the pr extension. */
 export function defaultWorkflows(check: string[]): Workflow[] {

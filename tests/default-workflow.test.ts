@@ -1,11 +1,11 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Controller, type Artifact, type Options, type Runtime } from '../src/index.ts';
-import { defaultWorkflows } from '../workflows/default.ts';
+import { defaultWorkflows, examplePlanner } from '../workflows/default.ts';
 
 function setup(t: TestContext, reviews = ['FAIL', 'PASS', 'FAIL', 'PASS'], adversarial = ['PASS', 'PASS']) {
   const directory = mkdtempSync(join(tmpdir(), 'factory-default-'));
@@ -122,4 +122,15 @@ test('shipped design reads the repository and revises the plan with the owner fe
   controller.decide('plan', 'accept', second.subject!);
   assert.equal((await controller.advance('plan')).stage, 'owner');
   assert.equal(commits(), 1);
+});
+
+test('the example planner carries its role, the workflow guide and the plan skill plugin', () => {
+  const planner = examplePlanner('claude', { backend: 'bwrap', network: true });
+  assert.equal(planner.runtime, 'claude');
+  assert.deepEqual(planner.sandbox, { backend: 'bwrap', network: true, read: planner.skills });
+  assert.match(planner.role, /^You are the planner\./);
+  assert.match(planner.role, /## The workflow you are part of/);
+  assert.equal(planner.skills.length, 1);
+  assert.match(readFileSync(join(planner.skills[0], 'skills', 'plan', 'SKILL.md'), 'utf8'), /^---\nname: plan\n/);
+  assert.equal(JSON.parse(readFileSync(join(planner.skills[0], '.claude-plugin', 'plugin.json'), 'utf8')).name, 'medrengard-plan');
 });
