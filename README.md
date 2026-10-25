@@ -14,6 +14,9 @@ example planner role, guide and plan skill are in
 [`workflows/example`](workflows/example). Roles, review limits and PR
 behavior are workflow code.
 
+New to it? The [guide](docs/guide.md) shows how a run flows, how to build a
+factory and how to change the core.
+
 ## Requirements and checks
 
 Linux, Node 24 or later, Git and bubblewrap with user namespaces available.
@@ -114,7 +117,7 @@ credentials and for the practical limits, with the
 
 ## Project record
 
-[Core contract](docs/core.md) · [Status](docs/STATUS.md) ·
+[Guide](docs/guide.md) · [Core contract](docs/core.md) · [Status](docs/STATUS.md) ·
 [Roadmap](docs/roadmap.md) · [Live runs](docs/live-runs.md) ·
 [Refactor log](docs/refactor/log.md) · [Owner decisions](docs/decisions.md) ·
 [Architecture](docs/architecture/source-v0.3.md)

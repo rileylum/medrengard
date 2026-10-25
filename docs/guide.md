@@ -283,3 +283,77 @@ runtimes or extensions does not trigger this.
 Real developer and reviewer agents, a check command for a real repository and
 publishing a PR are the next ticket ([STATUS](STATUS.md)); the
 [roadmap](roadmap.md) lists what follows.
+
+## Changing the core
+
+### Where the rules live
+
+Almost everything is in [`src/primitives.ts`](../src/primitives.ts), named
+here by symbol:
+
+| Rule | Symbol |
+| --- | --- |
+| A workflow's shape: kinds, finite budgets, edges to real stages | `checkWorkflow` |
+| References across definitions, handoff cycles, sandbox checks, refusing a changed or legacy database | the `Controller` constructor |
+| Replaying events into `State`; which artifacts are evidence | `#read` |
+| Appending an event only if the work has not changed since it was read, then notifying observers | `#write` |
+| Picking the next stage from an outcome and the attempt count | `#edge` |
+| The stage loop: budgets, the failed-gate rule, clones and snapshots, `StageContext`, the deadline, escalation | `advance` |
+| Checking a claim | `#artifact` |
+| Copying a commit's objects out of the candidate's reach | `#retain`, and `SNAPSHOT` to materialize one |
+| Owner decisions and crash recovery | `decide`, `recover` |
+
+[`src/sandbox.ts`](../src/sandbox.ts) builds the bubblewrap command (`wrap`,
+`binds`, `environment`), validates sandboxes and probes bwrap
+(`checkSandbox`), and runs, caps and kills the process (`execute`).
+
+### Mechanism or policy
+
+The core holds mechanism; workflows and extensions hold policy
+([core.md](core.md#policy-not-core)). A useful test: if two owners could
+reasonably want different answers, such as how many reviews, which roles,
+or what a PR contains, it is policy and belongs in a workflow, an agent or an
+extension. A core change must keep every [invariant](core.md#invariants), and
+an extension point is built only once something the owner runs needs it
+(A-113 and A-124 in [decisions](decisions.md)).
+
+### The entry point
+
+[`src/index.ts`](../src/index.ts) is the whole public API. Everything outside
+`src/` that ships (`workflows/`, `extensions/`, `cli/`, `scripts/`) imports
+only that file, and [`tests/boundary.test.ts`](../tests/boundary.test.ts)
+fails otherwise. Tests may reach inside; most do not. A new public name is an
+export there, and a doc that links the name to `src/index.ts` is checked by
+[`tests/docs.test.ts`](../tests/docs.test.ts).
+
+### Test patterns
+
+Nothing calls a paid model. Each pattern has a file to copy:
+
+| To prove | Copy |
+| --- | --- |
+| A workflow behaviour, end to end through the entry point | [`tests/e2e/mvp.test.ts`](../tests/e2e/mvp.test.ts): a `Stub` runtime, a real Git repository and bwrap, one test per case |
+| A runtime keeps the contract | [`tests/e2e/contracts.test.ts`](../tests/e2e/contracts.test.ts): the same tests over a fake and `commandRuntime` |
+| Observers cannot change anything | [`tests/e2e/observation.test.ts`](../tests/e2e/observation.test.ts) |
+| A sandbox guarantee | [`tests/sandbox.test.ts`](../tests/sandbox.test.ts) on `execute` directly; [`tests/confinement.test.ts`](../tests/confinement.test.ts) for processes outliving their stage |
+| An adapter's argv and parsing | [`tests/claude-code.test.ts`](../tests/claude-code.test.ts): a fake `claude` script that reports its arguments |
+| The CLI | [`tests/cli.test.ts`](../tests/cli.test.ts): a factory written to a temporary directory |
+| The shipped policy | [`tests/default-workflow.test.ts`](../tests/default-workflow.test.ts) |
+
+Run `npm test`; [AGENTS.md](../AGENTS.md) gives the command for the real
+bubblewrap tests. Unit tests are kept for genuine branching logic only.
+
+### Adding a primitive
+
+1. Check it against [core.md](core.md): which goal it serves, which invariant
+   it touches, and whether it is policy in disguise.
+2. Write the failing test first, through `src/index.ts` only, usually as a
+   new numbered case in `tests/e2e/`.
+3. Implement it in `src/`, and export any new public name from
+   `src/index.ts`.
+4. Update the one doc that owns the fact: `core.md` for a rule, the threat
+   model for a permission, the README for how to run it, this guide for how
+   it works.
+5. Run the suite. The owner merges with `git merge --no-ff`, which runs
+   [`scripts/pre-merge-commit`](../scripts/pre-merge-commit) on the merge
+   result.
