@@ -159,3 +159,24 @@ of impossible combinations. Design it with destination-specific network.
 Commits: `3abfc12` feedback, `a42ca10` sandbox network and env, `0c2e927`
 import boundary, `6cf2d02` repository workspace, `ae06195` Claude Code runtime.
 Each step test first; `systemd-run --user --scope --quiet npm test` 68/68.
+
+### 2026-10-25 — Steps e and f, headless token check
+
+Shipped default: `design` reads the repository and loops on `changes`
+(`1764a50`); example planner role, guide and plan skill with `examplePlanner`
+(`5893771`). The owner compared a simplified `plan-work` skill and chose the
+original: “lets just go with your original, this is too complicated for our
+initial testing run.” CLI `start`, `show`, `decide` (`2361020`); refused setup
+reported without a stack trace (`eaf286a`). Factory
+`~/dev/medrengard-factory`, branch `feat/phase-1-factory` (`6b144a3`),
+`deadlineMs` 30 minutes after the owner asked about 20-minute runs; a smarter
+deadline is parked. Gate: `systemd-run --user --scope --quiet npm test` 72/72.
+
+Token: created by the owner with `claude setup-token`, stored in
+`~/.config/medrengard/claude-token` (mode 600) and read into
+`CLAUDE_CODE_OAUTH_TOKEN`; never printed. Owner: “Approved” for one confined
+headless check. Result through `src/sandbox.ts` with network, the token only,
+`HOME=/tmp` and the runtime's flags (`--tools Read,Grep,Glob`,
+`--setting-sources project`): exit 0, 3.2 s, `subtype: success`,
+`is_error: false`, `result: "ok"`, one turn, model `claude-sonnet-5-5`,
+reported cost $0.0081. This does not approve the live run.
