@@ -36,7 +36,7 @@ function setup(t: TestContext, role = 'You are the planner.', settingSources?: s
 }
 const reported = (content: string | undefined) => JSON.parse(content!) as { argv: string[]; stdin: string };
 
-test('claude -p runs with the role, skills, read-only tools and user settings only by default', async t => {
+test('claude -p runs with the role, skills, read-only tools, the Skill tool and user settings only by default', async t => {
   const { controller, skill } = setup(t);
   controller.open('rifle', 'plan', 'remove the hit sound from rifle hits');
   const state = await controller.advance('rifle');
@@ -44,7 +44,7 @@ test('claude -p runs with the role, skills, read-only tools and user settings on
   assert.equal(state.artifacts[0].kind, 'document');
   assert.deepEqual(reported(state.artifacts[0].content).argv, [
     '-p', '--output-format', 'json', '--no-session-persistence', '--setting-sources', 'user',
-    '--tools', 'Read,Grep,Glob', '--strict-mcp-config', '--append-system-prompt', 'You are the planner.', '--plugin-dir', skill,
+    '--tools', 'Read,Grep,Glob,Skill', '--strict-mcp-config', '--append-system-prompt', 'You are the planner.', '--plugin-dir', skill,
   ]);
   assert.equal(reported(state.artifacts[0].content).stdin, 'remove the hit sound from rifle hits\n');
 });

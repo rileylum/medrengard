@@ -22,7 +22,8 @@ export function claudeCodeRuntime(options: {
       if (Object.keys(request.agent.mcpServers).length) throw new Error('claude code runtime does not pass MCP servers yet');
       const argv = [...options.command, '-p', '--output-format', 'json', '--no-session-persistence',
         '--setting-sources', (options.settingSources ?? ['user']).join(','),
-        ...(options.model ? ['--model', options.model] : []), '--tools', 'Read,Grep,Glob', '--strict-mcp-config', '--append-system-prompt', request.agent.role,
+        // Skill loads the agent's plugin skills; without it they register but cannot be used.
+        ...(options.model ? ['--model', options.model] : []), '--tools', 'Read,Grep,Glob,Skill', '--strict-mcp-config', '--append-system-prompt', request.agent.role,
         ...request.agent.skills.flatMap(skill => ['--plugin-dir', skill])];
       const previous = context.artifacts.findLast(a => a.kind === 'document');
       const prompt = [request.input, previous && `Previous plan:\n${previous.content}`, request.feedback && `Owner feedback:\n${request.feedback}`];
