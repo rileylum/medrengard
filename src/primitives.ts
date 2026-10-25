@@ -31,6 +31,8 @@ export interface Access {
   workspace?: 'empty' | 'repository' | 'subject';
   /** Every process has a private /tmp. `scratch` adds a folder kept after the run (`MEDRENGARD_SCRATCH`); `full` also the workspace. */
   write?: 'none' | 'scratch' | 'full';
+  /** A `subject` copy carries the commit's Git history, so it can be diffed against the base; on unless declined. */
+  history?: boolean;
   read?: string[];
   network?: boolean;
   env?: string[];
@@ -39,7 +41,7 @@ export interface Access {
 export interface Agent { runtime: string; role: string; skills: string[]; mcpServers: Record<string, unknown>; sandbox: Sandbox }
 /** The runtime receives instructions as data, separately from executable commands. */
 // lazy: feedback is text only; carry hashed attachments when an owner needs to send images.
-export interface AgentRequest { runId: string; agent: Agent; input: string; workspace: string; subject?: string; feedback?: string }
+export interface AgentRequest { runId: string; agent: Agent; produces: 'commit' | 'document' | 'verdict'; input: string; workspace: string; subject?: string; feedback?: string }
 /** Adapters execute through the supplied confined context and return untrusted claims. */
 export interface Runtime {
   start(request: AgentRequest, context: StageContext): Promise<void>;
@@ -51,11 +53,14 @@ export interface Runtime {
 export interface Artifact { kind: 'commit' | 'document' | 'verdict'; hash: string; stage: string; sha?: string; repository?: string; content?: string; subject?: string; verdict?: 'PASS' | 'FAIL'; findings?: string[] }
 /** Stage implementations receive data and confined execution, never a state writer. */
 export interface StageContext {
+  work: string;
   subject?: string;
+  /** The commit the work's clone started from, once it has one. */
+  base?: string;
   /** The run's kept scratch folder, when its access writes `scratch` or `full`. */
   scratch?: string;
   artifacts: Artifact[];
-  execute(argv: string[], options?: { signal?: AbortSignal; input?: string }): Promise<RunResult>;
+  execute(argv: string[], options?: { signal?: AbortSignal; input?: string; onStdout?: (chunk: string) => void }): Promise<RunResult>;
 }
 /** State is rebuilt from the event log; evidence contains only the current subject. */
 export interface State {
@@ -63,7 +68,7 @@ export interface State {
   subject?: string; feedback?: string; pending?: string; spent: Record<string, number>; artifacts: Artifact[]; evidence: Artifact[]; reason?: string;
 }
 /** Positions are assigned by SQLite in commit order. */
-export interface Event { position: number; id: string; type: string; [key: string]: unknown }
+export interface Event { position: number; id: string; type: string; time: string; [key: string]: unknown }
 /** Trusted owner definitions and implementations are supplied directly, never loaded from a candidate. */
 export interface Options {
   path: string; directory: string; repository?: string; workflows: Workflow[];
@@ -95,9 +100,9 @@ const strings = (v: unknown) => v === undefined || (Array.isArray(v) && v.every(
 function checkAccess(a: unknown): boolean {
   if (a === undefined) return true;
   if (!a || typeof a !== 'object') return false;
-  const { workspace, write, read, network, env, ...rest } = a as Access;
+  const { workspace, write, read, network, env, history, ...rest } = a as Access;
   return !Object.keys(rest).length && [undefined, 'empty', 'repository', 'subject'].includes(workspace) && [undefined, 'none', 'scratch', 'full'].includes(write)
-    && strings(read) && strings(env) && [undefined, true, false].includes(network);
+    && strings(read) && strings(env) && [network, history].every(v => [undefined, true, false].includes(v));
 }
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v));
@@ -217,14 +222,15 @@ export class Controller {
     if (observer.getStore()) throw new Error('observer cannot change state');
     this.#db.exec('BEGIN IMMEDIATE');
     let position: number;
+    let body: string;
     try {
       const current = Number(this.#db.prepare('SELECT COUNT(*) AS n FROM primitive_events WHERE id=?').get(id)!.n);
       if (current !== expected) throw new Error('work changed concurrently');
-      const body = JSON.stringify({ ...event, id });
+      body = JSON.stringify({ ...event, id, time: new Date().toISOString() });
       position = Number(this.#db.prepare('INSERT INTO primitive_events(id,body) VALUES (?,?)').run(id, body).lastInsertRowid);
       this.#db.exec('COMMIT');
     } catch (e) { this.#db.exec('ROLLBACK'); throw e; }
-    const observed = frozen(copy({ ...event, id, position } as Event));
+    const observed = frozen({ ...JSON.parse(body), position } as Event);
     for (const fn of this.#observers) {
       // Returned thenables execute code too; keep assimilation inside the observation guard.
       try { observer.run(true, () => { void Promise.resolve(fn(observed)).catch(() => {}); }); } catch {}
@@ -340,7 +346,9 @@ export class Controller {
           if (!this.events().some(e => e.id === id && e.type === 'workspace' && e.repository)) {
             if (!this.#options.repository) throw new Error('repository workspace requires an owner repository');
             execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'clone', '--no-local', '--quiet', '--', this.#options.repository, state.workspace], { timeout: 10000, stdio: 'pipe' });
-            this.#write(id, { type: 'workspace', path: state.workspace, repository: true }, version++);
+            let base: string | undefined;
+            try { base = execFileSync('git', ['-C', state.workspace, 'rev-parse', '--verify', '--quiet', 'HEAD'], { encoding: 'utf8', stdio: 'pipe' }).trim(); } catch { /* an empty repository has no base */ }
+            this.#write(id, { type: 'workspace', path: state.workspace, repository: true, base }, version++);
           }
         } else {
           workspace = join(this.#options.directory, randomUUID()); mkdirSync(workspace, { recursive: true });
@@ -348,24 +356,30 @@ export class Controller {
             if (!commit) throw new Error('subject workspace needs a commit');
             const snapshot = await this.#execute(workspace, [process.execPath, '-e', SNAPSHOT, commit.repository!, state.subject!, workspace], true, { backend: 'bwrap' }, abort.signal, [commit.repository!, process.execPath]);
             if (snapshot.exitCode !== 0) throw new Error(`cannot materialize commit: ${snapshot.stderr}`);
+            if (stage.access?.history ?? true) {
+              // History comes from the controller's retained repository, so no candidate Git configuration arrives with it.
+              const history = await this.#execute(workspace, ['sh', '-c', 'set -e; git init -q; git --no-replace-objects -c core.hooksPath=/dev/null fetch -q --no-tags "$1" "refs/artifacts/$2"; git update-ref HEAD "$2"; git reset -q', 'history', commit.repository!, state.subject!], true, { backend: 'bwrap' }, abort.signal, [commit.repository!]);
+              if (history.exitCode !== 0) throw new Error(`cannot copy commit history: ${history.stderr}`);
+            }
           }
         }
         if (scratch) mkdirSync(scratch, { recursive: true });
         const agent = stage.agent ? this.#options.agents[stage.agent] : undefined;
-        const base = agent?.sandbox ?? { backend: 'bwrap' };
+        const own = agent?.sandbox ?? { backend: 'bwrap' };
         const access = stage.access ?? {};
-        const sandbox: Sandbox = { ...base, read: [...base.read ?? [], ...access.read ?? []], env: [...base.env ?? [], ...access.env ?? []], network: !!(base.network || access.network) };
+        const sandbox: Sandbox = { ...own, read: [...own.read ?? [], ...access.read ?? []], env: [...own.env ?? [], ...access.env ?? []], network: !!(own.network || access.network) };
         const policy: Policy = { cwd: workspace, write: [...write === 'full' ? [workspace] : [], ...scratch ? [scratch] : []], read: write === 'full' ? [] : [workspace], env: scratch ? { MEDRENGARD_SCRATCH: scratch } : {} };
-        const context: StageContext = frozen({ subject: state.subject, scratch, artifacts: copy(state.artifacts), execute: (argv: string[], options: { signal?: AbortSignal; input?: string } = {}) => {
+        const base = this.events().find(e => e.id === id && e.type === 'workspace' && e.repository)?.base as string | undefined;
+        const context: StageContext = frozen({ work: id, subject: state.subject, base, scratch, artifacts: copy(state.artifacts), execute: (argv: string[], options: { signal?: AbortSignal; input?: string; onStdout?: (chunk: string) => void } = {}) => {
           if (!active || abort.signal.aborted) return Promise.reject(new Error('stage execution has ended'));
           if (!Array.isArray(argv) || !argv.length || !argv.every(a => typeof a === 'string')) return Promise.reject(new Error('invalid command'));
-          return execute(sandbox, policy, argv, options.signal ? AbortSignal.any([options.signal, abort.signal]) : abort.signal, options.input ?? '');
+          return execute(sandbox, policy, argv, options.signal ? AbortSignal.any([options.signal, abort.signal]) : abort.signal, options.input ?? '', options.onStdout);
         } });
         let result: any;
         const operation = async () => {
           if (stage.kind === 'agent') {
             runtime = this.#options.runtimes[agent!.runtime];
-            await runtime.start(frozen({ runId, agent: copy(agent!), input: state.input, workspace, subject: state.subject, feedback: state.feedback }), context);
+            await runtime.start(frozen({ runId, agent: copy(agent!), produces: stage.produces!, input: state.input, workspace, subject: state.subject, feedback: state.feedback }), context);
             for await (const event of runtime.events(runId)) {
               if (!active || abort.signal.aborted) throw new Error('stage execution has ended');
               this.#write(id, { type: 'runtime', runId, event: data(event) }, version++);

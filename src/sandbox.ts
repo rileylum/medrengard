@@ -108,8 +108,8 @@ export interface RunResult {
   wallMs: number;
 }
 
-/** Execute a confined command, ending its namespace on cancellation or output overflow. */
-export function execute(sandbox: Sandbox, policy: Policy, argv: string[], signal: AbortSignal, input = ''): Promise<RunResult> {
+/** Execute a confined command, ending its namespace on cancellation or output overflow; `onStdout` sees output as it arrives. */
+export function execute(sandbox: Sandbox, policy: Policy, argv: string[], signal: AbortSignal, input = '', onStdout?: (chunk: string) => void): Promise<RunResult> {
   const [command, args] = wrap(sandbox, policy, argv[0], argv.slice(1));
   const child = spawn(command, args, { cwd: policy.cwd, env: environment(sandbox, policy), stdio: ['pipe', 'pipe', 'pipe'] });
   const started = Date.now();
@@ -133,7 +133,10 @@ export function execute(sandbox: Sandbox, policy: Policy, argv: string[], signal
         output.stdout = '';
         output.stderr = `${stream} exceeded ${maxOutputBytes} bytes`;
         child.kill('SIGKILL');
-      } else output[stream] += chunk;
+      } else {
+        output[stream] += chunk;
+        if (stream === 'stdout') onStdout?.(chunk);
+      }
     });
   }
   // Early exit may close stdin before the request has been consumed.

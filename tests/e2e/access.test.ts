@@ -132,7 +132,7 @@ test('defaults follow the output contract: a writable clone for a commit, a writ
   const state = await controller.advance('work');
   assert.equal(state.stage, 'DONE', state.reason);
   assert.equal(seen.before, 'writable\n');
-  assert.equal(seen.after, 'answer writable\n');
+  assert.equal(seen.after, 'answer .git writable\n');
   // The copy is disposable: the clone and the owner's repository never see its writes.
   assert.equal(existsSync(join(state.workspace, 'probe')), false);
   assert.equal(execFileSync('git', ['-C', repository, 'status', '--porcelain'], { encoding: 'utf8' }), '');

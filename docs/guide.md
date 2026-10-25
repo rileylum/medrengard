@@ -107,7 +107,7 @@ Each stage can declare its `access`; without it, it gets these defaults:
 | Stage | Works in | Can change it |
 | --- | --- | --- |
 | One that writes code (develop, fix) | The work's private copy of the project, made the first time a stage needs it | Yes |
-| Any other stage once there is code to look at (checks, reviews, the PR step) | A fresh copy of exactly that version's files, thrown away afterwards | Yes |
+| Any other stage once there is code to look at (checks, reviews, the PR step) | A fresh copy of exactly that version's files with its Git history, so `git diff <base> HEAD` shows the change, thrown away afterwards | Yes |
 | One that reads the project before any code is written (design, declared with `workspace: 'repository'`) | The work's private copy | No, so it cannot change what the developer starts from |
 | Anything else | A new empty folder | Yes |
 
@@ -191,7 +191,8 @@ Each stage declares:
   sandbox. `workspace` is `repository` (the work's copy of the project),
   `subject` (a fresh copy of the current commit) or `empty`. `write` is `none`
   (only `/tmp`), `scratch` (also a folder of its own that is kept after the
-  run, at `$MEDRENGARD_SCRATCH`) or `full` (also the workspace). `read`,
+  run, at `$MEDRENGARD_SCRATCH`) or `full` (also the workspace). `history:
+  false` leaves Git history out of a `subject` copy. `read`,
   `network` and `env` work as in a sandbox. Unset fields take the defaults in
   [What each stage can see](#what-each-stage-can-see); a stage that writes
   code must keep the writable copy of the project.
@@ -236,10 +237,12 @@ appetite, is in the [threat model](security/threat-model.md#agents-with-network-
 ### Runtimes
 
 A [`Runtime`](../src/index.ts) has four methods: `start(request, context)`
-begins a run, `events(runId)` reports progress (each report is recorded),
-`result(runId)` returns the claim, `{ outcome, artifact }`, and `cancel(runId)`
-stops it. Anything it runs for the agent must go through `context.execute`,
-which is the sandbox. There are three choices:
+begins a run, `events(runId)` reports progress (each report is recorded as it
+comes, so it is kept even if the run is cut off), `result(runId)` returns the
+claim, `{ outcome, artifact }`, and `cancel(runId)` stops it. The request says
+what the stage `produces`. Anything it runs for the agent must go through
+`context.execute`, which is the sandbox; its `onStdout` option hands over
+output as it arrives. There are three choices:
 
 - [`commandRuntime`](../src/index.ts)`(argv)`: any local program that reads the
   request as JSON and writes its result as JSON.
@@ -261,7 +264,9 @@ accepts.
 
 An extension is a function `(context) => Promise<{ outcome, artifact }>` in
 `Options.extensions`, run by a `command` stage that names it. It runs inside
-Medrengard as trusted code and sees the subject and every artifact so far.
+Medrengard as trusted code. Its `context` holds the `work` ID, the `subject`,
+the `base` commit the work's copy of the project started from, the run's
+`scratch` folder if it has one, and every artifact so far.
 Anything it runs through `context.execute` gets the stage's `access`.
 [`commandCheck`](../extensions/command-check/index.ts)`(argv)` is the shipped
 check: it runs a command and turns exit code 0 into `PASS` and anything else

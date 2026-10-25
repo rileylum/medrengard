@@ -195,3 +195,23 @@ suites moved to the new fields. Gate:
 
 The owner's factory still declares `workspace: 'repository'`, so through the
 `.medrengard` symlink it is refused until step g updates it.
+
+### 2026-10-26 — Step c: what a run is told, and what the log keeps
+
+Owner, on history: “I think we should add access.history and set its default
+to true.” Owner ideas parked: future `write` capabilities (a shared cache
+path, later stages reading scratch, cleanup) and capturing the scripts agents
+write so a repeated one can be proposed as a skill.
+
+`AgentRequest.produces`; `StageContext.work`, `base` (the clone's HEAD,
+recorded on the `workspace` event) and `execute(..., { onStdout })`;
+`Access.history`, default on, fetches the commit's history into a `subject`
+copy from the controller's retained repository and resets the index, so
+`git status` is clean and `git diff <base> HEAD` shows the change. Every event
+records `time` (ISO 8601); observers see it too. A runtime that yields events
+while its process runs keeps them when the deadline kills the run. The parked
+event-time finding is closed.
+
+Tests: `tests/e2e/run-context.test.ts`, 4 cases, red then green; one access
+test now expects `.git` in the default copy. Gate:
+`systemd-run --user --scope --quiet npm test` 93/93.
