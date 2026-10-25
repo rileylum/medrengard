@@ -26,10 +26,11 @@ if (!Object.hasOwn(arity, command ?? '') || !arity[command].includes(args.length
   process.stderr.write(`${USAGE}\n`);
   process.exit(2);
 }
-const factory: { options: Options; workflow: string } = (await import(pathToFileURL(join(process.cwd(), 'factory.ts')).href)).default;
-mkdirSync(dirname(factory.options.path), { recursive: true });
-const controller = new Controller(factory.options);
+let controller: Controller | undefined;
 try {
+  const factory: { options: Options; workflow: string } = (await import(pathToFileURL(join(process.cwd(), 'factory.ts')).href)).default;
+  mkdirSync(dirname(factory.options.path), { recursive: true });
+  controller = new Controller(factory.options);
   let id = args[0];
   if (command === 'start') { id = randomUUID().slice(0, 8); controller.open(id, factory.workflow, args[0]); }
   if (command === 'decide') controller.decide(id, args[1], args[2], args[3]);
@@ -39,5 +40,5 @@ try {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
 } finally {
-  controller.close();
+  controller?.close();
 }

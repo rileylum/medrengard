@@ -31,13 +31,14 @@ const options: Options = {
     design: { kind: 'agent', agent: 'planner', produces: 'document', workspace: 'repository', budget: 1, on: { done: 'approve' } },
     approve: { kind: 'human', on: { accept: 'DONE', changes: { workflow: 'plan' } } },
   } }],
-  agents: { planner: { runtime: 'fake', role: '', skills: [], mcpServers: {}, sandbox: { backend: 'bwrap' } } },
+  agents: { planner: { runtime: 'fake', role: '', skills: [], mcpServers: {}, sandbox: { backend: 'bwrap', env: ['SF_CLI_TOKEN'] } } },
   runtimes: { fake: planner },
 };
 export default { options, workflow: 'plan' };
 `);
-  const cli = (...args: string[]) => spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: 'utf8' });
-  return { cli };
+  const cli = (...args: string[]) => spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: 'utf8', env: { ...process.env, SF_CLI_TOKEN: 'token' } });
+  const unset = (...args: string[]) => spawnSync(process.execPath, [CLI, ...args], { cwd: dir, encoding: 'utf8' });
+  return { cli, unset };
 }
 const field = (output: string, name: string) => output.match(new RegExp(`^${name} (\\S+)$`, 'm'))?.[1];
 
@@ -70,8 +71,8 @@ test('start shows the plan and its hash; changes with feedback revises it; accep
   assert.equal(field(accepted.stdout, 'stage'), 'DONE');
 });
 
-test('usage errors and unknown works exit non-zero without a stack trace', t => {
-  const { cli } = factory(t);
+test('usage errors, unknown works and refused setup exit non-zero without a stack trace', t => {
+  const { cli, unset } = factory(t);
   for (const args of [[], ['start'], ['decide', 'x', 'accept'], ['frobnicate']]) {
     const r = cli(...args);
     assert.equal(r.status, 2, `${args.join(' ')}: ${r.stderr}`);
@@ -81,4 +82,8 @@ test('usage errors and unknown works exit non-zero without a stack trace', t => 
   assert.equal(unknown.status, 1);
   assert.match(unknown.stderr, /unknown work missing/);
   assert.doesNotMatch(unknown.stderr, /\n\s+at /);
+  const refused = unset('show', 'missing');
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /SF_CLI_TOKEN is not set/);
+  assert.doesNotMatch(refused.stderr, /\n\s+at /);
 });
