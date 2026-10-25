@@ -23,7 +23,8 @@ export interface Stage {
 /** Runtime selection is independent of instructions and sandbox configuration. */
 export interface Agent { runtime: string; role: string; skills: string[]; mcpServers: Record<string, unknown>; sandbox: Sandbox }
 /** The runtime receives instructions as data, separately from executable commands. */
-export interface AgentRequest { runId: string; agent: Agent; input: string; workspace: string; subject?: string }
+// lazy: feedback is text only; carry hashed attachments when an owner needs to send images.
+export interface AgentRequest { runId: string; agent: Agent; input: string; workspace: string; subject?: string; feedback?: string }
 /** Adapters execute through the supplied confined context and return untrusted claims. */
 export interface Runtime {
   start(request: AgentRequest, context: StageContext): Promise<void>;
@@ -42,7 +43,7 @@ export interface StageContext {
 /** State is rebuilt from the event log; evidence contains only the current subject. */
 export interface State {
   id: string; workflow: string; stage: string; input: string; workspace: string;
-  subject?: string; pending?: string; spent: Record<string, number>; artifacts: Artifact[]; evidence: Artifact[]; reason?: string;
+  subject?: string; feedback?: string; pending?: string; spent: Record<string, number>; artifacts: Artifact[]; evidence: Artifact[]; reason?: string;
 }
 /** Positions are assigned by SQLite in commit order. */
 export interface Event { position: number; id: string; type: string; [key: string]: unknown }
@@ -166,6 +167,7 @@ export class Controller {
       if (e.type === 'started') { state.pending = e.runId as string; state.spent[state.stage] = (state.spent[state.stage] ?? 0) + 1; }
       if (e.type === 'completed' || e.type === 'decision') {
         state.pending = undefined;
+        if (e.type === 'decision') state.feedback = e.feedback as string | undefined;
         if (e.artifact) {
           const a = e.artifact as Artifact;
           state.artifacts.push(a);
@@ -217,13 +219,14 @@ export class Controller {
     if (typeof edge === 'string') return { next: edge };
     return { workflow: edge.workflow, next: this.#workflows.get(edge.workflow)!.start };
   }
-  /** Record an owner decision only for the exact artifact currently being reviewed. */
-  decide(id: string, outcome: string, subject: string): void {
+  /** Record an owner decision, with optional feedback for the next run, only for the exact artifact currently being reviewed. */
+  decide(id: string, outcome: string, subject: string, feedback?: string): void {
     if (observer.getStore()) throw new Error('observer cannot change state');
+    if (feedback !== undefined && typeof feedback !== 'string') throw new Error('invalid feedback');
     const { state, version } = this.#read(id);
     if (this.#workflows.get(state.workflow)!.stages[state.stage]?.kind !== 'human') throw new Error('work is not awaiting its owner');
     if (!state.subject || subject !== state.subject) throw new Error('stale owner decision');
-    this.#write(id, { type: 'decision', outcome, subject, ...this.#edge(state, outcome) }, version);
+    this.#write(id, { type: 'decision', outcome, subject, feedback, ...this.#edge(state, outcome) }, version);
   }
   /** An interrupted run is ambiguous: retain its spent budget and escalate without retrying. */
   recover(id: string): void {
@@ -320,7 +323,7 @@ export class Controller {
         const operation = async () => {
           if (stage.kind === 'agent') {
             runtime = this.#options.runtimes[agent!.runtime];
-            await runtime.start(frozen({ runId, agent: copy(agent!), input: state.input, workspace, subject: state.subject }), context);
+            await runtime.start(frozen({ runId, agent: copy(agent!), input: state.input, workspace, subject: state.subject, feedback: state.feedback }), context);
             for await (const event of runtime.events(runId)) {
               if (!active || abort.signal.aborted) throw new Error('stage execution has ended');
               this.#write(id, { type: 'runtime', runId, event: data(event) }, version++);

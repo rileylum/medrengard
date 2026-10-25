@@ -209,3 +209,41 @@ test('11. workflow checker refuses invalid edges, kinds and unbounded loops befo
     assert.throws(() => setup(t, new Stub(), [w]), /workflow/);
   }
 });
+
+test('12. owner feedback reaches the next run after a restart and only the latest decision carries it', async t => {
+  const plan: Workflow = { name: 'plan', start: 'design', stages: {
+    design: { kind: 'agent', agent: 'designer', produces: 'document', budget: 1, on: { done: 'approve' } },
+    approve: { kind: 'human', on: { approve: 'DONE', changes: { workflow: 'plan' } } },
+  } };
+  const requests: AgentRequest[] = [];
+  const results = new Map<string, unknown>();
+  const planner: Runtime = {
+    async start(request) {
+      requests.push(request);
+      results.set(request.runId, { outcome: 'done', artifact: { kind: 'document', content: `# Plan ${requests.length}\n${request.feedback ?? ''}` } });
+    },
+    async result(id) { return results.get(id); }, async cancel() {}, async *events() {},
+  };
+  const { controller, options } = setup(t, planner as Stub, [plan]);
+  controller.open('rifle', 'plan', 'remove the hit sound from rifle hits');
+  const first = (await controller.advance('rifle')).subject!;
+  assert.throws(() => controller.decide('rifle', 'changes', first, 42 as any), /feedback/);
+  controller.decide('rifle', 'changes', first, 'Keep the knife hit sounds.');
+  assert.equal(controller.events().at(-1)!.feedback, 'Keep the knife hit sounds.');
+  controller.close();
+
+  const restarted = new Controller(options); t.after(() => restarted.close());
+  const second = await restarted.advance('rifle');
+  assert.equal(second.stage, 'approve', second.reason);
+  assert.equal(requests[0].feedback, undefined);
+  assert.equal(requests[1].feedback, 'Keep the knife hit sounds.');
+  assert.equal(requests[1].input, 'remove the hit sound from rifle hits');
+  assert.notEqual(second.subject, first);
+  assert.throws(() => restarted.decide('rifle', 'approve', first), /stale/);
+
+  restarted.decide('rifle', 'changes', second.subject!);
+  const third = await restarted.advance('rifle');
+  assert.equal(requests[2].feedback, undefined);
+  restarted.decide('rifle', 'approve', third.subject!);
+  assert.equal(restarted.state('rifle').stage, 'DONE');
+});
