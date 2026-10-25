@@ -14,7 +14,7 @@ const FAKE = `const argv = process.argv.slice(2); const stdin = require('fs').re
 const failed = argv[argv.indexOf('--append-system-prompt') + 1] === 'fail';
 console.log(JSON.stringify({ type: 'result', is_error: failed, result: failed ? 'refused' : JSON.stringify({ argv, stdin }) }));`;
 
-function setup(t: TestContext, role = 'You are the planner.', settingSources?: string[]) {
+function setup(t: TestContext, role = 'You are the planner.', settingSources?: string[], model?: string) {
   const dir = mkdtempSync('/var/tmp/software_factory-claude-');
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const repository = join(dir, 'repository');
@@ -29,7 +29,7 @@ function setup(t: TestContext, role = 'You are the planner.', settingSources?: s
   const controller = new Controller({
     path: join(dir, 'events.sqlite'), directory: join(dir, 'runs'), repository, workflows: [plan],
     agents: { planner: { runtime: 'claude', role, skills: [skill], mcpServers: {}, sandbox: { backend: 'bwrap', read: [NODE_PREFIX, fake, skill] } } },
-    runtimes: { claude: claudeCodeRuntime({ command: [process.execPath, fake], settingSources }) },
+    runtimes: { claude: claudeCodeRuntime({ command: [process.execPath, fake], settingSources, model }) },
   });
   t.after(() => controller.close());
   return { controller, skill };
@@ -67,4 +67,11 @@ test('an error result escalates the work without a document', async t => {
   assert.equal(state.stage, 'ESCALATED');
   assert.match(state.reason!, /refused/);
   assert.equal(state.artifacts.length, 0);
+});
+
+test('a configured model is passed to claude unchanged', async t => {
+  const { controller } = setup(t, 'You are the planner.', undefined, 'opus');
+  controller.open('rifle', 'plan', 'remove the hit sound from rifle hits');
+  const { argv } = reported((await controller.advance('rifle')).artifacts[0].content);
+  assert.deepEqual(argv.slice(argv.indexOf('--model'), argv.indexOf('--model') + 2), ['--model', 'opus']);
 });

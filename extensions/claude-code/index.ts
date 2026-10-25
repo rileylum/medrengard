@@ -11,6 +11,8 @@ export function claudeCodeRuntime(options: {
    * `.claude/` settings, including hooks and permission rules: use it only for a repository you trust.
    */
   settingSources?: ('user' | 'project' | 'local')[];
+  /** Passed to `--model` unchanged, e.g. `opus` or a full model ID; Claude Code's default when absent. */
+  model?: string;
 }): Runtime {
   const runs = new Map<string, { abort: AbortController; result: Promise<RunResult> }>();
   return {
@@ -20,7 +22,7 @@ export function claudeCodeRuntime(options: {
       if (Object.keys(request.agent.mcpServers).length) throw new Error('claude code runtime does not pass MCP servers yet');
       const argv = [...options.command, '-p', '--output-format', 'json', '--no-session-persistence',
         '--setting-sources', (options.settingSources ?? ['user']).join(','),
-        '--tools', 'Read,Grep,Glob', '--strict-mcp-config', '--append-system-prompt', request.agent.role,
+        ...(options.model ? ['--model', options.model] : []), '--tools', 'Read,Grep,Glob', '--strict-mcp-config', '--append-system-prompt', request.agent.role,
         ...request.agent.skills.flatMap(skill => ['--plugin-dir', skill])];
       const previous = context.artifacts.findLast(a => a.kind === 'document');
       const prompt = [request.input, previous && `Previous plan:\n${previous.content}`, request.feedback && `Owner feedback:\n${request.feedback}`];
