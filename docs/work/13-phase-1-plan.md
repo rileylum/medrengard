@@ -30,28 +30,36 @@ does not settle that silently. This run tests the workflow, not prompt quality.
    `AgentRequest.feedback` field. Hash binding of decisions is unchanged.
 2. `Sandbox` gains `network?: boolean` and `env?: string[]`, names of variables
    copied from the controller's environment. Both default off; commands and
-   agents get neither unless declared.
+   agents get neither unless declared. Values reach bwrap through its
+   environment, not its arguments; setup refuses invalid, reserved (`PATH`,
+   `HOME`, `LANG`) and unset names.
+3. `Stage.workspace: 'repository'` gives a stage a fresh clone of the owner
+   repository, read-only unless it produces a commit. Found during
+   implementation: design stages had an empty workspace, not a clone.
 
 Already supported, no change: stale-hash refusal, a `changes` edge to
 `{ workflow: 'design' }` (resets the stage budget), `approve` to `DONE`, and
 `deadlineMs`.
 
-**Core extension (`extensions/claude-code/`):** wraps `commandRuntime`. Maps the
-existing `Agent` fields onto `claude -p`: role and workflow guide to
-`--append-system-prompt-file`, skills to `--plugin-dir`, plus
-`--setting-sources project`, read-only `--allowedTools`, `--output-format json`
-and `--no-session-persistence`. No `--bare`: it refuses OAuth. Prompt is the
-input plus feedback; the final result becomes the document artifact. Design
-stages get a read-only clone, so the planner writes no file.
+**Core extension (`extensions/claude-code/`):** `claudeCodeRuntime({ command,
+settingSources })`, its own runtime over `context.execute` (per-request argv
+does not fit `commandRuntime`). Maps the existing `Agent` fields onto
+`claude -p`: role (with the workflow guide) to `--append-system-prompt`, skills
+to `--plugin-dir`, plus `--setting-sources` (default `user`; `project` only for
+a trusted repository), `--tools Read,Grep,Glob`, `--strict-mcp-config`,
+`--output-format json` and `--no-session-persistence`. No `--bare`: it refuses
+OAuth. Prompt is the input, the previous plan and the latest feedback; the
+final result becomes the document artifact. Design stages get a read-only
+clone, so the planner writes no file.
 
 **CLI (`cli/`):** `start "<idea>"`, `show <work>` (plan, hash, status, feedback
-history), `decide <work> approve|changes <hash> ["feedback"]`. `start` and
+history), `decide <work> <outcome> <hash> ["feedback"]`, outcome names from the workflow. `start` and
 `decide` advance automatic stages. Loads `factory.ts` from the working
 directory. Input is a string; `lazy:` file and issue inputs, snapshotted at
 entry when added.
 
 **Shipped default (`workflows/`):** the default's `design` workflow gains
-`changes → design`, with feedback reaching the fresh run; `approve` still starts
+`changes → design` and a repository workspace, with feedback reaching the fresh run; `accept` still starts
 `develop`. The example planner role, basic plan skill and workflow guide ship
 beside it, so the default is runnable and is the template the installer will
 seed. `tests/default-workflow.test.ts` covers the new loop.
@@ -60,14 +68,15 @@ seed. `tests/default-workflow.test.ts` covers the new loop.
 `package.json` `imports` map `#medrengard` to `.medrengard/`, a symlink to this
 checkout during development. `factory.ts` uses the shipped planner role, skill
 and guide, and declares a phase-1 workflow of the default `design` shape with
-`approve → DONE`, because `develop` has no real agents yet; it switches to
+`accept → DONE`, because `develop` has no real agents yet; it switches to
 importing the default once `develop` is built. It also declares the planner's
 sandbox (network, `CLAUDE_CODE_OAUTH_TOKEN`, a read path for the `claude`
 install), the bolts_n_blades repository and a state directory outside
 `.medrengard/`.
 
-**Boundary:** a test fails if code outside `src/` imports anything but
-`src/index.ts`.
+**Boundary:** a test fails if shipped code outside `src/` (`workflows/`,
+`extensions/`, `cli/`, `scripts/`) imports anything but `src/index.ts`; tests
+are exempt.
 
 ## Acceptance
 
@@ -87,7 +96,8 @@ install), the bolts_n_blades repository and a state directory outside
 Interactive herdr sessions (phase 2), develop/check/PR stages, input types
 other than a string, multiple repositories or projects per factory, recovery
 beyond today's escalation, the install script, and destination-specific
-network access. The last two are following tickets; until then the factory uses
+network access. The last two are following tickets, as is separating stage
+access from output contracts (log, 2026-10-25 implementation); until then the factory uses
 the development symlink, and `network` is all-or-nothing under the risk the
 owner accepted in A-146.
 
@@ -121,3 +131,31 @@ probably become the default? And we can ship it as the example and a sane
 default?” After the recommendation (ship the workflow and example agents as the
 default; keep personal content in the factory; import rather than copy until it
 diverges; the default stays the whole journey): “Yes record it”.
+
+### 2026-10-25 — Implementation, steps a to d
+
+Owner, on feedback: “latest only is all good”; on images: text only for now
+(“Yep go ahead with text only”; `lazy:` attachments). On `env`: “yes we should refuse at setup”. On network:
+“an obvious follow up task will be to work out how to be more strict with
+Internet access”. On settings: “I think we should load project settings - you
+are specifically enabling the workflow on a repo, the user can accept that
+risk. Though I suppose it should be configurable - and make it clear that you
+should use user settings only unless you trust the repo. In this case I trust
+the repo”. On the missing clone: “When you're designing/planning a code change
+it obviously needs the clone - if you're doing a prototype you might not.
+Option A looks good”. On outcome names: “Accept can stay”.
+
+Planned follow-up, owner: “I think we should decouple as described and rely on
+customisable , extensible primitives. I think defining agents is useful though
+so you don't have to continue to redefine them. So this should probably be
+something that is defined outside a workflow and can be imported into one or
+many workflows multiple times”. Finding: a stage's access (workspace,
+writability) is inferred from `produces`, and network and credentials sit on
+the `Agent`. Direction: agents are defined once and imported, declaring
+identity, credentials and an access ceiling; stages declare the access a use
+needs within it; the core keeps output contracts, derived defaults and refusal
+of impossible combinations. Design it with destination-specific network.
+
+Commits: `3abfc12` feedback, `a42ca10` sandbox network and env, `0c2e927`
+import boundary, `6cf2d02` repository workspace, `ae06195` Claude Code runtime.
+Each step test first; `systemd-run --user --scope --quiet npm test` 68/68.
