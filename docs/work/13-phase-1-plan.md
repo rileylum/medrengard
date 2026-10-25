@@ -3,7 +3,7 @@
 Milestone: M2 in `docs/roadmap.md`, first slice of the
 [first user journey](../roadmap.md#first-user-journey--agreed-2026-10-24).
 Decision: [A-146](../decisions.md#a-146--2026-10-25--first-run-example-phase-split-subscription-token-factory-layout-and-installer).
-Branch: `feat/13-phase-1-plan`. Status: agreed scope; implementation starts next session.
+Branch: `feat/13-phase-1-plan`. Status: done, merged to main at `c3f91f9`.
 
 ## Behavior
 
@@ -211,3 +211,12 @@ Finding: neither plan used the plan skill. `--tools Read,Grep,Glob` removes the
 confirmed by two `stream-json` init checks (with `Skill` it is available),
 about $0.019 notional. Undeclared bundled plugins and skills, event times and
 full transcripts are parked; the owner wants the entire stream kept.
+
+### 2026-10-25 — Close
+
+After the live run: the runtime passes `--tools Read,Grep,Glob,Skill`
+(`1d141f6`), so the plan skill can load; not yet exercised by a live run.
+The owner merged `docs/phase-1-plan-ticket` and this branch (`c3f91f9`) and
+renamed the factory's branch to `main`. Owner: “we should finish a full run -
+currently we've produced a plan, but we should be able to get that through
+implement and review before we handle the listed tickets.”

@@ -1,8 +1,7 @@
 # Core
 
 The one page of what Medrengard is and what its core must hold. It overrides
-`docs/plan.md`, `docs/decisions.md`, `docs/specs/`, `docs/design/` and
-`docs/workflow.md` wherever they disagree; those are history.
+every other document wherever they disagree, including `docs/decisions.md`.
 
 ## What it is
 
@@ -17,6 +16,22 @@ a design stage that turns an idea into an approved spec, the develop and
 review loop, and the owner's review-and-iterate at the end. The Design Studio
 needs nothing from the core beyond these primitives; the MVP must not rule it
 out.
+
+## Goals
+
+The goals every change comes back to (A-125):
+
+- A strong core, with sane defaults and control and customisation left to the
+  owner.
+- Extensible and observable.
+- Vendor neutral: runtime, model and role are independent (D-002).
+- Local first: it runs on the owner's machine, under the owner's control
+  (A-001).
+- The controller decides: agents only claim (D-001).
+- Safe by default: candidate code is sandboxed, and nothing outward-facing or
+  irreversible happens unless the owner's workflow says so (D-019, D-023).
+- Durable: the event log is the record. An interrupted run escalates to the
+  owner; it is never silently retried.
 
 ## Primitives
 
@@ -57,20 +72,22 @@ No workflow or extension can switch these off.
 - The owner's definitions are trusted TypeScript. Repository-supplied
   definitions are out of scope for now; if added, they are data, never code
   (A-111).
+- A missing or failed check is never read as a pass.
+- Continuous improvement, when added, proposes changes; it never edits gates,
+  policy or its own prompts.
 
 ## Policy, not core
 
 These belong to workflows the owner writes, starting with a default workflow
 that ships beside the core: roles, review counts and budgets, the ticket
-format, the review package, merge and PR rules.
-
-## Cut
-
-`learn/`, `proto/`, and anything that exists only to serve something cut or
-something the e2e suite does not need.
+format, the review package, merge and PR rules. The shipped default
+(`workflows/default.ts`) gives reviewers a fresh context, two standard reviews
+and one adversarial review per cycle, and an owner gate before any PR.
 
 ## Proof
 
 `tests/e2e/` defines the MVP workflow as user code against the public entry
 point only, with stub agents, and proves the cases in source-v0.3 Appendix B
-that the MVP covers. Unit tests stay only for genuine branching logic.
+that the MVP covers. `tests/default-workflow.test.ts` runs the shipped
+default, and `tests/boundary.test.ts` keeps shipped code outside `src/` on the
+public entry point. Unit tests stay only for genuine branching logic.

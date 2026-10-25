@@ -9,12 +9,15 @@ text matter before deliberate malice (A-037, A-115). See
 
 | Actor | Authority |
 | --- | --- |
-| Owner's TypeScript workflows, agents, runtime adapters and extensions | Trusted host code. The owner supplies these directly; candidate definitions are never imported. |
-| Controller | Sole writer of workflow state and budget. It validates claims and exact artifact subjects before recording advancement. |
-| Developer process | Bwrap with its independent clone writable, declared read paths and system directories readable. Network disabled; no provider credentials provisioned. |
-| Checks and reviewer processes | Bwrap over a read-only snapshot of retained commit objects, without the developer's dirty files or gitdir. Network disabled. |
+| Owner's TypeScript workflows, agents, runtime adapters and extensions | Trusted host code. The owner supplies these directly; candidate definitions are never imported. This includes `extensions/claude-code` and the factory's `factory.ts`, which `cli/medrengard.ts` imports from its working directory. |
+| Controller | Sole writer of workflow state and budget. It validates claims and exact artifact subjects before recording advancement. It makes the work's first clone on the host from the owner's repository, with hooks disabled. |
+| Repository-reading agent process (`workspace: 'repository'`, e.g. the shipped default's `design`) | Bwrap over the work's `--no-local` clone, read-only, including its gitdir and every fetched ref; declared read paths and system directories readable. Network and environment variables only as its agent's `Sandbox` declares. The owner's phase-1 planner declares network and `CLAUDE_CODE_OAUTH_TOKEN`. |
+| Developer process | Bwrap with the same clone writable, declared read paths and system directories readable. Network and environment variables only as its agent's `Sandbox` declares. |
+| Reviewer agent processes | Bwrap over a read-only snapshot of retained commit objects, without the developer's dirty files or gitdir. Network and environment variables only as the reviewer agent's `Sandbox` declares. |
+| Check commands, extension-stage executions and the controller's own Git and snapshot calls | Bwrap with no network, no declared variables and no `Sandbox.read` paths. Checks see the read-only snapshot. |
+| Claude Code (`claudeCodeRuntime`) | Runs `claude -p` inside its agent's sandbox, with only the `Read`, `Grep`, `Glob` and `Skill` tools, `--strict-mcp-config` and `--no-session-persistence`. Settings default to `user`, empty under the private home. `project` loads the clone's `.claude/` settings, including hooks and permission rules; its hooks run inside the same sandbox, with its network and token. Use it only for a trusted repository. |
 | Observers | Trusted host callbacks receiving immutable events. Controller methods refuse mutation in observer context, including asynchronous continuations. This is an API boundary, not isolation from a malicious owner module. |
-| Issue text, runtime results and candidate files | Untrusted data; never evaluated as controller code or configuration. |
+| Issue text, runtime results and candidate files | Untrusted data; never evaluated as controller code or configuration. Owner feedback also reaches agents only as prompt text. |
 
 ## Mechanisms
 
@@ -24,12 +27,22 @@ text matter before deliberate malice (A-037, A-115). See
 - Agent output is a claim. Commit claims must equal the isolated workspace's
   HEAD; verified object packs are retained separately. Reviews and checks bind
   to an exact SHA, documents to a hash. A new subject invalidates old evidence.
+  Owner feedback given with a decision is recorded in that decision event and
+  reaches the next run's `AgentRequest.feedback`; the decision still binds to
+  the current hash or SHA.
 - Candidate Git operations execute inside bwrap with hooks and replacement
   objects disabled. The initial clone uses the owner's trusted repository.
   Snapshot materialization reads raw objects rather than candidate attributes.
-- Controller-executed processes always run without network access. Bwrap clears
-  the environment and sets HOME to its private temporary directory. Owners must
-  choose `sandbox.read` deliberately: anything mounted is readable by the run.
+- The sandbox has no network unless its `Sandbox` sets `network: true`, which
+  adds `--share-net`. That is all-or-nothing: the process then sees the host's
+  network, including loopback services, Docker bridges and abstract Unix
+  sockets. Destination-specific network is a following ticket (A-146).
+- Bwrap is started with an environment holding only `PATH`, `HOME` (its
+  private `/tmp`), `LANG` and the names in `Sandbox.env`, copied from the
+  controller's environment. Values pass through bwrap's own environment, never
+  its argv. Setup refuses invalid, reserved (`PATH`, `HOME`, `LANG`) and unset
+  names. Owners must choose `sandbox.read` deliberately: anything mounted is
+  readable by the run.
 - The sandbox sends SIGKILL directly to bwrap on cancellation or output
   overflow, without a grace period. Its PID namespace and parent-death behavior
   end descendants that start a new session after normal exit, overflow, a stage
@@ -38,17 +51,38 @@ text matter before deliberate malice (A-037, A-115). See
   escalates without spending again. Historical `events` databases are refused,
   not migrated or silently treated as empty.
 
+## Repository agent with network and token
+
+The owner's phase-1 planner reads the repository clone while holding a Claude
+Code subscription token and unrestricted network. A prompt injection in
+repository text, or a hook loaded through `settingSources: ['project']`, can
+send the token or the clone's contents, including every fetched ref, anywhere.
+The owner accepted this for phase 1 ([A-146](../decisions.md#a-146--2026-10-25--first-run-example-phase-split-subscription-token-factory-layout-and-installer),
+[accepted risks](../work/accepted-risks.md)); reopen before any agent reads
+untrusted input such as public issues. The token's value stays outside the
+factory (`~/.config/medrengard/claude-token`, mode 600) and reaches the
+sandbox only by name. Claude Code still loads bundled plugins and skills the
+factory did not declare; their effect is unverified
+([parked](../work/parked.md)).
+
 ## Limits
 
-There is no built-in Claude or Pi integration, provider credential provision,
-egress proxy, grant mechanism or repository configuration loader. The generic
-`commandRuntime` protocol is the real process adapter; owners provide other
-implementations as trusted TypeScript. The controller does not sandbox those
-host callbacks; their candidate execution must use `StageContext.execute`.
+`claudeCodeRuntime` is the only provider adapter; there is no Pi integration, code-host client,
+credential file or mount, egress proxy, destination-specific network or grant
+mechanism. The core loads no repository configuration; Claude Code does when
+`project` settings are chosen. The generic `commandRuntime` protocol is the
+other process adapter; owners provide further implementations as trusted
+TypeScript. The controller does not sandbox those host callbacks; their
+candidate execution must use `StageContext.execute`. The CLI imports whatever
+`factory.ts` is in its working directory.
 
-The full clone exposes all fetched refs. Snapshots use stored bytes without
-attributes or LFS conversion. There are no memory/disk quotas, global spend
-limits or command-ID deduplication for owner decisions. Process output caps,
-stage deadlines and finite workflow budgets do not substitute for those
-limits. Sandbox execution captures bounded output through pipes; there are no
-durable run folders or independent systemd runtime deadlines.
+A declared variable is in the bwrap process's environment, and the same user
+can read `/proc/<pid>/environ`. The work's full clone exposes all fetched refs
+to the developer and to repository-reading stages such as `design`
+([parked](../work/parked.md)). Snapshots use stored bytes without attributes
+or LFS conversion. There are no memory/disk quotas, global spend limits or
+command-ID deduplication for owner decisions. Process output caps, stage
+deadlines and finite workflow budgets do not substitute for those limits.
+Sandbox execution captures bounded output through pipes; there are no durable
+run folders, transcripts beyond the final result, or independent systemd
+runtime deadlines.

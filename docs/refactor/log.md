@@ -16,7 +16,7 @@ files / 12,367 lines; learn 64 files / 5,487 lines; proto 7 files / 833 lines.
 There was no public entry point, hence zero entry-point exports. Later counts
 use the same convention; exported names include types and values.
 
-## Round 00 — MVP proof (in progress)
+## Round 00 — MVP proof
 
 Worker: `refactor/r00`, isolated worktree. Establish all eleven cases in
 `tests/e2e/` using only the public entry point and owner-defined workflows.
@@ -71,7 +71,7 @@ pass. Net change: 794 lines added, zero removed. Src: 5,821 lines; tests:
 
 Integrated round 00 as `5585512` with `--no-ff`; the pre-merge gate passed.
 
-## Round 01 — remove cut frontends (in progress)
+## Round 01 — remove cut frontends
 
 Remove `learn/`, `proto/`, and supporting scripts/docs. Neither is imported
 by the core; both are explicitly cut by core.md. Worker branch `refactor/r01`.
@@ -84,7 +84,7 @@ unchanged. Verdict: simpler, PASS.
 
 Integrated round 01 as `25684cb` with `--no-ff`; pre-merge gate passed.
 
-## Round 02 — retire the legacy engine (in progress)
+## Round 02 — retire the legacy engine
 
 The public API depends only on its controller, generic process runtime,
 sandbox and process supervisor. Delete the unused legacy engine/CLI/vendor
@@ -106,7 +106,7 @@ Verdict: simpler, PASS.
 
 Integrated round 02 as `03e3a25` with `--no-ff`; pre-merge gate passed.
 
-## Round 03 — remove unused supervision (in progress)
+## Round 03 — remove unused supervision
 
 The public controller uses piped process-group execution inside bwrap, not
 the legacy supervisor's optional scopes or durable output folders. Remove
@@ -123,7 +123,7 @@ unused supervision disappears. Verdict: simpler, PASS.
 
 Integrated round 03 as `f16345a` with `--no-ff`; pre-merge gate passed.
 
-## Round 04 — collapse the sandbox implementation (in progress)
+## Round 04 — collapse the sandbox implementation
 
 The public controller uses bwrap with read/write mounts, a cleared environment,
 a private temporary directory and no network. Remove unused backend dispatch
@@ -138,7 +138,7 @@ real-process confinement files unchanged. Verdict: simpler, PASS.
 
 Integrated round 04 as `ebea36e` with `--no-ff`; pre-merge gate passed.
 
-## Round 05 — assess remaining simplification (in progress)
+## Round 05 — assess remaining simplification
 
 A fresh worker inspects the reduced implementation for a substantive further
 change, without speculative features or cosmetic churn. If none is justified,
@@ -155,7 +155,7 @@ tests: 1,004 lines; public exports: 13. Fresh reviewer: FAIL — empty diff,
 no change to approve as simpler; no code defect findings. No merge. This is
 the first consecutive round without an approved simplification.
 
-## Round 06 — remove obsolete launch preflight (in progress)
+## Round 06 — remove obsolete launch preflight
 
 An independent worker found an internal launch preflight and synthetic failed
 run constructor that served the retired CLI's diagnostic policy. The active
@@ -172,7 +172,7 @@ PASS; the consecutive no-change count resets to zero.
 
 Integrated round 06 as `398905b` with `--no-ff`; pre-merge gate passed.
 
-## Round 07 — consolidate sandbox setup validation (in progress)
+## Round 07 — consolidate sandbox setup validation
 
 Inspection found repeated backend checks and stage probes of only the
 default sandbox, while the agent's actual declared read paths were never
@@ -190,7 +190,7 @@ simpler validation boundary, PASS.
 
 Integrated round 07 as `412dcfa` with `--no-ff`; pre-merge gate passed.
 
-## Round 08 — assess sandbox execution collapse (in progress)
+## Round 08 — assess sandbox execution collapse
 
 The fresh worker identified that the generic process supervisor now has one
 production caller, always bwrap. Unlike a file-only merge, a sandbox-specific
@@ -209,7 +209,7 @@ simpler, PASS.
 
 Integrated round 08 as `88b0696` with `--no-ff`; pre-merge gate passed.
 
-## Round 09 — assess remaining simplification (in progress)
+## Round 09 — assess remaining simplification
 
 A fresh worker inspects the four-file implementation independently. Current
 policy already lives in the default workflow; proposed removals must preserve
@@ -353,7 +353,7 @@ Main is clean and remains at `5ed0e56`; nothing was pushed. Worker worktrees
 and local review reproductions remain available. The core contract, decisions,
 research and architecture are unchanged from the baseline.
 
-**Questions for the owner:**
+**Questions for the owner** (answered since: 1 by ticket 12, 2 by A-146 and ticket 13; 3 remains in the roadmap's decisions):
 
 1. Authorize a follow-up fix and regression for the returned-observer-thenable
    finding before merging? Recommended: fix it before treating this branch as

@@ -1,8 +1,8 @@
 # Parked findings
 
-Findings and capability gaps that survive the core refactor. These are not
-new owner approvals. Historical tickets and findings for deleted code remain
-in Git history; [decisions.md](../decisions.md) preserves the owner's decisions.
+Current findings and capability gaps. These are not owner approvals; the
+owner's decisions are in [decisions.md](../decisions.md). Findings about
+deleted code remain in Git history.
 
 | Source | Finding | Revisit when |
 | --- | --- | --- |
@@ -18,10 +18,3 @@ in Git history; [decisions.md](../decisions.md) preserves the owner's decisions.
 | Core refactor, recovery | Replay preserves spent budget and escalates an interrupted run. It does not adopt a process result, resume an escalated work, or migrate a historical `events` database. | When an owner needs adoption, continuation or historical migration; preserve exact evidence and no-duplicate execution. |
 | Core refactor, trusted extensions | Runtime adapters, extension functions and observer callbacks execute trusted owner TypeScript in the controller process. Synchronous hangs cannot be interrupted by its timer, and trusted code can access host resources. | Before accepting any third-party implementation as untrusted code. |
 | Core refactor, artifact limits | JSON artifacts are capped at 1 MiB; retained packs share the process output cap; snapshots refuse non-UTF-8 paths/links and unsupported tree entries such as submodules. | When a real workflow needs larger artifacts or those tree forms. |
-
-The sandbox owns command execution and sends SIGKILL directly to bwrap on
-cancellation or output overflow, without a grace period. Public API tests verify
-that its PID namespace and parent-death behavior end a descendant in a new
-session after normal exit, overflow, a stage deadline or controller death. The
-unused process-group supervisor, systemd and run-folder mechanisms were removed;
-the wrapper-only 11-e2 finding retired with the wrapper.

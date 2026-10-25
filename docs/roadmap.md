@@ -7,22 +7,13 @@ paid run, external action or risk. [core.md](core.md) remains authoritative.
 
 ## Starting point
 
-The implementation on `refactor/core` at `7785418` is a **core candidate**.
-The simplification run is complete; core v1 and a usable factory are not.
-The stop rule measured whether another simplification was justified, not
-whether every product requirement was met.
-
-The final suite passed 54/54 tests, but the final adversarial review found an
-observer mutation/order defect, subsequently fixed in
-[ticket 12](work/12-observer-isolation.md). The refactor removed substantial
-capability alongside duplication: provider adapters, CLI and layered config,
-durable run adoption, grants, frontends and their tests. A generic JSON
-process adapter and a fake code-host proof do not constitute a real factory.
-See the [final report](refactor/log.md#final-report--2026-10-24) and
-[remaining findings](work/parked.md) for evidence and limitations.
-
-Stop optimizing for source-line reduction. Build one real delivery path and
-let its concrete requirements identify the next core changes.
+Main is a **core candidate**, not core v1. The refactor removed provider
+adapters, the CLI, layered config, durable run adoption, grants and frontends
+([final report](refactor/log.md#final-report--2026-10-24)); ticket 12 fixed the
+observer defect its final review found; ticket 13 added back a Claude Code
+runtime and a small CLI for the first journey's planning phase. Build one real
+delivery path and let its requirements choose the next core changes; do not
+optimize for line count.
 
 ## Development loop
 
@@ -52,7 +43,8 @@ Start with one owner, one existing repository and one small change at a time.
 Use one provider initially, with separate developer and reviewer runs. A short
 document combines the plan and specification; a larger discovery process,
 ticket decomposition, multiple concurrent workers and a dashboard are outside
-this first journey. The provider and operator interface remain to be selected.
+this first journey. The first provider is Claude Code on a subscription token,
+driven through a small CLI (A-146).
 
 1. The owner supplies an idea and repository. The planning stage inspects the
    relevant context and proposes intended behavior, acceptance checks, exclusions
@@ -94,21 +86,22 @@ a newer document or commit. Publication reconciliation must prevent duplicate
 PRs after an ambiguous response. Assess both reliable workflow execution and
 whether the delivered change meets its acceptance criteria.
 
-### Next design step
+### Progress
 
-Define exactly what the owner supplies at entry and what is presented for
-plan/spec approval, using a concrete small repository change. The JSON-output
-example discussed in the session is illustrative, not a selected ticket or
-repository. Then map the journey to the existing public API, workflow and
-integrations, identify demonstrated gaps, and prepare the first bounded
-implementation ticket with public-boundary acceptance evidence. Build a new
-primitive only when the journey exposes a worthwhile need.
-
-Select the first provider and its network/credential boundary, resolve the
-recovery guarantee and durable feedback/owner-command identity, and choose the
-smallest useful operator interface at their implementation boundaries. This
-agreement records the journey; it is not authorization for a paid scenario,
-external publication or implementation during this documentation session.
+- **Phase 1, idea to approved plan:** done in [ticket 13](work/13-phase-1-plan.md).
+  Live run 1 took a bolts_n_blades change through a plan, one feedback round, a
+  refused stale hash and approval. Agents run headless; the owner acts at the
+  workflow's gates through the CLI. Interactive agent sessions in herdr are a
+  later slice.
+- **Next: a full run.** Owner, 2026-10-25: “we should finish a full run -
+  currently we've produced a plan, but we should be able to get that through
+  implement and review before we handle the listed tickets.” That needs real
+  developer and reviewer agents, a real check command, and a decision on
+  whether the run publishes a PR.
+- **Following tickets, after the full run:** session transcripts and event
+  times, plan versions instead of long hashes in the CLI, destination-specific
+  network, separating stage access from output contracts with reusable agents,
+  the install script and a smarter deadline ([parked](work/parked.md)).
 
 ## Three completion boundaries
 
@@ -117,12 +110,14 @@ external publication or implementation during this documentation session.
 A small, dependable public contract used successfully by real integrations.
 Declare this milestone only when:
 
-- The known observer defect has a public-API regression and is fixed.
+- The known observer defect has a public-API regression and is fixed. Done
+  (ticket 12).
 - A real idea-to-PR path exercises specification approval, isolated development,
   checks, bounded reviews, owner-requested changes and publication.
 - The same representative workflow works with two real runtimes and a fake,
   without provider-specific branches in the controller or workflow.
-- Owner feedback is durable and reaches the relevant subsequent stage.
+- Owner feedback is durable and reaches the relevant subsequent stage. Done for
+  design (ticket 13); result revision still to prove.
 - Interruption and escalation have explicit, tested outcomes and an owner
   continuation or abandonment path; no implicit retry or duplicate spend.
 - Repeated external commands are handled safely wherever the shipped
@@ -189,8 +184,8 @@ use, while candidate commands remain confined.
 
 | Milestone | Work | Exit evidence |
 | --- | --- | --- |
-| M1 — Close the refactor | Fix observer mutation/order failure in a follow-up ticket; reconcile current guarantees with prior promises | Regression fails before the fix and passes afterward; full gate and review pass; supported/deferred behavior is explicit |
-| M2 — One real delivery path | One provider, small operator interface, durable revision feedback, real PR publication and a usable failure path | Idea to approved spec to checked/reviewed commit to actual PR; no manual advancement between automatic stages |
+| M1 — Close the refactor (done, ticket 12) | Fix observer mutation/order failure in a follow-up ticket; reconcile current guarantees with prior promises | Regression fails before the fix and passes afterward; full gate and review pass; supported/deferred behavior is explicit |
+| M2 — One real delivery path (in progress: planning done, ticket 13) | One provider, small operator interface, durable revision feedback, real PR publication and a usable failure path | Idea to approved spec to checked/reviewed commit to actual PR; no manual advancement between automatic stages |
 | M3 — Core v1 | Second provider; interruption, escalation and redelivery mechanisms required by those integrations | Core v1 acceptance criteria above, proven through the public API |
 | M4 — Local factory v1 | Defaults, setup/operator documentation, evidence inspection, operating limits and cleanup | Repeatable real small-ticket use with the success/revision/failure evidence above |
 | M5 onward — Expanded capabilities | Richer design/review, parallel work, release tracking and improvement feedback | Separate acceptance criteria for each capability, following the architecture roadmap |
@@ -201,15 +196,16 @@ when the workload needs them, not only in a final hardening phase.
 
 ## Decisions needed at concrete implementation boundaries
 
-1. **Recovery promise.** The historical baseline says a crash never loses paid
-   work. Current recovery kills confined processes and escalates pending runs;
+1. **Recovery promise.** The original design promised that a crash never loses
+   paid work. Current recovery kills confined processes and escalates pending runs;
    it does not adopt completed-but-unrecorded results. Either restore durable
    result adoption with exact run/evidence identity, or obtain and record an
    explicit revision of that promise. This document does not choose for the
    owner. Do not equate replay with lossless recovery.
-2. **First provider and access boundary.** Pi and Claude Code remain the earlier
-   stated targets. Select the first implementation and its network/credential
-   handling before live runs; follow [live-runs.md](live-runs.md).
+2. **Provider access boundary.** Claude Code is the first provider, with
+   declared all-or-nothing network and a token passed by name (A-146). Narrow
+   network to named destinations in the following ticket; Pi or another
+   provider is the second runtime for core v1. Follow [live-runs.md](live-runs.md).
 3. **Human input and escalation.** Define the smallest durable feedback and
    owner continuation/abandonment contract. Decide stage/subject identity and
    deduplication with the actual command transport, not a speculative bus.
@@ -228,13 +224,5 @@ capability, respecting the provider-access prerequisites and open O-018.
 
 ## How this relates to the previous roadmap
 
-The old implementation-plan completion labels describe the old implementation,
-not the refactored branch. Re-prove restored capabilities at the new public API.
-The architecture's contracts/runtime/thin-slice phases map to M1–M3; useful
-quality/review defaults and local operations complete M4. Broader Design Studio,
-worker pools, release tracking and improvement remain later milestones.
-
-The one-off refactor prompt has finished. Do not restart its reduction loop or
-treat its unattended integration permissions as ongoing authorization. A new
-implementation ticket should state its behavior, acceptance evidence and review
-plan, referencing this roadmap and the authoritative core contract.
+Completion labels in the old implementation plan describe deleted code.
+Re-prove restored capabilities at the new public API.
