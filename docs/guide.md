@@ -131,3 +131,155 @@ fresh budget.
 other copy of the state. If the controller dies mid-run, `recover` escalates
 the pending run instead of starting it again; see
 [core.md](core.md#invariants).
+
+## Building a factory
+
+A factory is a directory, outside this checkout, that holds your trusted
+`factory.ts`. The owner's factory, `~/dev/medrengard-factory`, is the worked
+example here. It takes an idea about one repository to an approved plan.
+[`tests/cli.test.ts`](../tests/cli.test.ts) builds the same shape with a fake
+planner, which is the version the suite actually runs.
+
+### Layout
+
+| Entry | Role |
+| --- | --- |
+| `factory.ts` | Default-exports `{ options, workflow }`: the controller [`Options`](../src/index.ts) and the name of the workflow `start` opens. |
+| `package.json` | An `imports` map: `#medrengard` is the core's entry point through `.medrengard`, and `#medrengard/*` the rest of the checkout, so the factory can import `extensions/` and `workflows/`. |
+| `.medrengard` | A symlink to this checkout, ignored by Git. |
+| `state/` | Holds `events.sqlite`, the factory's event log, ignored by Git. |
+
+Run directories (`Options.directory`) live under `/var/tmp/medrengard-factory/runs`,
+outside `$HOME`, so no instructions file in a parent directory is mistaken for
+the clone's own.
+The README covers [running it](../README.md#run-it).
+
+### Options
+
+`Options` has a few fields:
+
+- `path`: the event database.
+- `directory`: where clones and snapshots go.
+- `repository`: the owner repository that works clone.
+- `workflows`: the stage graphs.
+- `agents`: agents by name.
+- `runtimes`: runtimes by name.
+- `extensions`: stage functions by name.
+- `deadlineMs`: the wall-clock limit for one stage run. The default is 30 seconds;
+  the factory sets 30 minutes because a planner takes minutes.
+
+The constructor checks the workflows, agents, runtimes, extensions and
+sandboxes before any work starts. It also refuses to
+open an event log whose works were opened under different workflow
+definitions; see [Changing a workflow](#changing-a-workflow).
+
+### Workflows
+
+A [`Workflow`](../src/index.ts) is a name, a `start` stage and named
+[`Stage`](../src/index.ts)s. The factory's `plan` workflow has two stages:
+`design` runs the planner agent on a read-only clone (`workspace: 'repository'`)
+and produces a document, and `approve` is a human stage whose `accept` ends the
+work, `changes` restarts `plan` with a fresh budget, and `reject` escalates.
+
+Each stage declares:
+
+- `kind`: `agent`, `command` or `human`.
+- What runs: `agent` (a key of `agents`); `command` (an argv); or `extension`
+  (a key of `extensions`), on a `command` stage.
+- `produces`: `document`, `commit` or `verdict`. Agent stages must declare it.
+- `budget`: a positive whole number of attempts. Required except on human
+  stages.
+- `on`: outcome names mapped to a stage, `DONE`, `ESCALATED`, a list of those
+  picked by attempt, or `{ workflow }` to hand off.
+
+[`checkWorkflow`](../src/index.ts) returns the errors for one workflow without
+building a controller. [`workflows/default.ts`](../workflows/default.ts) is the
+full idea-to-PR policy: `design`, then `develop` with a check, up to two
+standard reviews with one fix between them, one adversarial review, an owner gate and a `pr` extension. The
+factory's `plan` is its `design` half, with `accept` ending the work until
+develop has real agents.
+
+### Agents and sandboxes
+
+An [`Agent`](../src/index.ts) names its runtime and carries `role` text,
+`skills`, `mcpServers` and a `sandbox`. Runtime, model and role are chosen
+independently: the factory's `designer` comes from `examplePlanner`, which
+joins [`planner.md`](../workflows/example/planner.md) and
+[`guide.md`](../workflows/example/guide.md) as the role and adds the
+[plan skill](../workflows/example/plan-skill/skills/plan/SKILL.md) as a Claude
+Code plugin. Change the role and the runtime stays the same; change the runtime
+and the role stays the same.
+
+The sandbox is `backend: 'bwrap'` plus `read` (absolute paths to mount
+read-only, such as the `claude` binary), `network` (the host network, off
+unless `true`) and `env` (names of variables to copy in, which must be set when
+the controller starts). The factory's planner declares all three, to reach the
+model with a subscription token; what that exposes, and why it is accepted for
+now, is in the [threat model](security/threat-model.md#repository-agent-with-network-and-token).
+
+### Runtimes
+
+A [`Runtime`](../src/index.ts) has four methods: `start(request, context)`
+begins a run; `events(runId)` yields progress, each recorded as a `runtime`
+event; `result(runId)` returns the claim, `{ outcome, artifact }`; `cancel(runId)`
+stops it. Anything it executes for the candidate must go through
+`context.execute`, which is the sandbox. Three exist:
+
+- [`commandRuntime`](../src/index.ts)`(argv)`: any local program that reads the
+  request and artifacts as JSON on stdin and writes the result as JSON on
+  stdout. [`tests/e2e/contracts.test.ts`](../tests/e2e/contracts.test.ts) runs
+  such programs.
+- `claudeCodeRuntime({ command, settingSources, model })`: headless
+  `claude -p` with read-only tools (`Read`, `Grep`, `Glob`, `Skill`). It turns
+  the final message into a document, so it can plan but not commit or review.
+  It refuses agents with MCP servers.
+- Your own. The stub in the `setup` of
+  [`tests/default-workflow.test.ts`](../tests/default-workflow.test.ts) is a
+  short, complete example: it commits through `context.execute` for the
+  developer and returns verdicts for reviewers.
+
+### Extensions
+
+An extension is a function `(context) => Promise<{ outcome, artifact }>` in
+`Options.extensions`, run by a `command` stage that names it. It is trusted
+code in the controller's process; it receives the subject and every artifact
+so far, and anything it executes through `context.execute` runs in a bare
+sandbox. The `pr` extension in the same `setup` returns a document whose
+`subject` is the reviewed SHA, so the link is evidence rather than a new
+subject.
+
+### Observers
+
+`controller.observe(fn)` calls `fn` with each event as it is written; it
+cannot change state. The CLI does not expose it, so use it from your own
+script around `Controller`, as the [README](../README.md#use-the-primitives)
+does.
+
+### Recipes
+
+**A new repository.** Point `repository` at it. If the runtime loads project
+settings (`settingSources: ['project']`), the repository's `.claude/` hooks
+run inside the planner's sandbox with its network and token: only do this for
+a repository you trust. Add any toolchain outside the system directories
+(`/usr`, `/opt` and the like) to the agents' `sandbox.read`.
+
+**A new stage.** Add it to the workflow with its kind, implementation,
+`produces`, `budget` and edges, and point an existing edge at it. A new agent
+goes in `agents`, a new extension in `extensions`. A `command` stage only runs
+when a commit is the subject, so `plan` cannot gain a check until it has a
+developer. Try it with a fake runtime first, as `tests/cli.test.ts` does; a
+paid run follows [live runs](live-runs.md).
+
+### Changing a workflow
+
+Each `opened` event records a hash of all workflow definitions. Once you
+change any workflow, the controller refuses that database with `workflow
+definitions changed since the recorded run`. Move `events.sqlite` aside,
+or point `path` at a new file, and start new works. Changing agents,
+runtimes or extensions does not trigger this.
+
+### What is not there yet
+
+Real developer and reviewer agents, a check command for a real repository and
+publishing a PR are the next ticket ([STATUS](STATUS.md)); the
+[roadmap](roadmap.md) lists what follows.
