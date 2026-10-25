@@ -17,6 +17,8 @@ export interface Stage {
   command?: string[];
   extension?: string;
   produces?: 'commit' | 'document' | 'verdict';
+  /** `repository` runs in a fresh clone of the owner repository, writable only for commit stages, which always get one. */
+  workspace?: 'repository';
   budget?: number;
   on: Record<string, Transition>;
 }
@@ -95,6 +97,7 @@ export function checkWorkflow(w: Workflow): string[] {
     if (s.kind !== 'human' && (!Number.isSafeInteger(s.budget) || s.budget! <= 0)) errors.push(`workflow stage ${name} needs a finite budget`);
     if (s.kind === 'agent' && (typeof s.agent !== 'string' || !['commit', 'document', 'verdict'].includes(s.produces!))) errors.push(`workflow agent ${name} needs agent and output`);
     if (s.kind === 'command' && ((!!s.command === !!s.extension) || (s.command && (!Array.isArray(s.command) || !s.command.length || !s.command.every(a => typeof a === 'string'))))) errors.push(`workflow command ${name} needs one implementation`);
+    if (s.workspace !== undefined && s.workspace !== 'repository') errors.push(`workflow stage ${name} has an invalid workspace`);
     if (!s.on || typeof s.on !== 'object' || !Object.keys(s.on).length) { errors.push(`workflow stage ${name} needs transitions`); continue; }
     for (const edge of Object.values(s.on)) {
       const choices = Array.isArray(edge) ? edge : [edge];
@@ -301,8 +304,8 @@ export class Controller {
       try {
         // The clone has its own object database and gitdir: candidate writes cannot affect the source repository.
         mkdirSync(state.workspace, { recursive: true });
-        if (stage.produces === 'commit' && !this.events().some(e => e.id === id && e.type === 'workspace' && e.repository)) {
-          if (!this.#options.repository) throw new Error('commit stage requires an owner repository');
+        if ((stage.produces === 'commit' || stage.workspace === 'repository') && !this.events().some(e => e.id === id && e.type === 'workspace' && e.repository)) {
+          if (!this.#options.repository) throw new Error('repository workspace requires an owner repository');
           execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'clone', '--no-local', '--quiet', '--', this.#options.repository, state.workspace], { timeout: 10000, stdio: 'pipe' });
           this.#write(id, { type: 'workspace', path: state.workspace, repository: true }, version++);
         }

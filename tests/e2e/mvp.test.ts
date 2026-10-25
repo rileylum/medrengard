@@ -247,3 +247,29 @@ test('12. owner feedback reaches the next run after a restart and only the lates
   restarted.decide('rifle', 'approve', third.subject!);
   assert.equal(restarted.state('rifle').stage, 'DONE');
 });
+
+test('13. a stage that declares the repository workspace reads a fresh clone it cannot change', async t => {
+  const plan: Workflow = { name: 'plan', start: 'design', stages: {
+    design: { kind: 'agent', agent: 'designer', produces: 'document', workspace: 'repository', budget: 1, on: { done: 'approve' } },
+    approve: { kind: 'human', on: { approve: 'DONE' } },
+  } };
+  const results = new Map<string, unknown>();
+  const planner: Runtime = {
+    async start(request, context) {
+      const r = await context.execute(['sh', '-c', 'git rev-parse HEAD; touch plan.md 2>/dev/null && echo writable || echo read-only']);
+      assert.equal(r.exitCode, 0, r.stderr);
+      results.set(request.runId, { outcome: 'done', artifact: { kind: 'document', content: r.stdout } });
+    },
+    async result(id) { return results.get(id); }, async cancel() {}, async *events() {},
+  };
+  const { controller, repo } = setup(t, planner as Stub, [plan]);
+  const head = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  controller.open('read', 'plan', 'plan a change');
+  const state = await controller.advance('read');
+  assert.equal(state.stage, 'approve', state.reason);
+  assert.equal(state.artifacts[0].content, `${head}\nread-only\n`);
+  assert.notEqual(state.workspace, repo);
+  assert.equal(execFileSync('git', ['-C', repo, 'status', '--porcelain'], { encoding: 'utf8' }), '');
+  const invalid = structuredClone(plan); (invalid.stages.design as any).workspace = 'host';
+  assert(checkWorkflow(invalid).some(e => /workspace/.test(e)));
+});
