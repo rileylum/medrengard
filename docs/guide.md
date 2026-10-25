@@ -102,15 +102,18 @@ needs you, is done, or has stopped with a reason, which is called
 
 ### What each stage can see
 
+Each stage can declare its `access`; without it, it gets these defaults:
+
 | Stage | Works in | Can change it |
 | --- | --- | --- |
 | One that writes code (develop, fix) | The work's private copy of the project, made the first time a stage needs it | Yes |
-| Any other stage once there is code to look at (checks, reviews, the PR step) | A fresh copy of exactly that version's files, without Git's history | No |
-| One that reads the project before any code is written (design) | The work's private copy | No |
-| Anything else | The work's folder: empty unless an earlier stage copied the project into it | No |
+| Any other stage once there is code to look at (checks, reviews, the PR step) | A fresh copy of exactly that version's files, thrown away afterwards | Yes |
+| One that reads the project before any code is written (design, declared with `workspace: 'repository'`) | The work's private copy | No, so it cannot change what the developer starts from |
+| Anything else | A new empty folder | Yes |
 
-An agent gets only the network access and secrets its sandbox grants. Checks
-and extensions get neither. The
+Every process can also write its own private `/tmp`, which is gone when it
+ends. A stage gets only the paths, network access and secrets its agent's
+sandbox and its own `access` grant. The
 [threat model](security/threat-model.md#trust-boundaries) has the details.
 
 ## Building a factory
@@ -173,17 +176,25 @@ whose works were started under different workflows; see
 A [`Workflow`](../src/index.ts) is a name, a `start` stage and named
 [`Stage`](../src/index.ts)s. The factory's `plan` workflow has two. `design`
 runs the planner agent on a read-only copy of the project
-(`workspace: 'repository'`) and produces a document. `approve` is a human
+(`access: { workspace: 'repository' }`) and produces a document. `approve` is a human
 stage: `accept` ends the work, `changes` starts `plan` again with a fresh
 budget, and `reject` escalates.
 
 Each stage declares:
 
 - `kind`: `agent`, `command` or `human`.
-- What runs: `agent` (a name in `agents`), or on a `command` stage either
-  `command` (the command and its arguments) or `extension` (a name in
-  `extensions`).
+- What runs: `agent` (a name in `agents`), or on a `command` stage
+  `extension` (a name in `extensions`). A command stage is your own code; an
+  agent stage hands a request to a runtime.
 - `produces`: `document`, `commit` or `verdict`. Agent stages must say.
+- `access`: what the stage's processes can reach, on top of its agent's
+  sandbox. `workspace` is `repository` (the work's copy of the project),
+  `subject` (a fresh copy of the current commit) or `empty`. `write` is `none`
+  (only `/tmp`), `scratch` (also a folder of its own that is kept after the
+  run, at `$MEDRENGARD_SCRATCH`) or `full` (also the workspace). `read`,
+  `network` and `env` work as in a sandbox. Unset fields take the defaults in
+  [What each stage can see](#what-each-stage-can-see); a stage that writes
+  code must keep the writable copy of the project.
 - `budget`: how many attempts it gets, a positive whole number. Every stage
   except a human one needs it.
 - `on`: each outcome mapped to where it leads: another stage, `DONE`,
@@ -251,8 +262,10 @@ accepts.
 An extension is a function `(context) => Promise<{ outcome, artifact }>` in
 `Options.extensions`, run by a `command` stage that names it. It runs inside
 Medrengard as trusted code and sees the subject and every artifact so far.
-Anything it runs through `context.execute` gets a sandbox with no network and
-no secrets. The `pr` extension in the same `setup` returns a document whose
+Anything it runs through `context.execute` gets the stage's `access`.
+[`commandCheck`](../extensions/command-check/index.ts)`(argv)` is the shipped
+check: it runs a command and turns exit code 0 into `PASS` and anything else
+into `FAIL`, keeping the output. The `pr` extension in the same `setup` returns a document whose
 `subject` is the reviewed SHA, so the link counts as evidence about that code
 rather than as a new subject.
 
@@ -299,10 +312,9 @@ PR are the next piece of work ([STATUS](STATUS.md)); the
 `Controller.advance` runs automatic stages until the work reaches a human
 stage, `DONE` or `ESCALATED`. Before each run it escalates instead if the
 stage's budget is spent, or if the stage already failed on this subject and
-the owner has not decided since. Each `started` event spends one attempt. A
-command stage turns exit code 0 into `PASS` and anything else into `FAIL`, and
-escalates if there is no commit to check; an extension stage has no such
-requirement.
+the owner has not decided since. Each `started` event spends one attempt and
+records the run's scratch folder, if it has one. A stage whose `access` asks
+for a `subject` copy before there is a commit escalates.
 
 #### How a claim is checked
 

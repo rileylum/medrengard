@@ -20,10 +20,11 @@ and evidence binds to the exact commit or document it was about. See
 | --- | --- |
 | Owner's TypeScript workflows, agents, runtime adapters and extensions | Trusted host code. The owner supplies these directly; candidate definitions are never imported. This includes `extensions/claude-code` and the factory's `factory.ts`, which `cli/medrengard.ts` imports from its working directory. |
 | Controller | Sole writer of workflow state and budget. It validates claims and exact artifact subjects before recording advancement. It makes the work's first clone on the host from the owner's repository, with hooks disabled. |
-| Repository-reading agent process (`workspace: 'repository'`, e.g. the shipped default's `design`) | Bwrap over the work's `--no-local` clone, read-only, including its gitdir and every fetched ref; declared read paths and system directories readable. Network and environment variables only as its agent's `Sandbox` declares. The owner's phase-1 planner declares network and `CLAUDE_CODE_OAUTH_TOKEN`. |
-| Developer process | Bwrap with the same clone writable, declared read paths and system directories readable. Network and environment variables only as its agent's `Sandbox` declares. |
-| Reviewer agent processes | Bwrap over a read-only snapshot of retained commit objects, without the developer's dirty files or gitdir. Network and environment variables only as the reviewer agent's `Sandbox` declares. |
-| Check commands, extension-stage executions and the controller's own Git and snapshot calls | Bwrap with no network, no declared variables and no `Sandbox.read` paths. Checks see the read-only snapshot. |
+| Stage processes, agent or command | Bwrap with what the agent's `Sandbox` and the stage's `access` declare together: read paths, network, named variables, and write `none` (a private `/tmp` only), `scratch` (plus a folder of the run's own, kept after it) or `full` (plus the workspace). System directories are readable. |
+| Repository-reading stage (`access.workspace: 'repository'` without a commit, e.g. the shipped default's `design`) | The work's `--no-local` clone, read-only by default, including its gitdir and every fetched ref. The owner's planner declares network and `CLAUDE_CODE_OAUTH_TOKEN`. |
+| Developer stage (`produces: 'commit'`) | The same clone, always writable; setup refuses less. |
+| Stages after a commit (checks, reviewers, publication) | By default a writable copy of the retained commit's stored files, made fresh for the run and thrown away, without the developer's dirty files or gitdir. Writes cannot change the commit the evidence names. |
+| The controller's own Git and snapshot calls | Bwrap with no network, no declared variables and no `Sandbox.read` paths. |
 | Claude Code (`claudeCodeRuntime`) | Runs `claude -p` inside its agent's sandbox, with only the `Read`, `Grep`, `Glob` and `Skill` tools, `--strict-mcp-config` and `--no-session-persistence`. Settings default to `user`, empty under the private home. `project` loads the clone's `.claude/` settings, including hooks and permission rules; its hooks run inside the same sandbox, with its network and token. Use it only for a trusted repository. |
 | Observers | Trusted host callbacks receiving immutable events. Controller methods refuse mutation in observer context, including asynchronous continuations. This is an API boundary, not isolation from a malicious owner module. |
 | Issue text, runtime results and candidate files | Untrusted data; never evaluated as controller code or configuration. Owner feedback also reaches agents only as prompt text. |
@@ -47,9 +48,11 @@ and evidence binds to the exact commit or document it was about. See
   network, including loopback services, Docker bridges and abstract Unix
   sockets. Destination-specific network is a following ticket (A-146).
 - Bwrap is started with an environment holding only `PATH`, `HOME` (its
-  private `/tmp`), `LANG` and the names in `Sandbox.env`, copied from the
-  controller's environment. Values pass through bwrap's own environment, never
-  its argv. Setup refuses invalid, reserved (`PATH`, `HOME`, `LANG`) and unset
+  private `/tmp`), `LANG`, `MEDRENGARD_SCRATCH` when the run has a scratch
+  folder, and the names in the agent's `Sandbox.env` and the stage's
+  `access.env`, copied from the controller's environment. Values pass through bwrap's own environment, never
+  its argv. Setup refuses invalid, reserved (`PATH`, `HOME`, `LANG`,
+  `MEDRENGARD_SCRATCH`) and unset
   names. Owners must choose `sandbox.read` deliberately: anything mounted is
   readable by the run.
 - The sandbox sends SIGKILL directly to bwrap on cancellation or output
@@ -90,6 +93,7 @@ to the developer and to repository-reading stages such as `design`
 or LFS conversion. There are no memory/disk quotas, global spend limits or
 command-ID deduplication for owner decisions. Process output caps, stage
 deadlines and finite workflow budgets do not substitute for those limits.
-Sandbox execution captures bounded output through pipes; there are no durable
-run folders, transcripts beyond the final result, or independent systemd
+Sandbox execution captures bounded output through pipes; a run's scratch
+folder is kept but not cleaned up, and there are no transcripts beyond the
+final result, or independent systemd
 runtime deadlines.

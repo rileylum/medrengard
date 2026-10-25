@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import type { Agent, Workflow } from '../src/index.ts';
+import type { Access, Agent, Workflow } from '../src/index.ts';
 
 const example = (name: string) => new URL(`example/${name}`, import.meta.url).pathname;
 
@@ -10,17 +10,17 @@ export function examplePlanner(runtime: string, sandbox: Agent['sandbox']): Agen
   return { runtime, role, skills: [example('plan-skill')], mcpServers: {}, sandbox: { ...sandbox, read: [...sandbox.read ?? [], example('plan-skill')] } };
 }
 
-/** Idea to PR policy; the owner supplies agents, check argv and the pr extension. */
-export function defaultWorkflows(check: string[]): Workflow[] {
+/** Idea to PR policy; the owner supplies the agents, the `check` and `pr` extensions, and the access the check needs. */
+export function defaultWorkflows(options: { check?: Access } = {}): Workflow[] {
   return [
     { name: 'design', start: 'design', stages: {
-      design: { kind: 'agent', agent: 'designer', produces: 'document', workspace: 'repository', budget: 1, on: { done: 'approve' } },
+      design: { kind: 'agent', agent: 'designer', produces: 'document', access: { workspace: 'repository' }, budget: 1, on: { done: 'approve' } },
       // Each round of owner feedback starts a fresh design run with a new budget.
       approve: { kind: 'human', on: { accept: { workflow: 'develop' }, changes: { workflow: 'design' }, reject: 'ESCALATED' } },
     } },
     { name: 'develop', start: 'develop', stages: {
       develop: { kind: 'agent', agent: 'developer', produces: 'commit', budget: 1, on: { done: 'check' } },
-      check: { kind: 'command', command: check, budget: 2, on: { PASS: 'standard', FAIL: 'ESCALATED' } },
+      check: { kind: 'command', extension: 'check', access: options.check, budget: 2, on: { PASS: 'standard', FAIL: 'ESCALATED' } },
       standard: { kind: 'agent', agent: 'standard', produces: 'verdict', budget: 2, on: { PASS: 'adversarial', FAIL: ['fix', 'ESCALATED'] } },
       fix: { kind: 'agent', agent: 'developer', produces: 'commit', budget: 1, on: { done: 'check' } },
       adversarial: { kind: 'agent', agent: 'adversarial', produces: 'verdict', budget: 1, on: { PASS: 'owner', FAIL: 'ESCALATED' } },

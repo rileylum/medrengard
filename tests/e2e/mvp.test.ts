@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { commandCheck } from '../../extensions/command-check/index.ts';
 import { Controller, checkWorkflow, commandRuntime, type Workflow, type Runtime, type AgentRequest, type StageContext } from '../../src/index.ts';
 
 const design: Workflow = { name: 'design', start: 'design', stages: {
@@ -13,7 +14,7 @@ const design: Workflow = { name: 'design', start: 'design', stages: {
 function develop(standard = 2, adversarial = 1): Workflow {
   return { name: 'develop', start: 'develop', stages: {
     develop: { kind: 'agent', agent: 'developer', produces: 'commit', budget: 1, on: { done: 'check' } },
-    check: { kind: 'command', command: ['node', '-e', "const fs=require('fs'); if (fs.existsSync('secret.txt')) process.exit(3); if (!fs.readFileSync('answer.txt','utf8').startsWith('answer')) process.exit(1); try { fs.writeFileSync('answer.txt','evil'); process.exit(2) } catch {} console.log('checked');"], budget: 4, on: { PASS: 'standard', FAIL: 'ESCALATED' } },
+    check: { kind: 'command', extension: 'check', access: { write: 'none' }, budget: 4, on: { PASS: 'standard', FAIL: 'ESCALATED' } },
     standard: { kind: 'agent', agent: 'standard', produces: 'verdict', budget: standard, on: { PASS: 'adversarial', FAIL: ['fix', 'ESCALATED'] } },
     fix: { kind: 'agent', agent: 'developer', produces: 'commit', budget: 3, on: { done: 'check' } },
     adversarial: { kind: 'agent', agent: 'adversarial', produces: 'verdict', budget: adversarial, on: { PASS: 'owner', FAIL: 'ESCALATED' } },
@@ -52,7 +53,9 @@ function setup(t: any, runtime = new Stub(), workflows = [design, develop()]) {
     runtime: 'stub', role: name === 'designer' ? 'design role' : `${name} role`, skills: [`${name} skill`], mcpServers: { docs: { command: 'docs-server', args: [name] } }, sandbox: { backend: 'bwrap' },
   }]));
   const prs: any[] = [];
-  const options = { path: join(dir, 'events.sqlite'), directory: join(dir, 'runs'), repository: repo, workflows, agents, runtimes: { stub: runtime }, extensions: {
+  // The check declares no write: a stored file it tries to change stays as committed.
+  const check = commandCheck(['node', '-e', "const fs=require('fs'); if (fs.existsSync('secret.txt')) process.exit(3); if (!fs.readFileSync('answer.txt','utf8').startsWith('answer')) process.exit(1); try { fs.writeFileSync('answer.txt','evil'); process.exit(2) } catch {} console.log('checked');"]);
+  const options = { path: join(dir, 'events.sqlite'), directory: join(dir, 'runs'), repository: repo, workflows, agents, runtimes: { stub: runtime }, extensions: { check,
     pr: async (context: StageContext) => { prs.push({ sha: context.subject, package: context.artifacts }); return { outcome: 'done', artifact: { kind: 'document', content: 'https://fake.invalid/pr/1', subject: context.subject } }; },
   } };
   const controller = new Controller(options);
@@ -158,7 +161,7 @@ test('8. actual controller crash and restart replays without duplicate runs or b
   const { controller, options, dir } = setup(t);
   controller.open('crash', 'design', 'answer'); controller.close();
   const script = join(dir, 'crash.mts');
-  writeFileSync(script, `import { Controller } from ${JSON.stringify(new URL('../../src/index.ts', import.meta.url).href)};\nconst options=${JSON.stringify({ ...options, runtimes: undefined, extensions: undefined })};\noptions.extensions={pr:async()=>{}};\noptions.runtimes={stub:{start(){process.kill(process.pid,'SIGKILL')},async result(){},async cancel(){},async *events(){}}};\nconst c=new Controller(options); await c.advance('crash');`);
+  writeFileSync(script, `import { Controller } from ${JSON.stringify(new URL('../../src/index.ts', import.meta.url).href)};\nconst options=${JSON.stringify({ ...options, runtimes: undefined, extensions: undefined })};\noptions.extensions={pr:async()=>{},check:async()=>{}};\noptions.runtimes={stub:{start(){process.kill(process.pid,'SIGKILL')},async result(){},async cancel(){},async *events(){}}};\nconst c=new Controller(options); await c.advance('crash');`);
   const crash = spawnSync(process.execPath, [script]);
   assert.equal(crash.signal, 'SIGKILL', crash.stderr.toString());
   const restarted = new Controller(options); t.after(() => restarted.close());
@@ -250,7 +253,7 @@ test('12. owner feedback reaches the next run after a restart and only the lates
 
 test('13. a stage that declares the repository workspace reads a fresh clone it cannot change', async t => {
   const plan: Workflow = { name: 'plan', start: 'design', stages: {
-    design: { kind: 'agent', agent: 'designer', produces: 'document', workspace: 'repository', budget: 1, on: { done: 'approve' } },
+    design: { kind: 'agent', agent: 'designer', produces: 'document', access: { workspace: 'repository' }, budget: 1, on: { done: 'approve' } },
     approve: { kind: 'human', on: { approve: 'DONE' } },
   } };
   const results = new Map<string, unknown>();
@@ -270,6 +273,6 @@ test('13. a stage that declares the repository workspace reads a fresh clone it 
   assert.equal(state.artifacts[0].content, `${head}\nread-only\n`);
   assert.notEqual(state.workspace, repo);
   assert.equal(execFileSync('git', ['-C', repo, 'status', '--porcelain'], { encoding: 'utf8' }), '');
-  const invalid = structuredClone(plan); (invalid.stages.design as any).workspace = 'host';
-  assert(checkWorkflow(invalid).some(e => /workspace/.test(e)));
+  const invalid = structuredClone(plan); (invalid.stages.design as any).access.workspace = 'host';
+  assert(checkWorkflow(invalid).some(e => /access/.test(e)));
 });

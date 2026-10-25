@@ -23,7 +23,8 @@ in [ticket 13](work/13-phase-1-plan.md).
    `/var/tmp/medrengard/live-N/`, or the owner's factory as built when the owner
    approves it (ticket 13 did, for read-only design stages). Supply trusted TypeScript `Options`,
    agent/runtime definitions and extensions to `Controller`. Import
-   `defaultWorkflows(checkArgv)` if its policy fits. A factory drives the
+   `defaultWorkflows({ check })` if its policy fits, with the `check` and `pr`
+   extensions. A factory drives the
    controller through `cli/medrengard.ts`.
 3. Show the owner the scenario inputs and definitions before paid execution.
    Use a named fake runtime to seed deterministic failures through the same

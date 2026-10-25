@@ -28,7 +28,7 @@ const options: Options = {
   path: ${JSON.stringify(join(dir, 'state', 'events.sqlite'))}, directory: ${JSON.stringify(join(dir, 'state', 'runs'))},
   repository: ${JSON.stringify(join(dir, 'repository'))},
   workflows: [{ name: 'plan', start: 'design', stages: {
-    design: { kind: 'agent', agent: 'planner', produces: 'document', workspace: 'repository', budget: 1, on: { done: 'approve' } },
+    design: { kind: 'agent', agent: 'planner', produces: 'document', access: { workspace: 'repository' }, budget: 1, on: { done: 'approve' } },
     approve: { kind: 'human', on: { accept: 'DONE', changes: { workflow: 'plan' } } },
   } }],
   agents: { planner: { runtime: 'fake', role: '', skills: [], mcpServers: {}, sandbox: { backend: 'bwrap', env: ['SF_CLI_TOKEN'] } } },

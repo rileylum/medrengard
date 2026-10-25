@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Controller, type Artifact, type Options, type Runtime } from '../src/index.ts';
 import { defaultWorkflows, examplePlanner } from '../workflows/default.ts';
+import { commandCheck } from '../extensions/command-check/index.ts';
 
 function setup(t: TestContext, reviews = ['FAIL', 'PASS', 'FAIL', 'PASS'], adversarial = ['PASS', 'PASS']) {
   const directory = mkdtempSync(join(tmpdir(), 'factory-default-'));
@@ -37,9 +38,9 @@ function setup(t: TestContext, reviews = ['FAIL', 'PASS', 'FAIL', 'PASS'], adver
   const prs: { sha: string; package: Artifact[] }[] = [];
   const options: Options = {
     path: join(directory, 'events.sqlite'), directory: join(directory, 'runs'), repository,
-    workflows: defaultWorkflows(['node', '-e', "if(!require('fs').readFileSync('answer','utf8').startsWith('answer ')) process.exit(1)"]),
+    workflows: defaultWorkflows(),
     agents: Object.fromEntries(['designer', 'developer', 'standard', 'adversarial'].map(role => [role, { runtime: 'stub', role, skills: [], mcpServers: {}, sandbox: { backend: 'bwrap' } }])),
-    runtimes: { stub: runtime }, extensions: { pr: async context => {
+    runtimes: { stub: runtime }, extensions: { check: commandCheck(['sh', '-c', 'grep -q "^answer " answer']), pr: async context => {
       prs.push({ sha: context.subject!, package: context.artifacts });
       return { outcome: 'done', artifact: { kind: 'document', subject: context.subject, content: 'https://fake.invalid/pr/1' } };
     } },
@@ -100,9 +101,9 @@ for (const gate of ['standard', 'adversarial']) test(`shipped workflow escalates
 test('automatic workflow handoffs cannot reset budgets in a cycle', () => {
   for (const destinations of [['one'], ['two', 'one']]) {
     const names = ['one', 'two'];
-    assert.throws(() => new Controller({ path: ':memory:', directory: tmpdir(), agents: {}, runtimes: {},
+    assert.throws(() => new Controller({ path: ':memory:', directory: tmpdir(), agents: {}, runtimes: {}, extensions: { handoff: async () => ({}) },
       workflows: destinations.map((next, i) => ({ name: names[i], start: 'handoff', stages: {
-        handoff: { kind: 'command', command: ['true'], budget: 1, on: { PASS: { workflow: next } } },
+        handoff: { kind: 'command', extension: 'handoff', budget: 1, on: { PASS: { workflow: next } } },
       } })),
     }), /handoffs.*cycle/);
   }

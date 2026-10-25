@@ -4,23 +4,36 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { checkSandbox, execute, type Sandbox, type RunResult } from './sandbox.ts';
+import { checkSandbox, execute, type Policy, type Sandbox, type RunResult } from './sandbox.ts';
 
 type Destination = string | { workflow: string };
 type Transition = Destination | Destination[];
 /** A checked graph; transition lists select an edge by the stage's attempt number. */
 export interface Workflow { name: string; start: string; stages: Record<string, Stage> }
-/** The owner declares implementation, output contract, finite budget and named edges. */
+/** The owner declares implementation, output contract, access, finite budget and named edges. */
 export interface Stage {
+  /** An agent stage hands a request to a runtime; a command stage runs the named extension, trusted owner code. */
   kind: 'agent' | 'command' | 'human';
   agent?: string;
-  command?: string[];
   extension?: string;
   produces?: 'commit' | 'document' | 'verdict';
-  /** `repository` runs in a fresh clone of the owner repository, writable only for commit stages, which always get one. */
-  workspace?: 'repository';
+  access?: Access;
   budget?: number;
   on: Record<string, Transition>;
+}
+/**
+ * What a stage's processes can reach, joined with its agent's sandbox. Unset fields default from the output contract:
+ * a commit stage gets the clone, a stage after a commit a disposable copy of it, otherwise an empty folder; all writable
+ * except a clone read by a stage that does not commit, so it cannot change what the developer starts from.
+ */
+export interface Access {
+  /** `repository`: the work's clone; `subject`: a fresh copy of the current commit; `empty`: a new folder per run. */
+  workspace?: 'empty' | 'repository' | 'subject';
+  /** Every process has a private /tmp. `scratch` adds a folder kept after the run (`MEDRENGARD_SCRATCH`); `full` also the workspace. */
+  write?: 'none' | 'scratch' | 'full';
+  read?: string[];
+  network?: boolean;
+  env?: string[];
 }
 /** Runtime selection is independent of instructions and sandbox configuration. */
 export interface Agent { runtime: string; role: string; skills: string[]; mcpServers: Record<string, unknown>; sandbox: Sandbox }
@@ -39,6 +52,8 @@ export interface Artifact { kind: 'commit' | 'document' | 'verdict'; hash: strin
 /** Stage implementations receive data and confined execution, never a state writer. */
 export interface StageContext {
   subject?: string;
+  /** The run's kept scratch folder, when its access writes `scratch` or `full`. */
+  scratch?: string;
   artifacts: Artifact[];
   execute(argv: string[], options?: { signal?: AbortSignal; input?: string }): Promise<RunResult>;
 }
@@ -75,6 +90,15 @@ for(const row of text(git('ls-tree','-rz','--full-tree',sha)).split('\\0').filte
 `;
 const observer = new AsyncLocalStorage<boolean>();
 const terminal = new Set(['DONE', 'ESCALATED']);
+const STAGE_KEYS = new Set(['kind', 'agent', 'extension', 'produces', 'access', 'budget', 'on']);
+const strings = (v: unknown) => v === undefined || (Array.isArray(v) && v.every(x => typeof x === 'string'));
+function checkAccess(a: unknown): boolean {
+  if (a === undefined) return true;
+  if (!a || typeof a !== 'object') return false;
+  const { workspace, write, read, network, env, ...rest } = a as Access;
+  return !Object.keys(rest).length && [undefined, 'empty', 'repository', 'subject'].includes(workspace) && [undefined, 'none', 'scratch', 'full'].includes(write)
+    && strings(read) && strings(env) && [undefined, true, false].includes(network);
+}
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v));
 function frozen<T>(v: T): T {
@@ -96,8 +120,11 @@ export function checkWorkflow(w: Workflow): string[] {
     if (terminal.has(name) || !s || !['agent', 'command', 'human'].includes(s.kind)) { errors.push(`workflow stage ${name} has invalid kind or name`); continue; }
     if (s.kind !== 'human' && (!Number.isSafeInteger(s.budget) || s.budget! <= 0)) errors.push(`workflow stage ${name} needs a finite budget`);
     if (s.kind === 'agent' && (typeof s.agent !== 'string' || !['commit', 'document', 'verdict'].includes(s.produces!))) errors.push(`workflow agent ${name} needs agent and output`);
-    if (s.kind === 'command' && ((!!s.command === !!s.extension) || (s.command && (!Array.isArray(s.command) || !s.command.length || !s.command.every(a => typeof a === 'string'))))) errors.push(`workflow command ${name} needs one implementation`);
-    if (s.workspace !== undefined && s.workspace !== 'repository') errors.push(`workflow stage ${name} has an invalid workspace`);
+    if (s.kind === 'command' && (typeof s.extension !== 'string' || !s.extension)) errors.push(`workflow command ${name} needs an extension`);
+    const unknown = Object.keys(s).filter(k => !STAGE_KEYS.has(k));
+    if (unknown.length) errors.push(`workflow stage ${name} has unknown fields ${unknown.join(', ')}`);
+    if (!checkAccess(s.access)) errors.push(`workflow stage ${name} has invalid access`);
+    else if (s.produces === 'commit' && ((s.access?.workspace ?? 'repository') !== 'repository' || (s.access?.write ?? 'full') !== 'full')) errors.push(`workflow stage ${name} produces a commit and needs a writable clone`);
     if (!s.on || typeof s.on !== 'object' || !Object.keys(s.on).length) { errors.push(`workflow stage ${name} needs transitions`); continue; }
     for (const edge of Object.values(s.on)) {
       const choices = Array.isArray(edge) ? edge : [edge];
@@ -145,7 +172,7 @@ export class Controller {
     };
     for (const name of this.#workflows.keys()) visit(name);
     if (errors.length) throw new Error(errors.join('; '));
-    checkSandbox(...Object.values(options.agents).map(a => a.sandbox));
+    checkSandbox(...Object.values(options.agents).map(a => a.sandbox), ...options.workflows.flatMap(w => Object.values(w.stages)).map(s => ({ backend: 'bwrap', ...s.access })));
     this.#options = { ...options, workflows: frozen(copy(options.workflows)), directory: resolve(options.directory), repository: options.repository ? resolve(options.repository) : undefined, agents: frozen(copy(options.agents)) };
     mkdirSync(this.#options.directory, { recursive: true });
     this.#db = new DatabaseSync(options.path);
@@ -295,32 +322,44 @@ export class Controller {
       if ((state.spent[state.stage] ?? 0) >= stage.budget!) { this.#write(id, { type: 'escalated', reason: `budget exhausted at ${state.stage}` }, version); return this.state(id); }
       if (this.#failedWithoutOwner(id, state)) { this.#write(id, { type: 'escalated', reason: `failed stage ${state.stage} needs a new subject or the owner before retry` }, version); return this.state(id); }
       const runId = randomUUID();
-      this.#write(id, { type: 'started', runId, stage: state.stage }, version++);
+      const commit = state.artifacts.findLast(a => a.kind === 'commit' && a.sha === state.subject);
+      const workspaceKind = stage.access?.workspace ?? (stage.produces === 'commit' ? 'repository' : commit ? 'subject' : 'empty');
+      const write = stage.access?.write ?? (workspaceKind === 'repository' && stage.produces !== 'commit' ? 'none' : 'full');
+      const scratch = write === 'none' ? undefined : join(this.#options.directory, 'scratch', runId);
+      this.#write(id, { type: 'started', runId, stage: state.stage, ...(scratch && { scratch }) }, version++);
       state = this.state(id);
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), this.#options.deadlineMs ?? 30000);
       let runtime: Runtime | undefined;
       let active = true;
       try {
-        // The clone has its own object database and gitdir: candidate writes cannot affect the source repository.
-        mkdirSync(state.workspace, { recursive: true });
-        if ((stage.produces === 'commit' || stage.workspace === 'repository') && !this.events().some(e => e.id === id && e.type === 'workspace' && e.repository)) {
-          if (!this.#options.repository) throw new Error('repository workspace requires an owner repository');
-          execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'clone', '--no-local', '--quiet', '--', this.#options.repository, state.workspace], { timeout: 10000, stdio: 'pipe' });
-          this.#write(id, { type: 'workspace', path: state.workspace, repository: true }, version++);
-        }
-        const agent = stage.agent ? this.#options.agents[stage.agent] : undefined;
         let workspace = state.workspace;
-        const commit = state.artifacts.findLast(a => a.kind === 'commit' && a.sha === state.subject);
-        if (stage.produces !== 'commit' && commit) {
-          workspace = join(this.#options.directory, randomUUID()); mkdirSync(workspace);
-          const snapshot = await this.#execute(workspace, [process.execPath, '-e', SNAPSHOT, commit.repository!, state.subject!, workspace], true, { backend: 'bwrap' }, abort.signal, [commit.repository!, process.execPath]);
-          if (snapshot.exitCode !== 0) throw new Error(`cannot materialize commit: ${snapshot.stderr}`);
+        if (workspaceKind === 'repository') {
+          // The clone has its own object database and gitdir: candidate writes cannot affect the source repository.
+          mkdirSync(state.workspace, { recursive: true });
+          if (!this.events().some(e => e.id === id && e.type === 'workspace' && e.repository)) {
+            if (!this.#options.repository) throw new Error('repository workspace requires an owner repository');
+            execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'clone', '--no-local', '--quiet', '--', this.#options.repository, state.workspace], { timeout: 10000, stdio: 'pipe' });
+            this.#write(id, { type: 'workspace', path: state.workspace, repository: true }, version++);
+          }
+        } else {
+          workspace = join(this.#options.directory, randomUUID()); mkdirSync(workspace, { recursive: true });
+          if (workspaceKind === 'subject') {
+            if (!commit) throw new Error('subject workspace needs a commit');
+            const snapshot = await this.#execute(workspace, [process.execPath, '-e', SNAPSHOT, commit.repository!, state.subject!, workspace], true, { backend: 'bwrap' }, abort.signal, [commit.repository!, process.execPath]);
+            if (snapshot.exitCode !== 0) throw new Error(`cannot materialize commit: ${snapshot.stderr}`);
+          }
         }
-        const context: StageContext = frozen({ subject: state.subject, artifacts: copy(state.artifacts), execute: (argv: string[], options: { signal?: AbortSignal; input?: string } = {}) => {
+        if (scratch) mkdirSync(scratch, { recursive: true });
+        const agent = stage.agent ? this.#options.agents[stage.agent] : undefined;
+        const base = agent?.sandbox ?? { backend: 'bwrap' };
+        const access = stage.access ?? {};
+        const sandbox: Sandbox = { ...base, read: [...base.read ?? [], ...access.read ?? []], env: [...base.env ?? [], ...access.env ?? []], network: !!(base.network || access.network) };
+        const policy: Policy = { cwd: workspace, write: [...write === 'full' ? [workspace] : [], ...scratch ? [scratch] : []], read: write === 'full' ? [] : [workspace], env: scratch ? { MEDRENGARD_SCRATCH: scratch } : {} };
+        const context: StageContext = frozen({ subject: state.subject, scratch, artifacts: copy(state.artifacts), execute: (argv: string[], options: { signal?: AbortSignal; input?: string } = {}) => {
           if (!active || abort.signal.aborted) return Promise.reject(new Error('stage execution has ended'));
           if (!Array.isArray(argv) || !argv.length || !argv.every(a => typeof a === 'string')) return Promise.reject(new Error('invalid command'));
-          return this.#execute(workspace, argv, stage.produces === 'commit', agent?.sandbox ?? { backend: 'bwrap' }, options.signal ? AbortSignal.any([options.signal, abort.signal]) : abort.signal, [], options.input ?? '');
+          return execute(sandbox, policy, argv, options.signal ? AbortSignal.any([options.signal, abort.signal]) : abort.signal, options.input ?? '');
         } });
         let result: any;
         const operation = async () => {
@@ -333,12 +372,7 @@ export class Controller {
             }
             return runtime.result(runId);
           }
-          if (stage.extension) return this.#options.extensions![stage.extension](context);
-          if (!state.subject || !state.artifacts.some(a => a.kind === 'commit' && a.sha === state.subject)) throw new Error('command needs a commit');
-          const command = await context.execute(stage.command!);
-          if (command.status !== 'exited' || command.exitCode === null) throw new Error('command did not finish');
-          const verdict = command.exitCode === 0 ? 'PASS' : 'FAIL';
-          return { outcome: verdict, artifact: { kind: 'verdict', verdict, subject: state.subject, findings: [], content: command.stdout + command.stderr } };
+          return this.#options.extensions![stage.extension!](context);
         };
         const expired = new Promise<never>((_, reject) => abort.signal.addEventListener('abort', () => reject(new Error('stage deadline exceeded')), { once: true }));
         result = data(await Promise.race([operation(), expired]));

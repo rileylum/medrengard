@@ -168,3 +168,30 @@ needed. Owner replies are quoted in A-148 and A-149: stage access and
 command stages become configurable primitives; the stage deadline stays and is
 raised if needed; event times and transcripts are in; the run publishes; Sonnet
 throughout; escalation recovery is out.
+
+### 2026-10-26 — Step b: stage access and command stages as code
+
+Owner, on `write`: “I think we want 3 options, full write, scratch, no
+write. Full write it can do everything; scratch, it can't write to the
+workspace but has a persistent folder that outlives the session it can write
+to (or we need some way to capture whats there before the session ends);
+no-write, only tmp files”. Built as `write: 'none' | 'scratch' | 'full'`,
+nested: every process has a private `/tmp`; `scratch` adds a folder per run
+under the controller's directory, recorded in the `started` event and passed as
+`MEDRENGARD_SCRATCH` and `context.scratch`; `full` adds the workspace. Scratch
+is kept but is not evidence, and later stages do not see it.
+
+`Stage.access` replaces `Stage.workspace`; `Stage.command` is removed and
+`extensions/command-check` ships `commandCheck(argv)`. Setup refuses unknown
+stage fields (so an old `workspace` or `command` fails loudly), invalid access,
+a commit stage without a writable clone, and the reserved
+`MEDRENGARD_SCRATCH`. `Access`, `Sandbox` and `RunResult` are exported (the
+parked public-API finding is closed). `defaultWorkflows` now takes
+`{ check?: Access }`.
+
+Tests: `tests/e2e/access.test.ts`, 12 cases, red then green; the existing
+suites moved to the new fields. Gate:
+`systemd-run --user --scope --quiet npm test` 89/89.
+
+The owner's factory still declares `workspace: 'repository'`, so through the
+`.medrengard` symlink it is refused until step g updates it.

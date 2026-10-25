@@ -23,7 +23,7 @@ function setup(t: TestContext, role = 'You are the planner.', settingSources?: s
   const fake = join(dir, 'claude.js'); writeFileSync(fake, FAKE);
   const skill = join(dir, 'plan-skill'); execFileSync('mkdir', [skill]);
   const plan: Workflow = { name: 'plan', start: 'design', stages: {
-    design: { kind: 'agent', agent: 'planner', produces: 'document', workspace: 'repository', budget: 1, on: { done: 'approve' } },
+    design: { kind: 'agent', agent: 'planner', produces: 'document', access: { workspace: 'repository' }, budget: 1, on: { done: 'approve' } },
     approve: { kind: 'human', on: { approve: 'DONE', changes: { workflow: 'plan' } } },
   } };
   const controller = new Controller({
