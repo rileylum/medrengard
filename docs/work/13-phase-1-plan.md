@@ -180,3 +180,34 @@ headless check. Result through `src/sandbox.ts` with network, the token only,
 `--setting-sources project`): exit 0, 3.2 s, `subtype: success`,
 `is_error: false`, `result: "ok"`, one turn, model `claude-sonnet-5-5`,
 reported cost $0.0081. This does not approve the live run.
+
+### 2026-10-25 — Live run 1
+
+Owner approval: after the plan (factory as built against `~/dev/bolts_n_blades`,
+state in the factory's `state/` rather than `/var/tmp/software_factory/live-N/`;
+two Sonnet planner runs, no retries; the owner runs the CLI), the owner asked
+“Why don't I run the CLI command?” and then ran it. Work `4834a9c6`, input
+verbatim as above.
+
+- Run 1: `opened → started design → workspace → runtime exit 0 → completed →
+  approve`, plan `f832bfed…3b45`, 3740 characters, “a minute or two at most”
+  (owner; events carry no time). It raised the Hit-weapon question unprompted:
+  `MSG_HIT` carries `victim, box, damage, killed` and no weapon, with options to
+  infer from damage or add a field. Its default muted online knife hits, and
+  approving would have meant that default; the owner found choosing between
+  nested options confusing.
+- Feedback, verbatim: “Okay option A is correct, except we'll need to
+  implement the weapon field to MSG_HIT so we can correctly just remove the
+  rifle hit in online play whilst preserving the knife”.
+- Run 2 reused the clone: plan `2e664003…884a` adds `weapon` to `MSG_HIT`,
+  bumps the protocol to 10 and plays the sound unless the weapon is the rifle;
+  one open question with a default.
+- Stale `accept` of the first hash: run by the owner; no event written. Accept
+  of the second hash: `decision accept → DONE`. Ten events; two paid planner
+  runs as planned; no seeded stages.
+
+Finding: neither plan used the plan skill. `--tools Read,Grep,Glob` removes the
+`Skill` tool, so the registered `medrengard-plan:plan` skill cannot be invoked;
+confirmed by two `stream-json` init checks (with `Skill` it is available),
+about $0.019 notional. Undeclared bundled plugins and skills, event times and
+full transcripts are parked; the owner wants the entire stream kept.
