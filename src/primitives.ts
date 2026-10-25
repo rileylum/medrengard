@@ -17,13 +17,16 @@ export interface Stage {
   command?: string[];
   extension?: string;
   produces?: 'commit' | 'document' | 'verdict';
+  /** `repository` runs in a fresh clone of the owner repository, writable only for commit stages, which always get one. */
+  workspace?: 'repository';
   budget?: number;
   on: Record<string, Transition>;
 }
 /** Runtime selection is independent of instructions and sandbox configuration. */
 export interface Agent { runtime: string; role: string; skills: string[]; mcpServers: Record<string, unknown>; sandbox: Sandbox }
 /** The runtime receives instructions as data, separately from executable commands. */
-export interface AgentRequest { runId: string; agent: Agent; input: string; workspace: string; subject?: string }
+// lazy: feedback is text only; carry hashed attachments when an owner needs to send images.
+export interface AgentRequest { runId: string; agent: Agent; input: string; workspace: string; subject?: string; feedback?: string }
 /** Adapters execute through the supplied confined context and return untrusted claims. */
 export interface Runtime {
   start(request: AgentRequest, context: StageContext): Promise<void>;
@@ -42,7 +45,7 @@ export interface StageContext {
 /** State is rebuilt from the event log; evidence contains only the current subject. */
 export interface State {
   id: string; workflow: string; stage: string; input: string; workspace: string;
-  subject?: string; pending?: string; spent: Record<string, number>; artifacts: Artifact[]; evidence: Artifact[]; reason?: string;
+  subject?: string; feedback?: string; pending?: string; spent: Record<string, number>; artifacts: Artifact[]; evidence: Artifact[]; reason?: string;
 }
 /** Positions are assigned by SQLite in commit order. */
 export interface Event { position: number; id: string; type: string; [key: string]: unknown }
@@ -94,6 +97,7 @@ export function checkWorkflow(w: Workflow): string[] {
     if (s.kind !== 'human' && (!Number.isSafeInteger(s.budget) || s.budget! <= 0)) errors.push(`workflow stage ${name} needs a finite budget`);
     if (s.kind === 'agent' && (typeof s.agent !== 'string' || !['commit', 'document', 'verdict'].includes(s.produces!))) errors.push(`workflow agent ${name} needs agent and output`);
     if (s.kind === 'command' && ((!!s.command === !!s.extension) || (s.command && (!Array.isArray(s.command) || !s.command.length || !s.command.every(a => typeof a === 'string'))))) errors.push(`workflow command ${name} needs one implementation`);
+    if (s.workspace !== undefined && s.workspace !== 'repository') errors.push(`workflow stage ${name} has an invalid workspace`);
     if (!s.on || typeof s.on !== 'object' || !Object.keys(s.on).length) { errors.push(`workflow stage ${name} needs transitions`); continue; }
     for (const edge of Object.values(s.on)) {
       const choices = Array.isArray(edge) ? edge : [edge];
@@ -166,6 +170,7 @@ export class Controller {
       if (e.type === 'started') { state.pending = e.runId as string; state.spent[state.stage] = (state.spent[state.stage] ?? 0) + 1; }
       if (e.type === 'completed' || e.type === 'decision') {
         state.pending = undefined;
+        if (e.type === 'decision') state.feedback = e.feedback as string | undefined;
         if (e.artifact) {
           const a = e.artifact as Artifact;
           state.artifacts.push(a);
@@ -217,13 +222,14 @@ export class Controller {
     if (typeof edge === 'string') return { next: edge };
     return { workflow: edge.workflow, next: this.#workflows.get(edge.workflow)!.start };
   }
-  /** Record an owner decision only for the exact artifact currently being reviewed. */
-  decide(id: string, outcome: string, subject: string): void {
+  /** Record an owner decision, with optional feedback for the next run, only for the exact artifact currently being reviewed. */
+  decide(id: string, outcome: string, subject: string, feedback?: string): void {
     if (observer.getStore()) throw new Error('observer cannot change state');
+    if (feedback !== undefined && typeof feedback !== 'string') throw new Error('invalid feedback');
     const { state, version } = this.#read(id);
     if (this.#workflows.get(state.workflow)!.stages[state.stage]?.kind !== 'human') throw new Error('work is not awaiting its owner');
     if (!state.subject || subject !== state.subject) throw new Error('stale owner decision');
-    this.#write(id, { type: 'decision', outcome, subject, ...this.#edge(state, outcome) }, version);
+    this.#write(id, { type: 'decision', outcome, subject, feedback, ...this.#edge(state, outcome) }, version);
   }
   /** An interrupted run is ambiguous: retain its spent budget and escalate without retrying. */
   recover(id: string): void {
@@ -298,8 +304,8 @@ export class Controller {
       try {
         // The clone has its own object database and gitdir: candidate writes cannot affect the source repository.
         mkdirSync(state.workspace, { recursive: true });
-        if (stage.produces === 'commit' && !this.events().some(e => e.id === id && e.type === 'workspace' && e.repository)) {
-          if (!this.#options.repository) throw new Error('commit stage requires an owner repository');
+        if ((stage.produces === 'commit' || stage.workspace === 'repository') && !this.events().some(e => e.id === id && e.type === 'workspace' && e.repository)) {
+          if (!this.#options.repository) throw new Error('repository workspace requires an owner repository');
           execFileSync('git', ['-c', 'core.hooksPath=/dev/null', 'clone', '--no-local', '--quiet', '--', this.#options.repository, state.workspace], { timeout: 10000, stdio: 'pipe' });
           this.#write(id, { type: 'workspace', path: state.workspace, repository: true }, version++);
         }
@@ -320,7 +326,7 @@ export class Controller {
         const operation = async () => {
           if (stage.kind === 'agent') {
             runtime = this.#options.runtimes[agent!.runtime];
-            await runtime.start(frozen({ runId, agent: copy(agent!), input: state.input, workspace, subject: state.subject }), context);
+            await runtime.start(frozen({ runId, agent: copy(agent!), input: state.input, workspace, subject: state.subject, feedback: state.feedback }), context);
             for await (const event of runtime.events(runId)) {
               if (!active || abort.signal.aborted) throw new Error('stage execution has ended');
               this.#write(id, { type: 'runtime', runId, event: data(event) }, version++);

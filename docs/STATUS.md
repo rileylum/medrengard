@@ -1,24 +1,32 @@
 # Current status
 
-## Current next action — ticket 13, 2026-10-25
+## Current next action — ticket 13 implemented, 2026-10-25
 
-The first-journey docs are merged (`379484d`). The owner chose the first run and
-its shape: the rifle half of bolts_n_blades slice 4, phase 1 ending at an
-owner-approved plan, a headless Claude Code planner on a subscription token,
-the owner's factory as a separate repository, and an install script for the
-product ([A-146](decisions.md#a-146--2026-10-25--first-run-example-phase-split-subscription-token-factory-layout-and-installer)).
-Scope and acceptance: [ticket 13](work/13-phase-1-plan.md).
+Ticket 13 is implemented on `feat/13-phase-1-plan`, stacked on the unmerged
+`docs/phase-1-plan-ticket`, step by step with the owner
+([ticket log](work/13-phase-1-plan.md#log)). Core: owner feedback on `decide`
+reaches the next `AgentRequest`; `Sandbox.network` and `Sandbox.env`, off by
+default, values passed through bwrap's environment; `Stage.workspace:
+'repository'` gives design a read-only clone. Shipped: an import-boundary
+test, `extensions/claude-code/` (`claudeCodeRuntime` with settings sources,
+model and the `Skill` tool), the default `design` loop with the example
+planner, and `cli/medrengard.ts` (`start`, `show`, `decide`). The owner's
+factory is `~/dev/medrengard-factory`, branch `feat/phase-1-factory`, with
+`.medrengard` symlinked to this checkout.
 
-The owner accepted the phase-1 token/network risk; destination-specific
-network access and the install script are following tickets.
+Live run 1 met the acceptance: the worked example through plan, one feedback
+round, a refused stale hash and approval (`DONE`), two Sonnet planner runs, and
+plan 1 raised the Hit-weapon question unprompted. Neither plan used the plan
+skill (the `Skill` tool was off); fixed afterwards in `1d141f6`, not rerun.
+Gate: `systemd-run --user --scope --quiet npm test` 73/73.
 
-Next: implement ticket 13 on `feat/13-phase-1-plan`, as the owner asked (“Commit
-and then handoff so the next session will start with the implementation”).
-Work step by step with the owner in the loop at each turn. Branch from main if
-the owner has merged `docs/phase-1-plan-ticket`, otherwise from that branch.
-The live run needs separate approval per `live-runs.md`. This session was
-documentation only; Markdown links and `git diff --check` checked, no tests
-rerun.
+Next: the owner merges `docs/phase-1-plan-ticket`, then `feat/13-phase-1-plan`
+(`--no-ff`), and makes the factory branch its `main`. Then the owner orders
+the following tickets: session transcripts and event times (the owner wants
+the entire stream kept), plan versions instead of long hashes in the CLI,
+destination-specific network, separating stage access from output contracts
+with reusable agents, the install script, and a smarter deadline. Findings are
+in [parked](work/parked.md).
 
 ## First user journey, 2026-10-24
 

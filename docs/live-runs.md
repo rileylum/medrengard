@@ -5,23 +5,29 @@ cost first. No paid runs are part of the core refactor. Historical Claude/Pi
 runs used integrations now deleted; they do not demonstrate provider support
 in the current API.
 
-The shipped `commandRuntime(argv)` is a generic JSON process adapter: it sends
-`AgentRequest` plus `artifacts` on stdin, expects one JSON result containing
-`outcome` and `artifact` on stdout, and records its exit event. It executes
-through `StageContext.execute` in bwrap. All controller execution currently
-disables network access, with no provider credentials provisioned. This supports
-local commands and stubs; a provider-backed integration needs an explicit
-network and credential design before a paid run is possible.
+Two runtimes ship. `commandRuntime(argv)` is a generic JSON process adapter: it
+sends `AgentRequest` plus `artifacts` on stdin and expects one JSON result
+containing `outcome` and `artifact` on stdout. `claudeCodeRuntime` (in
+`extensions/claude-code/`) runs headless `claude -p` and turns its final message
+into a document. Both execute through `StageContext.execute` in bwrap. An agent
+gets network and named environment variables only when its `Sandbox` declares
+them (`network`, `env`); a Claude Code subscription token is passed as
+`CLAUDE_CODE_OAUTH_TOKEN` by name, with the value kept outside the factory
+(ticket 13: `~/.config/medrengard/claude-token`, mode 600). Network is
+all-or-nothing under the risk accepted in A-146. The first live run is recorded
+in [ticket 13](work/13-phase-1-plan.md).
 
 ## Procedure
 
 1. Define scenarios, expected stage paths, artifacts and paid-run count; get
    the owner's quoted approval of the plan and cost.
 2. Use a scratch repository and fresh SQLite path under
-   `/var/tmp/software_factory/live-N/`. Supply trusted TypeScript `Options`,
+   `/var/tmp/software_factory/live-N/`, unless the owner approves running a
+   factory as built (ticket 13 did, for read-only design stages). Supply trusted TypeScript `Options`,
    agent/runtime definitions and extensions to `Controller`. Import
    `defaultWorkflows(checkArgv)` if its policy fits. There are no job JSON
-   files or `src/main.ts` commands.
+   files or `src/main.ts` commands; a factory drives the controller through
+   `cli/medrengard.ts`.
 3. Show the owner the scenario inputs and definitions before paid execution.
    Use a named fake runtime to seed deterministic failures through the same
    controller API; record which stages were seeded. Do not edit the database.

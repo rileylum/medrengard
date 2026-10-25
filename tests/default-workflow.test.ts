@@ -1,11 +1,11 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Controller, type Artifact, type Options, type Runtime } from '../src/index.ts';
-import { defaultWorkflows } from '../workflows/default.ts';
+import { defaultWorkflows, examplePlanner } from '../workflows/default.ts';
 
 function setup(t: TestContext, reviews = ['FAIL', 'PASS', 'FAIL', 'PASS'], adversarial = ['PASS', 'PASS']) {
   const directory = mkdtempSync(join(tmpdir(), 'factory-default-'));
@@ -15,12 +15,17 @@ function setup(t: TestContext, reviews = ['FAIL', 'PASS', 'FAIL', 'PASS'], adver
   execFileSync('git', ['-C', repository, '-c', 'user.name=Owner', '-c', 'user.email=owner@test', 'commit', '--allow-empty', '-qm', 'base']);
   let result: unknown;
   let commits = 0;
+  const designs: { feedback?: string; head: string }[] = [];
   const runtime: Runtime = {
     async start(request, context) {
       let artifact;
-      if (request.agent.role === 'designer') artifact = { kind: 'document', content: 'Write an answer.' };
+      if (request.agent.role === 'designer') {
+        const head = await context.execute(['git', 'rev-parse', 'HEAD']);
+        designs.push({ feedback: request.feedback, head: head.stdout.trim() });
+        artifact = { kind: 'document', content: designs.length === 1 ? 'Write an answer.' : `Write an answer. ${request.feedback}` };
+      }
       else if (request.agent.role === 'developer') {
-        assert.equal(context.artifacts[0].content, 'Write an answer.');
+        assert.match(context.artifacts.findLast(a => a.kind === 'document')!.content!, /^Write an answer\./);
         const run = await context.execute(['sh', '-c', `set -e; printf 'answer ${++commits}' > answer; git add answer; git -c user.name=Stub -c user.email=stub@test commit -qm answer; git rev-parse HEAD`]);
         assert.equal(run.exitCode, 0, run.stderr);
         artifact = { kind: 'commit', sha: run.stdout.trim() };
@@ -40,7 +45,7 @@ function setup(t: TestContext, reviews = ['FAIL', 'PASS', 'FAIL', 'PASS'], adver
     } },
   };
   const controller = new Controller(options); t.after(() => controller.close());
-  return { controller, prs, commits: () => commits };
+  return { controller, prs, designs, repository, commits: () => commits };
 }
 
 test('shipped workflow fixes a failed review and opens a PR after an owner-authorized revision', async t => {
@@ -101,4 +106,31 @@ test('automatic workflow handoffs cannot reset budgets in a cycle', () => {
       } })),
     }), /handoffs.*cycle/);
   }
+});
+
+test('shipped design reads the repository and revises the plan with the owner feedback before development', async t => {
+  const { controller, designs, repository, commits } = setup(t, ['PASS'], ['PASS']);
+  controller.open('plan', 'design', 'Make an answer');
+  const first = await controller.advance('plan');
+  controller.decide('plan', 'changes', first.subject!, 'Keep it short.');
+  const second = await controller.advance('plan');
+  assert.equal(second.stage, 'approve', second.reason);
+  assert.notEqual(second.subject, first.subject);
+  const base = execFileSync('git', ['-C', repository, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  assert.deepEqual(designs, [{ feedback: undefined, head: base }, { feedback: 'Keep it short.', head: base }]);
+  assert.throws(() => controller.decide('plan', 'accept', first.subject!), /stale/);
+  controller.decide('plan', 'accept', second.subject!);
+  assert.equal((await controller.advance('plan')).stage, 'owner');
+  assert.equal(commits(), 1);
+});
+
+test('the example planner carries its role, the workflow guide and the plan skill plugin', () => {
+  const planner = examplePlanner('claude', { backend: 'bwrap', network: true });
+  assert.equal(planner.runtime, 'claude');
+  assert.deepEqual(planner.sandbox, { backend: 'bwrap', network: true, read: planner.skills });
+  assert.match(planner.role, /^You are the planner\./);
+  assert.match(planner.role, /## The workflow you are part of/);
+  assert.equal(planner.skills.length, 1);
+  assert.match(readFileSync(join(planner.skills[0], 'skills', 'plan', 'SKILL.md'), 'utf8'), /^---\nname: plan\n/);
+  assert.equal(JSON.parse(readFileSync(join(planner.skills[0], '.claude-plugin', 'plugin.json'), 'utf8')).name, 'medrengard-plan');
 });

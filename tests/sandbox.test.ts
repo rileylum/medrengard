@@ -1,6 +1,6 @@
 // The sandbox executes a command with the declared mounts;
 // under bwrap the command writes only its write roots, reads only the system directories and
-// its read roots, has no network and none of the controller's environment.
+// its read roots, and has no network and none of the controller's environment unless declared.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type AddressInfo } from 'node:net';
@@ -99,7 +99,7 @@ test('bwrap: the command runs in a session of its own, so it cannot push input i
   assert.notEqual(r.stdout.trim(), '0');
 });
 
-test('bwrap: no network', async () => {
+test('bwrap: no network unless declared, then the host network', async () => {
   const { work } = scratch();
   const server = createServer((s) => s.end());
   await new Promise<void>((res) => server.listen(0, '127.0.0.1', res));
@@ -109,7 +109,30 @@ test('bwrap: no network', async () => {
     const policy: Policy = { cwd: work, write: [work], read: [NODE_PREFIX] };
     const off = await run(BWRAP, policy, process.execPath, ['-e', connect]);
     assert.equal(off.exitCode, 7, off.stderr);
+    const on = await run({ ...BWRAP, network: true }, policy, process.execPath, ['-e', connect]);
+    assert.equal(on.exitCode, 0, on.stderr);
   } finally {
     server.close();
   }
+});
+
+test('bwrap: only declared variables are copied from the controller environment', async () => {
+  const { work } = scratch();
+  const policy: Policy = { cwd: work, write: [work], read: [] };
+  const r = await sh({ ...BWRAP, env: ['SF_SANDBOX_TOKEN'] }, policy, 'echo "token=${SF_SANDBOX_TOKEN:-unset} secret=${SF_SANDBOX_SECRET:-unset}"', { SF_SANDBOX_TOKEN: 'declared', SF_SANDBOX_SECRET: 'leaked' });
+  assert.equal(r.exitCode, 0, r.stderr);
+  assert.equal(r.stdout, 'token=declared secret=unset\n');
+});
+
+test('bwrap: a declared value reaches bwrap through its environment, not its command line', async () => {
+  const { root, work } = scratch();
+  // A stand-in bwrap reports the arguments and environment the real one would receive.
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'bwrap'), '#!/bin/sh\nprintf "arg %s\\n" "$@"; env\n', { mode: 0o755 });
+  const r = await run({ ...BWRAP, env: ['SF_SANDBOX_TOKEN'] }, { cwd: work, write: [work], read: [] }, 'true', [], { PATH: `${bin}:${process.env.PATH}`, SF_SANDBOX_TOKEN: 'declared-value', SF_SANDBOX_SECRET: 'leaked' });
+  assert.equal(r.exitCode, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /^arg .*declared-value/m);
+  assert.match(r.stdout, /^SF_SANDBOX_TOKEN=declared-value$/m);
+  assert.doesNotMatch(r.stdout, /leaked/, 'bwrap itself receives only the variables the sandbox gets');
 });
