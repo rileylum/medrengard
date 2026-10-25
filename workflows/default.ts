@@ -4,8 +4,9 @@ import type { Workflow } from '../src/index.ts';
 export function defaultWorkflows(check: string[]): Workflow[] {
   return [
     { name: 'design', start: 'design', stages: {
-      design: { kind: 'agent', agent: 'designer', produces: 'document', budget: 1, on: { done: 'approve' } },
-      approve: { kind: 'human', on: { accept: { workflow: 'develop' }, reject: 'ESCALATED' } },
+      design: { kind: 'agent', agent: 'designer', produces: 'document', workspace: 'repository', budget: 1, on: { done: 'approve' } },
+      // Each round of owner feedback starts a fresh design run with a new budget.
+      approve: { kind: 'human', on: { accept: { workflow: 'develop' }, changes: { workflow: 'design' }, reject: 'ESCALATED' } },
     } },
     { name: 'develop', start: 'develop', stages: {
       develop: { kind: 'agent', agent: 'developer', produces: 'commit', budget: 1, on: { done: 'check' } },
