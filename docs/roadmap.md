@@ -93,15 +93,14 @@ whether the delivered change meets its acceptance criteria.
   refused stale hash and approval. Agents run headless; the owner acts at the
   workflow's gates through the CLI. Interactive agent sessions in herdr are a
   later slice.
-- **Next: a full run.** Owner, 2026-10-25: “we should finish a full run -
-  currently we've produced a plan, but we should be able to get that through
-  implement and review before we handle the listed tickets.” That needs real
-  developer and reviewer agents, a real check command, and a decision on
-  whether the run publishes a PR.
-- **Following tickets, after the full run:** session transcripts and event
-  times, plan versions instead of long hashes in the CLI, destination-specific
-  network, separating stage access from output contracts with reusable agents,
-  the install script and a smarter deadline ([parked](work/parked.md)).
+- **Next: a full run,** in [ticket 14](work/14-full-run.md). Owner,
+  2026-10-25: “we should finish a full run - currently we've produced a plan,
+  but we should be able to get that through implement and review before we
+  handle the listed tickets.” It also brings stage access, event times, full
+  transcripts and a published PR (A-149).
+- **Following tickets, after the full run:** destination-specific network,
+  agents defined once with an access ceiling, the install script and a stall
+  timeout in place of the stage deadline ([parked](work/parked.md)).
 
 ## Three completion boundaries
 

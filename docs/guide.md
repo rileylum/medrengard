@@ -219,8 +219,8 @@ folders and files the agent may read, such as the `claude` program. `network`
 gives it the network when `true`. `env` names secrets or settings to pass in
 from your shell, each of which must be set when the controller starts. The
 factory's planner uses all three, so that it can reach the model with a
-subscription token. What that exposes, and why it is accepted for now, is in
-the [threat model](security/threat-model.md#repository-agent-with-network-and-token).
+subscription token. What that exposes, and why it fits the owner's risk
+appetite, is in the [threat model](security/threat-model.md#agents-with-network-and-a-token).
 
 ### Runtimes
 

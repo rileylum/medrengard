@@ -1,8 +1,17 @@
 # Threat model
 
-The core protects the owner's repository, event log, credentials and host
-from candidate execution. Mistakes and agents following hostile third-party
-text matter before deliberate malice (A-037, A-115). See
+Medrengard runs on one owner's machine, on the owner's personal
+repositories. The risks that shape it are agent mistakes, such as a badly
+formed command deleting a whole directory instead of the one it meant, and
+agents going outside the bounds of their task. Prompt injection, credential
+exfiltration and deliberately malicious code are not design drivers, though
+the same controls limit them (A-148). Agents need as much freedom as their
+task needs, so the owner declares what each one can reach rather than the
+core withholding it.
+
+The controls contain mistakes: candidate execution runs in a sandbox that sees
+only what was declared, the owner's repository is never written by a stage,
+and evidence binds to the exact commit or document it was about. See
 [accepted risks](../work/accepted-risks.md) and [parked findings](../work/parked.md).
 
 ## Trust boundaries
@@ -51,19 +60,17 @@ text matter before deliberate malice (A-037, A-115). See
   escalates without spending again. Historical `events` databases are refused,
   not migrated or silently treated as empty.
 
-## Repository agent with network and token
+## Agents with network and a token
 
-The owner's phase-1 planner reads the repository clone while holding a Claude
-Code subscription token and unrestricted network. A prompt injection in
-repository text, or a hook loaded through `settingSources: ['project']`, can
-send the token or the clone's contents, including every fetched ref, anywhere.
-The owner accepted this for phase 1 ([A-146](../decisions.md#a-146--2026-10-25--first-run-example-phase-split-subscription-token-factory-layout-and-installer),
-[accepted risks](../work/accepted-risks.md)); reopen before any agent reads
-untrusted input such as public issues. The token's value stays outside the
+The owner's agents hold a Claude Code subscription token with unrestricted
+network, and read the repository clone. Within the owner's appetite (A-148),
+this is how they reach the model and do their work, not an accepted
+exposure: the repositories are the owner's own, and an agent following
+hostile text is not a design driver. The token's value stays outside the
 factory (`~/.config/medrengard/claude-token`, mode 600) and reaches the
-sandbox only by name. Claude Code still loads bundled plugins and skills the
-factory did not declare; their effect is unverified
-([parked](../work/parked.md)).
+sandbox only by name. Network access by named destination is a following
+ticket. Claude Code still loads bundled plugins and skills the factory did not
+declare; their effect is unverified ([parked](../work/parked.md)).
 
 ## Limits
 

@@ -1,6 +1,14 @@
 # Current status
 
-## Current next action — 2026-10-25
+## Current next action — 2026-10-26
+
+[Ticket 14](work/14-full-run.md), the full run, is planned on
+`feat/14-full-run` with the owner (A-148 risk appetite, A-149 scope). Step a
+is done: the ticket, and the docs reframed around mistakes and task bounds
+rather than hostile input. Next: step b, stage access and command stages as
+code, test first, then check in with the owner.
+
+## Previous next action — 2026-10-25
 
 Main holds the core candidate, ticket 13 (idea to owner-approved plan through
 `cli/medrengard.ts`, with a headless Claude Code planner on a subscription
