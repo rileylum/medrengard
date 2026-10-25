@@ -45,42 +45,24 @@ and imports the core the same way any other caller does.
 
 ## One run
 
-`medrengard start "<idea>"` up to the point where it stops to ask the owner:
+From the owner's command to the event log:
 
 ```mermaid
-sequenceDiagram
-  actor Owner
-  participant CLI as cli/medrengard.ts
-  participant C as Controller
-  participant R as Runtime
-  participant B as bwrap
-  participant L as Event log
-  Owner->>CLI: start "idea"
-  Note over CLI: imports factory.ts { options, workflow }
-  CLI->>C: new Controller(options)
-  Note over C: checks workflows and agents,<br/>probes bwrap, opens SQLite
-  CLI->>C: open(id, workflow, idea)
-  C->>L: opened
-  CLI->>C: advance(id)
-  loop each automatic stage
-    C->>L: started (spends one attempt)
-    Note over C: prepares the stage's directory<br/>(first clone: workspace event)
-    C->>R: start(request, context)
-    R->>B: context.execute(argv, input)
-    B-->>R: exit status, stdout, stderr
-    R-->>C: events
-    C->>L: runtime
-    R-->>C: result: outcome and artifact (a claim)
-    Note over C: checks the claim
-    C->>L: completed (artifact, next stage) or escalated
-  end
-  C-->>CLI: state at a human stage, DONE or ESCALATED
-  CLI-->>Owner: stage, hash, latest document
-  Owner->>CLI: decide id outcome hash ["feedback"]
-  CLI->>C: decide(...)
-  C->>L: decision
-  CLI->>C: advance(id)
+flowchart LR
+  O([Owner]) -- "1. start or decide" --> CLI[cli/medrengard.ts]
+  CLI -- "2. loads" --> F[factory.ts]
+  CLI -- "3. advance" --> C[Controller]
+  C -- "4. runs a stage" --> R[Runtime]
+  R -- "5. executes" --> B[bwrap]
+  R -- "6. claim" --> C
+  C -- "7. records" --> L[(Event log)]
 ```
+
+The CLI builds a `Controller` from the factory's options. For each automatic
+stage the controller repeats steps 4 to 7: it records `started`, hands the
+runtime a context whose `execute` runs commands in bubblewrap, checks the
+claim the runtime returns, and records `completed` or `escalated`. It stops at
+a human stage, `DONE` or `ESCALATED`, and the owner's `decide` starts it again.
 
 Command stages have no runtime: the controller calls `context.execute` with
 the stage's argv and turns exit code 0 into `PASS` and anything else into
