@@ -27,6 +27,10 @@ read `docs/decisions.md` (latest entry wins) and
   branch; docs on `docs/<slug>`. Branches stay local; the owner merges with
   `git merge --no-ff`, which runs `scripts/pre-merge-commit`. Push only when
   the owner asks.
+- **Docs:** a behaviour change updates, on the same branch, the one doc that
+  owns the fact (README: how to run; `docs/core.md`: rules; threat model:
+  permissions; `docs/guide.md`: explanation), and other docs link to it rather
+  than restate it; `tests/docs.test.ts` must pass.
 - **Checks:** `npm test`; for the real bubblewrap tests,
   `systemd-run --user --scope --quiet npm test`.
 - **End of session:** append to the current ticket's log

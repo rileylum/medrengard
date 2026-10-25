@@ -1,123 +1,81 @@
 # Medrengard
 
-A primitives-first coding harness. The owner writes workflows, agents and
-extensions in TypeScript; the controller validates results, spends budgets
-and records events in SQLite. Candidate processes run inside bubblewrap.
+Medrengard runs AI coding agents on your own machine, one step at a time,
+following steps you write yourself. A typical set of steps is: plan the
+change, build it, check it, review it, then ask you. Medrengard runs each step,
+records everything that happens, and stops to ask you whenever the decision is
+yours or something goes wrong.
 
-The core has one entry point: [`src/index.ts`](src/index.ts). Beside it ship
-a Claude Code runtime ([`extensions/claude-code`](extensions/claude-code/index.ts)),
-a CLI ([`cli/medrengard.ts`](cli/medrengard.ts)) and the
-[default workflow](workflows/default.ts), all importing only the core's entry
-point. The default takes an idea through an approved specification,
-development, checks, bounded review, owner revision and a PR extension; its
-example planner role, guide and plan skill are in
-[`workflows/example`](workflows/example). Roles, review limits and PR
-behavior are workflow code.
+New to it? The [guide](docs/guide.md) explains how it fits together, how to
+set up your own factory and how to change the core.
 
-## Requirements and checks
+## What it does
 
-Linux, Node 24 or later, Git and bubblewrap with user namespaces available.
-There are no npm dependencies.
+- **You stay in charge.** Whatever an agent produces is only a claim until
+  Medrengard has checked it. Nothing passes an approval step without your
+  decision on the exact version you were shown.
+- **Agents are fenced in.** Each one runs in a sandbox that sees only what you
+  allow, with no network or secrets unless you grant them.
+- **Everything is recorded.** Every step is written to a local database. If a
+  run is interrupted, Medrengard stops and asks you rather than quietly
+  starting it again.
+- **The rules are yours.** The steps, the agents' roles, how many reviews to
+  run and what happens at the end are your own code, not built in.
+
+Today it can take an idea to a plan you have approved, with Claude Code as the
+planner. Building, checking and reviewing the change with real agents comes
+next. The [default workflow](workflows/default.ts) already describes that whole
+path, and the tests run it with stand-in agents.
+
+## Try it
+
+You need Linux, Node 24 or later, Git and bubblewrap, with unprivileged user
+namespaces allowed. There are no npm packages to install.
 
 ```sh
 npm test
 ```
 
-Tests use stub agents and real local JSON processes, Git repositories,
-bubblewrap and SQLite. They do not call paid model providers.
+The tests use stand-in agents and never call a paid model.
 
 ## Run it
 
-A factory is a directory, outside this checkout, whose `factory.ts`
-default-exports `{ options, workflow }`: the controller `Options` and the name
-of the workflow `start` opens. It is trusted code. With the core at
-`.medrengard/` and the token exported (the planner's sandbox declares
-`env: ['CLAUDE_CODE_OAUTH_TOKEN']`), run from the factory directory:
+A **factory** is a folder of your own, outside this checkout, holding a
+`factory.ts` that names the repository to work on, the steps and the agents.
+The [guide](docs/guide.md#building-a-factory) walks through one. From that
+folder, with this checkout linked in as `.medrengard`:
 
 ```sh
-export CLAUDE_CODE_OAUTH_TOKEN=...   # e.g. from a mode-600 file outside the factory
+export CLAUDE_CODE_OAUTH_TOKEN=...   # if your agents use Claude Code; keep the token outside the factory
 node .medrengard/cli/medrengard.ts start "<idea>"
 node .medrengard/cli/medrengard.ts show <work>
 node .medrengard/cli/medrengard.ts decide <work> <outcome> <hash> ["feedback"]
 ```
 
-`start` and `decide` advance automatic stages and print the work's stage, the
-current hash and plan, and the feedback so far. Outcomes are the workflow's
-edge names, such as `accept` or `changes`.
+`start` begins a new piece of work and runs it until it needs you, then prints
+the plan and its hash. `show` prints where a piece of work has got to.
+`decide` gives your answer, such as `accept`, or `changes` with feedback, for
+that exact hash, and carries on.
 
-## Use the primitives
+## Safety in brief
 
-Supply trusted TypeScript definitions to `new Controller(options)`, then:
+- Your `factory.ts` and everything it imports are trusted code. Text from
+  agents, issues or repositories is only ever treated as data.
+- For now an agent either has the network or does not; there is no way to
+  allow only some destinations. The owner accepted this for the first phase.
 
-```ts
-controller.open('work-1', 'design', 'Describe the requested change');
-await controller.advance('work-1');
-let spec = controller.state('work-1');
+The [threat model](docs/security/threat-model.md) says exactly who can reach
+what, with the [accepted risks](docs/work/accepted-risks.md) and
+[parked findings](docs/work/parked.md).
 
-// Ask for a revision of that exact document; the feedback reaches the next run.
-controller.decide('work-1', 'changes', spec.subject!, 'Keep the knife sounds');
-await controller.advance('work-1');
-spec = controller.state('work-1');
+## Learn more
 
-// Approve the revised document's hash.
-controller.decide('work-1', 'accept', spec.subject!);
-await controller.advance('work-1');
-```
-
-`Options` supplies workflow definitions, agent definitions, runtime adapters,
-extension functions, an event-database path, a working directory and the
-owner repository. A repository is needed by stages that produce commits or
-declare `workspace: 'repository'`, as the default's `design` does; such a
-stage reads the work's clone, writable only when it produces a commit. See the
-executable [MVP workflows](tests/e2e/mvp.test.ts) and the
-[default workflow test](tests/default-workflow.test.ts) for complete examples.
-
-An agent defines its runtime, role text, skills, MCP servers and sandbox. The
-sandbox declares read paths, `network` (the host network, off by default) and
-`env` (names of variables copied from the controller's environment, absent
-unless declared). A runtime implements `start`, `cancel`, `result` and
-`events`. `commandRuntime(argv)` supplies a generic local process adapter: it
-sends a JSON request plus artifacts through stdin and reads an
-`{ outcome, artifact }` JSON result from stdout. `claudeCodeRuntime` runs
-headless `claude -p` with read-only tools and turns its final message into a
-document. Both use `StageContext.execute` for confined execution.
-
-A command stage executes owner-declared argv against the retained commit's
-read-only snapshot. An extension stage receives the same subject and artifact
-history; a PR extension chooses its review package and filters evidence by
-current SHA. Human decisions bind to the current document hash or commit SHA,
-and their optional feedback is recorded and passed to the next agent run.
-The default workflow grants a fresh 2+1 review budget only after the owner's
-`changes` decision starts another revision.
-
-`observe` subscribes to immutable events without mutation authority. `events`
-reads the log, and `state` replays it. After a crash, `recover` escalates pending
-work without starting another run or spending budget again. Close the
-controller with `close()` when finished.
-
-## Boundaries
-
-- Accepted commits are retained outside candidate-writable storage. New
-  commits invalidate evidence for previous SHAs.
-- Unknown outcomes, invalid artifacts and interrupted runs escalate. Failed
-  gates cannot rerun on the same subject without an owner decision.
-- Owner modules, including `factory.ts`, are trusted host code. Candidate text
-  and output remain data; repository-supplied executable definitions are not
-  supported.
-- Network is all-or-nothing per agent, under a risk the owner accepted for
-  phase 1 (A-146).
-
-See the [threat model](docs/security/threat-model.md) for who gets network and
-credentials and for the practical limits, with the
-[parked findings](docs/work/parked.md) and
-[accepted risks](docs/work/accepted-risks.md).
-
-## Project record
-
-[Core contract](docs/core.md) · [Status](docs/STATUS.md) ·
-[Roadmap](docs/roadmap.md) · [Live runs](docs/live-runs.md) ·
-[Refactor log](docs/refactor/log.md) · [Owner decisions](docs/decisions.md) ·
-[Architecture](docs/architecture/source-v0.3.md)
-
-The decision register, research and architecture preserve historical direction;
-they may describe capabilities absent from the current implementation.
+- [Guide](docs/guide.md): how it works, building a factory, changing the core.
+- [Core rules](docs/core.md): what the core must always hold.
+- [Status](docs/STATUS.md) and [roadmap](docs/roadmap.md): where it is and
+  where it is going.
+- [Live runs](docs/live-runs.md): how runs with paid models are approved and
+  recorded.
+- [Owner decisions](docs/decisions.md), the [refactor log](docs/refactor/log.md)
+  and the [architecture](docs/architecture/source-v0.3.md): the project's
+  history. These may describe things that no longer exist.

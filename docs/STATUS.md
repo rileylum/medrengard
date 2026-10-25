@@ -21,6 +21,24 @@ developer and reviewer agents, a real check command for the target repository,
 and whether the run publishes a PR. After it, the owner orders the following
 tickets listed in the [roadmap](roadmap.md#progress).
 
+## Guide — 2026-10-25
+
+On `docs/guide`, built with the owner section by section: `docs/guide.md`
+explains how it works in plain English, then building a factory (the owner's
+`medrengard-factory` as the example) and changing the core. The README is
+rewritten in plain English as the front door and links the guide; `AGENTS.md` gains a **Docs** rule naming which doc owns which fact.
+`tests/docs.test.ts` fails on a broken relative link in the README or `docs/`,
+a link to a heading that does not exist, a missing repository path named in a
+current doc (the decision log, research,
+refactor, architecture and ticket logs are exempt) or a name linked to
+`src/index.ts` that it does not export. It removed one stale sentence from
+`live-runs.md`. Three language and API inconsistencies are parked in
+[parked findings](work/parked.md) (the three senses of "extension", unexported
+`Sandbox` and `RunResult`, "plan" and "spec" for a document); the guide uses
+the code's meaning until they are settled. No code changed. Gate:
+`systemd-run --user --scope --quiet npm test` 77/77. The next action above is
+unchanged.
+
 ## Documentation sweep — 2026-10-25
 
 On `docs/sweep-and-rename`, approved by the owner (“Fix all”, A-147): the
