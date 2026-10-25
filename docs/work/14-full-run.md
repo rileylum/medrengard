@@ -215,3 +215,29 @@ event-time finding is closed.
 Tests: `tests/e2e/run-context.test.ts`, 4 cases, red then green; one access
 test now expects `.git` in the default copy. Gate:
 `systemd-run --user --scope --quiet npm test` 93/93.
+
+### 2026-10-26 — Step d: the Claude Code runtime builds, reviews and records
+
+Owner, on who commits: “lets build the workflow so that the runtime does it -
+its deterministic that way, we don't need an agent thinking about how that
+should happen. But, again we need flexibility in the system so an agent should
+be able to if a user/workflow configures it that way.” On the output buffer:
+“Yes fold it in.”
+
+Core: `execute` takes `{ input, onStdout, buffer }`; `buffer: false` leaves
+stdout out of the result and its 8 MiB cap (`ExecuteOptions` exported).
+`claudeCodeRuntime` runs `stream-json --verbose` unbuffered and records each
+line as a runtime event as it arrives (over 512 KiB: size and head); the
+result line is the claim. Output follows `request.produces`: the final message
+as a document; a commit made by the runtime (`git add -A`, `author`, the final
+message verbatim as the commit message, also kept as the artifact's content)
+or, with `commit: 'agent'`, HEAD as the agent left it; a verdict from
+`--json-schema` (`structured_output`, confirmed in the 2.1.310 binary without
+a paid run) bound to `context.subject`. Default tools per output, overridable
+with `tools`; `--permission-mode bypassPermissions` for every run (A-148).
+`defaultPrompt` is exported and replaceable with `prompt`.
+
+Tests: `tests/claude-code.test.ts` rewritten, 8 cases against a fake `claude`
+(failed 8/8 against the previous runtime, then green); one `buffer: false`
+case in `tests/e2e/run-context.test.ts`, red then green. Gate:
+`systemd-run --user --scope --quiet npm test` 98/98.

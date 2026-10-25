@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { checkSandbox, execute, type Policy, type Sandbox, type RunResult } from './sandbox.ts';
+import { checkSandbox, execute, type ExecuteOptions, type Policy, type Sandbox, type RunResult } from './sandbox.ts';
 
 type Destination = string | { workflow: string };
 type Transition = Destination | Destination[];
@@ -60,7 +60,7 @@ export interface StageContext {
   /** The run's kept scratch folder, when its access writes `scratch` or `full`. */
   scratch?: string;
   artifacts: Artifact[];
-  execute(argv: string[], options?: { signal?: AbortSignal; input?: string; onStdout?: (chunk: string) => void }): Promise<RunResult>;
+  execute(argv: string[], options?: ExecuteOptions & { signal?: AbortSignal }): Promise<RunResult>;
 }
 /** State is rebuilt from the event log; evidence contains only the current subject. */
 export interface State {
@@ -271,7 +271,7 @@ export class Controller {
   }
   async #execute(workspace: string, argv: string[], writable: boolean, sandbox: Sandbox, signal: AbortSignal, read: string[] = [], input = ''): Promise<RunResult> {
     const policy = { cwd: workspace, write: writable ? [workspace] : [], read: [...read, ...(writable ? [] : [workspace])] };
-    return execute(sandbox, policy, argv, signal, input);
+    return execute(sandbox, policy, argv, signal, { input });
   }
   async #git(state: State, args: string[], signal: AbortSignal): Promise<string> {
     const result = await this.#execute(state.workspace, ['git', '--no-replace-objects', '-c', 'core.hooksPath=/dev/null', ...args], false, { backend: 'bwrap' }, signal);
@@ -370,10 +370,10 @@ export class Controller {
         const sandbox: Sandbox = { ...own, read: [...own.read ?? [], ...access.read ?? []], env: [...own.env ?? [], ...access.env ?? []], network: !!(own.network || access.network) };
         const policy: Policy = { cwd: workspace, write: [...write === 'full' ? [workspace] : [], ...scratch ? [scratch] : []], read: write === 'full' ? [] : [workspace], env: scratch ? { MEDRENGARD_SCRATCH: scratch } : {} };
         const base = this.events().find(e => e.id === id && e.type === 'workspace' && e.repository)?.base as string | undefined;
-        const context: StageContext = frozen({ work: id, subject: state.subject, base, scratch, artifacts: copy(state.artifacts), execute: (argv: string[], options: { signal?: AbortSignal; input?: string; onStdout?: (chunk: string) => void } = {}) => {
+        const context: StageContext = frozen({ work: id, subject: state.subject, base, scratch, artifacts: copy(state.artifacts), execute: (argv: string[], { signal, ...options }: ExecuteOptions & { signal?: AbortSignal } = {}) => {
           if (!active || abort.signal.aborted) return Promise.reject(new Error('stage execution has ended'));
           if (!Array.isArray(argv) || !argv.length || !argv.every(a => typeof a === 'string')) return Promise.reject(new Error('invalid command'));
-          return execute(sandbox, policy, argv, options.signal ? AbortSignal.any([options.signal, abort.signal]) : abort.signal, options.input ?? '', options.onStdout);
+          return execute(sandbox, policy, argv, signal ? AbortSignal.any([signal, abort.signal]) : abort.signal, options);
         } });
         let result: any;
         const operation = async () => {

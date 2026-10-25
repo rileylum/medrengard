@@ -108,8 +108,17 @@ export interface RunResult {
   wallMs: number;
 }
 
-/** Execute a confined command, ending its namespace on cancellation or output overflow; `onStdout` sees output as it arrives. */
-export function execute(sandbox: Sandbox, policy: Policy, argv: string[], signal: AbortSignal, input = '', onStdout?: (chunk: string) => void): Promise<RunResult> {
+/** How a caller feeds and reads one execution. */
+export interface ExecuteOptions {
+  input?: string;
+  /** Sees stdout as it arrives. */
+  onStdout?: (chunk: string) => void;
+  /** `false` leaves stdout out of the result and its cap, for a caller that consumes it through `onStdout`. */
+  buffer?: boolean;
+}
+
+/** Execute a confined command, ending its namespace on cancellation or output overflow. */
+export function execute(sandbox: Sandbox, policy: Policy, argv: string[], signal: AbortSignal, { input = '', onStdout, buffer = true }: ExecuteOptions = {}): Promise<RunResult> {
   const [command, args] = wrap(sandbox, policy, argv[0], argv.slice(1));
   const child = spawn(command, args, { cwd: policy.cwd, env: environment(sandbox, policy), stdio: ['pipe', 'pipe', 'pipe'] });
   const started = Date.now();
@@ -127,6 +136,7 @@ export function execute(sandbox: Sandbox, policy: Policy, argv: string[], signal
     let bytes = 0;
     child[stream].setEncoding('utf8').on('data', (chunk: string) => {
       if (status === 'overflow') return;
+      if (stream === 'stdout' && !buffer) { onStdout?.(chunk); return; }
       bytes += Buffer.byteLength(chunk);
       if (bytes > maxOutputBytes) {
         status = 'overflow';

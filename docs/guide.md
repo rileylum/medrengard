@@ -248,10 +248,19 @@ output as it arrives. There are three choices:
   request as JSON and writes its result as JSON.
   [`tests/e2e/contracts.test.ts`](../tests/e2e/contracts.test.ts) runs such
   programs.
-- `claudeCodeRuntime({ command, settingSources, model })`: Claude Code with
-  read-only tools (`Read`, `Grep`, `Glob`, `Skill`). Its final message becomes
-  a document, so it can plan but cannot write code or review yet. It refuses
-  agents that declare MCP servers.
+- `claudeCodeRuntime({ command, settingSources, model, tools, prompt, commit,
+  author })`: headless Claude Code. What it returns follows what the stage
+  `produces`. For a document, the final message. For a commit, it commits
+  whatever the agent left in the copy of the project as `author`, with the
+  final message as the commit message; `commit: 'agent'` lets the agent commit
+  for itself instead. For a verdict, a `PASS` or `FAIL` with findings, asked
+  for with `--json-schema` and bound to the commit under review. Planners get
+  `Read`, `Grep`, `Glob` and `Skill`; reviewers also `Bash`; developers also
+  `Edit` and `Write`, all with permissions bypassed because the sandbox is the
+  boundary; `tools` replaces a set. `defaultPrompt` gives the idea, the plan,
+  what failed on the current commit, the change to review and your feedback;
+  `prompt` replaces or wraps it. The whole `stream-json` session is recorded as
+  runtime events. It refuses agents that declare MCP servers.
 - Your own. The stub in the `setup` of
   [`tests/default-workflow.test.ts`](../tests/default-workflow.test.ts) is a
   short, complete example: it commits through `context.execute` for the

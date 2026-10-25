@@ -1,9 +1,9 @@
 // What a run is told about itself, and what the log keeps about it.
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { Controller, type AgentRequest, type Options, type Runtime, type Stage, type StageContext } from '../../src/index.ts';
 
@@ -99,4 +99,22 @@ test('a runtime streams output as events while its process runs, and they are ke
   assert.equal(state.stage, 'ESCALATED');
   assert.match(state.reason!, /deadline/);
   assert.deepEqual(controller.events().filter(e => e.type === 'runtime').map(e => e.event), [{ line: 'one' }, { line: 'two' }]);
+});
+
+test('a streamed run can skip the output buffer, so a long transcript does not overflow it', async t => {
+  let received = 0;
+  let run: Awaited<ReturnType<StageContext['execute']>> | undefined;
+  const runtime: Runtime = {
+    async start(_request, context) {
+      run = await context.execute([process.execPath, '-e', "for (let i = 0; i < 10; i++) process.stdout.write('x'.repeat(1024 * 1024))"], { buffer: false, onStdout: chunk => { received += Buffer.byteLength(chunk); } });
+    },
+    async result() { return { outcome: 'done', artifact: { kind: 'document', content: 'streamed' } }; }, async cancel() {}, async *events() {},
+  };
+  const { controller } = setup(t, { plan: { kind: 'agent', agent: 'planner', produces: 'document', access: { read: [dirname(dirname(realpathSync(process.execPath)))] }, budget: 1, on: { done: 'DONE' } } }, {
+    runtimes: { stream: runtime }, agents: { planner: { runtime: 'stream', role: 'planner', skills: [], mcpServers: {}, sandbox: { backend: 'bwrap' } } },
+  });
+  assert.equal((await controller.advance('work')).stage, 'DONE');
+  assert.equal(run!.status, 'exited');
+  assert.equal(run!.stdout, '');
+  assert.equal(received, 10 * 1024 * 1024);
 });
