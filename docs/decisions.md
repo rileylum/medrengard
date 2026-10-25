@@ -80,9 +80,17 @@ planner holding the token with unrestricted network could leak it through a
 prompt injection; a following ticket narrows network access to named
 destinations ([accepted risks](work/accepted-risks.md)).
 
-Not ruled: whether the shipped default workflow gains the plan `changes` loop
-in ticket 13. No implementation, paid run or external publication is
-authorized by this record.
+Default: “I suppose whatever workflow we build should probably become the
+default? And we can ship it as the example and a sane default?” Then: “Yes
+record it”. The workflow each ticket builds becomes the shipped default and
+example, with runnable example agents (role text, skills, guide); it stays the
+whole idea-to-PR journey, and each ticket upgrades its part. Personal content
+(repositories, credentials, tuned prompts, personal extensions) stays in the
+factory, which imports the default until it diverges. The installer seeds the
+factory from it. Ticket 13 adds the `changes` loop to the default's `design`.
+
+No implementation, paid run or external publication is authorized by this
+record.
 
 ### A-145 — 2026-10-24 — First user journey with human approval and feedback
 

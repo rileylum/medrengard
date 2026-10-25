@@ -50,13 +50,21 @@ history), `decide <work> approve|changes <hash> ["feedback"]`. `start` and
 directory. Input is a string; `lazy:` file and issue inputs, snapshotted at
 entry when added.
 
+**Shipped default (`workflows/`):** the default's `design` workflow gains
+`changes → design`, with feedback reaching the fresh run; `approve` still starts
+`develop`. The example planner role, basic plan skill and workflow guide ship
+beside it, so the default is runnable and is the template the installer will
+seed. `tests/default-workflow.test.ts` covers the new loop.
+
 **Owner factory (`~/dev/medrengard-factory`, separate repository):**
 `package.json` `imports` map `#medrengard` to `.medrengard/`, a symlink to this
-checkout during development. `factory.ts` declares the phase-1 workflow
-(`design → approve`; `changes → design`; `approve → DONE`), the planner agent
-(role, one basic plan skill, the workflow's global guide), its sandbox
-(network, `CLAUDE_CODE_OAUTH_TOKEN`, a read path for the `claude` install), the
-bolts_n_blades repository and a state directory outside `.medrengard/`.
+checkout during development. `factory.ts` uses the shipped planner role, skill
+and guide, and declares a phase-1 workflow of the default `design` shape with
+`approve → DONE`, because `develop` has no real agents yet; it switches to
+importing the default once `develop` is built. It also declares the planner's
+sandbox (network, `CLAUDE_CODE_OAUTH_TOKEN`, a read path for the `claude`
+install), the bolts_n_blades repository and a state directory outside
+`.medrengard/`.
 
 **Boundary:** a test fails if code outside `src/` imports anything but
 `src/index.ts`.
@@ -85,7 +93,6 @@ owner accepted in A-146.
 
 ## To put to the owner during implementation
 
-- Whether `workflows/default.ts` gains the plan `changes` loop here.
 - Verify headless use of a `claude setup-token` token via
   `CLAUDE_CODE_OAUTH_TOKEN` before relying on it; the owner creates the token.
 
@@ -108,3 +115,9 @@ in A-146 and the accepted risks.
 Owner: “Commit and then handoff so the next session will start with the
 implementation”. Implementation proceeds step by step with the owner in the
 loop. This does not approve the paid live run.
+
+Owner, on the default workflow: “I suppose whatever workflow we build should
+probably become the default? And we can ship it as the example and a sane
+default?” After the recommendation (ship the workflow and example agents as the
+default; keep personal content in the factory; import rather than copy until it
+diverges; the default stays the whole journey): “Yes record it”.
