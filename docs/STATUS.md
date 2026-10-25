@@ -1,6 +1,26 @@
 # Current status
 
-## Current next action — first user journey, 2026-10-24
+## Current next action — ticket 13, 2026-10-25
+
+The first-journey docs are merged (`379484d`). The owner chose the first run and
+its shape: the rifle half of bolts_n_blades slice 4, phase 1 ending at an
+owner-approved plan, a headless Claude Code planner on a subscription token,
+the owner's factory as a separate repository, and an install script for the
+product ([A-146](decisions.md#a-146--2026-10-25--first-run-example-phase-split-subscription-token-factory-layout-and-installer)).
+Scope and acceptance: [ticket 13](work/13-phase-1-plan.md).
+
+The owner accepted the phase-1 token/network risk; destination-specific
+network access and the install script are following tickets.
+
+Next: implement ticket 13 on `feat/13-phase-1-plan`, as the owner asked (“Commit
+and then handoff so the next session will start with the implementation”).
+Work step by step with the owner in the loop at each turn. Branch from main if
+the owner has merged `docs/phase-1-plan-ticket`, otherwise from that branch.
+The live run needs separate approval per `live-runs.md`. This session was
+documentation only; Markdown links and `git diff --check` checked, no tests
+rerun.
+
+## First user journey, 2026-10-24
 
 The owner merged the refactor, roadmap and reviewed observer fix into main at
 `ce7c8a0` (`Merge branch 'feat/12-observer-isolation'`). The pending-merge notes

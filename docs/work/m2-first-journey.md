@@ -1,6 +1,6 @@
 # M2 — First user journey definition
 
-Status: journey agreed; implementation ticket and design still to be prepared.
+Status: journey agreed; first ticket is [13](13-phase-1-plan.md).
 Documentation branch: `docs/first-user-journey`, based on merged main `ce7c8a0`.
 Canonical scope: [roadmap](../roadmap.md#first-user-journey--agreed-2026-10-24).
 Decision: [A-145](../decisions.md#a-145--2026-10-24--first-user-journey-with-human-approval-and-feedback).
@@ -34,3 +34,12 @@ default workflow already implements spec revision, durable feedback transport,
 provider access, escalation continuation or real publication. Read the roadmap's
 unresolved decisions at the relevant boundary. Implementation begins only under
 a subsequent implementation instruction; paid scenarios follow `live-runs.md`.
+
+### 2026-10-25 — First run and phase 1 agreed
+
+The owner picked the rifle half of bolts_n_blades slice 4 with the input
+“remove the hit sound from rifle hits, as they aren't heard over the fire and
+bolt sounds”, split the journey into a headless phase 1 and a later interactive
+phase, chose a subscription token, and agreed the core/extension/factory split
+and a script installer. Quotes in A-146; scope in
+[ticket 13](13-phase-1-plan.md). Phase 1 covers entry and plan approval only.
