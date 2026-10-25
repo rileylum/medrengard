@@ -2,14 +2,16 @@
 
 ## Current next action — 2026-10-25
 
-Main holds the core candidate plus ticket 13: idea to owner-approved plan
-through `cli/medrengard.ts`, with a headless Claude Code planner on a
-subscription token ([ticket 13](work/13-phase-1-plan.md)). Live run 1 took a
-bolts_n_blades change through a plan, one feedback round, a refused stale hash
-and approval. Gate: `systemd-run --user --scope --quiet npm test` 73/73.
+Main holds the core candidate, ticket 13 (idea to owner-approved plan through
+`cli/medrengard.ts`, with a headless Claude Code planner on a subscription
+token; [ticket 13](work/13-phase-1-plan.md)) and the [guide](guide.md). Live
+run 1 took a bolts_n_blades change through a plan, one feedback round, a
+refused stale hash and approval. Gate:
+`systemd-run --user --scope --quiet npm test` 77/77.
 
 The owner's factory is `~/dev/medrengard-factory` (`main`), with `.medrengard`
-symlinked to this checkout; the token is in `~/.config/medrengard/claude-token`.
+symlinked to this checkout at `~/dev/medrengard`; the token is in
+`~/.config/medrengard/claude-token` (mode 600).
 
 Open caveat: the `Skill` tool fix (`1d141f6`) has not been exercised by a live
 planner run.
@@ -20,6 +22,29 @@ review before we handle the listed tickets”). Draft its ticket with the owner:
 developer and reviewer agents, a real check command for the target repository,
 and whether the run publishes a PR. After it, the owner orders the following
 tickets listed in the [roadmap](roadmap.md#progress).
+
+What the full run meets today, checked against the code on 2026-10-25:
+
+- **The check cannot run bolts_n_blades' tests yet.** Command stages get a
+  bare sandbox with no `Sandbox.read` paths or network, so they see only the
+  system directories. The owner's `node` is under `~/.config/nvm`, and
+  `node_modules` is ignored by Git, so the snapshot has no `vitest` either.
+  How a check gets its toolchain and dependencies is a core question for the
+  owner; it touches the roadmap's “separating stage access from output
+  contracts”.
+- **`claudeCodeRuntime` only plans.** It allows read-only tools and turns the
+  final message into a document. A developer needs write tools and a commit
+  result; a reviewer needs a verdict naming the current SHA.
+- **The developer's sandbox has no Git identity** (`HOME` is a private
+  `/tmp`), so it must commit with explicit author settings or declared `env`
+  names.
+- **Adding `develop` changes the factory's workflows,** so the controller will
+  refuse the factory's existing event log; start the full run on a fresh
+  `path`.
+- **The 30-minute stage deadline** may be short for a developer run
+  ([parked](work/parked.md)).
+- **No code-host client ships.** A `pr` extension is trusted host code, so it
+  could call `gh` on the host; whether the run publishes is the owner's call.
 
 ## Guide — 2026-10-25
 
@@ -46,5 +71,5 @@ decision log is trimmed to rules in force with a retired-ID index (full text at
 `c3f91f9`); research and architecture notes about deleted code are removed
 (index in `docs/research/README.md`); stale claims in the README, threat model,
 roadmap, open questions, core and live-run docs are corrected; superseded
-session history is removed from this file. The checkout is being renamed to
+session history is removed from this file. The checkout was renamed to
 `~/dev/medrengard`.
