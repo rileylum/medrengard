@@ -133,8 +133,10 @@ tests actually run.
 | [`src/primitives.ts`](../src/primitives.ts) | The [`Controller`](../src/index.ts), [`checkWorkflow`](../src/index.ts) and the types. |
 | [`src/sandbox.ts`](../src/sandbox.ts) | The sandbox, built on bubblewrap, a Linux tool that fences a program in. Stages use it through `StageContext.execute`. |
 | [`src/command-runtime.ts`](../src/command-runtime.ts) | [`commandRuntime`](../src/index.ts), a runtime for any local program that speaks JSON. |
-| [`extensions/claude-code`](../extensions/claude-code/index.ts) | `claudeCodeRuntime`, the Claude Code runtime. |
-| [`workflows/default.ts`](../workflows/default.ts) | `defaultWorkflows`, the idea-to-PR workflow, and `examplePlanner`, a planner agent built from [`workflows/example/`](../workflows/example/planner.md). |
+| [`extensions/claude-code`](../extensions/claude-code/index.ts) | `claudeCodeRuntime`, the Claude Code runtime, and its `defaultPrompt`. |
+| [`extensions/command-check`](../extensions/command-check/index.ts) | `commandCheck`, a check that runs a command. |
+| [`extensions/github`](../extensions/github/index.ts) | `githubPullRequest`, which publishes the accepted commit as a draft PR. |
+| [`workflows/default.ts`](../workflows/default.ts) | `defaultWorkflows`, the idea-to-PR workflow, and the example planner, developer, reviewer and adversarial reviewer agents, built from [`workflows/example/`](../workflows/example/planner.md). |
 | [`cli/medrengard.ts`](../cli/medrengard.ts) | The command line: `start`, `show` and `decide`, using the `factory.ts` in the current folder. |
 | [`tests/`](../tests/e2e/mvp.test.ts) | The tests, which double as worked examples. |
 
@@ -210,9 +212,14 @@ automatic stages, so only your decision can lead back round.
 anything.
 
 [`workflows/default.ts`](../workflows/default.ts) is the full idea-to-PR
-workflow: `design`, then `develop` with a check, up to two standard reviews
-with one fix between them, one adversarial review, your decision and a `pr`
-extension. The factory's `plan` is its `design` half, with `accept` ending the
+workflow: `design`, then `develop`, a `check` extension, a standard review and
+an adversarial review, your decision and a `pr` extension. A failed check gets
+up to two fixes and a failed standard review one; a failure that would end the
+run comes to your `owner` decision instead, with its findings, and the budgets
+are sized so that happens before any of them runs out. One round costs at most
+seven paid agent runs: the develop run, three fixes and three reviews. At
+`owner`, `accept` publishes, `changes` starts a fresh round with your feedback
+and `reject` ends the work. The factory's `plan` is its `design` half, with `accept` ending the
 work until develop has real agents.
 
 ### Agents and sandboxes
@@ -279,7 +286,13 @@ the `base` commit the work's copy of the project started from, the run's
 Anything it runs through `context.execute` gets the stage's `access`.
 [`commandCheck`](../extensions/command-check/index.ts)`(argv)` is the shipped
 check: it runs a command and turns exit code 0 into `PASS` and anything else
-into `FAIL`, keeping the output. The `pr` extension in the same `setup` returns a document whose
+into `FAIL`, keeping the output.
+[`githubPullRequest`](../extensions/github/index.ts)`({ repository })` is the
+shipped publisher. It uses your own `git` and `gh`: it pushes the accepted
+commit from Medrengard's stored copy to `medrengard/<work>` on your
+repository's remote, then opens a draft PR with the change, the evidence and
+the plan, or updates the open PR on that branch, so publishing again never
+opens a second one. The `pr` extension in the same `setup` returns a document whose
 `subject` is the reviewed SHA, so the link counts as evidence about that code
 rather than as a new subject.
 

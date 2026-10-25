@@ -77,8 +77,11 @@ declare; their effect is unverified ([parked](../work/parked.md)).
 
 ## Limits
 
-`claudeCodeRuntime` is the only provider adapter; there is no Pi integration, code-host client,
-credential file or mount, egress proxy, destination-specific network or grant
+`claudeCodeRuntime` is the only provider adapter and `githubPullRequest` the
+only code-host client. The latter is trusted host code: it pushes with the
+owner's Git credentials and calls the owner's logged-in `gh`, outside any
+sandbox, from the controller's retained copy rather than the owner's checkout.
+There is no Pi integration, credential file or mount, egress proxy, destination-specific network or grant
 mechanism. The core loads no repository configuration; Claude Code does when
 `project` settings are chosen. The generic `commandRuntime` protocol is the
 other process adapter; owners provide further implementations as trusted

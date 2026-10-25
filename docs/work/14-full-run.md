@@ -241,3 +241,32 @@ Tests: `tests/claude-code.test.ts` rewritten, 8 cases against a fake `claude`
 (failed 8/8 against the previous runtime, then green); one `buffer: false`
 case in `tests/e2e/run-context.test.ts`, red then green. Gate:
 `systemd-run --user --scope --quiet npm test` 98/98.
+
+### 2026-10-26 — Step e: example agents, the publisher and the default's owner routes
+
+Owner, on terminal failures: “Yeah the owner route is good, maybe all fails
+that would end the run should go there?” and “I think our default should be
+to route to owner as much as possible instead of escalate. Again this is jsut
+the workflow not a core thing” (A-150). Also asked for `recover` in step f.
+
+Example roles `developer.md` (does not commit; final message is the commit
+message), `reviewer.md` and `adversarial.md`, and a guide describing the whole
+run; `exampleDeveloper`, `exampleReviewer`, `exampleAdversarial` and
+`examplePlanner` share one helper. `defaultWorkflows`: check budget 4 with
+FAIL `['fix', 'fix', 'owner', 'owner']`, standard FAIL `['fix', 'owner']`, fix
+budget 3, adversarial FAIL to `owner`, `owner` gains `reject`. A test drives
+the worst round (two check failures, a standard failure, an adversarial
+failure) and reaches `owner` with every budget spent and no escalation.
+
+`extensions/github`: `githubPullRequest({ repository, remote, draft, branch,
+gh })`, trusted host code. Pushes `+<sha>:refs/heads/medrengard/<work>` from
+the retained repository to the owner repository's remote URL, so the owner's
+checkout gets no objects; reuses an open PR on the branch and refreshes its
+body, otherwise `gh pr create --draft` with the change, the evidence for the
+SHA and the plan (plan last, cut at 60,000 characters). The owner's `gh` is
+logged in and bolts_n_blades pushes over SSH.
+
+Tests: default workflow 8 cases (red on the missing exports, then green);
+`tests/github.test.ts` 3 cases against a bare remote and a fake `gh`, red then
+green, plus a red-then-green assertion that a reused PR's body names the new
+SHA. Gate: `systemd-run --user --scope --quiet npm test` 103/103.

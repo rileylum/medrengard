@@ -12,7 +12,7 @@ Summaries of what still holds, not owner quotes. The cited entries hold the appr
 | --- | --- | --- |
 | D-001 | source | The controller is deterministic and the only writer of state and budget. Agent output is a claim until the controller checks it (`docs/core.md` invariants). |
 | D-002 | source, A-001 | The core is vendor-neutral: an `Agent` names its runtime, role and sandbox independently, and runtime adapters live in extensions. Personal and corporate domains stay separate. |
-| D-003 | source, A-054 | Default policy, not core (D-023): the shipped default runs up to two standard reviews and one adversarial review per round; an adversarial FAIL escalates (`workflows/default.ts`). |
+| D-003 | source, A-054, A-150 | Default policy, not core (D-023): the shipped default runs up to two standard reviews and one adversarial review per round, with bounded fixes. A failure that would end the run goes to the owner's decision instead of escalating (`workflows/default.ts`). |
 | D-004 | source, A-054 | Default policy, not core (D-023): the default has the owner approve the design and the reviewed result before the PR. |
 | D-005 | source | A full, risk-tailored SDLC is the destination. No automatic production deployment; the default ends at the owner-approved PR (O-009). |
 | D-006 | source | Pools of three developers, two or three reviewers and one adversarial run at a time stay the source design target. Not built; no concurrent pools before M5 (`docs/roadmap.md`). |
@@ -26,6 +26,20 @@ Summaries of what still holds, not owner quotes. The cited entries hold the appr
 | P-005 | A-001 | Run locally; corporate execution needs separate authorisation. |
 
 ## Approval history
+
+### A-150 — 2026-10-26 — The default routes failures to the owner
+
+After the proposal to send terminal review failures to the owner stage rather
+than `ESCALATED`, which cannot be continued: “Yeah the owner route is good,
+maybe all fails that would end the run should go there?” Then: “I think our
+default should be to route to owner as much as possible instead of escalate.
+Again this is jsut the workflow not a core thing”.
+
+Effect: in `defaultWorkflows`, every workflow edge that would end a round on a
+failure leads to `owner`, and budgets are sized so the edges reach it before a
+budget runs out (check 4, fix 3, standard 2, adversarial 1; at most seven paid
+runs a round). The core's own escalations (runtime errors, deadlines, invalid
+claims, interrupted runs) are unchanged. Revises D-003's adversarial rule.
 
 ### A-149 — 2026-10-26 — Full run scope: configurable primitives and shipped defaults
 
