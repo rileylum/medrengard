@@ -15,7 +15,7 @@ const failed = argv[argv.indexOf('--append-system-prompt') + 1] === 'fail';
 console.log(JSON.stringify({ type: 'result', is_error: failed, result: failed ? 'refused' : JSON.stringify({ argv, stdin }) }));`;
 
 function setup(t: TestContext, role = 'You are the planner.', settingSources?: string[], model?: string) {
-  const dir = mkdtempSync('/var/tmp/software_factory-claude-');
+  const dir = mkdtempSync('/var/tmp/medrengard-claude-');
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const repository = join(dir, 'repository');
   execFileSync('git', ['init', '-q', repository]);

@@ -141,3 +141,5 @@ changed and application tests were not rerun; the independent 57/57 gate and
 `git merge --no-ff feat/12-observer-isolation` from the main checkout, including
 this acceptance record. Then define M2's first real provider-to-PR journey.
 No merge, push or paid run occurred in this session.
+
+Merged to main at `ce7c8a0`.

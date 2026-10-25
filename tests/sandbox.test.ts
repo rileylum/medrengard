@@ -8,8 +8,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { dirname, join } from 'node:path';
 import { execute, type Policy, type Sandbox } from '../src/sandbox.ts';
 
-mkdirSync('/var/tmp/software_factory', { recursive: true });
-const dir = mkdtempSync('/var/tmp/software_factory/sf-sandbox-');
+mkdirSync('/var/tmp/medrengard', { recursive: true });
+const dir = mkdtempSync('/var/tmp/medrengard/sf-sandbox-');
 test.after(() => rmSync(dir, { recursive: true, force: true }));
 
 // The node install this test runs on; on this machine it lives under ~/.config/nvm, outside /usr.

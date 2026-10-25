@@ -1,9 +1,7 @@
 # Live runs
 
 A paid model run needs the owner's approval of a concrete scenario plan and
-cost first. No paid runs are part of the core refactor. Historical Claude/Pi
-runs used integrations now deleted; they do not demonstrate provider support
-in the current API.
+cost first, including small checks.
 
 Two runtimes ship. `commandRuntime(argv)` is a generic JSON process adapter: it
 sends `AgentRequest` plus `artifacts` on stdin and expects one JSON result
@@ -22,8 +20,8 @@ in [ticket 13](work/13-phase-1-plan.md).
 1. Define scenarios, expected stage paths, artifacts and paid-run count; get
    the owner's quoted approval of the plan and cost.
 2. Use a scratch repository and fresh SQLite path under
-   `/var/tmp/software_factory/live-N/`, unless the owner approves running a
-   factory as built (ticket 13 did, for read-only design stages). Supply trusted TypeScript `Options`,
+   `/var/tmp/medrengard/live-N/`, or the owner's factory as built when the owner
+   approves it (ticket 13 did, for read-only design stages). Supply trusted TypeScript `Options`,
    agent/runtime definitions and extensions to `Controller`. Import
    `defaultWorkflows(checkArgv)` if its policy fits. There are no job JSON
    files or `src/main.ts` commands; a factory drives the controller through
@@ -46,8 +44,6 @@ in [ticket 13](work/13-phase-1-plan.md).
 ## Local verification
 
 `npm test` exercises stub runtimes, the real JSON process adapter and bwrap.
-The public controller tests start a descendant in a new session and verify
-that it cannot outlive normal command exit, output overflow, a stage deadline
-or controller death. Sandbox cancellation sends SIGKILL directly to bwrap,
-without a grace period. The suite needs working unprivileged user namespaces;
+Process confinement and cleanup are described in the
+[threat model](security/threat-model.md). The suite needs working unprivileged user namespaces;
 it uses no model provider and incurs no model spend.
