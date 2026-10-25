@@ -202,7 +202,7 @@ verbatim as above.
 - Run 2 reused the clone: plan `2e664003…884a` adds `weapon` to `MSG_HIT`,
   bumps the protocol to 10 and plays the sound unless the weapon is the rifle;
   one open question with a default.
-- Stale `accept` of the first hash: run by the owner; no event written. Accept
+- Stale `accept` of the first hash: refused, “stale owner decision” (owner); no event written. Accept
   of the second hash: `decision accept → DONE`. Ten events; two paid planner
   runs as planned; no seeded stages.
 
