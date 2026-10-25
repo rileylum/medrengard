@@ -27,6 +27,27 @@ test('every relative link in the README and docs/ resolves', () => {
   assert.deepEqual(missing, []);
 });
 
+// GitHub's heading ids: lower case, punctuation dropped, spaces to hyphens, repeats numbered.
+function anchors(file: string): Set<string> {
+  const seen = new Map<string, number>();
+  return new Set([...prose(file).matchAll(/^#{1,6}\s+(.+?)\s*#*$/gm)].map(([, heading]) => {
+    const id = heading.toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-');
+    const n = seen.get(id) ?? 0; seen.set(id, n + 1);
+    return n ? `${id}-${n}` : id;
+  }));
+}
+
+test('every heading link in the README and docs/ names a heading that exists', () => {
+  const missing = DOCS.flatMap(file => [...prose(file).matchAll(LINK)]
+    .map(([, , href]) => href)
+    .filter(href => local(href) || href.startsWith('#'))
+    .filter(href => href.includes('#'))
+    .map(href => ({ href, doc: href.startsWith('#') ? join(root, file) : target(file, href) }))
+    .filter(({ href, doc }) => doc.endsWith('.md') && existsSync(doc) && !anchors(doc.slice(root.length + 1)).has(decodeURIComponent(href.split('#')[1])))
+    .map(({ href }) => `${file} -> ${href}`));
+  assert.deepEqual(missing, []);
+});
+
 test('every repository path named in a current doc exists', () => {
   const missing = DOCS.filter(file => !HISTORICAL.test(file)).flatMap(file => [...prose(file).matchAll(PATH)]
     .filter(([, path]) => !BRANCH.test(path) && !existsSync(join(root, path)) && !existsSync(target(file, path)))
