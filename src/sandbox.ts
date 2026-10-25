@@ -8,6 +8,10 @@ export interface Sandbox {
   backend: string;
   /** Absolute paths bound read-only for everything this job spawns, e.g. a toolchain outside /usr. */
   read?: string[];
+  /** Share the host network; off by default. */
+  network?: boolean;
+  /** Names of variables copied from the controller's environment; each must be set at setup. */
+  env?: string[];
 }
 
 /** Built by the stage that spawns. Paths are absolute. */
@@ -24,18 +28,17 @@ export interface Policy {
 // /bin, /sbin, /lib and /lib64 are symlinks and are recreated as symlinks.
 const SYSTEM = ['/usr', '/etc', '/opt', '/bin', '/sbin', '/lib', '/lib64'];
 
-/** Build bubblewrap arguments with declared mounts and no network. */
+// The sandbox sets these itself; the owner cannot override them.
+const RESERVED = ['PATH', 'HOME', 'LANG'];
+
+/** Build bubblewrap arguments with declared mounts, and no network unless declared. */
 function wrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]] {
-  const lang = process.env.LANG;
   return ['bwrap', [
     // Parent death ends bwrap; --unshare-all includes the PID namespace, so its
     // descendants die with the namespace init even after starting a new session.
-    '--die-with-parent', '--unshare-all',
+    '--die-with-parent', '--unshare-all', ...(sandbox.network ? ['--share-net'] : []),
     // A new session: the command cannot push input into the controller's terminal (TIOCSTI).
     '--new-session',
-    // The controller's environment may hold tokens; the command gets a path, a home and a locale.
-    '--clearenv',
-    '--setenv', 'PATH', process.env.PATH ?? '/usr/bin', '--setenv', 'HOME', '/tmp', ...(lang ? ['--setenv', 'LANG', lang] : []),
     '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp',
     ...SYSTEM.flatMap(systemBind),
     ...binds([...(sandbox.read ?? []), ...policy.read], policy.write),
@@ -55,6 +58,15 @@ function binds(read: string[], write: string[]): string[] {
     .flatMap(({ p, flag }) => [flag, p, p]);
 }
 
+// The controller's environment may hold tokens: bwrap and the command get a path, a home, a locale and
+// the declared names. Values go through the environment, not argv, which any local user can read.
+function environment(sandbox: Sandbox): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? '/usr/bin', HOME: '/tmp' };
+  if (process.env.LANG) env.LANG = process.env.LANG;
+  for (const name of sandbox.env ?? []) env[name] = process.env[name];
+  return env;
+}
+
 function systemBind(path: string): string[] {
   let st;
   try { st = lstatSync(path); } catch { return []; }
@@ -69,6 +81,11 @@ export function checkSandbox(...sandboxes: Sandbox[]): void {
     for (const p of sandbox.read ?? []) {
       if (typeof p !== 'string' || !isAbsolute(p)) throw new Error(`sandbox read path ${JSON.stringify(p)} is not absolute`);
       if (!existsSync(p)) throw new Error(`sandbox read path ${p} does not exist`);
+    }
+    for (const name of sandbox.env ?? []) {
+      if (typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`sandbox env ${JSON.stringify(name)} is not a variable name`);
+      if (RESERVED.includes(name)) throw new Error(`sandbox env ${name} is set by the sandbox`);
+      if (process.env[name] === undefined) throw new Error(`sandbox env ${name} is not set in the controller environment`);
     }
   }
   const probe = spawnSync('bwrap', ['--die-with-parent', '--unshare-all', ...SYSTEM.flatMap(systemBind), '--', 'true'], { timeout: 5000 });
@@ -92,7 +109,7 @@ export interface RunResult {
 /** Execute a confined command, ending its namespace on cancellation or output overflow. */
 export function execute(sandbox: Sandbox, policy: Policy, argv: string[], signal: AbortSignal, input = ''): Promise<RunResult> {
   const [command, args] = wrap(sandbox, policy, argv[0], argv.slice(1));
-  const child = spawn(command, args, { cwd: policy.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(command, args, { cwd: policy.cwd, env: environment(sandbox), stdio: ['pipe', 'pipe', 'pipe'] });
   const started = Date.now();
   let status: RunResult['status'] = 'exited';
   const output = { stdout: '', stderr: '' };

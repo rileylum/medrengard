@@ -36,6 +36,13 @@ for (const read of ['relative/path', 'missing']) test(`controller refuses ${read
   refuses(read === 'missing' ? /does not exist/ : /absolute/);
 });
 
+for (const [env, message] of [[['1BAD'], /not a variable name/], [['HOME'], /set by the sandbox/], [['SF_UNSET_TOKEN'], /not set/]] as const) test(`controller refuses sandbox env ${env[0]} before opening work`, t => {
+  const { options, refuses } = fixture(t);
+  options.agents.one.sandbox.env = [...env];
+  delete process.env.SF_UNSET_TOKEN;
+  refuses(message);
+});
+
 for (const backend of ['none', 'docker']) test(`controller refuses the ${backend} backend before opening work`, t => {
   const { options, refuses } = fixture(t);
   options.agents.one.sandbox.backend = backend;
