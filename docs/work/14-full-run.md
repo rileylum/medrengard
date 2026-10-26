@@ -406,3 +406,12 @@ merged local branches `docs/guide` and `docs/handoff-refresh`. The roadmap's
 progress lists what M2 still needs and the candidates for the next ticket. The
 owner will close PR 80 and choose the next ticket. Status: done, awaiting the
 owner's merge of this branch and the factory's `feat/full-run`.
+
+### 2026-10-26 — Docs: the default and the factory
+
+Owner, asking whether the factory's relation to the default was clear (“Is
+that difference clear in the readme for medrengard-factory?”), then “Yes
+please” to the proposal. On `docs/factory-split`, the guide gains “What the
+default gives you, and what your factory adds” and no longer says the factory
+stops at an approved plan. The factory gains a README (its branch
+`docs/readme`) that links to that section rather than restating it.

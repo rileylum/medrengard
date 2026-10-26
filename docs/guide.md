@@ -126,9 +126,10 @@ sandbox and its own `access` grant. The
 A factory is a folder of your own, outside this checkout, holding a
 `factory.ts` that Medrengard trusts. The owner's factory,
 `~/dev/medrengard-factory`, is the worked example here: it takes an idea about
-one repository to an approved plan. The same shape, with a fake planner, is
-built by [`tests/cli.test.ts`](../tests/cli.test.ts), which is the version the
-tests actually run.
+one repository through an approved plan, development, a check and reviews to a
+draft pull request. The same shape, with fake agents, is built by
+[`tests/cli.test.ts`](../tests/cli.test.ts), which is the version the tests
+actually run.
 
 ### What is in this checkout
 
@@ -145,10 +146,35 @@ tests actually run.
 | [`cli/medrengard.ts`](../cli/medrengard.ts) | The command line: `start`, `show`, `decide` and `recover`, using the `factory.ts` in the current folder. It is also the first observer: it prints each stage's start and result as they are recorded. |
 | [`tests/`](../tests/e2e/mvp.test.ts) | The tests, which double as worked examples. |
 
+### What the default gives you, and what your factory adds
+
+Medrengard ships the policy most factories share, and leaves out everything
+that is about you, your machine or your project. The owner's factory imports
+the shipped workflow unchanged and supplies the rest:
+
+| Medrengard ships | The factory supplies |
+| --- | --- |
+| The workflow, `defaultWorkflows`: stages, routes, budgets and the owner's gates | The repository to work on |
+| The example agents: their roles, the shared workflow guide and the plan skill | Each agent's sandbox: network, the token by name, and read access to `claude` and `node` |
+| `claudeCodeRuntime` | Its settings: the model, and project settings for a trusted repository |
+| `commandCheck`, a check that runs a command | The command it runs and what it can reach (`defaultWorkflows({ check })`) |
+| `githubPullRequest` | The repository it publishes from |
+| The controller and the CLI | Where the event log and working copies live, and the stage deadline |
+
+Importing keeps the factory current: a change to the default reaches it on the
+next run, once its event log is replaced (see
+[Changing a workflow](#changing-a-workflow)). To diverge, either change a
+piece and keep the shape (other agents, another check, a wrapped
+`defaultPrompt`, one stage replaced in the array `defaultWorkflows()`
+returns), or copy the workflow into `factory.ts` and own it. To the controller
+a workflow is only data, so both are equally supported. The factory's own
+README says what it runs and how; this section is the explanation it links to.
+
 ### The factory's files
 
 | Entry | What it is |
 | --- | --- |
+| `README.md` | What this factory runs and how to run it, linking here for the explanation. |
 | `factory.ts` | Default-exports `{ options, workflow }`: the controller's [`Options`](../src/index.ts) and the name of the workflow `start` opens. |
 | `package.json` | An `imports` map: `#medrengard` is the core's front door through `.medrengard`, and `#medrengard/*` the rest of the checkout, so the factory can import `extensions/` and `workflows/`. |
 | `.medrengard` | A symlink to this checkout, ignored by Git. |
