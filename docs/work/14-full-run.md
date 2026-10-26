@@ -313,3 +313,58 @@ real check passed in about 7 s (fresh `npm ci`, 901 tests passed, 4 expected
 failures, 2 skipped; typecheck clean), with no ANSI codes in its output after
 the `NO_COLOR` change. The work reached `owner`; nothing was published.
 bolts_n_blades' checkout is unchanged at `f0660b3`.
+
+### 2026-10-26 — Live run 2: idea to draft PR
+
+The owner ran it from the factory (“Okay I've ran it, please check”). Work
+`ab58c74c`, input verbatim as in live run 1, event log
+`~/dev/medrengard-factory/state/full.sqlite` (118 events, 102 of them
+transcript lines, 284 KB). Path:
+`design → approve (accept) → develop → check PASS → standard PASS →
+adversarial PASS → owner (accept) → pr → DONE`. No changes rounds, no
+escalation, no seeded stages.
+
+| Run | Wall (event times) | Turns | Reported cost | Tools used |
+| --- | --- | --- | --- | --- |
+| design | 25 s | 12 | $0.095 | the plan skill (`Skill` loaded it: ticket 13's open caveat is closed), Grep, Glob, Read |
+| develop | 42 s | 9 | $0.101 | Bash only: read, edit, `npm install`, typecheck, tests |
+| check | 7 s | — | — | `npm ci`, 901 tests passed, typecheck clean |
+| standard | 16 s | 6 | $0.079 | `git diff <base> HEAD`, grep, tests; `StructuredOutput` |
+| adversarial | 18 s | 7 | $0.071 | `git diff`, grep, read; did not run tests; `StructuredOutput` |
+
+Four paid Sonnet runs, $0.35 notional in all (estimate was $2–6). The owner
+read the plan for about 1.5 minutes and the result for about 8. Plan hash
+`c6d4ba46…`; commit `bfc71252c5e18b1a3c5e6124439c0028da975ed8` on base
+`f0660b3`, authored `Medrengard <medrengard@localhost>`, two files, ten lines
+changed. Draft PR https://github.com/rileylum/bolts_n_blades/pull/80, head
+`medrengard/ab58c74c` at exactly the accepted SHA, one commit. The owner's
+checkout gained the commit only through a fetch at 01:34:35Z, 17 s after the
+publisher finished, with an auto-fetch signature; the publisher wrote nothing
+to it. 371 MB of working copies remain under `/var/tmp/medrengard-factory/runs`.
+
+Proven for real: write tools with `bypassPermissions` inside bwrap,
+`structured_output` verdicts, runtime commits, whole transcripts with times
+(no line over 512 KiB), the publisher over SSH and `gh`.
+
+Findings:
+
+1. **Commit message carries the developer's report.** The runtime uses the
+   final message verbatim; the developer wrote a report, then “Commit
+   message:” and a fenced message. The commit and the PR's Change section both
+   hold all of it.
+2. **Reviewer prose is lost.** Under `--json-schema` the result text is the
+   JSON, so the standard review's content is `{"verdict":"PASS","findings":[]}`;
+   the adversarial reviewer put non-blocking notes in `findings` on a PASS.
+3. **The plan misread the protocol.** It said `MSG_HIT` carries `e.weapon`,
+   citing `docs/protocol.md:192-196`, where `weapon` belongs to Kill; it put
+   protocol changes out of scope, against the owner's live-run-1 feedback to
+   add the field. The developer found it through the typecheck, fell back to
+   the local active weapon and reported the deviation; the adversarial
+   reviewer named the remaining switch-timing window as not blocking. The
+   owner accepted both gates. The workflow behaved as designed; the plan's
+   accuracy and the deviation's route did not reach the owner before review.
+4. **Undeclared plugins and skills** load in every agent
+   (`cc-plugin-agents-md`, `cc-plugin-telemetry`, `cc-plugin-plugin-authoring`
+   and about 19 skills), as parked; now confirmed from each run's init line.
+5. Reviewers do not get dependencies or the check's result; the standard
+   reviewer ran the tests in a copy without `node_modules`.

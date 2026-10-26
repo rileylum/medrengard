@@ -12,9 +12,13 @@ hash prefixes, prints progress and recovers interrupted runs. The owner's
 factory is on its `feat/full-run` branch and passed a free dry run with the
 real check. Gate: `systemd-run --user --scope --quiet npm test` 104/104.
 
-Next: the paid live run, which needs the owner's approval of the plan in the
-ticket's step g (the rifle-hit idea, 4 to 8 Sonnet runs, one draft PR on
-bolts_n_blades' GitHub repository). Both branches await the owner's merge.
+Live run 2 took the rifle-hit idea from idea to draft PR
+https://github.com/rileylum/bolts_n_blades/pull/80 with four paid Sonnet runs
+($0.35 notional), no escalation; evidence and five findings are in the
+ticket's log. Next: the owner chooses which findings to fix in this ticket
+(the commit message carrying the developer's report and the lost reviewer
+prose are runtime defects) and what to do with PR 80. Both branches await the
+owner's merge.
 
 ## Previous next action — 2026-10-25
 
