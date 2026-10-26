@@ -22,10 +22,10 @@ set up your own factory and how to change the core.
 - **The rules are yours.** The steps, the agents' roles, how many reviews to
   run and what happens at the end are your own code, not built in.
 
-Today it can take an idea to a plan you have approved, with Claude Code as the
-planner. Building, checking and reviewing the change with real agents comes
-next. The [default workflow](workflows/default.ts) already describes that whole
-path, and the tests run it with stand-in agents.
+Today it has taken an idea to a plan you approved, with Claude Code as the
+planner. The [default workflow](workflows/default.ts) goes on to build, check
+and review the change with Claude Code agents and open a draft pull request;
+the tests run all of it with stand-in agents, and its first real run is next.
 
 ## Try it
 

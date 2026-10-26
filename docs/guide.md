@@ -55,12 +55,17 @@ The owner's factory plans changes to one of the owner's projects:
    feedback. Either way you quote the plan's fingerprint, so you can only
    decide on the version you actually read.
 5. After `changes`, the planner runs again with your feedback and its previous
-   plan, and you are asked again. After `accept`, the work is done.
+   plan, and you are asked again.
+6. After `accept`, a developer agent writes the code in the private copy and
+   Medrengard commits it. The project's tests run on exactly that commit, then
+   a reviewer and an adversarial reviewer look at it. A failed check or review
+   goes back to the developer to fix, a limited number of times.
+7. You get the commit with every verdict and its findings. `accept` opens a
+   draft pull request; `changes` sends it back with your feedback for another
+   round.
 
-The shipped default workflow carries on from an approved plan: a developer
-agent writes the code, the project's checks run, reviewer agents review it,
-with one fix allowed after a failed first review, and you decide before a pull
-request is opened. Real agents for those steps are the next piece of work.
+The factory has run steps 1 to 5 for real; the whole run has been tested with
+stand-in agents and is ready for its first real run ([STATUS](STATUS.md)).
 
 Behind the commands, the pieces fit together like this:
 
@@ -147,7 +152,7 @@ tests actually run.
 | `factory.ts` | Default-exports `{ options, workflow }`: the controller's [`Options`](../src/index.ts) and the name of the workflow `start` opens. |
 | `package.json` | An `imports` map: `#medrengard` is the core's front door through `.medrengard`, and `#medrengard/*` the rest of the checkout, so the factory can import `extensions/` and `workflows/`. |
 | `.medrengard` | A symlink to this checkout, ignored by Git. |
-| `state/` | Holds `events.sqlite`, the factory's event log, ignored by Git. |
+| `state/` | Holds `full.sqlite`, the factory's event log, ignored by Git, and `events.sqlite`, the log of the planning-only runs before it. |
 
 Its working copies (`Options.directory`) live under
 `/var/tmp/medrengard-factory/runs`, outside your home folder, so that no
@@ -166,7 +171,8 @@ README shows how to [run it](../README.md#run-it).
 - `runtimes`: runtimes by name.
 - `extensions`: extension functions by name.
 - `deadlineMs`: how long one stage may run, in milliseconds. The default is 30
-  seconds; the factory sets 30 minutes, because planning takes minutes.
+  seconds; the factory sets 60 minutes, because a developer installs, edits
+  and tests.
 
 When the controller starts, it checks the workflows, agents, runtimes,
 extensions and sandboxes before any work begins. It also refuses an event log
@@ -176,11 +182,12 @@ whose works were started under different workflows; see
 ### Workflows
 
 A [`Workflow`](../src/index.ts) is a name, a `start` stage and named
-[`Stage`](../src/index.ts)s. The factory's `plan` workflow has two. `design`
-runs the planner agent on a read-only copy of the project
-(`access: { workspace: 'repository' }`) and produces a document. `approve` is a human
-stage: `accept` ends the work, `changes` starts `plan` again with a fresh
-budget, and `reject` escalates.
+[`Stage`](../src/index.ts)s. The factory uses the shipped default, described
+below. Its `design` workflow has two stages. `design` runs the planner agent on
+a read-only copy of the project (`access: { workspace: 'repository' }`) and
+produces a document. `approve` is a human stage: `accept` hands over to the
+`develop` workflow, `changes` starts `design` again with a fresh budget, and
+`reject` escalates.
 
 Each stage declares:
 
@@ -219,8 +226,9 @@ run comes to your `owner` decision instead, with its findings, and the budgets
 are sized so that happens before any of them runs out. One round costs at most
 seven paid agent runs: the develop run, three fixes and three reviews. At
 `owner`, `accept` publishes, `changes` starts a fresh round with your feedback
-and `reject` ends the work. The factory's `plan` is its `design` half, with `accept` ending the
-work until develop has real agents.
+and `reject` ends the work. The factory passes the check's access to
+`defaultWorkflows({ check })`: its `node` install and the network, so
+`commandCheck` can run `npm ci`, the tests and the typecheck on each commit.
 
 ### Agents and sandboxes
 
@@ -237,8 +245,8 @@ The sandbox is `backend: 'bwrap'` plus three optional settings. `read` lists
 folders and files the agent may read, such as the `claude` program. `network`
 gives it the network when `true`. `env` names secrets or settings to pass in
 from your shell, each of which must be set when the controller starts. The
-factory's planner uses all three, so that it can reach the model with a
-subscription token. What that exposes, and why it fits the owner's risk
+factory's agents use all three, so that they can reach the model with a
+subscription token and run `node` for the tests. What that exposes, and why it fits the owner's risk
 appetite, is in the [threat model](security/threat-model.md#agents-with-network-and-a-token).
 
 ### Runtimes
@@ -328,9 +336,8 @@ extensions does not trigger this.
 
 ### What is not there yet
 
-Real developer and reviewer agents, a check for a real project and opening a
-PR are the next piece of work ([STATUS](STATUS.md)); the
-[roadmap](roadmap.md) lists what follows.
+The full run has not yet been made with real agents; that is the next action
+([STATUS](STATUS.md)). The [roadmap](roadmap.md) lists what follows.
 
 ## Changing the core
 

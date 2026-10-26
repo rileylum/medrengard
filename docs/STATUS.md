@@ -2,11 +2,19 @@
 
 ## Current next action — 2026-10-26
 
-[Ticket 14](work/14-full-run.md), the full run, is planned on
-`feat/14-full-run` with the owner (A-148 risk appetite, A-149 scope). Step a
-is done: the ticket, and the docs reframed around mistakes and task bounds
-rather than hostile input. Next: step b, stage access and command stages as
-code, test first, then check in with the owner.
+[Ticket 14](work/14-full-run.md), the full run, is built on `feat/14-full-run`
+(steps a to f, and step g's factory and dry run). Stages declare their access
+(`none`, `scratch`, `full` write; history), command stages are owner code,
+events record times, `claudeCodeRuntime` develops, reviews and keeps whole
+transcripts, `githubPullRequest` publishes one draft PR per work, the default
+routes failures to the owner, and the CLI shows commits and verdicts, takes
+hash prefixes, prints progress and recovers interrupted runs. The owner's
+factory is on its `feat/full-run` branch and passed a free dry run with the
+real check. Gate: `systemd-run --user --scope --quiet npm test` 104/104.
+
+Next: the paid live run, which needs the owner's approval of the plan in the
+ticket's step g (the rifle-hit idea, 4 to 8 Sonnet runs, one draft PR on
+bolts_n_blades' GitHub repository). Both branches await the owner's merge.
 
 ## Previous next action — 2026-10-25
 

@@ -288,3 +288,28 @@ Tests: `tests/cli.test.ts` extended (a develop, review and owner gate in the
 fake factory; prefix, stale message and progress; a run killed mid-stage then
 recovered), red then green. Gate:
 `systemd-run --user --scope --quiet npm test` 104/104.
+
+### 2026-10-26 — Step g, parts 1 and 2: the factory and a free dry run
+
+Owner: “Go ahead, just do 1 and 2 and then we'll check in on the live run.”
+The commit author was not chosen, so the factory leaves the runtime's default,
+`Medrengard <medrengard@localhost>`.
+
+Factory `~/dev/medrengard-factory`, branch `feat/full-run` (`ce92cf1`):
+`defaultWorkflows({ check: { read: [node], network: true } })`, the four
+example agents on `claudeCodeRuntime` (Sonnet, project settings) with network,
+the token and read access to `claude` and the nvm `node`; `commandCheck` runs
+`npm ci`, `npm test` and `npm run typecheck` with `NO_COLOR=1 FORCE_COLOR=0`;
+`githubPullRequest({ repository })`; event log `state/full.sqlite`;
+`deadlineMs` 60 minutes. Before the change, the old factory was refused with
+“workflow stage design has unknown fields workspace”; after it, `show
+missing` through the real CLI passes setup and answers “unknown work missing”.
+
+Dry run, no model spend: `/var/tmp/medrengard-check/full-run-dry.ts` builds a
+controller from the factory's real options with a stub runtime, its own log
+and folders. The stub developer ran `npm ci` and `npm test` in its clone, then
+committed with `git add -A`: only `medrengard-dry-run.txt` was committed. The
+real check passed in about 7 s (fresh `npm ci`, 901 tests passed, 4 expected
+failures, 2 skipped; typecheck clean), with no ANSI codes in its output after
+the `NO_COLOR` change. The work reached `owner`; nothing was published.
+bolts_n_blades' checkout is unchanged at `f0660b3`.
