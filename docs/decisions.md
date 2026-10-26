@@ -27,6 +27,25 @@ Summaries of what still holds, not owner quotes. The cited entries hold the appr
 
 ## Approval history
 
+### A-151 — 2026-10-26 — Order of the next tickets, and a primitives research loop
+
+Owner, given the candidates after ticket 14 (1 real tickets through the
+factory, 2 continuing an escalated work, 3 a stall timeout, 4 a second
+runtime, 5 the install script, 6 agents with an access ceiling, 7
+destination-specific network): “Okay lets not start them, but this is the
+order I'd like: 2, 3, 6, 5, 4, 7 - with 1 running the whole time. In addition
+probably in the middle I think we'll run the loop of - workflow idea input,
+try and create it, identify the gaps in core primitives, identify
+opportunities for default shipped extensions, agents, workflows, observers
+etc. then priotize/triage and plan to build them. I feel like this loop could
+be an unattended multi-agent research loop activity, with some initial
+priotization/triage and final review. It probably goes in after 6.”
+
+Effect: the [roadmap's order](roadmap.md#progress): escalation continuation,
+stall timeout, agents with an access ceiling, the research loop, the install
+script, a second runtime, destination-specific network; real tickets through
+the factory throughout. Nothing is started by this record.
+
 ### A-150 — 2026-10-26 — The default routes failures to the owner
 
 After the proposal to send terminal review failures to the owner stage rather
