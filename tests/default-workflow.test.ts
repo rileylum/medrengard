@@ -8,7 +8,7 @@ import { Controller, type AgentRequest, type Artifact, type Options, type Runtim
 import { defaultWorkflows, exampleAdversarial, exampleDeveloper, examplePlanner, exampleReviewer } from '../workflows/default.ts';
 
 // Verdict lists are consumed in order; a check of 'FAIL' fails on the current commit.
-function setup(t: TestContext, { reviews = ['FAIL', 'PASS', 'FAIL', 'PASS'], adversarial = ['PASS', 'PASS'], checks = [] as string[] } = {}) {
+function setup(t: TestContext, { reviews = ['FAIL', 'PASS', 'FAIL', 'PASS'], adversarial = ['PASS', 'PASS'], checks = [] as string[], deviate = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'factory-default-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const repository = join(directory, 'repository');
@@ -36,7 +36,7 @@ function setup(t: TestContext, { reviews = ['FAIL', 'PASS', 'FAIL', 'PASS'], adv
         const verdict = (request.agent.role === 'standard' ? reviews : adversarial).shift();
         artifact = { kind: 'verdict', verdict, subject: context.subject, findings: verdict === 'FAIL' ? [`${request.agent.role} finding`] : [] };
       }
-      result = { outcome: artifact.kind === 'verdict' ? artifact.verdict : 'done', artifact };
+      result = { outcome: artifact.kind === 'verdict' ? artifact.verdict : deviate && commits === 1 ? 'deviated' : 'done', artifact };
     },
     async result() { return result; }, async cancel() {}, async *events() {},
   };
@@ -118,6 +118,21 @@ for (const [name, options, failed] of [
   assert.equal(controller.events().length, eventCount);
   controller.decide('failure', 'reject', state.subject!);
   assert.equal((await controller.advance('failure')).stage, 'ESCALATED');
+  assert.equal(prs.length, 0);
+});
+
+test('a commit that departs from the plan stops for the owner before check and review, under outcomes of its own', async t => {
+  const { controller, prs } = setup(t, { reviews: ['PASS'], adversarial: ['PASS'], deviate: true });
+  const state = await toOwner(controller, 'deviate');
+  assert.equal(state.stage, 'deviation', state.reason);
+  assert.equal(state.spent.check, undefined);
+  // An accept meant for the publication gate cannot pass this one, and the reverse.
+  assert.throws(() => controller.decide('deviate', 'accept', state.subject!), /unclassified outcome accept/);
+  controller.decide('deviate', 'proceed', state.subject!);
+  const owner = await controller.advance('deviate');
+  assert.equal(owner.stage, 'owner', owner.reason);
+  assert.equal(owner.subject, state.subject);
+  assert.throws(() => controller.decide('deviate', 'proceed', owner.subject!), /unclassified outcome proceed/);
   assert.equal(prs.length, 0);
 });
 

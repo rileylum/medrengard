@@ -10,9 +10,22 @@ export const DEFAULT_TOOLS: Record<Output, string[]> = {
   commit: ['Read', 'Grep', 'Glob', 'Skill', 'Bash', 'Edit', 'Write'],
 };
 
+// Structured results keep what the workflow acts on apart from what the owner reads.
 const VERDICT_SCHEMA = JSON.stringify({
-  type: 'object', additionalProperties: false, required: ['verdict', 'findings'],
-  properties: { verdict: { enum: ['PASS', 'FAIL'] }, findings: { type: 'array', items: { type: 'string' } } },
+  type: 'object', additionalProperties: false, required: ['verdict', 'findings', 'summary'],
+  properties: {
+    verdict: { enum: ['PASS', 'FAIL'] },
+    findings: { type: 'array', items: { type: 'string' }, description: 'Problems that must be fixed before the owner sees the change; empty on PASS.' },
+    summary: { type: 'string', description: 'A short review for the owner: what you checked, what you ran, and any concerns that do not block.' },
+  },
+});
+const COMMIT_SCHEMA = JSON.stringify({
+  type: 'object', additionalProperties: false, required: ['message', 'report', 'deviations'],
+  properties: {
+    message: { type: 'string', description: 'The commit message: a summary line under 72 characters, a blank line, then what changed and why.' },
+    report: { type: 'string', description: 'For the owner: what you did, which tests you ran and their result.' },
+    deviations: { type: 'array', items: { type: 'string' }, description: 'Each way the change departs from the approved plan, and why; empty if none.' },
+  },
 });
 // One event must stay under the controller's 1 MiB claim limit once wrapped.
 const MAX_LINE = 512 * 1024;
@@ -23,10 +36,12 @@ export function defaultPrompt(request: AgentRequest, context: StageContext): str
   // A document bound to a subject, such as a PR link, is evidence rather than the plan.
   const plan = context.artifacts.findLast(a => a.kind === 'document' && !a.subject);
   const failures = request.produces === 'commit' ? context.artifacts.filter(a => a.kind === 'verdict' && a.verdict === 'FAIL' && a.subject === context.subject) : [];
+  const recorded = request.produces === 'verdict' ? context.artifacts.filter(a => a.kind === 'verdict' && a.subject === context.subject) : [];
   return [
     request.input,
     plan && `${request.produces === 'document' ? 'Previous plan' : 'Approved plan'}:\n${plan.content}`,
     ...failures.map(a => [`${a.stage} FAIL:`, ...a.findings!.map(f => `- ${f}`), ...a.content ? [a.content.slice(-FAILURE_TAIL)] : []].join('\n')),
+    recorded.length && ['Already recorded for this commit:', ...recorded.map(a => `- ${a.stage}: ${a.verdict}`)].join('\n'),
     request.produces === 'verdict' && context.base && `Review the change ${context.base}..${context.subject}: run \`git diff ${context.base} HEAD\` in your workspace to see it.`,
     request.feedback && `Owner feedback:\n${request.feedback}`,
   ].filter(Boolean).join('\n\n') + '\n';
@@ -65,6 +80,7 @@ export function claudeCodeRuntime(options: {
         '--setting-sources', (options.settingSources ?? ['user']).join(','), ...(options.model ? ['--model', options.model] : []),
         '--permission-mode', 'bypassPermissions', '--tools', tools.join(','), '--strict-mcp-config',
         ...(request.produces === 'verdict' ? ['--json-schema', VERDICT_SCHEMA] : []),
+        ...(request.produces === 'commit' && (options.commit ?? 'runtime') === 'runtime' ? ['--json-schema', COMMIT_SCHEMA] : []),
         '--append-system-prompt', request.agent.role, ...request.agent.skills.flatMap(skill => ['--plugin-dir', skill])];
       const abort = new AbortController();
       const run = { abort, lines: [] as unknown[], result: undefined as any, wake() {}, finished: false, request, context, done: undefined as unknown as Promise<RunResult> };
@@ -101,16 +117,23 @@ export function claudeCodeRuntime(options: {
       const { request, context } = run;
       if (request.produces === 'document') return { outcome: 'done', artifact: { kind: 'document', content: output.result } };
       if (request.produces === 'verdict') {
-        const { verdict, findings } = output.structured_output ?? {};
+        const { verdict, findings, summary } = output.structured_output ?? {};
         if (!['PASS', 'FAIL'].includes(verdict)) throw new Error('claude returned no verdict');
-        return { outcome: verdict, artifact: { kind: 'verdict', verdict, findings, subject: context.subject, content: output.result } };
+        return { outcome: verdict, artifact: { kind: 'verdict', verdict, findings, subject: context.subject, content: summary } };
       }
+      if ((options.commit ?? 'runtime') === 'agent') {
+        const head = await context.execute(['git', 'rev-parse', 'HEAD']);
+        return { outcome: 'done', artifact: { kind: 'commit', sha: head.stdout.trim(), content: output.result } };
+      }
+      const { message, report, deviations } = output.structured_output ?? {};
+      if (typeof message !== 'string' || !message.trim() || typeof report !== 'string' || !Array.isArray(deviations)) throw new Error('claude returned no commit message, report and deviations');
       const author = options.author ?? { name: 'Medrengard', email: 'medrengard@localhost' };
-      const script = (options.commit ?? 'runtime') === 'agent' ? 'git rev-parse HEAD'
-        : 'set -e; git add -A; git diff --cached --quiet || git -c user.name="$1" -c user.email="$2" commit -q --cleanup=verbatim -F -; git rev-parse HEAD';
-      const commit = await context.execute(['sh', '-c', script, 'commit', author.name, author.email], { input: output.result || 'Medrengard change' });
+      const script = 'set -e; git add -A; git diff --cached --quiet || git -c user.name="$1" -c user.email="$2" commit -q --cleanup=verbatim -F -; git rev-parse HEAD';
+      const commit = await context.execute(['sh', '-c', script, 'commit', author.name, author.email], { input: message });
       if (commit.status !== 'exited' || commit.exitCode !== 0) throw new Error(`cannot commit the developer's work: ${commit.stderr}`);
-      return { outcome: 'done', artifact: { kind: 'commit', sha: commit.stdout.trim(), content: output.result } };
+      const content = deviations.length ? `${report}\n\nDeviations from the plan:\n${deviations.map(d => `- ${d}`).join('\n')}` : report;
+      // A departure from the approved plan is its own outcome, so a workflow can stop for the owner before review.
+      return { outcome: deviations.length ? 'deviated' : 'done', artifact: { kind: 'commit', sha: commit.stdout.trim(), content } };
     },
     async cancel(runId) { runs.get(runId)!.abort.abort(); await runs.get(runId)!.done; },
   };

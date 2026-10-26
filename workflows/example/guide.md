@@ -10,6 +10,8 @@ developer implements and reviewers check against, so anything it leaves
 unstated is decided later by someone without the owner's context.
 
 The developer implements the approved plan; the workflow commits the result.
+If the developer had to depart from the plan, the owner sees the departure and
+decides whether to proceed before the change is checked and reviewed.
 A check then runs the repository's tests on exactly that commit. A failed
 check or standard review sends its output or findings back to the developer
 for a fix, a bounded number of times. When the reviews pass, or the bound is

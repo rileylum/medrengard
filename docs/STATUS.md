@@ -10,15 +10,18 @@ transcripts, `githubPullRequest` publishes one draft PR per work, the default
 routes failures to the owner, and the CLI shows commits and verdicts, takes
 hash prefixes, prints progress and recovers interrupted runs. The owner's
 factory is on its `feat/full-run` branch and passed a free dry run with the
-real check. Gate: `systemd-run --user --scope --quiet npm test` 104/104.
+real check.
 
 Live run 2 took the rifle-hit idea from idea to draft PR
 https://github.com/rileylum/bolts_n_blades/pull/80 with four paid Sonnet runs
 ($0.35 notional), no escalation; evidence and five findings are in the
-ticket's log. Next: the owner chooses which findings to fix in this ticket
-(the commit message carrying the developer's report and the lost reviewer
-prose are runtime defects) and what to do with PR 80. Both branches await the
-owner's merge.
+ticket's log. The owner asked for four of the findings to be fixed; they are, test first
+(structured commit messages and review summaries, a `deviation` gate before
+review, recorded evidence in reviewer prompts), not yet exercised by a paid
+run. Gate: `systemd-run --user --scope --quiet npm test` 106/106. The owner
+will close PR 80. Next: the owner's review and merge of `feat/14-full-run`
+and the factory's `feat/full-run`; then a confirming run if wanted, and the
+following tickets in the roadmap.
 
 ## Previous next action — 2026-10-25
 

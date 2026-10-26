@@ -368,3 +368,30 @@ Findings:
    and about 19 skills), as parked; now confirmed from each run's init line.
 5. Reviewers do not get dependencies or the check's result; the standard
    reviewer ran the tests in a copy without `node_modules`.
+
+### 2026-10-26 — Fixes from live run 2
+
+Owner: “Yeah do all 4, I'll probably kill the PR as its not exactly how I'd
+implement it - but it proved the flow which was the main point.”
+
+1. Commits: the runtime asks with `--json-schema` for `{ message, report,
+   deviations }`, commits with `message`, and keeps `report` (plus a
+   “Deviations from the plan” list) as the artifact's content. `commit:
+   'agent'` asks for none of it.
+2. Verdicts: the schema gains `summary`, kept as the content; `findings` are
+   described as problems that must be fixed, empty on PASS.
+3. Deviations: a commit with deviations returns the outcome `deviated`. The
+   default routes it from `develop` and `fix` to a `deviation` human stage
+   (`proceed` to check, `changes`, `reject`) before checks and reviews. Its
+   outcomes differ from `owner`'s, so a repeated decision on the same SHA is
+   refused at the other gate; the A-143 accepted-risk row is updated. The
+   planner's role now says to read each cited line before relying on it.
+4. `defaultPrompt` gives a reviewer the verdicts already recorded for the
+   commit (“Already recorded for this commit: - check: PASS”); the reviewer
+   role says not to repeat work that already passed.
+
+Tests: `tests/claude-code.test.ts` (structured commit message and report, a
+deviation reaching a human stage, an agent commit asking for no schema, the
+recorded-evidence prompt) and a default-workflow deviation case, red then
+green. Gate: `systemd-run --user --scope --quiet npm test` 106/106. Not yet
+exercised by a paid run.

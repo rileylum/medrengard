@@ -32,11 +32,14 @@ export function defaultWorkflows(options: { check?: Access } = {}): Workflow[] {
       approve: { kind: 'human', on: { accept: { workflow: 'develop' }, changes: { workflow: 'design' }, reject: 'ESCALATED' } },
     } },
     { name: 'develop', start: 'develop', stages: {
-      develop: { kind: 'agent', agent: 'developer', produces: 'commit', budget: 1, on: { done: 'check' } },
+      develop: { kind: 'agent', agent: 'developer', produces: 'commit', budget: 1, on: { done: 'check', deviated: 'deviation' } },
+      // A commit that departs from the approved plan is settled with the owner before checks and reviews are spent on it.
+      // Its outcomes differ from the publication gate's, so a decision meant for one cannot pass the other on the same SHA.
+      deviation: { kind: 'human', on: { proceed: 'check', changes: { workflow: 'develop' }, reject: 'ESCALATED' } },
       // A check runs after the develop run and after each of up to three fixes.
       check: { kind: 'command', extension: 'check', access: options.check, budget: 4, on: { PASS: 'standard', FAIL: ['fix', 'fix', 'owner', 'owner'] } },
       standard: { kind: 'agent', agent: 'standard', produces: 'verdict', budget: 2, on: { PASS: 'adversarial', FAIL: ['fix', 'owner'] } },
-      fix: { kind: 'agent', agent: 'developer', produces: 'commit', budget: 3, on: { done: 'check' } },
+      fix: { kind: 'agent', agent: 'developer', produces: 'commit', budget: 3, on: { done: 'check', deviated: 'deviation' } },
       adversarial: { kind: 'agent', agent: 'adversarial', produces: 'verdict', budget: 1, on: { PASS: 'owner', FAIL: 'owner' } },
       // A new review budget requires the owner's decision on the current SHA.
       owner: { kind: 'human', on: { accept: 'pr', changes: { workflow: 'develop' }, reject: 'ESCALATED' } },

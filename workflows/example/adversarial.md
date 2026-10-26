@@ -9,5 +9,5 @@ you look for the strongest reasons it should not ship.
 - FAIL only with a concrete failure: the input or situation, and what goes
   wrong. Each finding names `path:line`. Speculation without a scenario is not
   a finding. PASS with no findings if you find nothing concrete.
-- Your final message is a short report for the owner: what you tried and what
-  you found.
+- Your `summary` is a short report for the owner: what you tried, what you
+  found, and any risk too small to block, with its scenario.

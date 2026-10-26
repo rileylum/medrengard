@@ -224,7 +224,9 @@ an adversarial review, your decision and a `pr` extension. A failed check gets
 up to two fixes and a failed standard review one; a failure that would end the
 run comes to your `owner` decision instead, with its findings, and the budgets
 are sized so that happens before any of them runs out. One round costs at most
-seven paid agent runs: the develop run, three fixes and three reviews. At
+seven paid agent runs: the develop run, three fixes and three reviews. A
+commit whose developer reports a departure from the plan stops at
+`deviation` before it is checked: `proceed`, `changes` or `reject`. At
 `owner`, `accept` publishes, `changes` starts a fresh round with your feedback
 and `reject` ends the work. The factory passes the check's access to
 `defaultWorkflows({ check })`: its `node` install and the network, so
@@ -265,15 +267,19 @@ output as it arrives. There are three choices:
   programs.
 - `claudeCodeRuntime({ command, settingSources, model, tools, prompt, commit,
   author })`: headless Claude Code. What it returns follows what the stage
-  `produces`. For a document, the final message. For a commit, it commits
-  whatever the agent left in the copy of the project as `author`, with the
-  final message as the commit message; `commit: 'agent'` lets the agent commit
-  for itself instead. For a verdict, a `PASS` or `FAIL` with findings, asked
-  for with `--json-schema` and bound to the commit under review. Planners get
+  `produces`. For a document, the final message. For a commit, it asks
+  with `--json-schema` for a commit `message`, a `report` for you and a list
+  of `deviations` from the plan, then commits whatever the agent left in the
+  copy of the project as `author` with that message, keeps the report (and
+  any deviations) as the commit's content, and returns the outcome `deviated`
+  instead of `done` if there were any; `commit: 'agent'` lets the agent commit
+  for itself instead. For a verdict, a `PASS` or `FAIL` with the findings that
+  must be fixed and a `summary` for you, bound to the commit under review. Planners get
   `Read`, `Grep`, `Glob` and `Skill`; reviewers also `Bash`; developers also
   `Edit` and `Write`, all with permissions bypassed because the sandbox is the
   boundary; `tools` replaces a set. `defaultPrompt` gives the idea, the plan,
-  what failed on the current commit, the change to review and your feedback;
+  what failed on the current commit, what is already recorded for the commit
+  under review, the change to review and your feedback;
   `prompt` replaces or wraps it. The whole `stream-json` session is recorded as
   runtime events. It refuses agents that declare MCP servers.
 - Your own. The stub in the `setup` of

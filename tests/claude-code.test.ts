@@ -9,8 +9,9 @@ import { Controller, type Agent, type Artifact, type StageContext, type Workflow
 import { claudeCodeRuntime, defaultPrompt } from '../extensions/claude-code/index.ts';
 
 const NODE_PREFIX = dirname(dirname(realpathSync(process.execPath)));
-// Streams an init line, then acts on its role: a developer bumps `answer` (and may commit it itself), a reviewer fails
-// an answer of 1, "fail" reports an error and "oversized" streams one huge line. The result reports argv and prompt.
+// Streams an init line, then acts on its role: a developer bumps `answer` (and may commit it itself, or report a
+// deviation), a reviewer fails an answer of 1, "fail" reports an error and "oversized" streams one huge line. The
+// result, and a developer's report or a reviewer's summary, report argv and prompt.
 const FAKE = `const fs = require('fs'); const { execFileSync } = require('child_process');
 const argv = process.argv.slice(2); const stdin = fs.readFileSync(0, 'utf8');
 const role = argv[argv.indexOf('--append-system-prompt') + 1];
@@ -18,16 +19,18 @@ const line = value => process.stdout.write(JSON.stringify(value) + '\\n');
 line({ type: 'system', subtype: 'init', cwd: process.cwd() });
 if (role === 'oversized') line({ type: 'assistant', text: 'x'.repeat(600 * 1024) });
 let structured;
+const reported = JSON.stringify({ argv, stdin });
 if (role.startsWith('developer')) {
   const n = fs.existsSync('answer') ? Number(fs.readFileSync('answer', 'utf8')) + 1 : 1;
+  if (argv.includes('--json-schema')) structured = { message: 'Bump the answer\\n\\nThe answer is now ' + n + '.', report: reported, deviations: role.includes('deviate') ? ['answer is a file, not a constant'] : [] };
   fs.writeFileSync('answer', String(n));
   if (role.includes('self-commit')) {
     execFileSync('git', ['add', 'answer']); execFileSync('git', ['-c', 'user.name=Agent', '-c', 'user.email=agent@test', 'commit', '-qm', 'agent commit']);
     fs.writeFileSync('extra', 'left out');
   }
 }
-if (argv.includes('--json-schema')) structured = fs.readFileSync('answer', 'utf8') === '1' ? { verdict: 'FAIL', findings: ['answer must be 2'] } : { verdict: 'PASS', findings: [] };
-line({ type: 'result', is_error: role === 'fail', result: role === 'fail' ? 'refused' : JSON.stringify({ argv, stdin }), structured_output: structured });`;
+else if (argv.includes('--json-schema')) structured = fs.readFileSync('answer', 'utf8') === '1' ? { verdict: 'FAIL', findings: ['answer must be 2'], summary: reported } : { verdict: 'PASS', findings: [], summary: reported };
+line({ type: 'result', is_error: role === 'fail', result: role === 'fail' ? 'refused' : structured ? JSON.stringify(structured) : reported, structured_output: structured });`;
 
 function setup(t: TestContext, runtime: Parameters<typeof claudeCodeRuntime>[0] extends infer O ? Omit<O, 'command'> : never = {}, roles: Record<string, string> = {}) {
   const dir = mkdtempSync('/var/tmp/medrengard-claude-');
@@ -40,7 +43,8 @@ function setup(t: TestContext, runtime: Parameters<typeof claudeCodeRuntime>[0] 
   const workflow: Workflow = { name: 'full', start: 'design', stages: {
     design: { kind: 'agent', agent: 'planner', produces: 'document', access: { workspace: 'repository' }, budget: 1, on: { done: 'approve' } },
     approve: { kind: 'human', on: { accept: 'develop', changes: { workflow: 'full' } } },
-    develop: { kind: 'agent', agent: 'developer', produces: 'commit', budget: 1, on: { done: 'review' } },
+    develop: { kind: 'agent', agent: 'developer', produces: 'commit', budget: 1, on: { done: 'review', deviated: 'confirm' } },
+    confirm: { kind: 'human', on: { proceed: 'review' } },
     review: { kind: 'agent', agent: 'reviewer', produces: 'verdict', budget: 2, on: { PASS: 'DONE', FAIL: ['fix', 'ESCALATED'] } },
     fix: { kind: 'agent', agent: 'developer', produces: 'commit', budget: 1, on: { done: 'review' } },
   } };
@@ -111,14 +115,26 @@ test('a developer edits, the runtime commits as the configured author, and a rev
   assert.match(developer.stdin, new RegExp(`Approved plan:\\n${plan.artifacts[0].content!.replace(/[\\[\]{}()*+?.^$|]/g, '\\$&')}`));
   const show = (format: string, sha: string) => execFileSync('git', ['-C', commits[1].repository!, 'show', '-s', `--format=${format}`, sha], { encoding: 'utf8' }).trim();
   assert.equal(show('%an <%ae>', commits[0].sha!), 'Factory <factory@test>');
-  assert.equal(show('%B', commits[0].sha!), commits[0].content);
+  // The commit carries the developer's message; the artifact keeps its report for the owner.
+  assert.equal(show('%B', commits[0].sha!), 'Bump the answer\n\nThe answer is now 1.');
+  assert.deepEqual(JSON.parse(flag(developer.argv, '--json-schema')).required, ['message', 'report', 'deviations']);
   assert.equal(execFileSync('git', ['-C', commits[1].repository!, 'show', `${commits[1].sha}:answer`], { encoding: 'utf8' }), '2');
   // The fix is told what failed; the reviewer is told which change to review and how to answer.
   assert.match(reported(commits[1].content).stdin, /review FAIL:\n- answer must be 2/);
   const review = reported(verdicts[0].content);
   assert.equal(flag(review.argv, '--tools'), 'Read,Grep,Glob,Skill,Bash');
-  assert.deepEqual(JSON.parse(flag(review.argv, '--json-schema')).required, ['verdict', 'findings']);
+  assert.deepEqual(JSON.parse(flag(review.argv, '--json-schema')).required, ['verdict', 'findings', 'summary']);
   assert.match(review.stdin, new RegExp(`Review the change ${base}\\.\\.${commits[0].sha}`));
+});
+
+test('a developer that departs from the plan says how, and the outcome lets the workflow stop for the owner', async t => {
+  const { controller } = setup(t, {}, { developer: 'developer deviate' });
+  controller.decide('rifle', 'accept', (await controller.advance('rifle')).subject!);
+  const state = await controller.advance('rifle');
+  assert.equal(state.stage, 'confirm', state.reason);
+  const commit = state.artifacts.find(a => a.kind === 'commit')!;
+  assert.match(commit.content!, /\n\nDeviations from the plan:\n- answer is a file, not a constant$/);
+  assert.equal(controller.events().findLast(e => e.type === 'completed')!.next, 'confirm');
 });
 
 test('a workflow can let the agent commit for itself; the runtime then commits nothing', async t => {
@@ -128,6 +144,7 @@ test('a workflow can let the agent commit for itself; the runtime then commits n
   const commit = state.artifacts.find(a => a.kind === 'commit')!;
   const files = execFileSync('git', ['-C', commit.repository!, 'show', '--name-only', '--format=%an', commit.sha!], { encoding: 'utf8' });
   assert.equal(files.trim(), 'Agent\n\nanswer');
+  assert.ok(!reported(commit.content).argv.includes('--json-schema'), 'an agent that commits for itself is not asked for a message');
 });
 
 test('tools and the prompt can be replaced per output', async t => {
@@ -147,4 +164,6 @@ test('the default prompt gives each output what it needs', () => {
   const failures = [doc('plan'), fail('check', [], `${'early '.repeat(2000)}npm ERR! test failed`), fail('review', ['a', 'b']), { ...fail('review', ['old']), subject: 'older' }];
   assert.equal(defaultPrompt(request('commit'), context(failures)), `idea\n\nApproved plan:\nplan\n\ncheck FAIL:\n${`${'early '.repeat(2000)}npm ERR! test failed`.slice(-8000)}\n\nreview FAIL:\n- a\n- b\n`);
   assert.equal(defaultPrompt(request('verdict'), context([doc('plan')])), 'idea\n\nApproved plan:\nplan\n\nReview the change base..sha: run `git diff base HEAD` in your workspace to see it.\n');
+  const passed: Artifact = { kind: 'verdict', hash: 'c', stage: 'check', subject: 'sha', verdict: 'PASS', findings: [], content: 'long output' };
+  assert.equal(defaultPrompt(request('verdict'), context([doc('plan'), passed, { ...passed, stage: 'old', subject: 'older' }])), 'idea\n\nApproved plan:\nplan\n\nAlready recorded for this commit:\n- check: PASS\n\nReview the change base..sha: run `git diff base HEAD` in your workspace to see it.\n');
 });
