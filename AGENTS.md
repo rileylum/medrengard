@@ -10,5 +10,6 @@ Use its language exactly, including the words it rules out.
 - **Cannot classify something?** Stop and ask the owner.
 - **Specs:** a sentence in `docs/core.md` without a test is a proposal.
 - **Tests** write only under the system temp directory, never inside the repository.
+- **Checks:** `npm test` (type check, lint, format check, tests).
 - **Git, overriding the global workflow:** branches stay local; push only when the owner asks.
   The owner merges.
