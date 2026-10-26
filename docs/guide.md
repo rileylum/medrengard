@@ -137,7 +137,7 @@ tests actually run.
 | [`extensions/command-check`](../extensions/command-check/index.ts) | `commandCheck`, a check that runs a command. |
 | [`extensions/github`](../extensions/github/index.ts) | `githubPullRequest`, which publishes the accepted commit as a draft PR. |
 | [`workflows/default.ts`](../workflows/default.ts) | `defaultWorkflows`, the idea-to-PR workflow, and the example planner, developer, reviewer and adversarial reviewer agents, built from [`workflows/example/`](../workflows/example/planner.md). |
-| [`cli/medrengard.ts`](../cli/medrengard.ts) | The command line: `start`, `show` and `decide`, using the `factory.ts` in the current folder. |
+| [`cli/medrengard.ts`](../cli/medrengard.ts) | The command line: `start`, `show`, `decide` and `recover`, using the `factory.ts` in the current folder. It is also the first observer: it prints each stage's start and result as they are recorded. |
 | [`tests/`](../tests/e2e/mvp.test.ts) | The tests, which double as worked examples. |
 
 ### The factory's files

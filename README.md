@@ -50,12 +50,17 @@ export CLAUDE_CODE_OAUTH_TOKEN=...   # if your agents use Claude Code; keep the 
 node .medrengard/cli/medrengard.ts start "<idea>"
 node .medrengard/cli/medrengard.ts show <work>
 node .medrengard/cli/medrengard.ts decide <work> <outcome> <hash> ["feedback"]
+node .medrengard/cli/medrengard.ts recover <work>
 ```
 
-`start` begins a new piece of work and runs it until it needs you, then prints
-the plan and its hash. `show` prints where a piece of work has got to.
-`decide` gives your answer, such as `accept`, or `changes` with feedback, for
-that exact hash, and carries on.
+`start` begins a new piece of work and runs it until it needs you, printing
+each step as it starts and finishes, then shows the plan and its hash. `show`
+prints where a piece of work has got to: the plan, or once there is code, the
+commit and every review of it with its findings. `decide` gives your answer,
+such as `accept`, or `changes` with feedback, for that exact version, and
+carries on; the first seven or more characters of the hash are enough.
+`recover` marks a run that was cut off (a closed terminal, a crash) as needing
+you, when `show` says one is in progress and nothing is running it.
 
 ## Safety in brief
 

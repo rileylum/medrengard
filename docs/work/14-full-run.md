@@ -270,3 +270,21 @@ Tests: default workflow 8 cases (red on the missing exports, then green);
 `tests/github.test.ts` 3 cases against a bare remote and a fake `gh`, red then
 green, plus a red-then-green assertion that a reused PR's body names the new
 SHA. Gate: `systemd-run --user --scope --quiet npm test` 103/103.
+
+### 2026-10-26 — Step f: the CLI follows a full run
+
+Owner: “Yes please” to `show` with the commit and verdicts, prefix decisions,
+`recover`, and progress through an observer.
+
+`show` gives the plan until there is a commit, then the commit's summary and
+each piece of evidence on the current subject with its time and findings, and
+says when a run is pending that `recover` may be needed. `decide` resolves a
+prefix of 7 or more characters against the current subject only, and a stale
+refusal names the current one. `recover <work>` calls `Controller.recover`.
+`start` prints the work ID to stderr at once, and an observer prints each
+`started`, `completed` and `escalated` event with its time.
+
+Tests: `tests/cli.test.ts` extended (a develop, review and owner gate in the
+fake factory; prefix, stale message and progress; a run killed mid-stage then
+recovered), red then green. Gate:
+`systemd-run --user --scope --quiet npm test` 104/104.
