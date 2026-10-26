@@ -18,10 +18,13 @@ https://github.com/rileylum/bolts_n_blades/pull/80 with four paid Sonnet runs
 ticket's log. The owner asked for four of the findings to be fixed; they are, test first
 (structured commit messages and review summaries, a `deviation` gate before
 review, recorded evidence in reviewer prompts), not yet exercised by a paid
-run. Gate: `systemd-run --user --scope --quiet npm test` 106/106. The owner
-will close PR 80. Next: the owner's review and merge of `feat/14-full-run`
-and the factory's `feat/full-run`; then a confirming run if wanted, and the
-following tickets in the roadmap.
+run. Gate: `systemd-run --user --scope --quiet npm test` 106/106. Working
+copies and the merged docs branches are cleaned up.
+
+Next: the owner merges `feat/14-full-run` and the factory's `feat/full-run`,
+closes PR 80, and chooses the next ticket from the
+[roadmap's candidates](roadmap.md#progress). A confirming paid run of the
+fixes is cheap (live run 2 cost $0.35) and best made on a real small change.
 
 ## Previous next action — 2026-10-25
 

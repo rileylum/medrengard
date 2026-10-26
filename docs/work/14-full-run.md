@@ -5,7 +5,7 @@ Milestone: M2 in `docs/roadmap.md`, the rest of the
 after [ticket 13](13-phase-1-plan.md).
 Decisions: [A-148](../decisions.md#a-148--2026-10-26--risk-appetite-mistakes-and-scope-not-hostile-input),
 [A-149](../decisions.md#a-149--2026-10-26--full-run-scope-configurable-primitives-and-shipped-defaults).
-Branch: `feat/14-full-run`. Status: planned.
+Branch: `feat/14-full-run`. Status: done, awaiting the owner's merge.
 
 ## Behavior
 
@@ -395,3 +395,14 @@ deviation reaching a human stage, an agent commit asking for no schema, the
 recorded-evidence prompt) and a default-workflow deviation case, red then
 green. Gate: `systemd-run --user --scope --quiet npm test` 106/106. Not yet
 exercised by a paid run.
+
+### 2026-10-26 — Close
+
+Owner: “Okay give me the merge comamnds and do trhe clean up, then I'll decide
+whats next”. Deleted the working copies under `/var/tmp/medrengard-factory/runs`
+(371 MB, live runs 1 and 2) and `/var/tmp/medrengard-check/dry-run` (342 MB);
+the event logs keep the record and PR 80 the published commit. Deleted the
+merged local branches `docs/guide` and `docs/handoff-refresh`. The roadmap's
+progress lists what M2 still needs and the candidates for the next ticket. The
+owner will close PR 80 and choose the next ticket. Status: done, awaiting the
+owner's merge of this branch and the factory's `feat/full-run`.
