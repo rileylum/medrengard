@@ -1,4 +1,0 @@
-node_modules/
-*.sqlite
-# Committed test fixtures; every other database is a run artefact.
-!tests/fixtures/*.sqlite
