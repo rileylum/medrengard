@@ -101,13 +101,32 @@ whether the delivered change meets its acceptance criteria.
 - **Still open for M2:** a fix cycle and an owner `changes` round with real
   agents (tested only with stand-ins), and a usable failure path: an
   escalated work cannot yet be continued.
-- **Candidates for what follows,** for the owner to order: real small tickets
-  through the factory, letting what hurts choose the next work; continuing an
-  escalated work (with the recovery promise below); a stall timeout in place
-  of the stage deadline, with cleanup of working copies; a second runtime
-  (M3); the install script (M4); agents defined once with an access ceiling.
-  Destination-specific network was a follow-up of A-146; under the risk
-  appetite in A-148 it is for the owner to keep, lower or drop.
+- **Order of what follows,** set by the owner on 2026-10-26
+  ([A-151](decisions.md#a-151--2026-10-26--order-of-the-next-tickets-and-a-primitives-research-loop)).
+  Throughout, real small tickets run through the factory, and what hurts
+  there can reorder the rest. Then, one ticket each:
+  1. Continuing an escalated work, settling the recovery promise below.
+  2. A stall timeout in place of the stage deadline, with cleanup of working
+     copies.
+  3. Agents defined once and reused, with an access ceiling.
+  4. **The primitives research loop** (below).
+  5. The install script (M4).
+  6. A second runtime (M3).
+  7. Destination-specific network, last; under A-148 the owner may lower or
+     drop it.
+
+### The primitives research loop
+
+Proposed by the owner, not designed or built. The loop the factory has been
+developed with, run largely unattended by several agents: take a workflow
+idea as input; try to express it on the public API; identify the gaps in the
+core primitives; identify opportunities for shipped defaults (extensions,
+agents, workflows, observers); then prioritise, triage and plan what to
+build. The owner does an initial prioritisation and triage and reviews the
+result at the end. Under [core.md](core.md) it proposes; it never edits gates,
+policy or its own prompts, and what it plans is built only after the owner's
+review. Unattended runs first need the parked memory, disk and spend limits
+([parked](work/parked.md)); the stall timeout and cleanup come before it.
 
 ## Three completion boundaries
 

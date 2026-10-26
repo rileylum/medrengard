@@ -21,10 +21,12 @@ review, recorded evidence in reviewer prompts), not yet exercised by a paid
 run. Gate: `systemd-run --user --scope --quiet npm test` 106/106. Working
 copies and the merged docs branches are cleaned up.
 
-Next: the owner merges `feat/14-full-run` and the factory's `feat/full-run`,
-closes PR 80, and chooses the next ticket from the
-[roadmap's candidates](roadmap.md#progress). A confirming paid run of the
-fixes is cheap (live run 2 cost $0.35) and best made on a real small change.
+Merged: ticket 14 and the factory's full workflow, then the guide's section on
+what the default gives a factory and the factory's README. PR 80 is closed.
+
+Next: the owner's order is set (A-151, [roadmap](roadmap.md#progress)):
+continuing an escalated work is the next ticket, with real small tickets
+through the factory throughout. Not started; draft the ticket with the owner.
 
 ## Previous next action — 2026-10-25
 
