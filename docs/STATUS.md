@@ -1,6 +1,32 @@
 # Current status
 
-## Current next action — 2026-10-25
+## Current next action — 2026-10-26
+
+[Ticket 14](work/14-full-run.md), the full run, is built on `feat/14-full-run`
+(steps a to f, and step g's factory and dry run). Stages declare their access
+(`none`, `scratch`, `full` write; history), command stages are owner code,
+events record times, `claudeCodeRuntime` develops, reviews and keeps whole
+transcripts, `githubPullRequest` publishes one draft PR per work, the default
+routes failures to the owner, and the CLI shows commits and verdicts, takes
+hash prefixes, prints progress and recovers interrupted runs. The owner's
+factory is on its `feat/full-run` branch and passed a free dry run with the
+real check.
+
+Live run 2 took the rifle-hit idea from idea to draft PR
+https://github.com/rileylum/bolts_n_blades/pull/80 with four paid Sonnet runs
+($0.35 notional), no escalation; evidence and five findings are in the
+ticket's log. The owner asked for four of the findings to be fixed; they are, test first
+(structured commit messages and review summaries, a `deviation` gate before
+review, recorded evidence in reviewer prompts), not yet exercised by a paid
+run. Gate: `systemd-run --user --scope --quiet npm test` 106/106. Working
+copies and the merged docs branches are cleaned up.
+
+Next: the owner merges `feat/14-full-run` and the factory's `feat/full-run`,
+closes PR 80, and chooses the next ticket from the
+[roadmap's candidates](roadmap.md#progress). A confirming paid run of the
+fixes is cheap (live run 2 cost $0.35) and best made on a real small change.
+
+## Previous next action — 2026-10-25
 
 Main holds the core candidate, ticket 13 (idea to owner-approved plan through
 `cli/medrengard.ts`, with a headless Claude Code planner on a subscription

@@ -93,15 +93,21 @@ whether the delivered change meets its acceptance criteria.
   refused stale hash and approval. Agents run headless; the owner acts at the
   workflow's gates through the CLI. Interactive agent sessions in herdr are a
   later slice.
-- **Next: a full run.** Owner, 2026-10-25: “we should finish a full run -
-  currently we've produced a plan, but we should be able to get that through
-  implement and review before we handle the listed tickets.” That needs real
-  developer and reviewer agents, a real check command, and a decision on
-  whether the run publishes a PR.
-- **Following tickets, after the full run:** session transcripts and event
-  times, plan versions instead of long hashes in the CLI, destination-specific
-  network, separating stage access from output contracts with reusable agents,
-  the install script and a smarter deadline ([parked](work/parked.md)).
+- **Full run:** done in [ticket 14](work/14-full-run.md). Live run 2 took the
+  rifle-hit idea from idea to a draft PR on bolts_n_blades with four paid
+  Sonnet runs, no manual advancement between automatic stages. Stages declare
+  their access, transcripts and event times are kept, and the default routes
+  failures to the owner (A-148 to A-150).
+- **Still open for M2:** a fix cycle and an owner `changes` round with real
+  agents (tested only with stand-ins), and a usable failure path: an
+  escalated work cannot yet be continued.
+- **Candidates for what follows,** for the owner to order: real small tickets
+  through the factory, letting what hurts choose the next work; continuing an
+  escalated work (with the recovery promise below); a stall timeout in place
+  of the stage deadline, with cleanup of working copies; a second runtime
+  (M3); the install script (M4); agents defined once with an access ceiling.
+  Destination-specific network was a follow-up of A-146; under the risk
+  appetite in A-148 it is for the owner to keep, lower or drop.
 
 ## Three completion boundaries
 

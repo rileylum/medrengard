@@ -12,20 +12,81 @@ Summaries of what still holds, not owner quotes. The cited entries hold the appr
 | --- | --- | --- |
 | D-001 | source | The controller is deterministic and the only writer of state and budget. Agent output is a claim until the controller checks it (`docs/core.md` invariants). |
 | D-002 | source, A-001 | The core is vendor-neutral: an `Agent` names its runtime, role and sandbox independently, and runtime adapters live in extensions. Personal and corporate domains stay separate. |
-| D-003 | source, A-054 | Default policy, not core (D-023): the shipped default runs up to two standard reviews and one adversarial review per round; an adversarial FAIL escalates (`workflows/default.ts`). |
+| D-003 | source, A-054, A-150 | Default policy, not core (D-023): the shipped default runs up to two standard reviews and one adversarial review per round, with bounded fixes. A failure that would end the run goes to the owner's decision instead of escalating (`workflows/default.ts`). |
 | D-004 | source, A-054 | Default policy, not core (D-023): the default has the owner approve the design and the reviewed result before the PR. |
 | D-005 | source | A full, risk-tailored SDLC is the destination. No automatic production deployment; the default ends at the owner-approved PR (O-009). |
 | D-006 | source | Pools of three developers, two or three reviewers and one adversarial run at a time stay the source design target. Not built; no concurrent pools before M5 (`docs/roadmap.md`). |
 | D-007 | A-001, A-146 | First runtimes are Claude Code and Pi. Claude Code is built as `extensions/claude-code/` and uses a subscription token; Pi is not yet built. |
 | D-016 | A-016, A-114, A-125 | Anything the controller cannot classify stops and asks the owner; no silent recovery or automatic retry. Edge-case semantics are added only when a test or a real incident needs them; read with A-037 and A-042, a probe-only edge case with no incident and no damage by mistake is parked or accepted. |
 | D-019 | A-035 | Candidate code runs in a sandbox chosen by backend name. `bwrap` is the only backend (`src/sandbox.ts`), with no network unless declared. No VM or cloud backend for now; the interface stays agnostic. |
-| D-020 | A-042 | Malicious code stays in scope, but defences need not be airtight. Each adversarial finding is weighed by risk; an owner-accepted risk goes to [work/accepted-risks.md](work/accepted-risks.md). |
-| D-021 | A-043 | The factory may run on any repository, not only scratch ones. Network and credential access follow each agent's declared sandbox; A-146 accepts the phase-1 planner token risk. |
+| D-020 | A-042, A-148 | The risks that drive design are agent mistakes (a command that deletes more than it meant to) and agents leaving their task, on the owner's personal repositories and machine. Prompt injection, credential exfiltration and malicious code are not design drivers. Agents get the freedom their task needs. Each adversarial finding is weighed by risk; an owner-accepted risk goes to [work/accepted-risks.md](work/accepted-risks.md). |
+| D-021 | A-043, A-148 | The factory may run on any repository, not only scratch ones. Network, credentials and paths follow the access the owner declares for each agent and stage. |
 | D-023 | A-054, A-113 | Strong core, sane defaults, user extensions, as `docs/core.md` defines them. The core holds the primitives and invariants; stages, budgets, human approval, merge and PR rules are workflow policy, with a default shipped beside the core. Extensions are TypeScript modules. Supersedes D-004 and D-003 as fixed rules. |
 | P-002 | A-001, A-016 | TypeScript core on Node 24 with `node:sqlite` state. Node built-ins only; no dependencies until a test needs one. |
 | P-005 | A-001 | Run locally; corporate execution needs separate authorisation. |
 
 ## Approval history
+
+### A-150 — 2026-10-26 — The default routes failures to the owner
+
+After the proposal to send terminal review failures to the owner stage rather
+than `ESCALATED`, which cannot be continued: “Yeah the owner route is good,
+maybe all fails that would end the run should go there?” Then: “I think our
+default should be to route to owner as much as possible instead of escalate.
+Again this is jsut the workflow not a core thing”.
+
+Effect: in `defaultWorkflows`, every workflow edge that would end a round on a
+failure leads to `owner`, and budgets are sized so the edges reach it before a
+budget runs out (check 4, fix 3, standard 2, adversarial 1; at most seven paid
+runs a round). The core's own escalations (runtime errors, deadlines, invalid
+claims, interrupted runs) are unchanged. Revises D-003's adversarial rule.
+
+### A-149 — 2026-10-26 — Full run scope: configurable primitives and shipped defaults
+
+On stage access, after the proposal for ticket 14: “C1 - again I think this is
+a problem where we are being too prescriptive, is a command stage an agent or
+is it just code? Either way, we need the primitive that allows it to be
+customisable - then we define our own as required, and use it.” “C2 - Yes I'm
+fine with things being writable, as above it should be customsiable in the
+primitive and defined for its use”. On the stage deadline: “Actually we have a
+follow up issue to change the deadline to be a stall timeout, so its probably
+not worth changing here and if we need we'll just up the time.”
+
+Scope: “Lets publish and include C6 and R4 in scope. Sonnet is fine for now.
+And we can leave the escalation path out of the ticket.” Shape: “Write up the
+plan the shape generally looks right if we keep in mind the core primitives,
+that are configurable and extensible, then we build sane defaults from those
+in the form of agents and workflows etc. If any of the code we touch needs a
+refactor to bring it in line with this - do that also.”
+
+Effect: [ticket 14](work/14-full-run.md). Stages declare their access; a
+command stage is trusted code with no built-in verdict rule; the shipped
+agents, check, publisher and workflow are defaults built from those
+primitives. Event times (C6) and full Claude Code transcripts (R4) are in
+scope; the run publishes a PR on bolts_n_blades; Sonnet for every agent.
+Continuing an escalated work and the stall timeout are out. The paid live run
+still needs its own approval.
+
+### A-148 — 2026-10-26 — Risk appetite: mistakes and scope, not hostile input
+
+Owner: “Okay the check access and developer risk are fine - I think we've way
+overtuned the risk profile/appetite - this is for working on personal repos on
+my machine, I'm concerned with agents accidentally running a command that
+deletes a whole directroy instead of just the one it wanted to because of a
+badly formatted grep or something - or going outside the bounds of its task.
+Not prompt injection, credential exfiltration etc. - though they will probably
+fall out of the controls we're putting in place. Agents need as much freedom
+as possible to actually do their work - update the docs to reflect this.”
+
+Effect: the [threat model](security/threat-model.md) is framed around one
+owner's personal repositories on their own machine. The controls exist to
+contain accidents and keep agents inside their task: the sandbox bounds what a
+mistaken command can damage, and evidence binds to what was actually checked.
+Prompt injection, credential exfiltration and deliberately malicious code are
+not design drivers. Agents get the access their task needs, declared by the
+owner; a developer with `Bash`, network and the token, and a check installing
+dependencies with network, are within this appetite. Supersedes the
+malicious-code scope of A-042 (D-020).
 
 ### A-147 — 2026-10-25 — Documentation sweep and decision log trim
 

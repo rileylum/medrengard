@@ -6,8 +6,8 @@ cost first, including small checks.
 Two runtimes ship. `commandRuntime(argv)` is a generic JSON process adapter: it
 sends `AgentRequest` plus `artifacts` on stdin and expects one JSON result
 containing `outcome` and `artifact` on stdout. `claudeCodeRuntime` (in
-`extensions/claude-code/`) runs headless `claude -p` and turns its final message
-into a document. Both execute through `StageContext.execute` in bwrap. An agent
+`extensions/claude-code/`) runs headless `claude -p`, records its whole session
+and returns a document, a commit or a verdict as the stage produces. Both execute through `StageContext.execute` in bwrap. An agent
 gets network and named environment variables only when its `Sandbox` declares
 them (`network`, `env`); a Claude Code subscription token is passed as
 `CLAUDE_CODE_OAUTH_TOKEN` by name, with the value kept outside the factory
@@ -23,7 +23,8 @@ in [ticket 13](work/13-phase-1-plan.md).
    `/var/tmp/medrengard/live-N/`, or the owner's factory as built when the owner
    approves it (ticket 13 did, for read-only design stages). Supply trusted TypeScript `Options`,
    agent/runtime definitions and extensions to `Controller`. Import
-   `defaultWorkflows(checkArgv)` if its policy fits. A factory drives the
+   `defaultWorkflows({ check })` if its policy fits, with the `check` and `pr`
+   extensions. A factory drives the
    controller through `cli/medrengard.ts`.
 3. Show the owner the scenario inputs and definitions before paid execution.
    Use a named fake runtime to seed deterministic failures through the same

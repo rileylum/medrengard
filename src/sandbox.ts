@@ -21,6 +21,8 @@ export interface Policy {
   write: string[];
   /** Bound read-only, on top of the system directories and Sandbox.read. */
   read: string[];
+  /** Values the controller sets itself, such as the scratch folder's path. */
+  env?: Record<string, string>;
 }
 
 // The system directories every command needs: binaries, libraries, the dynamic loader and /etc.
@@ -29,7 +31,7 @@ export interface Policy {
 const SYSTEM = ['/usr', '/etc', '/opt', '/bin', '/sbin', '/lib', '/lib64'];
 
 // The sandbox sets these itself; the owner cannot override them.
-const RESERVED = ['PATH', 'HOME', 'LANG'];
+const RESERVED = ['PATH', 'HOME', 'LANG', 'MEDRENGARD_SCRATCH'];
 
 /** Build bubblewrap arguments with declared mounts, and no network unless declared. */
 function wrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]] {
@@ -60,11 +62,11 @@ function binds(read: string[], write: string[]): string[] {
 
 // The controller's environment may hold tokens: bwrap and the command get a path, a home, a locale and
 // the declared names. Values go through the environment, not argv, which any local user can read.
-function environment(sandbox: Sandbox): NodeJS.ProcessEnv {
+function environment(sandbox: Sandbox, policy: Policy): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? '/usr/bin', HOME: '/tmp' };
   if (process.env.LANG) env.LANG = process.env.LANG;
   for (const name of sandbox.env ?? []) env[name] = process.env[name];
-  return env;
+  return { ...env, ...policy.env };
 }
 
 function systemBind(path: string): string[] {
@@ -106,10 +108,19 @@ export interface RunResult {
   wallMs: number;
 }
 
+/** How a caller feeds and reads one execution. */
+export interface ExecuteOptions {
+  input?: string;
+  /** Sees stdout as it arrives. */
+  onStdout?: (chunk: string) => void;
+  /** `false` leaves stdout out of the result and its cap, for a caller that consumes it through `onStdout`. */
+  buffer?: boolean;
+}
+
 /** Execute a confined command, ending its namespace on cancellation or output overflow. */
-export function execute(sandbox: Sandbox, policy: Policy, argv: string[], signal: AbortSignal, input = ''): Promise<RunResult> {
+export function execute(sandbox: Sandbox, policy: Policy, argv: string[], signal: AbortSignal, { input = '', onStdout, buffer = true }: ExecuteOptions = {}): Promise<RunResult> {
   const [command, args] = wrap(sandbox, policy, argv[0], argv.slice(1));
-  const child = spawn(command, args, { cwd: policy.cwd, env: environment(sandbox), stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(command, args, { cwd: policy.cwd, env: environment(sandbox, policy), stdio: ['pipe', 'pipe', 'pipe'] });
   const started = Date.now();
   let status: RunResult['status'] = 'exited';
   const output = { stdout: '', stderr: '' };
@@ -125,13 +136,17 @@ export function execute(sandbox: Sandbox, policy: Policy, argv: string[], signal
     let bytes = 0;
     child[stream].setEncoding('utf8').on('data', (chunk: string) => {
       if (status === 'overflow') return;
+      if (stream === 'stdout' && !buffer) { onStdout?.(chunk); return; }
       bytes += Buffer.byteLength(chunk);
       if (bytes > maxOutputBytes) {
         status = 'overflow';
         output.stdout = '';
         output.stderr = `${stream} exceeded ${maxOutputBytes} bytes`;
         child.kill('SIGKILL');
-      } else output[stream] += chunk;
+      } else {
+        output[stream] += chunk;
+        if (stream === 'stdout') onStdout?.(chunk);
+      }
     });
   }
   // Early exit may close stdin before the request has been consumed.

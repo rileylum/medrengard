@@ -55,12 +55,17 @@ The owner's factory plans changes to one of the owner's projects:
    feedback. Either way you quote the plan's fingerprint, so you can only
    decide on the version you actually read.
 5. After `changes`, the planner runs again with your feedback and its previous
-   plan, and you are asked again. After `accept`, the work is done.
+   plan, and you are asked again.
+6. After `accept`, a developer agent writes the code in the private copy and
+   Medrengard commits it. The project's tests run on exactly that commit, then
+   a reviewer and an adversarial reviewer look at it. A failed check or review
+   goes back to the developer to fix, a limited number of times.
+7. You get the commit with every verdict and its findings. `accept` opens a
+   draft pull request; `changes` sends it back with your feedback for another
+   round.
 
-The shipped default workflow carries on from an approved plan: a developer
-agent writes the code, the project's checks run, reviewer agents review it,
-with one fix allowed after a failed first review, and you decide before a pull
-request is opened. Real agents for those steps are the next piece of work.
+The factory has run steps 1 to 5 for real; the whole run has been tested with
+stand-in agents and is ready for its first real run ([STATUS](STATUS.md)).
 
 Behind the commands, the pieces fit together like this:
 
@@ -102,15 +107,18 @@ needs you, is done, or has stopped with a reason, which is called
 
 ### What each stage can see
 
+Each stage can declare its `access`; without it, it gets these defaults:
+
 | Stage | Works in | Can change it |
 | --- | --- | --- |
 | One that writes code (develop, fix) | The work's private copy of the project, made the first time a stage needs it | Yes |
-| Any other stage once there is code to look at (checks, reviews, the PR step) | A fresh copy of exactly that version's files, without Git's history | No |
-| One that reads the project before any code is written (design) | The work's private copy | No |
-| Anything else | The work's folder: empty unless an earlier stage copied the project into it | No |
+| Any other stage once there is code to look at (checks, reviews, the PR step) | A fresh copy of exactly that version's files with its Git history, so `git diff <base> HEAD` shows the change, thrown away afterwards | Yes |
+| One that reads the project before any code is written (design, declared with `workspace: 'repository'`) | The work's private copy | No, so it cannot change what the developer starts from |
+| Anything else | A new empty folder | Yes |
 
-An agent gets only the network access and secrets its sandbox grants. Checks
-and extensions get neither. The
+Every process can also write its own private `/tmp`, which is gone when it
+ends. A stage gets only the paths, network access and secrets its agent's
+sandbox and its own `access` grant. The
 [threat model](security/threat-model.md#trust-boundaries) has the details.
 
 ## Building a factory
@@ -130,9 +138,11 @@ tests actually run.
 | [`src/primitives.ts`](../src/primitives.ts) | The [`Controller`](../src/index.ts), [`checkWorkflow`](../src/index.ts) and the types. |
 | [`src/sandbox.ts`](../src/sandbox.ts) | The sandbox, built on bubblewrap, a Linux tool that fences a program in. Stages use it through `StageContext.execute`. |
 | [`src/command-runtime.ts`](../src/command-runtime.ts) | [`commandRuntime`](../src/index.ts), a runtime for any local program that speaks JSON. |
-| [`extensions/claude-code`](../extensions/claude-code/index.ts) | `claudeCodeRuntime`, the Claude Code runtime. |
-| [`workflows/default.ts`](../workflows/default.ts) | `defaultWorkflows`, the idea-to-PR workflow, and `examplePlanner`, a planner agent built from [`workflows/example/`](../workflows/example/planner.md). |
-| [`cli/medrengard.ts`](../cli/medrengard.ts) | The command line: `start`, `show` and `decide`, using the `factory.ts` in the current folder. |
+| [`extensions/claude-code`](../extensions/claude-code/index.ts) | `claudeCodeRuntime`, the Claude Code runtime, and its `defaultPrompt`. |
+| [`extensions/command-check`](../extensions/command-check/index.ts) | `commandCheck`, a check that runs a command. |
+| [`extensions/github`](../extensions/github/index.ts) | `githubPullRequest`, which publishes the accepted commit as a draft PR. |
+| [`workflows/default.ts`](../workflows/default.ts) | `defaultWorkflows`, the idea-to-PR workflow, and the example planner, developer, reviewer and adversarial reviewer agents, built from [`workflows/example/`](../workflows/example/planner.md). |
+| [`cli/medrengard.ts`](../cli/medrengard.ts) | The command line: `start`, `show`, `decide` and `recover`, using the `factory.ts` in the current folder. It is also the first observer: it prints each stage's start and result as they are recorded. |
 | [`tests/`](../tests/e2e/mvp.test.ts) | The tests, which double as worked examples. |
 
 ### The factory's files
@@ -142,7 +152,7 @@ tests actually run.
 | `factory.ts` | Default-exports `{ options, workflow }`: the controller's [`Options`](../src/index.ts) and the name of the workflow `start` opens. |
 | `package.json` | An `imports` map: `#medrengard` is the core's front door through `.medrengard`, and `#medrengard/*` the rest of the checkout, so the factory can import `extensions/` and `workflows/`. |
 | `.medrengard` | A symlink to this checkout, ignored by Git. |
-| `state/` | Holds `events.sqlite`, the factory's event log, ignored by Git. |
+| `state/` | Holds `full.sqlite`, the factory's event log, ignored by Git, and `events.sqlite`, the log of the planning-only runs before it. |
 
 Its working copies (`Options.directory`) live under
 `/var/tmp/medrengard-factory/runs`, outside your home folder, so that no
@@ -161,7 +171,8 @@ README shows how to [run it](../README.md#run-it).
 - `runtimes`: runtimes by name.
 - `extensions`: extension functions by name.
 - `deadlineMs`: how long one stage may run, in milliseconds. The default is 30
-  seconds; the factory sets 30 minutes, because planning takes minutes.
+  seconds; the factory sets 60 minutes, because a developer installs, edits
+  and tests.
 
 When the controller starts, it checks the workflows, agents, runtimes,
 extensions and sandboxes before any work begins. It also refuses an event log
@@ -171,19 +182,29 @@ whose works were started under different workflows; see
 ### Workflows
 
 A [`Workflow`](../src/index.ts) is a name, a `start` stage and named
-[`Stage`](../src/index.ts)s. The factory's `plan` workflow has two. `design`
-runs the planner agent on a read-only copy of the project
-(`workspace: 'repository'`) and produces a document. `approve` is a human
-stage: `accept` ends the work, `changes` starts `plan` again with a fresh
-budget, and `reject` escalates.
+[`Stage`](../src/index.ts)s. The factory uses the shipped default, described
+below. Its `design` workflow has two stages. `design` runs the planner agent on
+a read-only copy of the project (`access: { workspace: 'repository' }`) and
+produces a document. `approve` is a human stage: `accept` hands over to the
+`develop` workflow, `changes` starts `design` again with a fresh budget, and
+`reject` escalates.
 
 Each stage declares:
 
 - `kind`: `agent`, `command` or `human`.
-- What runs: `agent` (a name in `agents`), or on a `command` stage either
-  `command` (the command and its arguments) or `extension` (a name in
-  `extensions`).
+- What runs: `agent` (a name in `agents`), or on a `command` stage
+  `extension` (a name in `extensions`). A command stage is your own code; an
+  agent stage hands a request to a runtime.
 - `produces`: `document`, `commit` or `verdict`. Agent stages must say.
+- `access`: what the stage's processes can reach, on top of its agent's
+  sandbox. `workspace` is `repository` (the work's copy of the project),
+  `subject` (a fresh copy of the current commit) or `empty`. `write` is `none`
+  (only `/tmp`), `scratch` (also a folder of its own that is kept after the
+  run, at `$MEDRENGARD_SCRATCH`) or `full` (also the workspace). `history:
+  false` leaves Git history out of a `subject` copy. `read`,
+  `network` and `env` work as in a sandbox. Unset fields take the defaults in
+  [What each stage can see](#what-each-stage-can-see); a stage that writes
+  code must keep the writable copy of the project.
 - `budget`: how many attempts it gets, a positive whole number. Every stage
   except a human one needs it.
 - `on`: each outcome mapped to where it leads: another stage, `DONE`,
@@ -198,10 +219,18 @@ automatic stages, so only your decision can lead back round.
 anything.
 
 [`workflows/default.ts`](../workflows/default.ts) is the full idea-to-PR
-workflow: `design`, then `develop` with a check, up to two standard reviews
-with one fix between them, one adversarial review, your decision and a `pr`
-extension. The factory's `plan` is its `design` half, with `accept` ending the
-work until develop has real agents.
+workflow: `design`, then `develop`, a `check` extension, a standard review and
+an adversarial review, your decision and a `pr` extension. A failed check gets
+up to two fixes and a failed standard review one; a failure that would end the
+run comes to your `owner` decision instead, with its findings, and the budgets
+are sized so that happens before any of them runs out. One round costs at most
+seven paid agent runs: the develop run, three fixes and three reviews. A
+commit whose developer reports a departure from the plan stops at
+`deviation` before it is checked: `proceed`, `changes` or `reject`. At
+`owner`, `accept` publishes, `changes` starts a fresh round with your feedback
+and `reject` ends the work. The factory passes the check's access to
+`defaultWorkflows({ check })`: its `node` install and the network, so
+`commandCheck` can run `npm ci`, the tests and the typecheck on each commit.
 
 ### Agents and sandboxes
 
@@ -218,26 +247,41 @@ The sandbox is `backend: 'bwrap'` plus three optional settings. `read` lists
 folders and files the agent may read, such as the `claude` program. `network`
 gives it the network when `true`. `env` names secrets or settings to pass in
 from your shell, each of which must be set when the controller starts. The
-factory's planner uses all three, so that it can reach the model with a
-subscription token. What that exposes, and why it is accepted for now, is in
-the [threat model](security/threat-model.md#repository-agent-with-network-and-token).
+factory's agents use all three, so that they can reach the model with a
+subscription token and run `node` for the tests. What that exposes, and why it fits the owner's risk
+appetite, is in the [threat model](security/threat-model.md#agents-with-network-and-a-token).
 
 ### Runtimes
 
 A [`Runtime`](../src/index.ts) has four methods: `start(request, context)`
-begins a run, `events(runId)` reports progress (each report is recorded),
-`result(runId)` returns the claim, `{ outcome, artifact }`, and `cancel(runId)`
-stops it. Anything it runs for the agent must go through `context.execute`,
-which is the sandbox. There are three choices:
+begins a run, `events(runId)` reports progress (each report is recorded as it
+comes, so it is kept even if the run is cut off), `result(runId)` returns the
+claim, `{ outcome, artifact }`, and `cancel(runId)` stops it. The request says
+what the stage `produces`. Anything it runs for the agent must go through
+`context.execute`, which is the sandbox; its `onStdout` option hands over
+output as it arrives. There are three choices:
 
 - [`commandRuntime`](../src/index.ts)`(argv)`: any local program that reads the
   request as JSON and writes its result as JSON.
   [`tests/e2e/contracts.test.ts`](../tests/e2e/contracts.test.ts) runs such
   programs.
-- `claudeCodeRuntime({ command, settingSources, model })`: Claude Code with
-  read-only tools (`Read`, `Grep`, `Glob`, `Skill`). Its final message becomes
-  a document, so it can plan but cannot write code or review yet. It refuses
-  agents that declare MCP servers.
+- `claudeCodeRuntime({ command, settingSources, model, tools, prompt, commit,
+  author })`: headless Claude Code. What it returns follows what the stage
+  `produces`. For a document, the final message. For a commit, it asks
+  with `--json-schema` for a commit `message`, a `report` for you and a list
+  of `deviations` from the plan, then commits whatever the agent left in the
+  copy of the project as `author` with that message, keeps the report (and
+  any deviations) as the commit's content, and returns the outcome `deviated`
+  instead of `done` if there were any; `commit: 'agent'` lets the agent commit
+  for itself instead. For a verdict, a `PASS` or `FAIL` with the findings that
+  must be fixed and a `summary` for you, bound to the commit under review. Planners get
+  `Read`, `Grep`, `Glob` and `Skill`; reviewers also `Bash`; developers also
+  `Edit` and `Write`, all with permissions bypassed because the sandbox is the
+  boundary; `tools` replaces a set. `defaultPrompt` gives the idea, the plan,
+  what failed on the current commit, what is already recorded for the commit
+  under review, the change to review and your feedback;
+  `prompt` replaces or wraps it. The whole `stream-json` session is recorded as
+  runtime events. It refuses agents that declare MCP servers.
 - Your own. The stub in the `setup` of
   [`tests/default-workflow.test.ts`](../tests/default-workflow.test.ts) is a
   short, complete example: it commits through `context.execute` for the
@@ -250,9 +294,19 @@ accepts.
 
 An extension is a function `(context) => Promise<{ outcome, artifact }>` in
 `Options.extensions`, run by a `command` stage that names it. It runs inside
-Medrengard as trusted code and sees the subject and every artifact so far.
-Anything it runs through `context.execute` gets a sandbox with no network and
-no secrets. The `pr` extension in the same `setup` returns a document whose
+Medrengard as trusted code. Its `context` holds the `work` ID, the `subject`,
+the `base` commit the work's copy of the project started from, the run's
+`scratch` folder if it has one, and every artifact so far.
+Anything it runs through `context.execute` gets the stage's `access`.
+[`commandCheck`](../extensions/command-check/index.ts)`(argv)` is the shipped
+check: it runs a command and turns exit code 0 into `PASS` and anything else
+into `FAIL`, keeping the output.
+[`githubPullRequest`](../extensions/github/index.ts)`({ repository })` is the
+shipped publisher. It uses your own `git` and `gh`: it pushes the accepted
+commit from Medrengard's stored copy to `medrengard/<work>` on your
+repository's remote, then opens a draft PR with the change, the evidence and
+the plan, or updates the open PR on that branch, so publishing again never
+opens a second one. The `pr` extension in the same `setup` returns a document whose
 `subject` is the reviewed SHA, so the link counts as evidence about that code
 rather than as a new subject.
 
@@ -288,9 +342,8 @@ extensions does not trigger this.
 
 ### What is not there yet
 
-Real developer and reviewer agents, a check for a real project and opening a
-PR are the next piece of work ([STATUS](STATUS.md)); the
-[roadmap](roadmap.md) lists what follows.
+The full run has not yet been made with real agents; that is the next action
+([STATUS](STATUS.md)). The [roadmap](roadmap.md) lists what follows.
 
 ## Changing the core
 
@@ -299,10 +352,9 @@ PR are the next piece of work ([STATUS](STATUS.md)); the
 `Controller.advance` runs automatic stages until the work reaches a human
 stage, `DONE` or `ESCALATED`. Before each run it escalates instead if the
 stage's budget is spent, or if the stage already failed on this subject and
-the owner has not decided since. Each `started` event spends one attempt. A
-command stage turns exit code 0 into `PASS` and anything else into `FAIL`, and
-escalates if there is no commit to check; an extension stage has no such
-requirement.
+the owner has not decided since. Each `started` event spends one attempt and
+records the run's scratch folder, if it has one. A stage whose `access` asks
+for a `subject` copy before there is a commit escalates.
 
 #### How a claim is checked
 

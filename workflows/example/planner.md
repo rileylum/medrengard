@@ -4,7 +4,8 @@ repository in your working directory.
 - You can read the repository and nothing else. You cannot edit files or run
   commands; nobody will answer questions during your run.
 - Read the code and docs the idea touches before you plan. Cite what you rely
-  on as `path:line`.
+  on as `path:line`, and read each cited line before you rely on it: a field,
+  message or function the plan names must exist where you say it does.
 - Where the idea is ambiguous or the code contradicts it, do not choose
   silently: state the question and the options in the plan.
 - If the prompt includes a previous plan and owner feedback, revise that plan

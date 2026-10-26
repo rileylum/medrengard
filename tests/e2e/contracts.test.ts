@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
+import { commandCheck } from '../../extensions/command-check/index.ts';
 import { Controller, commandRuntime, type Runtime, type StageContext, type Options } from '../../src/index.ts';
 
 function fixture(t: any, runtime: Runtime, input = 'success', overrides: Partial<Options> = {}) {
@@ -161,8 +162,8 @@ test('accepted commit objects survive a later candidate replacing and pruning it
       develop: { kind: 'agent', agent: 'one', produces: 'commit', budget: 1, on: { done: 'fix' } },
       fix: { kind: 'agent', agent: 'one', produces: 'commit', budget: 1, on: { done: 'inspect' } },
       inspect: { kind: 'human', on: { accept: 'check' } },
-      check: { kind: 'command', command: ['node', '-e', "if(require('fs').readFileSync('answer','utf8')!=='replacement') process.exit(1)"], budget: 1, on: { PASS: 'DONE', FAIL: 'ESCALATED' } },
-    } }],
+      check: { kind: 'command', extension: 'check', budget: 1, on: { PASS: 'DONE', FAIL: 'ESCALATED' } },
+    } }], extensions: { check: commandCheck(['node', '-e', "if(require('fs').readFileSync('answer','utf8')!=='replacement') process.exit(1)"]) },
   });
   await controller.advance('work'); const state = controller.state('work');
   assert.equal(state.stage, 'inspect', state.reason);

@@ -22,10 +22,10 @@ set up your own factory and how to change the core.
 - **The rules are yours.** The steps, the agents' roles, how many reviews to
   run and what happens at the end are your own code, not built in.
 
-Today it can take an idea to a plan you have approved, with Claude Code as the
-planner. Building, checking and reviewing the change with real agents comes
-next. The [default workflow](workflows/default.ts) already describes that whole
-path, and the tests run it with stand-in agents.
+Today it has taken an idea to a plan you approved, with Claude Code as the
+planner. The [default workflow](workflows/default.ts) goes on to build, check
+and review the change with Claude Code agents and open a draft pull request;
+the tests run all of it with stand-in agents, and its first real run is next.
 
 ## Try it
 
@@ -50,12 +50,17 @@ export CLAUDE_CODE_OAUTH_TOKEN=...   # if your agents use Claude Code; keep the 
 node .medrengard/cli/medrengard.ts start "<idea>"
 node .medrengard/cli/medrengard.ts show <work>
 node .medrengard/cli/medrengard.ts decide <work> <outcome> <hash> ["feedback"]
+node .medrengard/cli/medrengard.ts recover <work>
 ```
 
-`start` begins a new piece of work and runs it until it needs you, then prints
-the plan and its hash. `show` prints where a piece of work has got to.
-`decide` gives your answer, such as `accept`, or `changes` with feedback, for
-that exact hash, and carries on.
+`start` begins a new piece of work and runs it until it needs you, printing
+each step as it starts and finishes, then shows the plan and its hash. `show`
+prints where a piece of work has got to: the plan, or once there is code, the
+commit and every review of it with its findings. `decide` gives your answer,
+such as `accept`, or `changes` with feedback, for that exact version, and
+carries on; the first seven or more characters of the hash are enough.
+`recover` marks a run that was cut off (a closed terminal, a crash) as needing
+you, when `show` says one is in progress and nothing is running it.
 
 ## Safety in brief
 

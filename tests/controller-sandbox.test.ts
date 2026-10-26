@@ -53,7 +53,8 @@ for (const kind of ['agent', 'command'] as const) test(`controller requires work
   const { dir, options, refuses } = fixture(t);
   if (kind === 'command') {
     options.agents = {};
-    options.workflows[0].stages.agent = { kind, command: ['true'], budget: 1, on: { PASS: 'DONE' } };
+    options.workflows[0].stages.agent = { kind, extension: 'check', budget: 1, on: { PASS: 'DONE' } };
+    options.extensions = { check: async () => ({}) };
   }
   const path = process.env.PATH;
   process.env.PATH = join(dir, 'empty-path');
