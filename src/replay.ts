@@ -6,9 +6,11 @@ export type Workflow<N extends string = string> = {
   steps: Record<N, { kind: StepKind }>;
 };
 
-export type CommissionEvent =
-  | { type: "commissioned" }
-  | { type: "attempt-started"; step: string; attempt: number };
+type Commissioned = { type: "commissioned" };
+
+type AttemptStarted = { type: "attempt-started"; step: string; attempt: number };
+
+export type CommissionEvent = Commissioned | AttemptStarted;
 
 export type CommissionState<N extends string = string> =
   | { status: "ready"; step: { name: N; kind: "agent" | "command" } }
@@ -23,8 +25,19 @@ export function defineWorkflow<N extends string>(workflow: Workflow<N>): Workflo
 /** Rebuilds a commission's state from its workflow and its events. */
 export function replay<N extends string>(
   workflow: Workflow<N>,
-  events: readonly CommissionEvent[],
+  events: readonly [Commissioned, ...Exclude<CommissionEvent, Commissioned>[]],
 ): CommissionState<N> {
+  const [, ...rest] = events;
+  let state = begin(workflow);
+
+  for (const event of rest) {
+    state = apply(state, event);
+  }
+
+  return state;
+}
+
+function begin<N extends string>(workflow: Workflow<N>): CommissionState<N> {
   const name = workflow.start;
   const { kind } = workflow.steps[name];
 
@@ -32,9 +45,21 @@ export function replay<N extends string>(
     return { status: "awaiting", step: { name, kind } };
   }
 
-  if (events.some((event) => event.type === "attempt-started")) {
-    return { status: "attempting", step: { name, kind } };
-  }
-
   return { status: "ready", step: { name, kind } };
+}
+
+function apply<N extends string>(
+  state: CommissionState<N>,
+  event: Exclude<CommissionEvent, Commissioned>,
+): CommissionState<N> {
+  switch (event.type) {
+    case "attempt-started":
+      // lazy: replay alone enforces that attempts start only when ready. When the engine
+      // writes attempt-started, move this rule somewhere both the writer and replay use.
+      if (state.status !== "ready") {
+        throw new Error(`An attempt cannot start while the commission is ${state.status}.`);
+      }
+
+      return { status: "attempting", step: state.step };
+  }
 }
