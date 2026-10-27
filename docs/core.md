@@ -66,7 +66,8 @@ The exit code reports the step's health; the outcome reports its result. A test 
 - exit 0 with a valid output: the attempt completes, its artifacts are recorded and the outcome's edge is followed;
 - exit 0 with a missing or invalid output (an undeclared outcome or kind, or an artifact its kind rejects): the commission escalates;
 - a non-zero exit: the commission escalates;
-- a limit reached: the engine sends `SIGTERM`, then `SIGKILL` after a grace period, and the commission escalates naming the limit.
+- a limit reached: the engine sends `SIGTERM`, then `SIGKILL` after a grace period, and the commission escalates naming the limit;
+- the owner cancels: the engine stops the step the same way, and the commission escalates naming the cancellation.
 
 The owner's request is the commission's first artifact, a document, and a decision with its feedback is a judgement. Steps receive both as declared inputs, like any other artifact.
 
@@ -95,7 +96,7 @@ Transitions:
 - Commissioned, the commission is ready or awaiting, by its start step's kind.
 - Ready, with budget left and the step not yet attempted on the same subject and inputs, an attempt starts.
 - Ready, with the budget spent or the step already attempted on the same subject and inputs, the commission escalates.
-- Attempting, a valid claim completes the attempt and follows the outcome's edge. An invalid claim, a non-zero exit, a reached limit or an interruption found on replay escalates.
+- Attempting, a valid claim completes the attempt and follows the outcome's edge. An invalid claim, a non-zero exit, a reached limit, the owner cancelling or an interruption found on replay escalates.
 - Awaiting, a decision naming the current subject and a declared outcome follows its edge. A stale or undeclared decision is refused and records nothing.
 - Escalated, a decision to retry makes the step ready again; a decision to abandon finishes the commission.
 - Finished, nothing is accepted.
@@ -123,7 +124,7 @@ Built in:
 - Verdict: a judgement with pass or fail and its findings, and an optional summary. Its outcome field is the verdict.
 - Decision: a judgement with the owner's outcome and optional feedback.
 
-Decisions are the owner's. A decision renews budgets, approves a subject and resolves escalations, so only the owner makes one, at an approval step or on an escalated commission. A step that claims a decision escalates. A model's choice is an outcome or a judgement, routed like any other.
+Decisions are the owner's. A decision renews budgets, approves a subject and resolves escalations, so only the owner makes one, at an approval step or on an escalated commission. A step that claims a decision escalates. Cancelling is not a decision: it stops an attempt and escalates, and the owner then decides on the escalation. A model's choice is an outcome or a judgement, routed like any other.
 
 **Language**
 
@@ -155,6 +156,7 @@ _Execution: the core. The commission is the aggregate root._
 - Evidence: the judgements about the current subject. Judgements about earlier subjects are history.
 - Decision: the owner's outcome at an approval step or on an escalation, naming the current subject.
 - Escalation: the commission paused for the owner, with a reason.
+- Cancel: the owner stopping an attempt in flight; the commission escalates, and nothing is decided.
 
 _Step contract: the process boundary._
 
@@ -177,4 +179,4 @@ _Record: the log and the store._
 - Extension: a package supplying artifact kinds, harness adapters, commands or observers.
 - Owner: the one person the factory serves.
 
-_Not used:_ stage (step), work, run or job (commission), role (prompt), run or execution (attempt), check (verify, for the engine), runtime (harness or harness adapter), ticket and cycle (workflow policy, not core).
+_Not used:_ stage (step), work, run or job (commission), role (prompt), run or execution (attempt), abort or kill (cancel, for the owner), check (verify, for the engine), runtime (harness or harness adapter), ticket and cycle (workflow policy, not core).
