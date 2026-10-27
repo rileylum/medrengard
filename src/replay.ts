@@ -95,5 +95,11 @@ function apply<N extends string>(
       }
 
       return { status: "escalated", step: state.step, reason: event.reason };
+    default:
+      return assertNever(event);
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled ${JSON.stringify(value)}.`);
 }
