@@ -6,11 +6,14 @@ export type Workflow<N extends string = string> = {
   steps: Record<N, { kind: StepKind }>;
 };
 
-export type CommissionEvent = { type: "commissioned" };
+export type CommissionEvent =
+  | { type: "commissioned" }
+  | { type: "attempt-started"; step: string; attempt: number };
 
 export type CommissionState<N extends string = string> =
   | { status: "ready"; step: { name: N; kind: "agent" | "command" } }
-  | { status: "awaiting"; step: { name: N; kind: "approval" } };
+  | { status: "awaiting"; step: { name: N; kind: "approval" } }
+  | { status: "attempting"; step: { name: N; kind: "agent" | "command" } };
 
 /** Declares a workflow, so the compiler checks that every step name it uses exists. */
 export function defineWorkflow<N extends string>(workflow: Workflow<N>): Workflow<N> {
@@ -20,13 +23,17 @@ export function defineWorkflow<N extends string>(workflow: Workflow<N>): Workflo
 /** Rebuilds a commission's state from its workflow and its events. */
 export function replay<N extends string>(
   workflow: Workflow<N>,
-  _events: readonly CommissionEvent[],
+  events: readonly CommissionEvent[],
 ): CommissionState<N> {
   const name = workflow.start;
   const { kind } = workflow.steps[name];
 
   if (kind === "approval") {
     return { status: "awaiting", step: { name, kind } };
+  }
+
+  if (events.some((event) => event.type === "attempt-started")) {
+    return { status: "attempting", step: { name, kind } };
   }
 
   return { status: "ready", step: { name, kind } };

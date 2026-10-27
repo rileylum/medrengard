@@ -18,3 +18,13 @@ test("a commission starting at an approval step is awaiting at its start step", 
     step: { name: "second" },
   });
 });
+
+test("a commission with a started attempt is attempting at that step", () => {
+  assert.partialDeepStrictEqual(
+    replay(startingAt("agent"), [
+      { type: "commissioned" },
+      { type: "attempt-started", step: "second", attempt: 1 },
+    ]),
+    { status: "attempting", step: { name: "second" } },
+  );
+});
