@@ -57,3 +57,19 @@ test("a completed attempt leaves the commission awaiting at a next approval step
     { status: "awaiting", step: { name: "first" } },
   );
 });
+
+test("a completed attempt to the end finishes the commission", () => {
+  assert.partialDeepStrictEqual(
+    replay(startingAt("agent"), [
+      { type: "commissioned" },
+      { type: "attempt-started", step: "second", attempt: 1 },
+      { type: "attempt-completed", step: "second", attempt: 1, outcome: "done", next: "end" },
+    ]),
+    { status: "finished" },
+  );
+});
+
+test("a workflow cannot name a step end", () => {
+  // @ts-expect-error: end is where edges finish, not a step.
+  defineWorkflow({ start: "first", steps: { first: { kind: "agent" }, end: { kind: "command" } } });
+});

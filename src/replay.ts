@@ -1,9 +1,9 @@
 export type StepKind = "agent" | "command" | "approval";
 
-/** A workflow over its step names `N`; `start` must name one of its steps. */
+/** A workflow over its step names `N`; `start` must name one of its steps, and `end` is reserved. */
 export type Workflow<N extends string = string> = {
   start: NoInfer<N>;
-  steps: Record<N, { kind: StepKind }>;
+  steps: Record<N, { kind: StepKind }> & { end?: never };
 };
 
 type Commissioned = { type: "commissioned" };
@@ -15,7 +15,7 @@ type AttemptCompleted<N extends string> = {
   step: N;
   attempt: number;
   outcome: string;
-  next: N;
+  next: N | "end";
 };
 
 export type CommissionEvent<N extends string = string> =
@@ -26,7 +26,8 @@ export type CommissionEvent<N extends string = string> =
 export type CommissionState<N extends string = string> =
   | { status: "ready"; step: { name: N; kind: "agent" | "command" } }
   | { status: "awaiting"; step: { name: N; kind: "approval" } }
-  | { status: "attempting"; step: { name: N; kind: "agent" | "command" } };
+  | { status: "attempting"; step: { name: N; kind: "agent" | "command" } }
+  | { status: "finished" };
 
 /** Declares a workflow, so the compiler checks that every step name it uses exists. */
 export function defineWorkflow<N extends string>(workflow: Workflow<N>): Workflow<N> {
@@ -75,6 +76,10 @@ function apply<N extends string>(
     case "attempt-completed":
       if (state.status !== "attempting") {
         throw new Error(`An attempt cannot complete while the commission is ${state.status}.`);
+      }
+
+      if (event.next === "end") {
+        return { status: "finished" };
       }
 
       return arrive(workflow, event.next);
