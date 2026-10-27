@@ -18,15 +18,21 @@ type AttemptCompleted<N extends string> = {
   next: N | "end";
 };
 
+// lazy: reason is free text for the owner. When an observer needs to group escalations,
+// add a closed set of causes beside it; the text stays, as the why.
+type Escalated = { type: "escalated"; reason: string; attempt?: number };
+
 export type CommissionEvent<N extends string = string> =
   | Commissioned
   | AttemptStarted<N>
-  | AttemptCompleted<N>;
+  | AttemptCompleted<N>
+  | Escalated;
 
 export type CommissionState<N extends string = string> =
   | { status: "ready"; step: { name: N; kind: "agent" | "command" } }
   | { status: "awaiting"; step: { name: N; kind: "approval" } }
   | { status: "attempting"; step: { name: N; kind: "agent" | "command" } }
+  | { status: "escalated"; step: { name: N; kind: "agent" | "command" }; reason: string }
   | { status: "finished" };
 
 /** Declares a workflow, so the compiler checks that every step name it uses exists. */
@@ -83,5 +89,11 @@ function apply<N extends string>(
       }
 
       return arrive(workflow, event.next);
+    case "escalated":
+      if (state.status !== "ready" && state.status !== "attempting") {
+        throw new Error(`A commission cannot escalate while it is ${state.status}.`);
+      }
+
+      return { status: "escalated", step: state.step, reason: event.reason };
   }
 }

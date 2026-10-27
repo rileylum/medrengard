@@ -73,3 +73,14 @@ test("a workflow cannot name a step end", () => {
   // @ts-expect-error: end is where edges finish, not a step.
   defineWorkflow({ start: "first", steps: { first: { kind: "agent" }, end: { kind: "command" } } });
 });
+
+test("an escalated attempt leaves the commission escalated at its step", () => {
+  assert.partialDeepStrictEqual(
+    replay(startingAt("agent"), [
+      { type: "commissioned" },
+      { type: "attempt-started", step: "second", attempt: 1 },
+      { type: "escalated", reason: "exited with code 1", attempt: 1 },
+    ]),
+    { status: "escalated", step: { name: "second" }, reason: "exited with code 1" },
+  );
+});
