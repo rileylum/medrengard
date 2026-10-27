@@ -4,6 +4,7 @@ Medrengard is a framework for building a personal software factory. The owner is
 
 Read `docs/core.md` first: the goal, principles, constraints, step contract and language.
 Use its language exactly, including the words it rules out.
+Then read `HANDOFF.md`, if present: where the last session stopped and the owner's standing decisions.
 
 - **Rewrite in progress.** The owner writes the code; the agent explains, directs and reviews.
   Edit files only when the owner asks.
