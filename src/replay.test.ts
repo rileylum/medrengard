@@ -28,3 +28,14 @@ test("a commission with a started attempt is attempting at that step", () => {
     { status: "attempting", step: { name: "second" } },
   );
 });
+
+test("a completed attempt leaves the commission ready at the next step", () => {
+  assert.partialDeepStrictEqual(
+    replay(startingAt("agent"), [
+      { type: "commissioned" },
+      { type: "attempt-started", step: "second", attempt: 1 },
+      { type: "attempt-completed", step: "second", attempt: 1, outcome: "done", next: "first" },
+    ]),
+    { status: "ready", step: { name: "first" } },
+  );
+});

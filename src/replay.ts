@@ -8,9 +8,20 @@ export type Workflow<N extends string = string> = {
 
 type Commissioned = { type: "commissioned" };
 
-type AttemptStarted = { type: "attempt-started"; step: string; attempt: number };
+type AttemptStarted<N extends string> = { type: "attempt-started"; step: N; attempt: number };
 
-export type CommissionEvent = Commissioned | AttemptStarted;
+type AttemptCompleted<N extends string> = {
+  type: "attempt-completed";
+  step: N;
+  attempt: number;
+  outcome: string;
+  next: N;
+};
+
+export type CommissionEvent<N extends string = string> =
+  | Commissioned
+  | AttemptStarted<N>
+  | AttemptCompleted<N>;
 
 export type CommissionState<N extends string = string> =
   | { status: "ready"; step: { name: N; kind: "agent" | "command" } }
@@ -25,20 +36,19 @@ export function defineWorkflow<N extends string>(workflow: Workflow<N>): Workflo
 /** Rebuilds a commission's state from its workflow and its events. */
 export function replay<N extends string>(
   workflow: Workflow<N>,
-  events: readonly [Commissioned, ...Exclude<CommissionEvent, Commissioned>[]],
+  events: readonly [Commissioned, ...Exclude<CommissionEvent<NoInfer<N>>, Commissioned>[]],
 ): CommissionState<N> {
   const [, ...rest] = events;
-  let state = begin(workflow);
+  let state = arrive(workflow, workflow.start);
 
   for (const event of rest) {
-    state = apply(state, event);
+    state = apply(workflow, state, event);
   }
 
   return state;
 }
 
-function begin<N extends string>(workflow: Workflow<N>): CommissionState<N> {
-  const name = workflow.start;
+function arrive<N extends string>(workflow: Workflow<N>, name: N): CommissionState<N> {
   const { kind } = workflow.steps[name];
 
   if (kind === "approval") {
@@ -49,17 +59,24 @@ function begin<N extends string>(workflow: Workflow<N>): CommissionState<N> {
 }
 
 function apply<N extends string>(
+  workflow: Workflow<N>,
   state: CommissionState<N>,
-  event: Exclude<CommissionEvent, Commissioned>,
+  event: Exclude<CommissionEvent<N>, Commissioned>,
 ): CommissionState<N> {
+  // lazy: replay alone enforces which events each status accepts. When the engine
+  // writes events, move these rules somewhere both the writer and replay use.
   switch (event.type) {
     case "attempt-started":
-      // lazy: replay alone enforces that attempts start only when ready. When the engine
-      // writes attempt-started, move this rule somewhere both the writer and replay use.
       if (state.status !== "ready") {
         throw new Error(`An attempt cannot start while the commission is ${state.status}.`);
       }
 
       return { status: "attempting", step: state.step };
+    case "attempt-completed":
+      if (state.status !== "attempting") {
+        throw new Error(`An attempt cannot complete while the commission is ${state.status}.`);
+      }
+
+      return arrive(workflow, event.next);
   }
 }
