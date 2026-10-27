@@ -39,3 +39,21 @@ test("a completed attempt leaves the commission ready at the next step", () => {
     { status: "ready", step: { name: "first" } },
   );
 });
+
+test("a completed attempt leaves the commission awaiting at a next approval step", () => {
+  // lazy: startingAt varies only the start step's kind, so this shape is written inline.
+  // When another test needs a non-command next step, let the helper take both kinds.
+  const workflow = defineWorkflow({
+    start: "second",
+    steps: { first: { kind: "approval" }, second: { kind: "agent" } },
+  });
+
+  assert.partialDeepStrictEqual(
+    replay(workflow, [
+      { type: "commissioned" },
+      { type: "attempt-started", step: "second", attempt: 1 },
+      { type: "attempt-completed", step: "second", attempt: 1, outcome: "done", next: "first" },
+    ]),
+    { status: "awaiting", step: { name: "first" } },
+  );
+});
