@@ -22,18 +22,29 @@ type AttemptCompleted<N extends string> = {
 // add a closed set of causes beside it; the text stays, as the why.
 type Escalated = { type: "escalated"; reason: string; attempt?: number };
 
+// decision and subject are artifact hashes; any feedback lives in the decision artifact.
+type Decided<N extends string> = {
+  type: "decided";
+  step: N;
+  decision: string;
+  outcome: string;
+  subject: string;
+  next: N | "end";
+};
+
 export type CommissionEvent<N extends string = string> =
   | Commissioned
   | AttemptStarted<N>
   | AttemptCompleted<N>
-  | Escalated;
+  | Escalated
+  | Decided<N>;
 
 export type CommissionState<N extends string = string> =
   | { status: "ready"; step: { name: N; kind: "agent" | "command" } }
   | { status: "awaiting"; step: { name: N; kind: "approval" } }
   | { status: "attempting"; step: { name: N; kind: "agent" | "command" } }
   | { status: "escalated"; step: { name: N; kind: "agent" | "command" }; reason: string }
-  | { status: "finished" };
+  | { status: "finished"; by: "end" | "abandoned" };
 
 /** Declares a workflow, so the compiler checks that every step name it uses exists. */
 export function defineWorkflow<N extends string>(workflow: Workflow<N>): Workflow<N> {
@@ -85,7 +96,7 @@ function apply<N extends string>(
       }
 
       if (event.next === "end") {
-        return { status: "finished" };
+        return { status: "finished", by: "end" };
       }
 
       return arrive(workflow, event.next);
@@ -95,6 +106,16 @@ function apply<N extends string>(
       }
 
       return { status: "escalated", step: state.step, reason: event.reason };
+    case "decided":
+      if (state.status !== "awaiting" && state.status !== "escalated") {
+        throw new Error(`A decision cannot arrive while the commission is ${state.status}.`);
+      }
+
+      if (event.next === "end") {
+        return { status: "finished", by: state.status === "escalated" ? "abandoned" : "end" };
+      }
+
+      return arrive(workflow, event.next);
     default:
       return assertNever(event);
   }

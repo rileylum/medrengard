@@ -65,7 +65,7 @@ test("a completed attempt to the end finishes the commission", () => {
       { type: "attempt-started", step: "second", attempt: 1 },
       { type: "attempt-completed", step: "second", attempt: 1, outcome: "done", next: "end" },
     ]),
-    { status: "finished" },
+    { status: "finished", by: "end" },
   );
 });
 
@@ -77,5 +77,60 @@ test("an escalated attempt leaves the commission escalated at its step", () => {
       { type: "escalated", reason: "exited with code 1", attempt: 1 },
     ]),
     { status: "escalated", step: { name: "second" }, reason: "exited with code 1" },
+  );
+});
+
+test("an approval decision leaves the commission at the next step", () => {
+  assert.partialDeepStrictEqual(
+    replay(startingAt("approval"), [
+      { type: "commissioned" },
+      {
+        type: "decided",
+        step: "second",
+        decision: "decision-hash",
+        outcome: "approved",
+        subject: "plan-hash",
+        next: "first",
+      },
+    ]),
+    { status: "ready", step: { name: "first" } },
+  );
+});
+
+test("a retry decision leaves the escalated step ready", () => {
+  assert.partialDeepStrictEqual(
+    replay(startingAt("agent"), [
+      { type: "commissioned" },
+      { type: "attempt-started", step: "second", attempt: 1 },
+      { type: "escalated", reason: "exited with code 1", attempt: 1 },
+      {
+        type: "decided",
+        step: "second",
+        decision: "decision-hash",
+        outcome: "retry",
+        subject: "log-hash",
+        next: "second",
+      },
+    ]),
+    { status: "ready", step: { name: "second" } },
+  );
+});
+
+test("an abandon decision finishes the escalated commission as abandoned", () => {
+  assert.partialDeepStrictEqual(
+    replay(startingAt("agent"), [
+      { type: "commissioned" },
+      { type: "attempt-started", step: "second", attempt: 1 },
+      { type: "escalated", reason: "exited with code 1", attempt: 1 },
+      {
+        type: "decided",
+        step: "second",
+        decision: "decision-hash",
+        outcome: "abandon",
+        subject: "log-hash",
+        next: "end",
+      },
+    ]),
+    { status: "finished", by: "abandoned" },
   );
 });
