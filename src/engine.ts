@@ -72,6 +72,15 @@ export function createEngine({ log, workflows }: Options) {
           throw new Error(`Step ${name} is an agent step, which cannot run yet.`);
         }
 
+        if (spent(events, name) >= step.budget) {
+          write(commission, events, {
+            type: "escalated",
+            reason: `Step ${name} has spent its budget of ${step.budget} attempts.`,
+          });
+
+          continue;
+        }
+
         const attempt = events.filter((event) => event.type === "attempt-started").length + 1;
         const started = { type: "attempt-started", step: name, attempt } as const;
 
@@ -81,6 +90,15 @@ export function createEngine({ log, workflows }: Options) {
       }
     },
   };
+}
+
+// Only the owner renews a budget: it counts the step's attempts since the latest decision.
+function spent(events: Log, name: string): number {
+  const since = events.findLastIndex((event) => event.type === "decided") + 1;
+
+  return events
+    .slice(since)
+    .filter((event) => event.type === "attempt-started" && event.step === name).length;
 }
 
 type Command = Extract<Workflow["steps"][string], { kind: "command" }>;

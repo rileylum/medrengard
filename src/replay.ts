@@ -1,7 +1,15 @@
-/** A command step runs `run` and follows the edge its outcome names in `on`. */
+/**
+ * A command step runs `run` and follows the edge its outcome names in `on`, starting at most
+ * `budget` attempts between the owner's decisions.
+ */
 type Step<N extends string> =
   | { kind: "agent" }
-  | { kind: "command"; run: readonly [string, ...string[]]; on: Record<string, N | "end"> }
+  | {
+      kind: "command";
+      run: readonly [string, ...string[]];
+      on: Record<string, N | "end">;
+      budget: number;
+    }
   | { kind: "approval" };
 
 /** A workflow over its step names `N`; `start` must name one of its steps, and `end` is reserved. */

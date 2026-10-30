@@ -1,12 +1,16 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEngine } from "./engine.ts";
 import { defineWorkflow } from "./replay.ts";
 
-/** Starts an engine whose one workflow, `build`, has a single command step that runs `script`. */
+/**
+ * Starts an engine whose one workflow, `build`, has a single command step that runs `script`,
+ * ends on `done`, repeats on `again` and has a budget of 2. The script's `$1` is a file it may append
+ * to, named `started` in the returned directory.
+ */
 async function engineRunning(t: TestContext, script: string) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
@@ -17,18 +21,25 @@ async function engineRunning(t: TestContext, script: string) {
     workflows: {
       build: defineWorkflow({
         start: "build",
-        steps: { build: { kind: "command", run: ["sh", "-c", script], on: { done: "end" } } },
+        steps: {
+          build: {
+            kind: "command",
+            run: ["sh", "-c", script, "sh", join(directory, "started")],
+            on: { done: "end", again: "build" },
+            budget: 2,
+          },
+        },
       }),
     },
   });
 
   engine.commission("build", "first");
 
-  return engine;
+  return { engine, directory };
 }
 
 test("a commission whose command step leads to the end finishes", async (t) => {
-  const engine = await engineRunning(
+  const { engine } = await engineRunning(
     t,
     `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
   );
@@ -37,7 +48,7 @@ test("a commission whose command step leads to the end finishes", async (t) => {
 });
 
 test("a step that exits non-zero escalates its commission", async (t) => {
-  const engine = await engineRunning(
+  const { engine } = await engineRunning(
     t,
     `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"; exit 3`,
   );
@@ -50,7 +61,7 @@ test("a step that exits non-zero escalates its commission", async (t) => {
 });
 
 test("a step that exits 0 without output.json escalates its commission", async (t) => {
-  const engine = await engineRunning(t, "true");
+  const { engine } = await engineRunning(t, "true");
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
@@ -60,7 +71,7 @@ test("a step that exits 0 without output.json escalates its commission", async (
 });
 
 test("a step that claims an undeclared outcome escalates its commission", async (t) => {
-  const engine = await engineRunning(
+  const { engine } = await engineRunning(
     t,
     `echo '{"outcome":"shipped"}' > "$MEDRENGARD_OUT/output.json"`,
   );
@@ -70,4 +81,18 @@ test("a step that claims an undeclared outcome escalates its commission", async 
     step: { name: "build" },
     reason: 'Step build claimed an outcome it does not declare: "shipped".',
   });
+});
+
+test("a step that has spent its budget escalates instead of starting again", async (t) => {
+  const { engine, directory } = await engineRunning(
+    t,
+    `echo started >> "$1"; echo '{"outcome":"again"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: "Step build has spent its budget of 2 attempts.",
+  });
+  assert.equal(await readFile(join(directory, "started"), "utf8"), "started\nstarted\n");
 });
