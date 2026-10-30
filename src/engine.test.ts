@@ -103,6 +103,23 @@ test("a step that claims an undeclared outcome escalates its commission", async 
   });
 });
 
+test("a step whose program cannot start escalates its commission", async (t) => {
+  const { directory, options } = await engineRunning(t, "true");
+  const { build } = options.workflows;
+  const missing = { ...build.steps.build, run: [join(directory, "missing")] as const };
+
+  const engine = createEngine({
+    ...options,
+    workflows: { build: { ...build, steps: { build: missing } } },
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: "Step build could not start: ENOENT.",
+  });
+});
+
 test("a step that has spent its budget escalates instead of starting again", async (t) => {
   const { engine, directory } = await engineRunning(
     t,

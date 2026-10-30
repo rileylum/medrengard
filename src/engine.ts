@@ -192,10 +192,18 @@ async function run(step: Command, name: string, attempt: number): Promise<Ending
     child.stdout.on("data", () => idle.refresh());
     child.stderr.on("data", () => idle.refresh());
 
-    const [code, signal] = await once(child, "close").finally(() => {
-      clearTimeout(idle);
-      clearTimeout(overall);
-    });
+    const closed = await once(child, "close")
+      .catch((error: NodeJS.ErrnoException) => error)
+      .finally(() => {
+        clearTimeout(idle);
+        clearTimeout(overall);
+      });
+
+    if (closed instanceof Error) {
+      return escalate(`Step ${name} could not start: ${closed.code}.`);
+    }
+
+    const [code, signal] = closed;
 
     if (stopped !== undefined) {
       return escalate(stopped);
