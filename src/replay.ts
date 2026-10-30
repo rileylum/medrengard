@@ -1,12 +1,18 @@
-export type StepKind = "agent" | "command" | "approval";
+/** A command step runs `run` and follows the edge its outcome names in `on`. */
+type Step<N extends string> =
+  | { kind: "agent" }
+  | { kind: "command"; run: readonly [string, ...string[]]; on: Record<string, N | "end"> }
+  | { kind: "approval" };
 
 /** A workflow over its step names `N`; `start` must name one of its steps, and `end` is reserved. */
 export type Workflow<N extends string = string> = {
   start: NoInfer<N>;
-  steps: Record<N, { kind: StepKind }> & { end?: never };
+  steps: { [K in N]: K extends "end" ? never : Step<NoInfer<N>> };
 };
 
-type Commissioned = { type: "commissioned" };
+// lazy: workflow names the definition by key in the engine's workflows. When a commission
+// must keep running after its definition is edited, record the definitions by hash instead.
+export type Commissioned = { type: "commissioned"; workflow: string };
 
 type AttemptStarted<N extends string> = { type: "attempt-started"; step: N; attempt: number };
 
@@ -81,8 +87,7 @@ function apply<N extends string>(
   state: CommissionState<N>,
   event: Exclude<CommissionEvent<N>, Commissioned>,
 ): CommissionState<N> {
-  // lazy: replay alone enforces which events each status accepts. When the engine
-  // writes events, move these rules somewhere both the writer and replay use.
+  // The engine replays each event before writing it, so these rules also keep the log valid.
   switch (event.type) {
     case "attempt-started":
       if (state.status !== "ready") {
