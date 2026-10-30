@@ -77,30 +77,28 @@ export function createEngine({ log, workflows }: Options) {
 
         write(commission, events, started);
 
-        const outcome = await run(step.run);
-
-        write(commission, [...events, started], {
-          type: "attempt-completed",
-          step: name,
-          attempt,
-          outcome,
-          next: step.on[outcome],
-        });
+        write(commission, [...events, started], await run(step, name, attempt));
       }
     },
   };
 }
 
-// lazy: the exit code and output.json are trusted, and the step is not confined. Escalate on a
-// failed exit or an invalid output, and run in the sandbox, before any step is not the owner's.
-async function run([command, ...args]: readonly [string, ...string[]]): Promise<string> {
+type Command = Extract<Workflow["steps"][string], { kind: "command" }>;
+
+type Ending = Extract<CommissionEvent, { type: "attempt-completed" | "escalated" }>;
+
+// lazy: the step is not confined. Run it in the sandbox before any step is not the owner's.
+async function run(step: Command, name: string, attempt: number): Promise<Ending> {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-attempt-"));
   const workspace = join(directory, "workspace");
   const output = join(directory, "output");
+  const escalate = (reason: string): Ending => ({ type: "escalated", reason, attempt });
 
   try {
     await mkdir(workspace);
     await mkdir(output);
+
+    const [command, ...args] = step.run;
 
     const child = spawn(command, args, {
       cwd: workspace,
@@ -108,11 +106,39 @@ async function run([command, ...args]: readonly [string, ...string[]]): Promise<
       stdio: "ignore",
     });
 
-    await once(child, "exit");
+    const [code, signal] = await once(child, "exit");
 
-    const { outcome } = JSON.parse(await readFile(join(output, "output.json"), "utf8"));
+    if (code !== 0) {
+      return escalate(
+        signal ? `Step ${name} was ended by ${signal}.` : `Step ${name} exited with code ${code}.`,
+      );
+    }
 
-    return outcome;
+    // Everything in the output directory is the step's doing, so any failure to read it is the step's.
+    const text = await readFile(join(output, "output.json"), "utf8").catch(() => undefined);
+
+    if (text === undefined) {
+      return escalate(`Step ${name} exited 0 without a readable output.json.`);
+    }
+
+    let claim;
+
+    try {
+      claim = JSON.parse(text);
+    } catch {
+      return escalate(`Step ${name} wrote an output.json that is not JSON.`);
+    }
+
+    // Strict equality with a declared key also refuses an outcome that is not a string.
+    const outcome = Object.keys(step.on).find((declared) => declared === claim?.outcome);
+
+    if (outcome === undefined) {
+      return escalate(
+        `Step ${name} claimed an outcome it does not declare: ${JSON.stringify(claim?.outcome)}.`,
+      );
+    }
+
+    return { type: "attempt-completed", step: name, attempt, outcome, next: step.on[outcome] };
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
