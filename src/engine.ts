@@ -29,6 +29,18 @@ export function createEngine({ log, workflows }: Options) {
 
   const self = { pid: process.pid, start: startOf(process.pid)! };
 
+  // A cancel is a request to the engine running the attempt, not commission state: the
+  // escalation that engine writes is the record.
+  database.exec(`CREATE TABLE IF NOT EXISTS cancellations (
+    commission TEXT NOT NULL, attempt INTEGER NOT NULL,
+    PRIMARY KEY (commission, attempt)) STRICT`);
+
+  const request = database.prepare("INSERT OR IGNORE INTO cancellations VALUES (?, ?)");
+
+  const requested = database.prepare(
+    "SELECT 1 FROM cancellations WHERE commission = ? AND attempt = ?",
+  );
+
   const insert = database.prepare("INSERT INTO events VALUES (?, ?, ?)");
 
   const select = database.prepare(
@@ -54,6 +66,23 @@ export function createEngine({ log, workflows }: Options) {
 
       replay(workflows[workflow], [event]);
       insert.run(commission, 0, JSON.stringify(event));
+    },
+
+    /** Asks the engine running the commission's attempt to stop it; that engine escalates. */
+    cancel(commission: string): void {
+      const events = read(commission);
+      const state = replay(workflows[events[0].workflow], events);
+
+      if (state.status !== "attempting") {
+        throw new Error(
+          `Commission ${commission} is ${state.status}, so no attempt can be cancelled.`,
+        );
+      }
+
+      request.run(
+        commission,
+        events.findLast((event) => event.type === "attempt-started")!.attempt,
+      );
     },
 
     /** Attempts ready steps until the commission is awaiting, escalated or finished. */
@@ -105,7 +134,9 @@ export function createEngine({ log, workflows }: Options) {
 
         write(commission, events, started);
 
-        write(commission, [...events, started], await run(step, name, attempt));
+        const cancelled = () => requested.get(commission, attempt) !== undefined;
+
+        write(commission, [...events, started], await run(step, name, attempt, cancelled));
       }
     },
   };
@@ -150,7 +181,12 @@ function stop(child: ChildProcess): void {
 }
 
 // lazy: the step is not confined. Run it in the sandbox before any step is not the owner's.
-async function run(step: Command, name: string, attempt: number): Promise<Ending> {
+async function run(
+  step: Command,
+  name: string,
+  attempt: number,
+  cancelled: () => boolean,
+): Promise<Ending> {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-attempt-"));
   const workspace = join(directory, "workspace");
   const output = join(directory, "output");
@@ -172,9 +208,12 @@ async function run(step: Command, name: string, attempt: number): Promise<Ending
 
     let stopped: string | undefined;
 
+    // The first reason to stop is the one recorded; stopping twice would signal a group that may be gone.
     const stopFor = (reason: string) => {
-      stopped ??= reason;
-      stop(child);
+      if (stopped === undefined) {
+        stopped = reason;
+        stop(child);
+      }
     };
 
     const idle = setTimeout(
@@ -187,6 +226,12 @@ async function run(step: Command, name: string, attempt: number): Promise<Ending
       step.limits.attempt * 1000,
     );
 
+    const cancel = setInterval(() => {
+      if (cancelled()) {
+        stopFor(`Step ${name} was cancelled by the owner.`);
+      }
+    }, 1000);
+
     // lazy: output is read only to see activity. Keep it as the transcript, under its
     // size limit, once the store exists.
     child.stdout.on("data", () => idle.refresh());
@@ -197,6 +242,7 @@ async function run(step: Command, name: string, attempt: number): Promise<Ending
       .finally(() => {
         clearTimeout(idle);
         clearTimeout(overall);
+        clearInterval(cancel);
       });
 
     if (closed instanceof Error) {

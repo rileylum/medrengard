@@ -216,3 +216,29 @@ test(
     });
   },
 );
+
+test("an attempt cancelled from another engine is stopped and escalates", async (t) => {
+  const { engine, directory, options } = await engineRunning(t, `echo started >> "$1"; sleep 30`, {
+    idle: 60,
+    attempt: 60,
+  });
+
+  const running = engine.advance("first");
+
+  await untilStarted(directory);
+  createEngine(options).cancel("first");
+
+  assert.partialDeepStrictEqual(await running, {
+    status: "escalated",
+    step: { name: "build" },
+    reason: "Step build was cancelled by the owner.",
+  });
+});
+
+test("a commission without an attempt in flight cannot be cancelled", async (t) => {
+  const { engine } = await engineRunning(t, "true");
+
+  assert.throws(() => engine.cancel("first"), {
+    message: "Commission first is ready, so no attempt can be cancelled.",
+  });
+});
