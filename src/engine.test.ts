@@ -8,7 +8,7 @@ import { defineWorkflow } from "./replay.ts";
 
 /**
  * Starts an engine whose one workflow, `build`, has a single command step that runs `script`,
- * ends on `done`, repeats on `again` and has a budget of 2. The script's `$1` is a file it may append
+ * ends on `done`, repeats on `again`, has a budget of 2 and an idle limit of 1 s. The script's `$1` is a file it may append
  * to, named `started` in the returned directory.
  */
 async function engineRunning(t: TestContext, script: string) {
@@ -27,6 +27,7 @@ async function engineRunning(t: TestContext, script: string) {
             run: ["sh", "-c", script, "sh", join(directory, "started")],
             on: { done: "end", again: "build" },
             budget: 2,
+            limits: { idle: 1 },
           },
         },
       }),
@@ -95,4 +96,24 @@ test("a step that has spent its budget escalates instead of starting again", asy
     reason: "Step build has spent its budget of 2 attempts.",
   });
   assert.equal(await readFile(join(directory, "started"), "utf8"), "started\nstarted\n");
+});
+
+test("a step that is idle for its idle limit is stopped and escalates", async (t) => {
+  const { engine } = await engineRunning(t, "sleep 5");
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: "Step build was idle for 1 s.",
+  });
+});
+
+test("a step that keeps writing output runs past its idle limit", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `for tick in 1 2 3 4; do echo "$tick"; sleep 0.5; done
+    echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
 });

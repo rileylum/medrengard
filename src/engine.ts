@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -105,6 +105,17 @@ type Command = Extract<Workflow["steps"][string], { kind: "command" }>;
 
 type Ending = Extract<CommissionEvent, { type: "attempt-completed" | "escalated" }>;
 
+// The time a stopped step has to exit after SIGTERM before it gets SIGKILL.
+const grace = 5000;
+
+function stop(child: ChildProcess): void {
+  process.kill(-child.pid!, "SIGTERM");
+
+  const kill = setTimeout(() => process.kill(-child.pid!, "SIGKILL"), grace);
+
+  child.once("close", () => clearTimeout(kill));
+}
+
 // lazy: the step is not confined. Run it in the sandbox before any step is not the owner's.
 async function run(step: Command, name: string, attempt: number): Promise<Ending> {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-attempt-"));
@@ -118,13 +129,31 @@ async function run(step: Command, name: string, attempt: number): Promise<Ending
 
     const [command, ...args] = step.run;
 
+    // Its own process group, so stopping the step also stops what it started.
     const child = spawn(command, args, {
       cwd: workspace,
       env: { PATH: process.env.PATH, MEDRENGARD_OUT: output },
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     });
 
-    const [code, signal] = await once(child, "exit");
+    let stopped: string | undefined;
+
+    const idle = setTimeout(() => {
+      stopped = `Step ${name} was idle for ${step.limits.idle} s.`;
+      stop(child);
+    }, step.limits.idle * 1000);
+
+    // lazy: output is read only to see activity. Keep it as the transcript, under its
+    // size limit, once the store exists.
+    child.stdout.on("data", () => idle.refresh());
+    child.stderr.on("data", () => idle.refresh());
+
+    const [code, signal] = await once(child, "close").finally(() => clearTimeout(idle));
+
+    if (stopped !== undefined) {
+      return escalate(stopped);
+    }
 
     if (code !== 0) {
       return escalate(
