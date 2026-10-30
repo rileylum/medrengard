@@ -139,17 +139,30 @@ async function run(step: Command, name: string, attempt: number): Promise<Ending
 
     let stopped: string | undefined;
 
-    const idle = setTimeout(() => {
-      stopped = `Step ${name} was idle for ${step.limits.idle} s.`;
+    const stopFor = (reason: string) => {
+      stopped ??= reason;
       stop(child);
-    }, step.limits.idle * 1000);
+    };
+
+    const idle = setTimeout(
+      () => stopFor(`Step ${name} was idle for ${step.limits.idle} s.`),
+      step.limits.idle * 1000,
+    );
+
+    const overall = setTimeout(
+      () => stopFor(`Step ${name} reached its attempt limit of ${step.limits.attempt} s.`),
+      step.limits.attempt * 1000,
+    );
 
     // lazy: output is read only to see activity. Keep it as the transcript, under its
     // size limit, once the store exists.
     child.stdout.on("data", () => idle.refresh());
     child.stderr.on("data", () => idle.refresh());
 
-    const [code, signal] = await once(child, "close").finally(() => clearTimeout(idle));
+    const [code, signal] = await once(child, "close").finally(() => {
+      clearTimeout(idle);
+      clearTimeout(overall);
+    });
 
     if (stopped !== undefined) {
       return escalate(stopped);

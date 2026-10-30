@@ -1,7 +1,7 @@
 /**
  * A command step runs `run` and follows the edge its outcome names in `on`, starting at most
- * `budget` attempts between the owner's decisions. An attempt that writes nothing to stdout or
- * stderr for `limits.idle` seconds is stopped.
+ * `budget` attempts between the owner's decisions. An attempt is stopped when it writes nothing to
+ * stdout or stderr for `limits.idle` seconds, or runs for `limits.attempt` seconds.
  */
 type Step<N extends string> =
   | { kind: "agent" }
@@ -10,7 +10,7 @@ type Step<N extends string> =
       run: readonly [string, ...string[]];
       on: Record<string, N | "end">;
       budget: number;
-      limits: { idle: number };
+      limits: { idle: number; attempt: number };
     }
   | { kind: "approval" };
 
