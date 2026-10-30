@@ -1,22 +1,26 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { createEngine } from "./engine.ts";
 import { defineWorkflow } from "./replay.ts";
 
 /**
  * Starts an engine whose one workflow, `build`, has a single command step that runs `script`,
- * ends on `done`, repeats on `again`, has a budget of 2 and the given limits. The script's `$1` is a file it may append
- * to, named `started` in the returned directory.
+ * ends on `done`, repeats on `again`, has a budget of 2 and the given limits. The script's `$1`
+ * is a file it may append to, named `started` in the returned directory. Returns the options too,
+ * so a test can start a second engine on the same log.
  */
 async function engineRunning(t: TestContext, script: string, limits = { idle: 1, attempt: 5 }) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
   t.after(() => rm(directory, { recursive: true, force: true }));
 
-  const engine = createEngine({
+  const options = {
     log: join(directory, "log.sqlite"),
     workflows: {
       build: defineWorkflow({
@@ -32,11 +36,26 @@ async function engineRunning(t: TestContext, script: string, limits = { idle: 1,
         },
       }),
     },
-  });
+  };
+
+  const engine = createEngine(options);
 
   engine.commission("build", "first");
 
-  return { engine, directory };
+  return { engine, directory, options };
+}
+
+/** Waits until the step has written to its `started` file. */
+async function untilStarted(directory: string): Promise<string> {
+  for (;;) {
+    const started = await readFile(join(directory, "started"), "utf8").catch(() => "");
+
+    if (started.endsWith("\n")) {
+      return started;
+    }
+
+    await sleep(20);
+  }
 }
 
 test("a commission whose command step leads to the end finishes", async (t) => {
@@ -130,3 +149,53 @@ test("a step that runs for its attempt limit is stopped and escalates", async (t
     reason: "Step build reached its attempt limit of 1 s.",
   });
 });
+
+test("an attempt held by a live engine is left attempting", async (t) => {
+  const { engine, directory, options } = await engineRunning(
+    t,
+    `echo started >> "$1"; sleep 1; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    { idle: 5, attempt: 5 },
+  );
+
+  const running = engine.advance("first");
+
+  await untilStarted(directory);
+
+  assert.partialDeepStrictEqual(await createEngine(options).advance("first"), {
+    status: "attempting",
+  });
+  assert.partialDeepStrictEqual(await running, { status: "finished" });
+});
+
+test(
+  "an attempt whose engine process died escalates as interrupted",
+  { timeout: 10_000 },
+  async (t) => {
+    const { engine, directory, options } = await engineRunning(t, `echo $$ > "$1"; exec sleep 30`, {
+      idle: 60,
+      attempt: 60,
+    });
+
+    const crashing = join(directory, "crashing.ts");
+
+    await writeFile(
+      crashing,
+      `import { createEngine } from ${JSON.stringify(join(import.meta.dirname, "engine.ts"))};
+    await createEngine(${JSON.stringify(options)}).advance("first");`,
+    );
+
+    const child = spawn(process.execPath, [crashing], { stdio: "ignore" });
+    const step = Number(await untilStarted(directory));
+
+    // The step outlives its engine in its own process group, so the test ends it.
+    t.after(() => process.kill(-step, "SIGKILL"));
+    child.kill("SIGKILL");
+    await once(child, "exit");
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      step: { name: "build" },
+      reason: "Step build was interrupted.",
+    });
+  },
+);

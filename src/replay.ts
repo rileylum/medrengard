@@ -24,7 +24,14 @@ export type Workflow<N extends string = string> = {
 // must keep running after its definition is edited, record the definitions by hash instead.
 export type Commissioned = { type: "commissioned"; workflow: string };
 
-type AttemptStarted<N extends string> = { type: "attempt-started"; step: N; attempt: number };
+// process names the engine process running the attempt, so another engine can tell a live
+// attempt from an interrupted one.
+type AttemptStarted<N extends string> = {
+  type: "attempt-started";
+  step: N;
+  attempt: number;
+  process: { pid: number; start: number };
+};
 
 type AttemptCompleted<N extends string> = {
   type: "attempt-completed";

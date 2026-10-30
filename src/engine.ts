@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +26,8 @@ export function createEngine({ log, workflows }: Options) {
   database.exec(`CREATE TABLE IF NOT EXISTS events (
     commission TEXT NOT NULL, position INTEGER NOT NULL, event TEXT NOT NULL,
     PRIMARY KEY (commission, position)) STRICT`);
+
+  const self = { pid: process.pid, start: startOf(process.pid)! };
 
   const insert = database.prepare("INSERT INTO events VALUES (?, ?, ?)");
 
@@ -60,6 +63,22 @@ export function createEngine({ log, workflows }: Options) {
         const workflow = workflows[events[0].workflow];
         const state = replay(workflow, events);
 
+        if (state.status === "attempting") {
+          const started = events.findLast((event) => event.type === "attempt-started")!;
+
+          if (startOf(started.process.pid) === started.process.start) {
+            return state;
+          }
+
+          write(commission, events, {
+            type: "escalated",
+            reason: `Step ${state.step.name} was interrupted.`,
+            attempt: started.attempt,
+          });
+
+          continue;
+        }
+
         if (state.status !== "ready") {
           return state;
         }
@@ -82,7 +101,7 @@ export function createEngine({ log, workflows }: Options) {
         }
 
         const attempt = events.filter((event) => event.type === "attempt-started").length + 1;
-        const started = { type: "attempt-started", step: name, attempt } as const;
+        const started = { type: "attempt-started", step: name, attempt, process: self } as const;
 
         write(commission, events, started);
 
@@ -90,6 +109,20 @@ export function createEngine({ log, workflows }: Options) {
       }
     },
   };
+}
+
+// A pid is reused once its process ends; with its start time from /proc it names one process.
+function startOf(pid: number): number | undefined {
+  let stat;
+
+  try {
+    stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  } catch {
+    return undefined;
+  }
+
+  // Fields follow the command name in parentheses; the start time is the 20th after it.
+  return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
 }
 
 // Only the owner renews a budget: it counts the step's attempts since the latest decision.
