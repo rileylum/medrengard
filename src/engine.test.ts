@@ -163,6 +163,13 @@ function planAt(body: string) {
   };
 }
 
+/**
+ * A script that appends to `$1` and claims `again` with a new document, numbered by the attempt,
+ * so each attempt is about a new subject.
+ */
+const claimingAgain = `echo started >> "$1"; wc -l < "$1" > "$MEDRENGARD_OUT/plan.md"
+  echo '${JSON.stringify({ ...planAt("plan.md"), outcome: "again" })}' > "$MEDRENGARD_OUT/output.json"`;
+
 /** The commission's current subject, which a decision must name. */
 function subjectOf(engine: ReturnType<typeof createEngine>): string {
   const state = engine.state("first");
@@ -592,6 +599,17 @@ test("a step whose program cannot start escalates its commission", async (t) => 
 });
 
 test("a step that has spent its budget escalates instead of starting again", async (t) => {
+  const { engine, directory } = await engineRunning(t, claimingAgain);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: "Step build has spent its budget of 2 attempts.",
+  });
+  assert.equal(await readFile(join(directory, "started"), "utf8"), "started\nstarted\n");
+});
+
+test("a step attempted again on the same subject and inputs escalates instead", async (t) => {
   const { engine, directory } = await engineRunning(
     t,
     `echo started >> "$1"; echo '{"outcome":"again"}' > "$MEDRENGARD_OUT/output.json"`,
@@ -600,9 +618,9 @@ test("a step that has spent its budget escalates instead of starting again", asy
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
-    reason: "Step build has spent its budget of 2 attempts.",
+    reason: "Step build was already attempted on this subject and these inputs.",
   });
-  assert.equal(await readFile(join(directory, "started"), "utf8"), "started\nstarted\n");
+  assert.equal(await readFile(join(directory, "started"), "utf8"), "started\n");
 });
 
 test("a step that is idle for its idle limit is stopped and escalates", async (t) => {
@@ -742,10 +760,7 @@ test("a decision with an undeclared outcome is refused and records nothing", asy
 });
 
 test("a retry renews the budget of the escalated step", async (t) => {
-  const { engine, directory } = await engineRunning(
-    t,
-    `echo started >> "$1"; echo '{"outcome":"again"}' > "$MEDRENGARD_OUT/output.json"`,
-  );
+  const { engine, directory } = await engineRunning(t, claimingAgain);
 
   await engine.advance("first");
   engine.decide("first", { subject: subjectOf(engine), outcome: "retry" });

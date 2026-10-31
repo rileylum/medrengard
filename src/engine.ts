@@ -5,6 +5,7 @@ import { chmod, mkdir, mkdtemp, open, realpath, rm, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 import {
   assertNever,
   replay,
@@ -198,7 +199,11 @@ export function createEngine({ log, workflows }: Options) {
           throw new Error(`Step ${name} is an agent step, which cannot run yet.`);
         }
 
-        if (spent(events, name) >= step.budget) {
+        const attempts = sinceDecision(events).filter(
+          (event) => event.type === "attempt-started" && event.step === name,
+        );
+
+        if (attempts.length >= step.budget) {
           write(commission, events, {
             type: "escalated",
             reason: `Step ${name} has spent its budget of ${step.budget} attempts.`,
@@ -207,19 +212,46 @@ export function createEngine({ log, workflows }: Options) {
           continue;
         }
 
+        // An input with nothing to resolve to, such as a decision not yet made, is left out.
+        const given = step.inputs.flatMap((input) => {
+          const hash = resolve(input, state);
+
+          return hash === undefined ? [] : [{ name: input, hash }];
+        });
+
+        // A repeat would see what the earlier attempt saw, so only a decision can justify it.
+        const repeated = attempts.some(
+          (event) =>
+            event.type === "attempt-started" &&
+            event.subject === state.subject &&
+            isDeepStrictEqual(event.inputs, given),
+        );
+
+        if (repeated) {
+          write(commission, events, {
+            type: "escalated",
+            reason: `Step ${name} was already attempted on this subject and these inputs.`,
+          });
+
+          continue;
+        }
+
         const attempt = events.filter((event) => event.type === "attempt-started").length + 1;
-        const started = { type: "attempt-started", step: name, attempt, process: self } as const;
+
+        const started = {
+          type: "attempt-started",
+          step: name,
+          attempt,
+          subject: state.subject,
+          inputs: given,
+          process: self,
+        } as const;
 
         write(commission, events, started);
 
         const cancelled = () => requested.get(commission, attempt) !== undefined;
 
-        // An input with nothing to resolve to, such as a decision not yet made, is left out.
-        const inputs = step.inputs.flatMap((input) => {
-          const hash = resolve(input, state);
-
-          return hash === undefined ? [] : [{ name: input, hash, artifact: store.get(hash) }];
-        });
+        const inputs = given.map((input) => ({ ...input, artifact: store.get(input.hash) }));
 
         write(
           commission,
@@ -262,13 +294,9 @@ function resolve(
   }
 }
 
-// Only the owner renews a budget: it counts the step's attempts since the latest decision.
-function spent(events: Log, name: string): number {
-  const since = events.findLastIndex((event) => event.type === "decided") + 1;
-
-  return events
-    .slice(since)
-    .filter((event) => event.type === "attempt-started" && event.step === name).length;
+// Only the owner renews a budget or permits a repeat: both count from the latest decision.
+function sinceDecision(events: Log): Log[number][] {
+  return events.slice(events.findLastIndex((event) => event.type === "decided") + 1);
 }
 
 type Command = Extract<Workflow["steps"][string], { kind: "command" }>;

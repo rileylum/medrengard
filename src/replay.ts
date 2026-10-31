@@ -32,12 +32,15 @@ export type Workflow<N extends string = string> = {
 // request is the hash of the owner's request, the commission's first subject.
 export type Commissioned = { type: "commissioned"; workflow: string; request: string };
 
+// subject and inputs name what the attempt was given, by hash, inputs in the order declared.
 // process names the engine process running the attempt, so another engine can tell a live
 // attempt from an interrupted one.
 type AttemptStarted<N extends string> = {
   type: "attempt-started";
   step: N;
   attempt: number;
+  subject: string;
+  inputs: readonly { name: Input; hash: string }[];
   process: { pid: number; start: number };
 };
 
