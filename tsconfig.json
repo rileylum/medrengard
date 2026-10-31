@@ -9,5 +9,5 @@
     "verbatimModuleSyntax": true,
     "types": ["node"]
   },
-  "include": ["src", "adapters"]
+  "include": ["src", "adapters", "verifiers"]
 }

@@ -21,7 +21,10 @@ export type Decision = {
   body?: string;
 };
 
-export type Artifact = Document | Decision;
+/** A commit, named by its SHA. */
+export type Commit = { kind: "commit"; fields: { sha: string }; body?: undefined };
+
+export type Artifact = Document | Commit | Decision;
 
 /**
  * Keeps artifacts, their bodies and transcripts in `directory`, each under the sha256 of its

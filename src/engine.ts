@@ -15,7 +15,7 @@ import {
   type Input,
   type Workflow,
 } from "./replay.ts";
-import { createStore, type Artifact, type Document } from "./store.ts";
+import { createStore, type Artifact, type Commit, type Document } from "./store.ts";
 
 type Options = { log: string; workflows: Record<string, Workflow> };
 
@@ -271,7 +271,18 @@ export function createEngine({ log, workflows }: Options) {
         write(
           commission,
           [...events, started],
-          await run(step, { commission, step: name, attempt, inputs }, cancelled, store),
+          await run(
+            step,
+            {
+              commission,
+              step: name,
+              attempt,
+              subject: { hash: state.subject, artifact: store.get(state.subject) },
+              inputs,
+            },
+            cancelled,
+            store,
+          ),
         );
       }
     },
@@ -314,11 +325,13 @@ function sinceDecision(events: Log): Log[number][] {
 
 type Runnable = Extract<Workflow["steps"][string], { kind: "agent" | "command" }>;
 
-// What a step is given: the domain values its input.json encodes.
+// What an attempt is given: the domain values its input.json encodes, and the commission's
+// subject, which verifiers judge a claim against.
 type Given = {
   commission: string;
   step: string;
   attempt: number;
+  subject: { hash: string; artifact: Artifact };
   inputs: readonly { name: Input; hash: string; artifact: Artifact }[];
 };
 
@@ -491,6 +504,17 @@ async function run(
       return escalate(claim.reason);
     }
 
+    // A document's kind has no verifier; a commit's does.
+    for (const artifact of claim.artifacts) {
+      if (artifact.kind === "commit") {
+        const rejected = await verify(directory, workspace, name, artifact, given.subject);
+
+        if (rejected !== undefined) {
+          return escalate(rejected);
+        }
+      }
+    }
+
     return {
       type: "attempt-completed",
       step: name,
@@ -507,7 +531,7 @@ async function run(
   }
 }
 
-type Claim = { outcome: string; artifacts: Document[] };
+type Claim = { outcome: string; artifacts: (Document | Commit)[] };
 
 // The largest output.json the engine reads, in bytes.
 const claimLimit = 64 * 1024;
@@ -571,11 +595,29 @@ async function parse(
   }
 
   const root = await realpath(output);
-  const artifacts: Document[] = [];
+  const artifacts: (Document | Commit)[] = [];
 
   for (const artifact of claimed) {
     if (artifact?.kind === "decision") {
       return { reason: `Step ${name} claimed a decision, which only the owner makes.` };
+    }
+
+    if (artifact?.kind === "commit") {
+      const { fields } = artifact;
+      const sha = fields?.sha;
+
+      if (
+        !hasExactly(artifact, ["kind", "fields"]) ||
+        !hasExactly(fields, ["sha"]) ||
+        !isText(sha) ||
+        !/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)
+      ) {
+        return { reason: `Step ${name} claimed a commit that is not a SHA.` };
+      }
+
+      artifacts.push({ kind: "commit", fields: { sha } });
+
+      continue;
     }
 
     if (artifact?.kind !== "document") {
@@ -667,6 +709,94 @@ async function readAtMost(path: string, limit: number): Promise<Buffer | undefin
   } finally {
     await file.close();
   }
+}
+
+// lazy: the commit kind's verifier is built in, beside the engine. Name it in the kind's
+// definition, by hash, with definitions by hash.
+const commitVerifier = [
+  process.execPath,
+  join(import.meta.dirname, "..", "verifiers", "commit.ts"),
+] as const;
+
+// The seconds a verifier may run before it is stopped and the claim escalates.
+const verifierLimit = 30;
+
+// Runs the commit verifier on a claim in the attempt's workspace. Returns undefined when it
+// accepts, else the reason to escalate.
+// lazy: the workspace is not read-only to the verifier; the sandbox makes it so.
+async function verify(
+  directory: string,
+  workspace: string,
+  name: string,
+  claim: Commit,
+  subject: { hash: string; artifact: Artifact },
+): Promise<string | undefined> {
+  const area = await mkdtemp(join(directory, "verifier-"));
+  const input = join(area, "input");
+  const output = join(area, "output");
+  const failed = (why: string) => `The commit verifier failed on step ${name}'s claim: ${why}`;
+
+  await mkdir(input);
+  await mkdir(output);
+
+  await writeFile(
+    join(input, "claim.json"),
+    JSON.stringify({
+      fields: claim.fields,
+      subject: { hash: subject.hash, kind: subject.artifact.kind, fields: subject.artifact.fields },
+    }),
+  );
+
+  const [command, ...args] = commitVerifier;
+
+  const child = spawn(command, args, {
+    cwd: workspace,
+    env: { PATH: process.env.PATH, MEDRENGARD_IN: input, MEDRENGARD_OUT: output },
+    stdio: "ignore",
+    detached: true,
+  });
+
+  let late = false;
+
+  const limit = setTimeout(() => {
+    late = true;
+    stop(child);
+  }, verifierLimit * 1000);
+
+  const closed = await once(child, "close")
+    .catch((error: NodeJS.ErrnoException) => error)
+    .finally(() => clearTimeout(limit));
+
+  if (closed instanceof Error) {
+    return failed(`it could not start: ${closed.code}.`);
+  }
+
+  if (late) {
+    return failed(`it reached its limit of ${verifierLimit} s.`);
+  }
+
+  if (closed[0] !== 0) {
+    return failed(`it exited with code ${closed[0]}.`);
+  }
+
+  const bytes = await readAtMost(join(output, "output.json"), claimLimit);
+  let verdict;
+
+  try {
+    verdict = bytes === undefined ? undefined : JSON.parse(utf8.decode(bytes));
+  } catch {
+    verdict = undefined;
+  }
+
+  if (verdict?.accepted === true) {
+    return undefined;
+  }
+
+  if (verdict?.accepted === false && isText(verdict.reason)) {
+    return `Step ${name} claimed a commit its verifier rejected: ${verdict.reason}`;
+  }
+
+  return failed("it wrote no valid output.json.");
 }
 
 function isText(value: unknown): value is string {

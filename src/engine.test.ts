@@ -159,6 +159,30 @@ async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
   return started;
 }
 
+/**
+ * A script that commits in a new repository in its workspace and claims `done` with that commit,
+ * or with `$claimed` if set. Its dates are fixed, so every run makes the same commit.
+ */
+const committing = `git init -q
+  GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z \\
+    git -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false \\
+    commit -q --allow-empty --no-verify -m Plan
+  sha=\${claimed:-$(git rev-parse HEAD)}
+  echo "{\\"outcome\\":\\"done\\",\\"artifacts\\":[{\\"kind\\":\\"commit\\",\\"fields\\":{\\"sha\\":\\"$sha\\"}}]}" \\
+    > "$MEDRENGARD_OUT/output.json"`;
+
+/** A command step that runs `script` and leads on `done` to `next`. */
+function stepRunning<N extends string>(script: string, next: N) {
+  return {
+    kind: "command",
+    inputs: [],
+    run: ["sh", "-c", script],
+    on: { done: next },
+    budget: 1,
+    limits: { idle: 5, attempt: 10, transcript: 65536 },
+  } as const;
+}
+
 /** A claim of the outcome `done` with one document, titled Plan, whose body is at `body`. */
 function planAt(body: string) {
   return {
@@ -561,6 +585,78 @@ test("an agent step runs its harness adapter, which is given the agent", async (
   assert.partialDeepStrictEqual(JSON.parse(await readFile(join(directory, "input.json"), "utf8")), {
     step: "plan",
     agent: { model: "a-model", prompt: "Plan the change." },
+  });
+});
+
+test("a claimed commit at the workspace HEAD becomes the subject", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(committing, "review"),
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+
+  const commit = engine.artifact(subjectOf(engine));
+
+  assert.equal(commit.kind, "commit");
+  assert.match(commit.fields.sha, /^[0-9a-f]{40}$/);
+});
+
+test("a claimed commit that is not the workspace HEAD escalates", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(`claimed=${"0".repeat(40)}; ${committing}`, "end"),
+      },
+    }),
+  );
+
+  const state = await engine.advance("first");
+
+  assert.equal(state.status, "escalated");
+  assert.match(
+    state.reason,
+    /^Step build claimed a commit its verifier rejected: HEAD is [0-9a-f]{40}, not 0{40}\.$/,
+  );
+});
+
+test("a claimed commit that is already the subject escalates", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(committing, "rebuild"),
+        rebuild: stepRunning(committing, "end"),
+      },
+    }),
+  );
+
+  const state = await engine.advance("first");
+
+  assert.partialDeepStrictEqual(state, { status: "escalated", step: { name: "rebuild" } });
+  assert.match(
+    state.status === "escalated" ? state.reason : "",
+    /^Step rebuild claimed a commit its verifier rejected: [0-9a-f]{40} is already the subject\.$/,
+  );
+});
+
+test("a claimed commit that is not a SHA escalates", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: { build: stepRunning(`claimed=main; ${committing}`, "end") },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build claimed a commit that is not a SHA.",
   });
 });
 
