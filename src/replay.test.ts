@@ -7,7 +7,9 @@ const startingAt = (kind: "agent" | "approval") =>
 
 test("a commission starting at an agent step is ready at its start step", () => {
   assert.partialDeepStrictEqual(
-    replay(startingAt("agent"), [{ type: "commissioned", workflow: "test" }]),
+    replay(startingAt("agent"), [
+      { type: "commissioned", workflow: "test", request: "request-hash" },
+    ]),
     {
       status: "ready",
       step: { name: "second" },
@@ -17,7 +19,9 @@ test("a commission starting at an agent step is ready at its start step", () => 
 
 test("a commission starting at an approval step is awaiting at its start step", () => {
   assert.partialDeepStrictEqual(
-    replay(startingAt("approval"), [{ type: "commissioned", workflow: "test" }]),
+    replay(startingAt("approval"), [
+      { type: "commissioned", workflow: "test", request: "request-hash" },
+    ]),
     {
       status: "awaiting",
       step: { name: "second" },
@@ -28,7 +32,7 @@ test("a commission starting at an approval step is awaiting at its start step", 
 test("a commission with a started attempt is attempting at that step", () => {
   assert.partialDeepStrictEqual(
     replay(startingAt("agent"), [
-      { type: "commissioned", workflow: "test" },
+      { type: "commissioned", workflow: "test", request: "request-hash" },
       { type: "attempt-started", step: "second", attempt: 1, process: { pid: 1, start: 1 } },
     ]),
     { status: "attempting", step: { name: "second" } },
@@ -38,7 +42,7 @@ test("a commission with a started attempt is attempting at that step", () => {
 test("a completed attempt leaves the commission ready at the next step", () => {
   assert.partialDeepStrictEqual(
     replay(startingAt("agent"), [
-      { type: "commissioned", workflow: "test" },
+      { type: "commissioned", workflow: "test", request: "request-hash" },
       { type: "attempt-started", step: "second", attempt: 1, process: { pid: 1, start: 1 } },
       { type: "attempt-completed", step: "second", attempt: 1, outcome: "done", next: "first" },
     ]),
@@ -56,7 +60,7 @@ test("a completed attempt leaves the commission awaiting at a next approval step
 
   assert.partialDeepStrictEqual(
     replay(workflow, [
-      { type: "commissioned", workflow: "test" },
+      { type: "commissioned", workflow: "test", request: "request-hash" },
       { type: "attempt-started", step: "second", attempt: 1, process: { pid: 1, start: 1 } },
       { type: "attempt-completed", step: "second", attempt: 1, outcome: "done", next: "first" },
     ]),
@@ -67,7 +71,7 @@ test("a completed attempt leaves the commission awaiting at a next approval step
 test("a completed attempt to the end finishes the commission", () => {
   assert.partialDeepStrictEqual(
     replay(startingAt("agent"), [
-      { type: "commissioned", workflow: "test" },
+      { type: "commissioned", workflow: "test", request: "request-hash" },
       { type: "attempt-started", step: "second", attempt: 1, process: { pid: 1, start: 1 } },
       { type: "attempt-completed", step: "second", attempt: 1, outcome: "done", next: "end" },
     ]),
@@ -78,7 +82,7 @@ test("a completed attempt to the end finishes the commission", () => {
 test("an escalated attempt leaves the commission escalated at its step", () => {
   assert.partialDeepStrictEqual(
     replay(startingAt("agent"), [
-      { type: "commissioned", workflow: "test" },
+      { type: "commissioned", workflow: "test", request: "request-hash" },
       { type: "attempt-started", step: "second", attempt: 1, process: { pid: 1, start: 1 } },
       { type: "escalated", reason: "exited with code 1", attempt: 1 },
     ]),
@@ -89,7 +93,7 @@ test("an escalated attempt leaves the commission escalated at its step", () => {
 test("an approval decision leaves the commission at the next step", () => {
   assert.partialDeepStrictEqual(
     replay(startingAt("approval"), [
-      { type: "commissioned", workflow: "test" },
+      { type: "commissioned", workflow: "test", request: "request-hash" },
       {
         type: "decided",
         step: "second",
@@ -106,7 +110,7 @@ test("an approval decision leaves the commission at the next step", () => {
 test("a retry decision leaves the escalated step ready", () => {
   assert.partialDeepStrictEqual(
     replay(startingAt("agent"), [
-      { type: "commissioned", workflow: "test" },
+      { type: "commissioned", workflow: "test", request: "request-hash" },
       { type: "attempt-started", step: "second", attempt: 1, process: { pid: 1, start: 1 } },
       { type: "escalated", reason: "exited with code 1", attempt: 1 },
       {
@@ -125,7 +129,7 @@ test("a retry decision leaves the escalated step ready", () => {
 test("an abandon decision finishes the escalated commission as abandoned", () => {
   assert.partialDeepStrictEqual(
     replay(startingAt("agent"), [
-      { type: "commissioned", workflow: "test" },
+      { type: "commissioned", workflow: "test", request: "request-hash" },
       { type: "attempt-started", step: "second", attempt: 1, process: { pid: 1, start: 1 } },
       { type: "escalated", reason: "exited with code 1", attempt: 1 },
       {

@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   replay,
@@ -12,14 +12,19 @@ import {
   type CommissionState,
   type Workflow,
 } from "./replay.ts";
+import { createStore, type Artifact } from "./store.ts";
 
 type Options = { log: string; workflows: Record<string, Workflow> };
 
 type Log = [Commissioned, ...Exclude<CommissionEvent, Commissioned>[]];
 
-/** Runs commissions through the owner's workflows, keeping every event in the SQLite log at `log`. */
+/**
+ * Runs commissions through the owner's workflows, keeping every event in the SQLite log at `log`
+ * and every artifact in the store beside it.
+ */
 export function createEngine({ log, workflows }: Options) {
   const database = new DatabaseSync(log);
+  const store = createStore(join(dirname(log), "store"));
 
   // The primary key refuses a second event at the same position, so a concurrent writer fails
   // instead of interleaving.
@@ -60,12 +65,36 @@ export function createEngine({ log, workflows }: Options) {
   }
 
   return {
-    /** Starts a commission under the workflow named `workflow`. */
-    commission(workflow: string, commission: string): void {
-      const event: Commissioned = { type: "commissioned", workflow };
+    /** Starts a commission under the workflow named `workflow`, about the owner's request. */
+    commission(
+      workflow: string,
+      commission: string,
+      request: { title: string; body: string },
+    ): void {
+      const event: Commissioned = {
+        type: "commissioned",
+        workflow,
+        request: store.put({
+          kind: "document",
+          fields: { title: request.title },
+          body: request.body,
+        }),
+      };
 
       replay(workflows[workflow], [event]);
       insert.run(commission, 0, JSON.stringify(event));
+    },
+
+    /** Replays the commission's state from the log. */
+    state(commission: string): CommissionState {
+      const events = read(commission);
+
+      return replay(workflows[events[0].workflow], events);
+    },
+
+    /** Reads the artifact kept under `hash`. */
+    artifact(hash: string): Artifact {
+      return store.get(hash);
     },
 
     /** Asks the engine running the commission's attempt to stop it; that engine escalates. */

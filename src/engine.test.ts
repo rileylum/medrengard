@@ -40,7 +40,7 @@ async function engineRunning(t: TestContext, script: string, limits = { idle: 1,
 
   const engine = createEngine(options);
 
-  engine.commission("build", "first");
+  engine.commission("build", "first", { title: "Greet", body: "Say hello." });
 
   return { engine, directory, options };
 }
@@ -65,6 +65,18 @@ test("a commission whose command step leads to the end finishes", async (t) => {
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+});
+
+test("a commission's request is its first subject, kept in the store", async (t) => {
+  const { engine } = await engineRunning(t, "true");
+  const state = engine.state("first");
+
+  assert.equal(state.status, "ready");
+  assert.deepEqual(engine.artifact(state.subject), {
+    kind: "document",
+    fields: { title: "Greet" },
+    body: "Say hello.",
+  });
 });
 
 test("a step that exits non-zero escalates its commission", async (t) => {

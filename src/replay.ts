@@ -22,7 +22,8 @@ export type Workflow<N extends string = string> = {
 
 // lazy: workflow names the definition by key in the engine's workflows. When a commission
 // must keep running after its definition is edited, record the definitions by hash instead.
-export type Commissioned = { type: "commissioned"; workflow: string };
+// request is the hash of the owner's request, the commission's first subject.
+export type Commissioned = { type: "commissioned"; workflow: string; request: string };
 
 // process names the engine process running the attempt, so another engine can tell a live
 // attempt from an interrupted one.
@@ -63,10 +64,15 @@ export type CommissionEvent<N extends string = string> =
   | Decided<N>;
 
 export type CommissionState<N extends string = string> =
-  | { status: "ready"; step: { name: N; kind: "agent" | "command" } }
-  | { status: "awaiting"; step: { name: N; kind: "approval" } }
-  | { status: "attempting"; step: { name: N; kind: "agent" | "command" } }
-  | { status: "escalated"; step: { name: N; kind: "agent" | "command" }; reason: string }
+  | { status: "ready"; step: { name: N; kind: "agent" | "command" }; subject: string }
+  | { status: "awaiting"; step: { name: N; kind: "approval" }; subject: string }
+  | { status: "attempting"; step: { name: N; kind: "agent" | "command" }; subject: string }
+  | {
+      status: "escalated";
+      step: { name: N; kind: "agent" | "command" };
+      subject: string;
+      reason: string;
+    }
   | { status: "finished"; by: "end" | "abandoned" };
 
 /** Declares a workflow, so the compiler checks that every step name it uses exists. */
@@ -79,8 +85,8 @@ export function replay<N extends string>(
   workflow: Workflow<N>,
   events: readonly [Commissioned, ...Exclude<CommissionEvent<NoInfer<N>>, Commissioned>[]],
 ): CommissionState<N> {
-  const [, ...rest] = events;
-  let state = arrive(workflow, workflow.start);
+  const [{ request }, ...rest] = events;
+  let state = arrive(workflow, workflow.start, request);
 
   for (const event of rest) {
     state = apply(workflow, state, event);
@@ -89,14 +95,18 @@ export function replay<N extends string>(
   return state;
 }
 
-function arrive<N extends string>(workflow: Workflow<N>, name: N): CommissionState<N> {
+function arrive<N extends string>(
+  workflow: Workflow<N>,
+  name: N,
+  subject: string,
+): CommissionState<N> {
   const { kind } = workflow.steps[name];
 
   if (kind === "approval") {
-    return { status: "awaiting", step: { name, kind } };
+    return { status: "awaiting", step: { name, kind }, subject };
   }
 
-  return { status: "ready", step: { name, kind } };
+  return { status: "ready", step: { name, kind }, subject };
 }
 
 function apply<N extends string>(
@@ -111,7 +121,7 @@ function apply<N extends string>(
         throw new Error(`An attempt cannot start while the commission is ${state.status}.`);
       }
 
-      return { status: "attempting", step: state.step };
+      return { status: "attempting", step: state.step, subject: state.subject };
     case "attempt-completed":
       if (state.status !== "attempting") {
         throw new Error(`An attempt cannot complete while the commission is ${state.status}.`);
@@ -121,13 +131,18 @@ function apply<N extends string>(
         return { status: "finished", by: "end" };
       }
 
-      return arrive(workflow, event.next);
+      return arrive(workflow, event.next, state.subject);
     case "escalated":
       if (state.status !== "ready" && state.status !== "attempting") {
         throw new Error(`A commission cannot escalate while it is ${state.status}.`);
       }
 
-      return { status: "escalated", step: state.step, reason: event.reason };
+      return {
+        status: "escalated",
+        step: state.step,
+        subject: state.subject,
+        reason: event.reason,
+      };
     case "decided":
       if (state.status !== "awaiting" && state.status !== "escalated") {
         throw new Error(`A decision cannot arrive while the commission is ${state.status}.`);
@@ -137,7 +152,7 @@ function apply<N extends string>(
         return { status: "finished", by: state.status === "escalated" ? "abandoned" : "end" };
       }
 
-      return arrive(workflow, event.next);
+      return arrive(workflow, event.next, state.subject);
     default:
       return assertNever(event);
   }
