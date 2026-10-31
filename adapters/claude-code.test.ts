@@ -2,7 +2,7 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createEngine } from "../src/engine.ts";
 import { defineWorkflow } from "../src/replay.ts";
 
@@ -50,6 +50,22 @@ ${script}
             inputs: [],
             on: { done: "end" },
             budget: 1,
+            // The system, Node and this repository to run the adapter, and the test's directory
+            // for the fake claude and what it records.
+            access: {
+              paths: [
+                ...["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
+                  path,
+                  mode: "read" as const,
+                })),
+                { path: dirname(dirname(process.execPath)), mode: "read" },
+                { path: join(import.meta.dirname, ".."), mode: "read" },
+                { path: directory, mode: "write" },
+              ],
+              network: false,
+              environment: [],
+              workspace: "write",
+            },
             limits: { idle: 5, attempt: 10, transcript: 65536 },
           },
         },

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { constants, readFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
+import { constants, readdirSync, readFileSync } from "node:fs";
+import { mkdir, mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -17,6 +17,7 @@ import {
 } from "./replay.ts";
 import { parseWorkflow } from "./definition.ts";
 import { hasExactly, isText } from "./json.ts";
+import { confine } from "./sandbox.ts";
 import { createStore, type Artifact, type Commit, type Document } from "./store.ts";
 
 type Options = { log: string; workflows: Record<string, Workflow> };
@@ -389,18 +390,47 @@ type Ending = Extract<CommissionEvent, { type: "attempt-completed" | "escalated"
 // The time a stopped step has to exit after SIGTERM before it gets SIGKILL.
 const grace = 5000;
 
-function stop(child: ChildProcess): void {
-  process.kill(-child.pid!, "SIGTERM");
+// Sends SIGTERM to the child's process group, then SIGKILL after the grace period. A sandboxed
+// step's group leader is bwrap, which dies at once on SIGTERM and takes the step with it, so it
+// is spared the SIGTERM and the step has its grace period.
+function stop(child: ChildProcess, leader: "bwrap" | "program"): void {
+  const group = child.pid!;
 
-  const kill = setTimeout(() => process.kill(-child.pid!, "SIGKILL"), grace);
+  for (const pid of membersOf(group)) {
+    if (leader === "program" || pid !== group) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // It exited since the group was listed.
+      }
+    }
+  }
+
+  const kill = setTimeout(() => process.kill(-group, "SIGKILL"), grace);
 
   child.once("close", () => clearTimeout(kill));
 }
 
-// Writes input.json and each declared input's body, named after the input, then makes them
-// read-only.
-// lazy: file modes only; the step owns the files and could change them back. The sandbox's
-// read-only bind enforces it, once it exists.
+// The processes in process group `group`, by their pid in the engine's namespace, read from
+// /proc/<pid>/stat: the group is the third field after the command name, which is in parentheses
+// and may itself hold spaces or parentheses.
+function membersOf(group: number): number[] {
+  return readdirSync("/proc")
+    .filter((entry) => /^\d+$/.test(entry))
+    .filter((pid) => {
+      try {
+        const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+
+        return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2]) === group;
+      } catch {
+        return false;
+      }
+    })
+    .map(Number);
+}
+
+// Writes input.json and each declared input's body, named after the input. The sandbox binds the
+// input read-only.
 async function prepare(input: string, step: Runnable, given: Given): Promise<void> {
   await mkdir(input);
 
@@ -412,7 +442,7 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
     const { kind, fields } = artifact;
 
     if (artifact.body !== undefined) {
-      await writeFile(join(input, name), artifact.body, { mode: 0o444 });
+      await writeFile(join(input, name), artifact.body);
       inputs[name] = { hash, kind, fields, body: name };
     } else {
       inputs[name] = { hash, kind, fields };
@@ -430,11 +460,9 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
       step.kind === "agent" ? { model: step.agent.model, prompt: step.agent.prompt } : undefined,
   };
 
-  await writeFile(join(input, "input.json"), JSON.stringify(encoded), { mode: 0o444 });
-  await chmod(input, 0o555);
+  await writeFile(join(input, "input.json"), JSON.stringify(encoded));
 }
 
-// lazy: the step is not confined. Run it in the sandbox before any step is not the owner's.
 // The transcript and claimed artifacts go to the store before the event naming them is written.
 async function run(
   step: Runnable,
@@ -476,12 +504,17 @@ async function run(
     await mkdir(output);
 
     // An agent step's program is its harness adapter, under the same contract.
-    const [command, ...args] = step.kind === "agent" ? step.agent.harness.run : step.run;
+    const { command, args, env } = confine(
+      step.access,
+      { workspace, input, output },
+      step.kind === "agent" ? step.agent.harness.run : step.run,
+    );
 
-    // Its own process group, so stopping the step also stops what it started.
+    // Its own session and process group: stopping the step also stops what it started, and
+    // without a controlling terminal the step cannot push input into the owner's.
     const child = spawn(command, args, {
       cwd: workspace,
-      env: { PATH: process.env.PATH, MEDRENGARD_IN: input, MEDRENGARD_OUT: output },
+      env,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     });
@@ -492,7 +525,7 @@ async function run(
     const stopFor = (reason: string) => {
       if (stopped === undefined) {
         stopped = reason;
-        stop(child);
+        stop(child, "bwrap");
       }
     };
 
@@ -587,8 +620,6 @@ async function run(
       next: step.on[claim.outcome],
     };
   } finally {
-    // A read-only directory's files cannot be removed until it is writable again.
-    await chmod(input, 0o755).catch(() => undefined);
     await rm(directory, { recursive: true, force: true });
   }
 }
@@ -838,7 +869,7 @@ async function runBuiltIn(
 
   const limit = setTimeout(() => {
     late = true;
-    stop(child);
+    stop(child, "program");
   }, builtInLimit * 1000);
 
   const closed = await once(child, "close")

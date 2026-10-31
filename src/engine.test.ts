@@ -2,12 +2,27 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createEngine } from "./engine.ts";
-import { defineWorkflow, type Input, type Workflow } from "./replay.ts";
+import { defineWorkflow, type Access, type Input, type Workflow } from "./replay.ts";
+
+// The system's programs, read-only.
+const system = ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
+  path,
+  mode: "read" as const,
+}));
+
+// Every test's directory is under the temp directory, so a step can reach its own; nothing of the
+// owner's is visible.
+const access: Access = {
+  paths: [...system, { path: tmpdir(), mode: "write" }],
+  network: false,
+  environment: [],
+  workspace: "write",
+};
 
 /**
  * Starts an engine whose one workflow, `build`, is made by `workflow` from the test's directory,
@@ -50,6 +65,7 @@ function engineRunning(
           inputs: [],
           run: ["sh", "-c", script, "sh", join(directory, "started")],
           on: { done: "end", again: "build" },
+          access,
           budget: 2,
           limits,
         },
@@ -71,6 +87,7 @@ function engineAwaiting(t: TestContext) {
           inputs: [],
           run: ["true"],
           on: { done: "end" },
+          access,
           budget: 1,
           limits: { idle: 1, attempt: 5, transcript: 65536 },
         },
@@ -94,6 +111,7 @@ async function engineReceiving(t: TestContext, inputs: readonly Input[], script:
           inputs,
           run: ["sh", "-c", script, "sh", join(directory, "received")],
           on: { done: "end" },
+          access,
           budget: 1,
           limits: { idle: 1, attempt: 5, transcript: 65536 },
         },
@@ -136,6 +154,7 @@ async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
              echo '${JSON.stringify(claim)}' > "$MEDRENGARD_OUT/output.json"`,
           ],
           on: { done: "read" },
+          access,
           budget: 1,
           limits,
         },
@@ -151,6 +170,7 @@ async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
             join(directory, "received"),
           ],
           on: { done: "review" },
+          access,
           budget: 1,
           limits,
         },
@@ -186,6 +206,7 @@ function stepRunning<N extends string>(script: string, next: N, args: readonly s
     inputs: [],
     run: ["sh", "-c", script, "sh", ...args],
     on: { done: next },
+    access,
     budget: 1,
     limits: { idle: 5, attempt: 10, transcript: 65536 },
   } as const;
@@ -304,6 +325,115 @@ test("a step cannot write to its input", async (t) => {
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+});
+
+/**
+ * Starts an engine with a single command step that runs `script` under the access `confined`
+ * makes from the test's directory, and claims `done` once it ends. The script's `$1` is that
+ * directory; what the script prints is the attempt's transcript.
+ */
+function engineConfined(t: TestContext, confined: (directory: string) => Access, script: string) {
+  return engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          kind: "command",
+          workspace: "empty",
+          inputs: [],
+          run: [
+            "sh",
+            "-c",
+            `${script}
+             echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "sh",
+            directory,
+          ],
+          on: { done: "end" },
+          budget: 1,
+          access: confined(directory),
+          limits: { idle: 5, attempt: 10, transcript: 65536 },
+        },
+      },
+    }),
+  );
+}
+
+test("a step sees only the paths its access declares, in their modes", async (t) => {
+  const { engine, directory } = await engineConfined(
+    t,
+    (directory) => ({
+      ...access,
+      paths: [...system, { path: join(directory, "shown"), mode: "read" }],
+    }),
+    `test -e "$1/hidden/secret" && echo hidden is visible
+     cat "$1/shown/note"
+     (echo changed > "$1/shown/note") 2> /dev/null && echo shown is writable`,
+  );
+
+  await mkdir(join(directory, "hidden"));
+  await mkdir(join(directory, "shown"));
+  await writeFile(join(directory, "hidden", "secret"), "secret\n");
+  await writeFile(join(directory, "shown", "note"), "note\n");
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.equal(engine.transcript("first", 1).toString(), "note\n");
+});
+
+test("a path declared empty hides what is there and holds at most its size", async (t) => {
+  const { engine, directory } = await engineConfined(
+    t,
+    (directory) => ({
+      ...access,
+      paths: [...access.paths, { path: join(directory, "hidden"), mode: "empty", size: 4096 }],
+    }),
+    `ls "$1/hidden"
+     head -c 8192 /dev/zero > "$1/hidden/large" 2> /dev/null || echo full`,
+  );
+
+  await mkdir(join(directory, "hidden"));
+  await writeFile(join(directory, "hidden", "secret"), "secret\n");
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.equal(engine.transcript("first", 1).toString(), "full\n");
+  assert.deepEqual(await readdir(join(directory, "hidden")), ["secret"]);
+});
+
+test("a step whose access makes its workspace read-only cannot write to it", async (t) => {
+  const { engine } = await engineConfined(
+    t,
+    () => ({ ...access, workspace: "read" }),
+    `touch note 2> /dev/null || echo read-only`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.equal(engine.transcript("first", 1).toString(), "read-only\n");
+});
+
+test("a step gets only the environment its access names", async (t) => {
+  process.env.MEDRENGARD_TEST_SHOWN = "shown";
+  process.env.MEDRENGARD_TEST_HIDDEN = "hidden";
+  t.after(() => {
+    delete process.env.MEDRENGARD_TEST_SHOWN;
+    delete process.env.MEDRENGARD_TEST_HIDDEN;
+  });
+
+  const { engine } = await engineConfined(
+    t,
+    () => ({ ...access, environment: ["MEDRENGARD_TEST_SHOWN"] }),
+    `echo "$MEDRENGARD_TEST_SHOWN" "$MEDRENGARD_TEST_HIDDEN"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.equal(engine.transcript("first", 1).toString(), "shown \n");
+});
+
+test("a step without network access has only a loopback interface", async (t) => {
+  // /proc/net/dev lists one interface per line, each with a colon; its headers have none.
+  const { engine } = await engineConfined(t, () => access, `grep -c : /proc/net/dev`);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.equal(engine.transcript("first", 1).toString(), "1\n");
 });
 
 test("a claimed document becomes the subject the next step receives", async (t) => {
@@ -529,6 +659,7 @@ test("a decision about an earlier subject is not given as the decision", async (
              echo '${JSON.stringify(planAt("plan.md"))}' > "$MEDRENGARD_OUT/output.json"`,
           ],
           on: { done: "read" },
+          access,
           budget: 1,
           limits,
         },
@@ -544,6 +675,7 @@ test("a decision about an earlier subject is not given as the decision", async (
             directory,
           ],
           on: { done: "end" },
+          access,
           budget: 1,
           limits,
         },
@@ -582,6 +714,7 @@ test("an agent step runs its harness adapter, which is given the agent", async (
           },
           inputs: [],
           on: { done: "end" },
+          access,
           budget: 1,
           limits: { idle: 1, attempt: 5, transcript: 65536 },
         },
@@ -787,6 +920,7 @@ test("a commission whose command step leads to an approval step awaits the owner
           inputs: [],
           run: ["sh", "-c", `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`],
           on: { done: "review" },
+          access,
           budget: 1,
           limits: { idle: 1, attempt: 5, transcript: 65536 },
         },
@@ -849,11 +983,13 @@ test("a step whose program cannot start escalates its commission", async (t) => 
 
   engine.commission("build", "second", { title: "Greet", body: "Say hello." });
 
+  // bwrap starts, then cannot start the program, so the reason is in the transcript.
   assert.partialDeepStrictEqual(await engine.advance("second"), {
     status: "escalated",
     step: { name: "build" },
-    reason: "Step build could not start: ENOENT.",
+    reason: "Step build exited with code 1.",
   });
+  assert.match(engine.transcript("second", 1).toString(), /execvp .*missing: No such file/);
 });
 
 test("a step that has spent its budget escalates instead of starting again", async (t) => {
@@ -950,6 +1086,18 @@ test("a step that runs for its attempt limit is stopped and escalates", async (t
   });
 });
 
+test("a stopped step has its grace period between SIGTERM and SIGKILL", async (t) => {
+  const { engine, directory } = await engineRunning(
+    t,
+    `trap 'sleep 0.5; echo stopped gracefully > "$1"; exit 0' TERM
+     while true; do echo tick; sleep 0.1; done`,
+    { idle: 5, attempt: 1, transcript: 65536 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "escalated" });
+  assert.equal(await readFile(join(directory, "started"), "utf8"), "stopped gracefully\n");
+});
+
 test("an attempt held by a live engine is left attempting", async (t) => {
   const { engine, directory, options } = await engineRunning(
     t,
@@ -971,11 +1119,15 @@ test(
   "an attempt whose engine process died escalates as interrupted",
   { timeout: 10_000 },
   async (t) => {
-    const { engine, directory, options } = await engineRunning(t, `echo $$ > "$1"; exec sleep 30`, {
-      idle: 60,
-      attempt: 60,
-      transcript: 65536,
-    });
+    const { engine, directory, options } = await engineRunning(
+      t,
+      `echo started >> "$1"; exec sleep 30`,
+      {
+        idle: 60,
+        attempt: 60,
+        transcript: 65536,
+      },
+    );
 
     const crashing = join(directory, "crashing.ts");
 
@@ -986,10 +1138,7 @@ test(
     );
 
     const child = spawn(process.execPath, [crashing], { stdio: "ignore" });
-    const step = Number(await untilStarted(directory));
-
-    // The step outlives its engine in its own process group, so the test ends it.
-    t.after(() => process.kill(-step, "SIGKILL"));
+    await untilStarted(directory);
     child.kill("SIGKILL");
     await once(child, "exit");
 

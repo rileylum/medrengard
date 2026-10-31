@@ -17,15 +17,37 @@ export type Agent = {
   prompt: string;
 };
 
+/**
+ * What a step's process may read, write and reach, enforced by its sandbox.
+ *
+ * A path not covered by `paths` is invisible. Where declared paths nest, the deeper one decides;
+ * on the same path, read wins. An empty path is a fresh directory of at most `size` bytes over
+ * whatever is there. The workspace, the input (read-only) and the output are always there, the
+ * workspace in the mode `workspace` gives.
+ *
+ * `environment` names the variables passed through from the engine's own environment, or "all".
+ * `PATH`, `MEDRENGARD_IN` and `MEDRENGARD_OUT` are always set, over any passed through.
+ */
+export type Access = {
+  paths: readonly (
+    | { path: string; mode: "read" | "write" }
+    | { path: string; mode: "empty"; size: number }
+  )[];
+  network: boolean;
+  environment: readonly string[] | "all";
+  workspace: "read" | "write";
+};
+
 // What every step that starts a program declares: its inputs, whether its workspace is built from
 // the subject or starts empty, its outcomes' edges, the attempts it may start between the owner's
-// decisions, and its limits. An attempt is stopped after `idle`
+// decisions, its access, and its limits. An attempt is stopped after `idle`
 // seconds without stdout or stderr output, `attempt` seconds in all, or `transcript` bytes of it.
 type Program<N extends string> = {
   inputs: readonly Input[];
   workspace: "subject" | "empty";
   on: Record<string, N | "end">;
   budget: number;
+  access: Access;
   limits: { idle: number; attempt: number; transcript: number };
 };
 

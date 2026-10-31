@@ -1,5 +1,9 @@
+import { normalize } from "node:path";
 import { hasExactly, isRecord, isText } from "./json.ts";
 import type { Workflow } from "./replay.ts";
+
+// A variable name the shell can pass on.
+const variable = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 // setTimeout fires at once past 2^31 - 1 ms, so a longer limit would stop a step immediately.
 const longestLimit = 2_147_483;
@@ -53,14 +57,16 @@ export function parseWorkflow(name: string, text: string): Workflow {
     }
 
     const program = kind === "command" ? "run" : "agent";
-    const { workspace, inputs, budget, limits } = step;
+    const { workspace, inputs, budget, access, limits } = step;
+    const { paths, network, environment } = access ?? {};
+    const workspaceAccess = access?.workspace;
     const { agent } = step;
     const harness = agent?.harness;
     const argv = kind === "command" ? step.run : harness?.run;
     const seconds = { idle: limits?.idle, attempt: limits?.attempt };
     const transcript = limits?.transcript;
 
-    const fields = ["kind", "workspace", "inputs", program, "on", "budget", "limits"];
+    const fields = ["kind", "workspace", "inputs", program, "on", "budget", "access", "limits"];
 
     if (!hasExactly(step, fields)) {
       throw invalid(`step ${name} does not have exactly the fields a ${kind} step defines`);
@@ -93,6 +99,45 @@ export function parseWorkflow(name: string, text: string): Workflow {
 
     if (!Number.isInteger(budget) || budget <= 0) {
       throw invalid(`step ${name}'s budget must be a positive integer`);
+    }
+
+    if (!hasExactly(access, ["paths", "network", "environment", "workspace"])) {
+      throw invalid(`step ${name}'s access must be its paths, network, environment and workspace`);
+    }
+
+    if (
+      !Array.isArray(paths) ||
+      !paths.every((entry) => {
+        const { path, mode, size } = entry ?? {};
+
+        return (
+          isText(path) &&
+          path === normalize(path) &&
+          path.startsWith("/") &&
+          (mode === "empty"
+            ? hasExactly(entry, ["path", "mode", "size"]) && Number.isInteger(size) && size > 0
+            : hasExactly(entry, ["path", "mode"]) && (mode === "read" || mode === "write"))
+        );
+      })
+    ) {
+      throw invalid(
+        `step ${name}'s paths must each be an absolute path and a mode: read, write, or empty with a size`,
+      );
+    }
+
+    if (network !== true && network !== false) {
+      throw invalid(`step ${name}'s network access must be true or false`);
+    }
+
+    if (
+      environment !== "all" &&
+      !(Array.isArray(environment) && environment.every((each) => variable.test(each)))
+    ) {
+      throw invalid(`step ${name}'s environment must be all or a list of variable names`);
+    }
+
+    if (workspaceAccess !== "read" && workspaceAccess !== "write") {
+      throw invalid(`step ${name}'s workspace access must be read or write`);
     }
 
     if (!hasExactly(limits, ["idle", "attempt", "transcript"])) {
