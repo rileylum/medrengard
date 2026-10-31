@@ -2,6 +2,9 @@
  * A position in the commission a step can be given as an input: its current subject, or the
  * owner's latest decision about that subject, if there is one.
  */
+// lazy: a closed set, because so far every input is a position the engine derives. Open it, as
+// an open vocabulary like kinds (principle 3), when a step needs an input this set cannot name,
+// such as the evidence about the subject.
 export type Input = "subject" | "decision";
 
 /**
