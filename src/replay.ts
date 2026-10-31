@@ -5,20 +5,32 @@
 export type Input = "subject" | "decision";
 
 /**
- * A command step runs `run`, given `inputs`, and follows the edge its outcome names in `on`,
- * starting at most `budget` attempts between the owner's decisions. An attempt is stopped when it
- * writes nothing to stdout or stderr for `limits.idle` seconds, or runs for `limits.attempt` seconds.
+ * A reusable agent: the harness adapter program that runs it, and the model and prompt it is
+ * given.
+ */
+export type Agent = {
+  harness: { run: readonly [string, ...string[]] };
+  model: string;
+  prompt: string;
+};
+
+// What every step that starts a program declares: its inputs, its outcomes' edges, the attempts it
+// may start between the owner's decisions, and the seconds without stdout or stderr output (idle)
+// or in all (attempt) after which an attempt is stopped.
+type Program<N extends string> = {
+  inputs: readonly Input[];
+  on: Record<string, N | "end">;
+  budget: number;
+  limits: { idle: number; attempt: number };
+};
+
+/**
+ * A step: an agent step runs its agent's harness adapter, a command step runs `run`, and an
+ * approval step waits for the owner's decision, following the edge its outcome names in `on`.
  */
 type Step<N extends string> =
-  | { kind: "agent" }
-  | {
-      kind: "command";
-      inputs: readonly Input[];
-      run: readonly [string, ...string[]];
-      on: Record<string, N | "end">;
-      budget: number;
-      limits: { idle: number; attempt: number };
-    }
+  | ({ kind: "agent"; agent: Agent } & Program<N>)
+  | ({ kind: "command"; run: readonly [string, ...string[]] } & Program<N>)
   | { kind: "approval"; on: Record<string, N | "end"> };
 
 /** A workflow over its step names `N`; `start` must name one of its steps, and `end` is reserved. */

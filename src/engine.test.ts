@@ -521,6 +521,45 @@ test("a decision about an earlier subject is not given as the decision", async (
   assert.deepEqual(input.inputs, {});
 });
 
+test("an agent step runs its harness adapter, which is given the agent", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "plan",
+      steps: {
+        plan: {
+          kind: "agent",
+          agent: {
+            harness: {
+              run: [
+                "sh",
+                "-c",
+                `cp "$MEDRENGARD_IN/input.json" "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+                "sh",
+                directory,
+              ],
+            },
+            model: "a-model",
+            prompt: "Plan the change.",
+          },
+          inputs: [],
+          on: { done: "end" },
+          budget: 1,
+          limits: { idle: 1, attempt: 5 },
+        },
+      },
+    }),
+  );
+
+  assert.equal(engine.state("first").status, "ready");
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+
+  assert.partialDeepStrictEqual(JSON.parse(await readFile(join(directory, "input.json"), "utf8")), {
+    step: "plan",
+    agent: { model: "a-model", prompt: "Plan the change." },
+  });
+});
+
 test("a commission whose command step leads to an approval step awaits the owner", async (t) => {
   const { engine } = await engineWith(t, () =>
     defineWorkflow({

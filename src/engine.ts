@@ -194,9 +194,9 @@ export function createEngine({ log, workflows }: Options) {
         const name = state.step.name;
         const step = workflow.steps[name];
 
-        // lazy: only command steps run. Agent steps run once a harness adapter exists.
-        if (step.kind !== "command") {
-          throw new Error(`Step ${name} is an agent step, which cannot run yet.`);
+        // Replay arrives at an approval step as awaiting, never ready.
+        if (step.kind === "approval") {
+          throw new Error(`Step ${name} is an approval step, so it cannot be ready.`);
         }
 
         const attempts = sinceDecision(events).filter(
@@ -299,7 +299,7 @@ function sinceDecision(events: Log): Log[number][] {
   return events.slice(events.findLastIndex((event) => event.type === "decided") + 1);
 }
 
-type Command = Extract<Workflow["steps"][string], { kind: "command" }>;
+type Runnable = Extract<Workflow["steps"][string], { kind: "agent" | "command" }>;
 
 // What a step is given: the domain values its input.json encodes.
 type Given = {
@@ -326,7 +326,7 @@ function stop(child: ChildProcess): void {
 // read-only.
 // lazy: file modes only; the step owns the files and could change them back. The sandbox's
 // read-only bind enforces it, once it exists.
-async function prepare(input: string, step: Command, given: Given): Promise<void> {
+async function prepare(input: string, step: Runnable, given: Given): Promise<void> {
   await mkdir(input);
 
   const inputs: Partial<
@@ -350,6 +350,9 @@ async function prepare(input: string, step: Command, given: Given): Promise<void
     attempt: given.attempt,
     outcomes: Object.keys(step.on),
     inputs,
+    // Left out of a command step's input.json, which has no agent.
+    agent:
+      step.kind === "agent" ? { model: step.agent.model, prompt: step.agent.prompt } : undefined,
   };
 
   await writeFile(join(input, "input.json"), JSON.stringify(encoded), { mode: 0o444 });
@@ -359,7 +362,7 @@ async function prepare(input: string, step: Command, given: Given): Promise<void
 // lazy: the step is not confined. Run it in the sandbox before any step is not the owner's.
 // keep stores a claimed artifact and returns its hash, before the event naming it is written.
 async function run(
-  step: Command,
+  step: Runnable,
   given: Given,
   cancelled: () => boolean,
   keep: (document: Document) => string,
@@ -376,7 +379,8 @@ async function run(
     await prepare(input, step, given);
     await mkdir(output);
 
-    const [command, ...args] = step.run;
+    // An agent step's program is its harness adapter, under the same contract.
+    const [command, ...args] = step.kind === "agent" ? step.agent.harness.run : step.run;
 
     // Its own process group, so stopping the step also stops what it started.
     const child = spawn(command, args, {
@@ -477,7 +481,7 @@ const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 // Parses the claim a step wrote to `output`, or gives the reason it is invalid. Everything in the
 // output directory is the step's doing, so any failure to read it is the step's.
 async function parse(
-  step: Command,
+  step: Runnable,
   name: string,
   output: string,
 ): Promise<Claim | { reason: string }> {
