@@ -14,7 +14,7 @@ const adapter = join(import.meta.dirname, "claude-code.ts");
  * directory's `arguments` file, and its input and output directories in `directories`, each ended
  * by a NUL.
  */
-async function engineWithClaude(t: TestContext, script: string) {
+async function engineWithClaude(t: TestContext, script: string, args: readonly string[] = []) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -42,7 +42,13 @@ ${script}
             workspace: "empty",
             agent: {
               harness: {
-                run: ["env", `PATH=${directory}:${process.env.PATH}`, process.execPath, adapter],
+                run: [
+                  "env",
+                  `PATH=${directory}:${process.env.PATH}`,
+                  process.execPath,
+                  adapter,
+                  ...args,
+                ],
               },
               model: "a-model",
               prompt: "Plan the change.",
@@ -111,6 +117,29 @@ test("the Claude Code adapter runs claude headless with the agent, whose claim c
   ]);
   assert.ok(prompt.startsWith("Plan the change.\n"));
   assert.ok(prompt.includes('["done"]'));
+});
+
+test("the Claude Code adapter runs claude in the permission mode its harness names", async (t) => {
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    ["--permission-mode", "bypassPermissions"],
+  );
+
+  await engine.advance("first");
+
+  const argv = (await readFile(join(directory, "arguments"), "utf8")).split("\0");
+
+  assert.equal(argv[argv.indexOf("--permission-mode") + 1], "bypassPermissions");
+});
+
+test("the Claude Code adapter refuses arguments it does not define", async (t) => {
+  const { engine } = await engineWithClaude(t, "true", ["--permission-mode", "plan"]);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step plan exited with code 2.",
+  });
 });
 
 test("a Claude Code run that fails escalates its commission", async (t) => {
