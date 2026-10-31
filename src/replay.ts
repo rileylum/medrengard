@@ -1,12 +1,16 @@
+/** A position in the commission a step can be given as an input: its current subject. */
+export type Input = "subject";
+
 /**
- * A command step runs `run` and follows the edge its outcome names in `on`, starting at most
- * `budget` attempts between the owner's decisions. An attempt is stopped when it writes nothing to
- * stdout or stderr for `limits.idle` seconds, or runs for `limits.attempt` seconds.
+ * A command step runs `run`, given `inputs`, and follows the edge its outcome names in `on`,
+ * starting at most `budget` attempts between the owner's decisions. An attempt is stopped when it
+ * writes nothing to stdout or stderr for `limits.idle` seconds, or runs for `limits.attempt` seconds.
  */
 type Step<N extends string> =
   | { kind: "agent" }
   | {
       kind: "command";
+      inputs: readonly Input[];
       run: readonly [string, ...string[]];
       on: Record<string, N | "end">;
       budget: number;
@@ -158,6 +162,7 @@ function apply<N extends string>(
   }
 }
 
-function assertNever(value: never): never {
+/** Fails at compile time when a switch misses a case, and at run time if one arrives anyway. */
+export function assertNever(value: never): never {
   throw new Error(`Unhandled ${JSON.stringify(value)}.`);
 }

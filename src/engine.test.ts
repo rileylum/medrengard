@@ -2,7 +2,7 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -42,6 +42,7 @@ function engineRunning(t: TestContext, script: string, limits = { idle: 1, attem
       steps: {
         build: {
           kind: "command",
+          inputs: [],
           run: ["sh", "-c", script, "sh", join(directory, "started")],
           on: { done: "end", again: "build" },
           budget: 2,
@@ -61,6 +62,7 @@ function engineAwaiting(t: TestContext) {
         review: { kind: "approval", on: { approve: "build", reject: "end" } },
         build: {
           kind: "command",
+          inputs: [],
           run: ["true"],
           on: { done: "end" },
           budget: 1,
@@ -69,6 +71,32 @@ function engineAwaiting(t: TestContext) {
       },
     }),
   );
+}
+
+/**
+ * Starts an engine with a single command step that declares `inputs`, runs `script` and ends on
+ * `done`. The script's `$1` is the directory `received` in the returned directory, empty at start.
+ */
+async function engineReceiving(t: TestContext, inputs: readonly "subject"[], script: string) {
+  const started = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          kind: "command",
+          inputs,
+          run: ["sh", "-c", script, "sh", join(directory, "received")],
+          on: { done: "end" },
+          budget: 1,
+          limits: { idle: 1, attempt: 5 },
+        },
+      },
+    }),
+  );
+
+  await mkdir(join(started.directory, "received"));
+
+  return started;
 }
 
 /** The commission's current subject, which a decision must name. */
@@ -116,6 +144,61 @@ test("a commission's request is its first subject, kept in the store", async (t)
   });
 });
 
+test("a step that declares the subject receives it in its input", async (t) => {
+  const { engine, directory } = await engineReceiving(
+    t,
+    ["subject"],
+    `cp "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const subject = subjectOf(engine);
+
+  await engine.advance("first");
+
+  const received = join(directory, "received");
+
+  assert.deepEqual(JSON.parse(await readFile(join(received, "input.json"), "utf8")), {
+    commission: "first",
+    step: "build",
+    attempt: 1,
+    outcomes: ["done"],
+    inputs: {
+      subject: { hash: subject, kind: "document", fields: { title: "Greet" }, body: "subject" },
+    },
+  });
+
+  assert.equal(await readFile(join(received, "subject"), "utf8"), "Say hello.");
+});
+
+test("a step that declares no inputs receives only input.json", async (t) => {
+  const { engine, directory } = await engineReceiving(
+    t,
+    [],
+    `ls -A "$MEDRENGARD_IN" > "$1/listing"; cp "$MEDRENGARD_IN/input.json" "$1"
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+
+  const received = join(directory, "received");
+
+  assert.equal(await readFile(join(received, "listing"), "utf8"), "input.json\n");
+  assert.deepEqual(JSON.parse(await readFile(join(received, "input.json"), "utf8")).inputs, {});
+});
+
+test("a step cannot write to its input", async (t) => {
+  const { engine } = await engineReceiving(
+    t,
+    ["subject"],
+    `test -f "$MEDRENGARD_IN/subject" &&
+     ! touch "$MEDRENGARD_IN/note" 2> /dev/null &&
+     ! (echo changed > "$MEDRENGARD_IN/subject") 2> /dev/null &&
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+});
+
 test("a commission whose command step leads to an approval step awaits the owner", async (t) => {
   const { engine } = await engineWith(t, () =>
     defineWorkflow({
@@ -123,6 +206,7 @@ test("a commission whose command step leads to an approval step awaits the owner
       steps: {
         build: {
           kind: "command",
+          inputs: [],
           run: ["sh", "-c", `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`],
           on: { done: "review" },
           budget: 1,

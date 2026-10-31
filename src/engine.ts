@@ -1,15 +1,17 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
+  assertNever,
   replay,
   type Commissioned,
   type CommissionEvent,
   type CommissionState,
+  type Input,
   type Workflow,
 } from "./replay.ts";
 import { createStore, type Artifact } from "./store.ts";
@@ -204,7 +206,17 @@ export function createEngine({ log, workflows }: Options) {
 
         const cancelled = () => requested.get(commission, attempt) !== undefined;
 
-        write(commission, [...events, started], await run(step, name, attempt, cancelled));
+        const inputs = step.inputs.map((input) => {
+          const hash = resolve(input, state);
+
+          return { name: input, hash, artifact: store.get(hash) };
+        });
+
+        write(
+          commission,
+          [...events, started],
+          await run(step, { commission, step: name, attempt, inputs }, cancelled),
+        );
       }
     },
   };
@@ -224,6 +236,16 @@ function startOf(pid: number): number | undefined {
   return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
 }
 
+// The artifact an input names, in the commission's current state.
+function resolve(input: Input, state: Extract<CommissionState, { status: "ready" }>): string {
+  switch (input) {
+    case "subject":
+      return state.subject;
+    default:
+      return assertNever(input);
+  }
+}
+
 // Only the owner renews a budget: it counts the step's attempts since the latest decision.
 function spent(events: Log, name: string): number {
   const since = events.findLastIndex((event) => event.type === "decided") + 1;
@@ -234,6 +256,14 @@ function spent(events: Log, name: string): number {
 }
 
 type Command = Extract<Workflow["steps"][string], { kind: "command" }>;
+
+// What a step is given: the domain values its input.json encodes.
+type Given = {
+  commission: string;
+  step: string;
+  attempt: number;
+  inputs: readonly { name: Input; hash: string; artifact: Artifact }[];
+};
 
 type Ending = Extract<CommissionEvent, { type: "attempt-completed" | "escalated" }>;
 
@@ -248,20 +278,52 @@ function stop(child: ChildProcess): void {
   child.once("close", () => clearTimeout(kill));
 }
 
+// Writes input.json and each declared input's body, named after the input, then makes them
+// read-only.
+// lazy: file modes only; the step owns the files and could change them back. The sandbox's
+// read-only bind enforces it, once it exists.
+async function prepare(input: string, step: Command, given: Given): Promise<void> {
+  await mkdir(input);
+
+  const inputs: Partial<
+    Record<Input, { hash: string; kind: string; fields: Artifact["fields"]; body?: string }>
+  > = {};
+
+  for (const { name, hash, artifact } of given.inputs) {
+    const { kind, fields } = artifact;
+
+    if ("body" in artifact) {
+      await writeFile(join(input, name), artifact.body, { mode: 0o444 });
+      inputs[name] = { hash, kind, fields, body: name };
+    } else {
+      inputs[name] = { hash, kind, fields };
+    }
+  }
+
+  const encoded = {
+    commission: given.commission,
+    step: given.step,
+    attempt: given.attempt,
+    outcomes: Object.keys(step.on),
+    inputs,
+  };
+
+  await writeFile(join(input, "input.json"), JSON.stringify(encoded), { mode: 0o444 });
+  await chmod(input, 0o555);
+}
+
 // lazy: the step is not confined. Run it in the sandbox before any step is not the owner's.
-async function run(
-  step: Command,
-  name: string,
-  attempt: number,
-  cancelled: () => boolean,
-): Promise<Ending> {
+async function run(step: Command, given: Given, cancelled: () => boolean): Promise<Ending> {
+  const { step: name, attempt } = given;
   const directory = await mkdtemp(join(tmpdir(), "medrengard-attempt-"));
   const workspace = join(directory, "workspace");
+  const input = join(directory, "input");
   const output = join(directory, "output");
   const escalate = (reason: string): Ending => ({ type: "escalated", reason, attempt });
 
   try {
     await mkdir(workspace);
+    await prepare(input, step, given);
     await mkdir(output);
 
     const [command, ...args] = step.run;
@@ -269,7 +331,7 @@ async function run(
     // Its own process group, so stopping the step also stops what it started.
     const child = spawn(command, args, {
       cwd: workspace,
-      env: { PATH: process.env.PATH, MEDRENGARD_OUT: output },
+      env: { PATH: process.env.PATH, MEDRENGARD_IN: input, MEDRENGARD_OUT: output },
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     });
@@ -355,6 +417,8 @@ async function run(
 
     return { type: "attempt-completed", step: name, attempt, outcome, next: step.on[outcome] };
   } finally {
+    // A read-only directory's files cannot be removed until it is writable again.
+    await chmod(input, 0o755).catch(() => undefined);
     await rm(directory, { recursive: true, force: true });
   }
 }
