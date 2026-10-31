@@ -99,6 +99,70 @@ async function engineReceiving(t: TestContext, inputs: readonly "subject"[], scr
   return started;
 }
 
+/** What a test step writes as its output.json, including fields output.json does not define. */
+type Claim = {
+  outcome: string;
+  artifact?: readonly never[];
+  artifacts?: readonly { kind: string; fields: Record<string, string>; body?: string }[];
+};
+
+/**
+ * Starts an engine whose `build` step runs `setup`, then writes `claim` as its output.json, and
+ * leads on `done` to `read`, which receives the subject into the directory `received` and leads to
+ * the approval step `review`.
+ */
+async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
+  const limits = { idle: 1, attempt: 5 };
+
+  const started = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          kind: "command",
+          inputs: [],
+          run: [
+            "sh",
+            "-c",
+            `${setup}
+             echo '${JSON.stringify(claim)}' > "$MEDRENGARD_OUT/output.json"`,
+          ],
+          on: { done: "read" },
+          budget: 1,
+          limits,
+        },
+        read: {
+          kind: "command",
+          inputs: ["subject"],
+          run: [
+            "sh",
+            "-c",
+            `cp "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "sh",
+            join(directory, "received"),
+          ],
+          on: { done: "review" },
+          budget: 1,
+          limits,
+        },
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  await mkdir(join(started.directory, "received"));
+
+  return started;
+}
+
+/** A claim of the outcome `done` with one document, titled Plan, whose body is at `body`. */
+function planAt(body: string) {
+  return {
+    outcome: "done",
+    artifacts: [{ kind: "document", fields: { title: "Plan" }, body }],
+  };
+}
+
 /** The commission's current subject, which a decision must name. */
 function subjectOf(engine: ReturnType<typeof createEngine>): string {
   const state = engine.state("first");
@@ -197,6 +261,112 @@ test("a step cannot write to its input", async (t) => {
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+});
+
+test("a claimed document becomes the subject the next step receives", async (t) => {
+  const { engine, directory } = await engineClaiming(
+    t,
+    `printf 'Do it.' > "$MEDRENGARD_OUT/plan.md"`,
+    planAt("plan.md"),
+  );
+
+  const request = subjectOf(engine);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "awaiting",
+    step: { name: "review" },
+  });
+
+  const subject = subjectOf(engine);
+  const received = join(directory, "received");
+
+  assert.notEqual(subject, request);
+
+  assert.deepEqual(engine.artifact(subject), {
+    kind: "document",
+    fields: { title: "Plan" },
+    body: "Do it.",
+  });
+
+  assert.equal(
+    JSON.parse(await readFile(join(received, "input.json"), "utf8")).inputs.subject.hash,
+    subject,
+  );
+
+  assert.equal(await readFile(join(received, "subject"), "utf8"), "Do it.");
+});
+
+test("a claim with a field output.json does not define escalates", async (t) => {
+  const { engine } = await engineClaiming(t, "true", { outcome: "done", artifact: [] });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: 'Step build wrote an output.json with fields it does not define: ["artifact"].',
+  });
+});
+
+test("a claimed artifact of an undeclared kind escalates", async (t) => {
+  const { engine } = await engineClaiming(t, "true", {
+    outcome: "done",
+    artifacts: [{ kind: "memo", fields: {} }],
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: 'Step build claimed an artifact of undeclared kind: "memo".',
+  });
+});
+
+test("a claimed decision escalates, since only the owner decides", async (t) => {
+  const { engine } = await engineClaiming(t, "true", {
+    outcome: "done",
+    artifacts: [{ kind: "decision", fields: { outcome: "approve", subject: "any" } }],
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: "Step build claimed a decision, which only the owner makes.",
+  });
+});
+
+test("a claimed document without a title escalates", async (t) => {
+  const { engine } = await engineClaiming(t, `printf 'Do it.' > "$MEDRENGARD_OUT/plan.md"`, {
+    outcome: "done",
+    artifacts: [{ kind: "document", fields: { name: "Plan" }, body: "plan.md" }],
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: "Step build claimed a document that is not a title and a body path.",
+  });
+});
+
+test("a claimed body the step did not write escalates", async (t) => {
+  const { engine } = await engineClaiming(t, "true", planAt("plan.md"));
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: 'Step build claimed a body it did not write: "plan.md".',
+  });
+});
+
+test("a claimed body outside the step's output escalates", async (t) => {
+  const { engine } = await engineClaiming(
+    t,
+    `ln -s "$MEDRENGARD_IN/input.json" "$MEDRENGARD_OUT/plan.md"`,
+    planAt("plan.md"),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: 'Step build claimed a body outside its output: "plan.md".',
+  });
 });
 
 test("a commission whose command step leads to an approval step awaits the owner", async (t) => {

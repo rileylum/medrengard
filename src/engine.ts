@@ -1,9 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   assertNever,
@@ -14,7 +14,7 @@ import {
   type Input,
   type Workflow,
 } from "./replay.ts";
-import { createStore, type Artifact } from "./store.ts";
+import { createStore, type Artifact, type Document } from "./store.ts";
 
 type Options = { log: string; workflows: Record<string, Workflow> };
 
@@ -215,7 +215,9 @@ export function createEngine({ log, workflows }: Options) {
         write(
           commission,
           [...events, started],
-          await run(step, { commission, step: name, attempt, inputs }, cancelled),
+          await run(step, { commission, step: name, attempt, inputs }, cancelled, (document) =>
+            store.put(document),
+          ),
         );
       }
     },
@@ -313,7 +315,13 @@ async function prepare(input: string, step: Command, given: Given): Promise<void
 }
 
 // lazy: the step is not confined. Run it in the sandbox before any step is not the owner's.
-async function run(step: Command, given: Given, cancelled: () => boolean): Promise<Ending> {
+// keep stores a claimed artifact and returns its hash, before the event naming it is written.
+async function run(
+  step: Command,
+  given: Given,
+  cancelled: () => boolean,
+  keep: (document: Document) => string,
+): Promise<Ending> {
   const { step: name, attempt } = given;
   const directory = await mkdtemp(join(tmpdir(), "medrengard-attempt-"));
   const workspace = join(directory, "workspace");
@@ -391,34 +399,132 @@ async function run(step: Command, given: Given, cancelled: () => boolean): Promi
       );
     }
 
-    // Everything in the output directory is the step's doing, so any failure to read it is the step's.
-    const text = await readFile(join(output, "output.json"), "utf8").catch(() => undefined);
+    const claim = await parse(step, name, output);
 
-    if (text === undefined) {
-      return escalate(`Step ${name} exited 0 without a readable output.json.`);
+    if ("reason" in claim) {
+      return escalate(claim.reason);
     }
 
-    let claim;
-
-    try {
-      claim = JSON.parse(text);
-    } catch {
-      return escalate(`Step ${name} wrote an output.json that is not JSON.`);
-    }
-
-    // Strict equality with a declared key also refuses an outcome that is not a string.
-    const outcome = Object.keys(step.on).find((declared) => declared === claim?.outcome);
-
-    if (outcome === undefined) {
-      return escalate(
-        `Step ${name} claimed an outcome it does not declare: ${JSON.stringify(claim?.outcome)}.`,
-      );
-    }
-
-    return { type: "attempt-completed", step: name, attempt, outcome, next: step.on[outcome] };
+    return {
+      type: "attempt-completed",
+      step: name,
+      attempt,
+      outcome: claim.outcome,
+      artifacts: claim.artifacts.map(keep),
+      next: step.on[claim.outcome],
+    };
   } finally {
     // A read-only directory's files cannot be removed until it is writable again.
     await chmod(input, 0o755).catch(() => undefined);
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+type Claim = { outcome: string; artifacts: Document[] };
+
+// Parses the claim a step wrote to `output`, or gives the reason it is invalid. Everything in the
+// output directory is the step's doing, so any failure to read it is the step's.
+async function parse(
+  step: Command,
+  name: string,
+  output: string,
+): Promise<Claim | { reason: string }> {
+  const text = await readFile(join(output, "output.json"), "utf8").catch(() => undefined);
+
+  if (text === undefined) {
+    return { reason: `Step ${name} exited 0 without a readable output.json.` };
+  }
+
+  let claim;
+
+  try {
+    claim = JSON.parse(text);
+  } catch {
+    return { reason: `Step ${name} wrote an output.json that is not JSON.` };
+  }
+
+  // Strict equality with a declared key also refuses an outcome that is not a string.
+  const outcome = Object.keys(step.on).find((declared) => declared === claim?.outcome);
+
+  if (outcome === undefined) {
+    return {
+      reason: `Step ${name} claimed an outcome it does not declare: ${JSON.stringify(claim?.outcome)}.`,
+    };
+  }
+
+  // A misspelt field would otherwise drop the claim it was meant to carry.
+  const undefinedFields = Object.keys(claim).filter(
+    (field) => field !== "outcome" && field !== "artifacts",
+  );
+
+  if (undefinedFields.length > 0) {
+    return {
+      reason: `Step ${name} wrote an output.json with fields it does not define: ${JSON.stringify(undefinedFields)}.`,
+    };
+  }
+
+  const claimed = Object.hasOwn(claim, "artifacts") ? claim.artifacts : [];
+
+  if (!Array.isArray(claimed)) {
+    return { reason: `Step ${name} claimed artifacts that are not a list.` };
+  }
+
+  const root = await realpath(output);
+  const artifacts: Document[] = [];
+
+  for (const artifact of claimed) {
+    if (artifact?.kind === "decision") {
+      return { reason: `Step ${name} claimed a decision, which only the owner makes.` };
+    }
+
+    if (artifact?.kind !== "document") {
+      return {
+        reason: `Step ${name} claimed an artifact of undeclared kind: ${JSON.stringify(artifact?.kind)}.`,
+      };
+    }
+
+    const { fields, body } = artifact;
+    const title = fields?.title;
+
+    if (
+      !hasExactly(artifact, ["kind", "fields", "body"]) ||
+      !hasExactly(fields, ["title"]) ||
+      !isText(title) ||
+      !isText(body)
+    ) {
+      return { reason: `Step ${name} claimed a document that is not a title and a body path.` };
+    }
+
+    // Resolved first, so neither .. nor a symbolic link can reach outside the output.
+    const path = await realpath(join(output, body)).catch(() => undefined);
+
+    if (path !== undefined && relative(root, path).split(sep)[0] === "..") {
+      return { reason: `Step ${name} claimed a body outside its output: ${JSON.stringify(body)}.` };
+    }
+
+    const text = path && (await readFile(path, "utf8").catch(() => undefined));
+
+    if (text === undefined) {
+      return { reason: `Step ${name} claimed a body it did not write: ${JSON.stringify(body)}.` };
+    }
+
+    artifacts.push({ kind: "document", fields: { title }, body: text });
+  }
+
+  return { outcome, artifacts };
+}
+
+function isText(value: unknown): value is string {
+  return value === String(value);
+}
+
+// True for a plain JSON object with exactly these keys.
+function hasExactly(value: unknown, keys: readonly string[]): value is object {
+  if (value === null || value === undefined || Object.getPrototypeOf(value) !== Object.prototype) {
+    return false;
+  }
+
+  const present = Object.keys(value);
+
+  return present.length === keys.length && keys.every((key) => present.includes(key));
 }

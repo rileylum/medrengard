@@ -38,11 +38,13 @@ type AttemptStarted<N extends string> = {
   process: { pid: number; start: number };
 };
 
+// artifacts are the hashes of the artifacts the attempt claimed, in the order claimed.
 type AttemptCompleted<N extends string> = {
   type: "attempt-completed";
   step: N;
   attempt: number;
   outcome: string;
+  artifacts: readonly string[];
   next: N | "end";
 };
 
@@ -135,7 +137,9 @@ function apply<N extends string>(
         return { status: "finished", by: "end" };
       }
 
-      return arrive(workflow, event.next, state.subject);
+      // lazy: every kind a step can claim is a subject, so the last artifact claimed is the
+      // subject. Record each artifact's role once a step can claim a judgement.
+      return arrive(workflow, event.next, event.artifacts.at(-1) ?? state.subject);
     case "escalated":
       if (state.status !== "ready" && state.status !== "attempting") {
         throw new Error(`A commission cannot escalate while it is ${state.status}.`);
