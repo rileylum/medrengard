@@ -100,10 +100,14 @@ export function createEngine({ log, workflows }: Options) {
     },
 
     /**
-     * Records the owner's decision about the commission's current subject. At an approval step
-     * the outcome must be one the step declares; on an escalation it is retry or abandon.
+     * Records the owner's decision about the commission's current subject, with any feedback. At
+     * an approval step the outcome must be one the step declares; on an escalation it is retry or
+     * abandon.
      */
-    decide(commission: string, { subject, outcome }: { subject: string; outcome: string }) {
+    decide(
+      commission: string,
+      { subject, outcome, feedback }: { subject: string; outcome: string; feedback?: string },
+    ) {
       const events = read(commission);
       const workflow = workflows[events[0].workflow];
       const state = replay(workflow, events);
@@ -127,7 +131,11 @@ export function createEngine({ log, workflows }: Options) {
       const event = {
         type: "decided",
         step: name,
-        decision: store.put({ kind: "decision", fields: { outcome, subject } }),
+        decision: store.put(
+          feedback === undefined
+            ? { kind: "decision", fields: { outcome, subject } }
+            : { kind: "decision", fields: { outcome, subject }, body: feedback },
+        ),
         outcome,
         subject,
         next: on[outcome],
@@ -206,10 +214,11 @@ export function createEngine({ log, workflows }: Options) {
 
         const cancelled = () => requested.get(commission, attempt) !== undefined;
 
-        const inputs = step.inputs.map((input) => {
+        // An input with nothing to resolve to, such as a decision not yet made, is left out.
+        const inputs = step.inputs.flatMap((input) => {
           const hash = resolve(input, state);
 
-          return { name: input, hash, artifact: store.get(hash) };
+          return hash === undefined ? [] : [{ name: input, hash, artifact: store.get(hash) }];
         });
 
         write(
@@ -238,11 +247,16 @@ function startOf(pid: number): number | undefined {
   return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
 }
 
-// The artifact an input names, in the commission's current state.
-function resolve(input: Input, state: Extract<CommissionState, { status: "ready" }>): string {
+// The artifact an input names in the commission's current state, if there is one.
+function resolve(
+  input: Input,
+  state: Extract<CommissionState, { status: "ready" }>,
+): string | undefined {
   switch (input) {
     case "subject":
       return state.subject;
+    case "decision":
+      return state.decision;
     default:
       return assertNever(input);
   }
@@ -294,7 +308,7 @@ async function prepare(input: string, step: Command, given: Given): Promise<void
   for (const { name, hash, artifact } of given.inputs) {
     const { kind, fields } = artifact;
 
-    if ("body" in artifact) {
+    if (artifact.body !== undefined) {
       await writeFile(join(input, name), artifact.body, { mode: 0o444 });
       inputs[name] = { hash, kind, fields, body: name };
     } else {

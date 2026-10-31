@@ -14,8 +14,12 @@ import { join } from "node:path";
 /** A document artifact, such as the owner's request: a title and a text body. */
 export type Document = { kind: "document"; fields: { title: string }; body: string };
 
-/** The owner's decision: an outcome about a subject, named by its hash. */
-export type Decision = { kind: "decision"; fields: { outcome: string; subject: string } };
+/** The owner's decision: an outcome about a subject, named by its hash, and any feedback. */
+export type Decision = {
+  kind: "decision";
+  fields: { outcome: string; subject: string };
+  body?: string;
+};
 
 export type Artifact = Document | Decision;
 
@@ -50,7 +54,7 @@ export function createStore(directory: string) {
     /** Keeps an artifact and returns its hash, which covers its kind, fields and body hash. */
     put(artifact: Artifact): string {
       const { kind, fields } = artifact;
-      const body = "body" in artifact ? keep(artifact.body) : null;
+      const body = artifact.body === undefined ? null : keep(artifact.body);
 
       // lazy: fields hash in the order they were written. Sort them once a kind can be
       // written by something other than the engine.

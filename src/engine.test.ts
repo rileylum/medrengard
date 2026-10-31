@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createEngine } from "./engine.ts";
-import { defineWorkflow, type Workflow } from "./replay.ts";
+import { defineWorkflow, type Input, type Workflow } from "./replay.ts";
 
 /**
  * Starts an engine whose one workflow, `build`, is made by `workflow` from the test's directory,
@@ -77,7 +77,7 @@ function engineAwaiting(t: TestContext) {
  * Starts an engine with a single command step that declares `inputs`, runs `script` and ends on
  * `done`. The script's `$1` is the directory `received` in the returned directory, empty at start.
  */
-async function engineReceiving(t: TestContext, inputs: readonly "subject"[], script: string) {
+async function engineReceiving(t: TestContext, inputs: readonly Input[], script: string) {
   const started = await engineWith(t, (directory) =>
     defineWorkflow({
       start: "build",
@@ -422,6 +422,96 @@ test("a claimed body that is not UTF-8 escalates", async (t) => {
     step: { name: "build" },
     reason: 'Step build claimed a body that is not UTF-8: "plan.md".',
   });
+});
+
+test("a step that declares the decision receives the owner's feedback", async (t) => {
+  const { engine, directory } = await engineReceiving(
+    t,
+    ["decision"],
+    // -f, since the first attempt's copies are read-only.
+    `cp -f "$MEDRENGARD_IN"/* "$1"; exit 3`,
+  );
+
+  await engine.advance("first");
+
+  const subject = subjectOf(engine);
+
+  engine.decide("first", { subject, outcome: "retry", feedback: "Use fewer words." });
+  await engine.advance("first");
+
+  const received = join(directory, "received");
+  const input = JSON.parse(await readFile(join(received, "input.json"), "utf8"));
+
+  assert.partialDeepStrictEqual(input.inputs.decision, { kind: "decision", body: "decision" });
+
+  assert.deepEqual(engine.artifact(input.inputs.decision.hash), {
+    kind: "decision",
+    fields: { outcome: "retry", subject },
+    body: "Use fewer words.",
+  });
+
+  assert.equal(await readFile(join(received, "decision"), "utf8"), "Use fewer words.");
+});
+
+test("a step that declares the decision receives none before the owner decides", async (t) => {
+  const { engine, directory } = await engineReceiving(
+    t,
+    ["decision"],
+    `cp "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+
+  const input = JSON.parse(await readFile(join(directory, "received", "input.json"), "utf8"));
+
+  assert.deepEqual(input.inputs, {});
+});
+
+test("a decision about an earlier subject is not given as the decision", async (t) => {
+  const limits = { idle: 1, attempt: 5 };
+
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "review",
+      steps: {
+        review: { kind: "approval", on: { approve: "build" } },
+        build: {
+          kind: "command",
+          inputs: [],
+          run: [
+            "sh",
+            "-c",
+            `printf 'Do it.' > "$MEDRENGARD_OUT/plan.md"
+             echo '${JSON.stringify(planAt("plan.md"))}' > "$MEDRENGARD_OUT/output.json"`,
+          ],
+          on: { done: "read" },
+          budget: 1,
+          limits,
+        },
+        read: {
+          kind: "command",
+          inputs: ["decision"],
+          run: [
+            "sh",
+            "-c",
+            `cp "$MEDRENGARD_IN/input.json" "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "sh",
+            directory,
+          ],
+          on: { done: "end" },
+          budget: 1,
+          limits,
+        },
+      },
+    }),
+  );
+
+  engine.decide("first", { subject: subjectOf(engine), outcome: "approve", feedback: "Plan it." });
+  await engine.advance("first");
+
+  const input = JSON.parse(await readFile(join(directory, "input.json"), "utf8"));
+
+  assert.deepEqual(input.inputs, {});
 });
 
 test("a commission whose command step leads to an approval step awaits the owner", async (t) => {

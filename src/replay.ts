@@ -1,5 +1,8 @@
-/** A position in the commission a step can be given as an input: its current subject. */
-export type Input = "subject";
+/**
+ * A position in the commission a step can be given as an input: its current subject, or the
+ * owner's latest decision about that subject, if there is one.
+ */
+export type Input = "subject" | "decision";
 
 /**
  * A command step runs `run`, given `inputs`, and follows the edge its outcome names in `on`,
@@ -69,14 +72,27 @@ export type CommissionEvent<N extends string = string> =
   | Escalated
   | Decided<N>;
 
+// decision is the owner's latest decision about the current subject; one about an earlier
+// subject is history.
 export type CommissionState<N extends string = string> =
-  | { status: "ready"; step: { name: N; kind: "agent" | "command" }; subject: string }
-  | { status: "awaiting"; step: { name: N; kind: "approval" }; subject: string }
-  | { status: "attempting"; step: { name: N; kind: "agent" | "command" }; subject: string }
+  | {
+      status: "ready";
+      step: { name: N; kind: "agent" | "command" };
+      subject: string;
+      decision?: string;
+    }
+  | { status: "awaiting"; step: { name: N; kind: "approval" }; subject: string; decision?: string }
+  | {
+      status: "attempting";
+      step: { name: N; kind: "agent" | "command" };
+      subject: string;
+      decision?: string;
+    }
   | {
       status: "escalated";
       step: { name: N; kind: "agent" | "command" };
       subject: string;
+      decision?: string;
       reason: string;
     }
   | { status: "finished"; by: "end" | "abandoned" };
@@ -92,7 +108,7 @@ export function replay<N extends string>(
   events: readonly [Commissioned, ...Exclude<CommissionEvent<NoInfer<N>>, Commissioned>[]],
 ): CommissionState<N> {
   const [{ request }, ...rest] = events;
-  let state = arrive(workflow, workflow.start, request);
+  let state = arrive(workflow, workflow.start, request, undefined);
 
   for (const event of rest) {
     state = apply(workflow, state, event);
@@ -105,14 +121,15 @@ function arrive<N extends string>(
   workflow: Workflow<N>,
   name: N,
   subject: string,
+  decision: string | undefined,
 ): CommissionState<N> {
   const { kind } = workflow.steps[name];
 
   if (kind === "approval") {
-    return { status: "awaiting", step: { name, kind }, subject };
+    return { status: "awaiting", step: { name, kind }, subject, decision };
   }
 
-  return { status: "ready", step: { name, kind }, subject };
+  return { status: "ready", step: { name, kind }, subject, decision };
 }
 
 function apply<N extends string>(
@@ -127,7 +144,7 @@ function apply<N extends string>(
         throw new Error(`An attempt cannot start while the commission is ${state.status}.`);
       }
 
-      return { status: "attempting", step: state.step, subject: state.subject };
+      return { ...state, status: "attempting" };
     case "attempt-completed":
       if (state.status !== "attempting") {
         throw new Error(`An attempt cannot complete while the commission is ${state.status}.`);
@@ -139,18 +156,17 @@ function apply<N extends string>(
 
       // lazy: every kind a step can claim is a subject, so the last artifact claimed is the
       // subject. Record each artifact's role once a step can claim a judgement.
-      return arrive(workflow, event.next, event.artifacts.at(-1) ?? state.subject);
+      if (event.artifacts.length > 0) {
+        return arrive(workflow, event.next, event.artifacts.at(-1)!, undefined);
+      }
+
+      return arrive(workflow, event.next, state.subject, state.decision);
     case "escalated":
       if (state.status !== "ready" && state.status !== "attempting") {
         throw new Error(`A commission cannot escalate while it is ${state.status}.`);
       }
 
-      return {
-        status: "escalated",
-        step: state.step,
-        subject: state.subject,
-        reason: event.reason,
-      };
+      return { ...state, status: "escalated", reason: event.reason };
     case "decided":
       if (state.status !== "awaiting" && state.status !== "escalated") {
         throw new Error(`A decision cannot arrive while the commission is ${state.status}.`);
@@ -160,7 +176,7 @@ function apply<N extends string>(
         return { status: "finished", by: state.status === "escalated" ? "abandoned" : "end" };
       }
 
-      return arrive(workflow, event.next, state.subject);
+      return arrive(workflow, event.next, state.subject, event.decision);
     default:
       return assertNever(event);
   }
