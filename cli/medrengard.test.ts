@@ -1,18 +1,21 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const cli = join(import.meta.dirname, "medrengard.ts");
 const repository = join(import.meta.dirname, "..");
 
 /**
  * Writes a factory in a new directory, with the workflow `build`, whose command step prints hello,
- * claims `done` and awaits the owner at `review`, and the workflow `failing`, whose step exits 3.
- * Its log is in the directory's `state`.
+ * claims `done` and awaits the owner at `review`; the workflow `failing`, whose step exits 3; and
+ * the workflow `slow`, whose step appends start, then end half a second later, to the directory's
+ * `steps` file and leads to `review`. Its log is in the directory's `state`.
  */
 async function factoryIn(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
@@ -40,6 +43,26 @@ async function factoryIn(t: TestContext) {
            steps: {
              build: {
                ...step(\`echo hello; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`),
+               on: { done: "review" },
+             },
+             review: { kind: "approval", on: { approve: "end" } },
+           },
+         }),
+         slow: defineWorkflow({
+           start: "build",
+           steps: {
+             build: {
+               ...step(""),
+               run: [
+                 "sh", "-c",
+                 \`echo start >> "$1"; sleep 0.5; echo end >> "$1"
+                  echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`,
+                 "sh", ${JSON.stringify(join(directory, "steps"))},
+               ],
+               access: {
+                 ...contract,
+                 paths: [...contract.paths, { path: ${JSON.stringify(directory)}, mode: "write" }],
+               },
                on: { done: "review" },
              },
              review: { kind: "approval", on: { approve: "end" } },
@@ -177,3 +200,182 @@ test("the CLI without a factory exits 2 naming both ways to give one", () => {
   assert.match(stderr, /--factory/);
   assert.match(stderr, /MEDRENGARD_FACTORY/);
 });
+
+// A line the runner prints with --json, as far as the tests read it.
+type Line = {
+  parallel?: number;
+  commission?: string;
+  state?: { status: string };
+  stopping?: { commission: string; step: string }[];
+};
+
+/**
+ * Starts `medrengard run --json` with `args` on `factory`. `until` waits for a line of its stdout
+ * that matches; `lines` holds every line so far, parsed.
+ */
+function runner(t: TestContext, factory: string, args: readonly string[] = []) {
+  const child = spawn(process.execPath, [cli, "run", "--json", ...args], {
+    cwd: tmpdir(),
+    env: { ...process.env, MEDRENGARD_FACTORY: factory },
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+
+  t.after(() => child.kill("SIGKILL"));
+
+  const lines: Line[] = [];
+  let partial = "";
+
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+    const parts = (partial + chunk).split("\n");
+
+    partial = parts.pop()!;
+    lines.push(...parts.map((line) => JSON.parse(line)));
+  });
+
+  const exited = once(child, "exit");
+
+  const until = async (match: Line) => {
+    for (;;) {
+      if (lines.some((line) => isMatch(line, match))) {
+        return;
+      }
+
+      await sleep(20);
+    }
+  };
+
+  return { child, lines, until, exited };
+}
+
+function isMatch(actual: Line, expected: Line): boolean {
+  try {
+    assert.partialDeepStrictEqual(actual, expected);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Waits until a slow step has started. */
+async function untilStarted(directory: string) {
+  while ((await readFile(join(directory, "steps"), "utf8").catch(() => "")) === "") {
+    await sleep(20);
+  }
+}
+
+/** Commissions each of `commissions` under the workflow `workflow`. */
+function commissionAll(factory: string, workflow: string, commissions: readonly string[]) {
+  for (const commission of commissions) {
+    run(["commission", workflow, commission, "--title", "Greet", "--body", "Say hello."], factory);
+  }
+}
+
+test(
+  "the runner advances every ready commission, which the commissions command lists",
+  { timeout: 10_000 },
+  async (t) => {
+    const { factory } = await factoryIn(t);
+
+    commissionAll(factory, "build", ["first", "second"]);
+
+    const { child, lines, until, exited } = runner(t, factory);
+
+    await until({ commission: "second", state: { status: "awaiting" } });
+    child.kill("SIGTERM");
+
+    const [code] = await exited;
+
+    assert.equal(code, 0);
+    assert.deepEqual(lines[0], { parallel: 1 });
+    assert.partialDeepStrictEqual(JSON.parse(run(["commissions", "--json"], factory).stdout), [
+      { commission: "first", state: { status: "awaiting" } },
+      { commission: "second", state: { status: "awaiting" } },
+    ]);
+  },
+);
+
+test(
+  "the runner runs at most one step at once by default, oldest commission first",
+  { timeout: 10_000 },
+  async (t) => {
+    const { directory, factory } = await factoryIn(t);
+
+    commissionAll(factory, "slow", ["first", "second"]);
+
+    const { child, lines, until } = runner(t, factory);
+
+    await until({ commission: "second", state: { status: "awaiting" } });
+    child.kill("SIGTERM");
+
+    assert.equal(await readFile(join(directory, "steps"), "utf8"), "start\nend\nstart\nend\n");
+    assert.deepEqual(
+      lines.filter((line) => "state" in line).map((line) => line.commission),
+      ["first", "second"],
+    );
+  },
+);
+
+test("the runner runs steps in parallel up to --parallel", { timeout: 10_000 }, async (t) => {
+  const { directory, factory } = await factoryIn(t);
+
+  commissionAll(factory, "slow", ["first", "second"]);
+
+  const { child, until } = runner(t, factory, ["--parallel", "2"]);
+
+  await until({ commission: "first", state: { status: "awaiting" } });
+  await until({ commission: "second", state: { status: "awaiting" } });
+  child.kill("SIGTERM");
+
+  assert.equal(await readFile(join(directory, "steps"), "utf8"), "start\nstart\nend\nend\n");
+});
+
+test(
+  "a stopped runner lets its running step finish before it exits",
+  { timeout: 10_000 },
+  async (t) => {
+    const { directory, factory } = await factoryIn(t);
+
+    commissionAll(factory, "slow", ["first"]);
+
+    const { child, exited } = runner(t, factory);
+
+    await untilStarted(directory);
+
+    child.kill("SIGTERM");
+
+    const [code] = await exited;
+
+    assert.equal(code, 0);
+    assert.partialDeepStrictEqual(JSON.parse(run(["state", "first", "--json"], factory).stdout), {
+      status: "awaiting",
+    });
+  },
+);
+
+test(
+  "a runner stopped twice exits at once, and its step escalates as interrupted",
+  { timeout: 10_000 },
+  async (t) => {
+    const { directory, factory } = await factoryIn(t);
+
+    commissionAll(factory, "slow", ["first"]);
+
+    const { child, until, exited } = runner(t, factory);
+
+    await untilStarted(directory);
+
+    child.kill("SIGTERM");
+    await until({ stopping: [{ commission: "first", step: "build" }] });
+    child.kill("SIGTERM");
+
+    const [code] = await exited;
+
+    assert.notEqual(code, 0);
+    assert.partialDeepStrictEqual(JSON.parse(run(["advance", "first", "--json"], factory).stdout), {
+      status: "escalated",
+      reason: "Step build was interrupted.",
+    });
+    assert.equal(await readFile(join(directory, "steps"), "utf8"), "start\n");
+  },
+);

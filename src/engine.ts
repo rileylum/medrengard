@@ -58,6 +58,11 @@ export function createEngine({ log, workflows }: Options) {
     "SELECT event FROM events WHERE commission = ? ORDER BY position",
   );
 
+  // In the order they were commissioned: rowid follows insertion.
+  const commissioned = database.prepare(
+    "SELECT commission FROM events WHERE position = 0 ORDER BY rowid",
+  );
+
   function read(commission: string): Log {
     const events = select.all(commission).map(({ event }) => JSON.parse(String(event)));
 
@@ -119,6 +124,14 @@ export function createEngine({ log, workflows }: Options) {
       const events = read(commission);
 
       return replay(definitionOf(events), events);
+    },
+
+    /** Lists every commission in the log with its state, oldest first. */
+    commissions(): { commission: string; state: CommissionState }[] {
+      return commissioned.all().map(({ commission }) => ({
+        commission: String(commission),
+        state: this.state(String(commission)),
+      }));
     },
 
     /** Reads the transcript of the commission's attempt numbered `attempt`. */

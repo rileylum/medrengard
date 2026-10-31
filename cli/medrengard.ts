@@ -9,7 +9,9 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
+import type { createEngine as Create } from "../src/engine.ts";
 import type { CommissionState } from "../src/replay.ts";
 import type { Artifact } from "../src/store.ts";
 
@@ -18,6 +20,8 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
   commission <workflow> <commission> --title <title> (--body <text> | --body-file <path>)
   advance    <commission>
   state      <commission>
+  commissions
+  run        [--parallel <n>]
   decide     <commission> <outcome> --subject <hash> [--feedback <text> | --feedback-file <path>]
   cancel     <commission>
   transcript <commission> <attempt>
@@ -31,6 +35,8 @@ const commands = new Map([
   ["commission", { arguments: 2, options: ["title", "body", "body-file"] }],
   ["advance", { arguments: 1, options: [] }],
   ["state", { arguments: 1, options: [] }],
+  ["commissions", { arguments: 0, options: [] }],
+  ["run", { arguments: 0, options: ["parallel"] }],
   ["decide", { arguments: 2, options: ["subject", "feedback", "feedback-file"] }],
   ["cancel", { arguments: 1, options: [] }],
   ["transcript", { arguments: 2, options: [] }],
@@ -53,6 +59,7 @@ try {
       subject: text,
       feedback: text,
       "feedback-file": text,
+      parallel: text,
     },
   });
 } catch {
@@ -85,7 +92,8 @@ if (
   (command === "commission" &&
     (values.title === undefined || (values.body ?? values["body-file"]) === undefined)) ||
   (command === "decide" && values.subject === undefined) ||
-  (command === "transcript" && !/^[1-9]\d*$/.test(args[1]))
+  (command === "transcript" && !/^[1-9]\d*$/.test(args[1])) ||
+  !/^[1-9]\d*$/.test(values.parallel ?? "1")
 ) {
   refuseUsage();
 }
@@ -142,6 +150,18 @@ try {
     case "artifact":
       printArtifact(engine.artifact(first));
       break;
+    case "commissions":
+      print(
+        engine.commissions(),
+        engine
+          .commissions()
+          .map(({ commission, state }) => `${commission}: ${describe(state)}\n`)
+          .join(""),
+      );
+      break;
+    case "run":
+      await runner(engine, Number(values.parallel ?? "1"));
+      break;
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -156,24 +176,122 @@ function refuseUsage(): never {
 }
 
 // Prints `result` as JSON, or `readable` for the owner.
-function print(result: CommissionState | Artifact | null, readable: string): void {
+// Every result the CLI prints, as JSON with --json.
+type Printed =
+  | CommissionState
+  | Artifact
+  | null
+  | { commission: string; state: CommissionState }[]
+  | { parallel: number }
+  | { stopping: { commission: string; step: string }[] }
+  | { commission: string; state: CommissionState };
+
+function print(result: Printed, readable: string): void {
   process.stdout.write(json ? `${JSON.stringify(result)}\n` : readable);
 }
 
-function printState(state: CommissionState): void {
+// A state for the owner to read: where the commission is and what it is about.
+function describe(state: CommissionState): string {
   if (state.status === "finished") {
-    print(state, `finished by ${state.by}\n`);
-
-    return;
+    return `finished by ${state.by}`;
   }
 
-  const lines = [
+  return [
     `${state.status} at ${state.step.name}, about ${state.subject}`,
     ...(state.status === "escalated" ? [`reason: ${state.reason}`] : []),
     ...(state.decision === undefined ? [] : [`decision: ${state.decision}`]),
-  ];
+  ].join("\n");
+}
 
-  print(state, `${lines.join("\n")}\n`);
+function printState(state: CommissionState): void {
+  print(state, `${describe(state)}\n`);
+}
+
+/**
+ * Advances ready commissions, at most `parallel` steps at once and the oldest commission first,
+ * and lets the engine escalate attempts no live engine holds, until stopped. A first SIGINT or
+ * SIGTERM starts nothing new and waits for the running steps; a second exits at once, and bwrap
+ * takes the steps with it, so each escalates as interrupted when next advanced.
+ */
+async function runner(engine: ReturnType<typeof Create>, parallel: number): Promise<void> {
+  const advancing = new Map<string, Promise<void>>();
+
+  // The commissions whose advance may start a step, which the limit counts.
+  const stepping = new Set<string>();
+
+  let stopping = false;
+
+  print({ parallel }, `running at most ${parallel} steps in parallel\n`);
+
+  const stop = () => {
+    if (stopping) {
+      process.exit(130);
+    }
+
+    stopping = true;
+
+    const waiting = [...stepping].flatMap((commission) => {
+      const state = engine.state(commission);
+
+      return state.status === "finished" ? [] : [{ commission, step: state.step.name }];
+    });
+
+    const names = waiting.map(({ commission, step }) => `${commission} at ${step}`);
+
+    print({ stopping: waiting }, `stopping, waiting for: ${names.join(", ") || "nothing"}\n`);
+  };
+
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+
+  const advance = (commission: string, step: boolean) => {
+    if (step) {
+      stepping.add(commission);
+    }
+
+    const done = engine
+      .advance(commission)
+      .then(
+        (state) => {
+          // Still attempting: another live engine holds the attempt.
+          if (state.status !== "attempting") {
+            print({ commission, state }, `${commission}: ${describe(state)}\n`);
+          }
+        },
+        (error: Error) => {
+          process.stderr.write(
+            json
+              ? `${JSON.stringify({ commission, error: error.message })}\n`
+              : `${commission}: ${error.message}\n`,
+          );
+        },
+      )
+      .finally(() => {
+        advancing.delete(commission);
+        stepping.delete(commission);
+      });
+
+    advancing.set(commission, done);
+  };
+
+  while (!stopping) {
+    for (const { commission, state } of engine.commissions()) {
+      if (advancing.has(commission)) {
+        continue;
+      }
+
+      if (state.status === "attempting") {
+        advance(commission, false);
+      } else if (state.status === "ready" && stepping.size < parallel) {
+        advance(commission, true);
+      }
+    }
+
+    // The log has no notifications, so the runner looks again.
+    await sleep(1000);
+  }
+
+  await Promise.all(advancing.values());
 }
 
 function printArtifact(artifact: Artifact): void {
