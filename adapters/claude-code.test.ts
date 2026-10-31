@@ -11,7 +11,8 @@ const adapter = join(import.meta.dirname, "claude-code.ts");
 /**
  * Starts an engine whose one agent step, `plan`, runs the Claude Code adapter with a fake `claude`
  * on its PATH, and commissions `first`. The fake runs `script`; its arguments are in the returned
- * directory's `arguments` file, each ended by a NUL.
+ * directory's `arguments` file, and its input and output directories in `directories`, each ended
+ * by a NUL.
  */
 async function engineWithClaude(t: TestContext, script: string) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
@@ -24,6 +25,7 @@ async function engineWithClaude(t: TestContext, script: string) {
     claude,
     `#!/bin/sh
 printf '%s\\0' "$@" > "${join(directory, "arguments")}"
+printf '%s\\0' "$MEDRENGARD_IN" "$MEDRENGARD_OUT" > "${join(directory, "directories")}"
 ${script}
 `,
   );
@@ -68,17 +70,25 @@ test("the Claude Code adapter runs claude headless with the agent, whose claim c
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
 
-  const [print, ...rest] = (await readFile(join(directory, "arguments"), "utf8"))
-    .split("\0")
-    .slice(0, -1);
+  const fields = async (file: string) =>
+    (await readFile(join(directory, file), "utf8")).split("\0").slice(0, -1);
 
+  const [input, output] = await fields("directories");
+  const [print, ...rest] = await fields("arguments");
   const prompt = rest.at(-1)!;
 
   assert.equal(print, "-p");
+
+  // Edits only, in the workspace and the step's input and output: shell commands stay refused.
   assert.deepEqual(rest.slice(0, -1), [
     "--output-format",
     "stream-json",
     "--verbose",
+    "--permission-mode",
+    "acceptEdits",
+    "--add-dir",
+    input,
+    output,
     "--model",
     "a-model",
   ]);

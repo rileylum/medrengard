@@ -34,6 +34,14 @@ const claude = spawn(
     "--output-format",
     "stream-json",
     "--verbose",
+    // lazy: edits only, in the workspace, input and output; shell commands are refused. Translate
+    // the step's declared access once access and the sandbox exist.
+    "--permission-mode",
+    "acceptEdits",
+    // Before --model, which ends this list of directories.
+    "--add-dir",
+    input,
+    output,
     "--model",
     given.agent.model,
     `${given.agent.prompt}\n\n${contract}`,
