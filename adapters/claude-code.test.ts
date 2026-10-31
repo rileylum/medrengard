@@ -49,7 +49,7 @@ ${script}
             inputs: [],
             on: { done: "end" },
             budget: 1,
-            limits: { idle: 5, attempt: 10 },
+            limits: { idle: 5, attempt: 10, transcript: 65536 },
           },
         },
       }),

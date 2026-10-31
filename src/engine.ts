@@ -95,6 +95,21 @@ export function createEngine({ log, workflows }: Options) {
       return replay(workflows[events[0].workflow], events);
     },
 
+    /** Reads the transcript of the commission's attempt numbered `attempt`. */
+    transcript(commission: string, attempt: number): Buffer {
+      for (const event of read(commission)) {
+        if (
+          (event.type === "attempt-completed" || event.type === "escalated") &&
+          event.attempt === attempt &&
+          event.transcript !== undefined
+        ) {
+          return store.read(event.transcript);
+        }
+      }
+
+      throw new Error(`Commission ${commission} has no transcript for attempt ${attempt}.`);
+    },
+
     /** Reads the artifact kept under `hash`. */
     artifact(hash: string): Artifact {
       return store.get(hash);
@@ -256,9 +271,7 @@ export function createEngine({ log, workflows }: Options) {
         write(
           commission,
           [...events, started],
-          await run(step, { commission, step: name, attempt, inputs }, cancelled, (document) =>
-            store.put(document),
-          ),
+          await run(step, { commission, step: name, attempt, inputs }, cancelled, store),
         );
       }
     },
@@ -308,6 +321,8 @@ type Given = {
   attempt: number;
   inputs: readonly { name: Input; hash: string; artifact: Artifact }[];
 };
+
+type Store = ReturnType<typeof createStore>;
 
 type Ending = Extract<CommissionEvent, { type: "attempt-completed" | "escalated" }>;
 
@@ -360,19 +375,31 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
 }
 
 // lazy: the step is not confined. Run it in the sandbox before any step is not the owner's.
-// keep stores a claimed artifact and returns its hash, before the event naming it is written.
+// The transcript and claimed artifacts go to the store before the event naming them is written.
 async function run(
   step: Runnable,
   given: Given,
   cancelled: () => boolean,
-  keep: (document: Document) => string,
+  store: Store,
 ): Promise<Ending> {
   const { step: name, attempt } = given;
   const directory = await mkdtemp(join(tmpdir(), "medrengard-attempt-"));
   const workspace = join(directory, "workspace");
   const input = join(directory, "input");
   const output = join(directory, "output");
-  const escalate = (reason: string): Ending => ({ type: "escalated", reason, attempt });
+
+  // stdout and stderr together, in the order they arrive, up to the transcript limit.
+  const transcript: Buffer[] = [];
+  let written = 0;
+
+  const kept = () => store.keep(Buffer.concat(transcript));
+
+  const escalate = (reason: string): Ending => ({
+    type: "escalated",
+    reason,
+    attempt,
+    transcript: kept(),
+  });
 
   try {
     await mkdir(workspace);
@@ -416,10 +443,23 @@ async function run(
       }
     }, 1000);
 
-    // lazy: output is read only to see activity. Keep it as the transcript, under its
-    // size limit, once the store exists.
-    child.stdout.on("data", () => idle.refresh());
-    child.stderr.on("data", () => idle.refresh());
+    const record = (chunk: Buffer) => {
+      idle.refresh();
+
+      const room = step.limits.transcript - written;
+
+      transcript.push(chunk.subarray(0, Math.max(room, 0)));
+      written += chunk.length;
+
+      if (written > step.limits.transcript) {
+        stopFor(
+          `Step ${name} wrote more than its transcript limit of ${step.limits.transcript} bytes.`,
+        );
+      }
+    };
+
+    child.stdout.on("data", record);
+    child.stderr.on("data", record);
 
     const closed = await once(child, "close")
       .catch((error: NodeJS.ErrnoException) => error)
@@ -456,7 +496,8 @@ async function run(
       step: name,
       attempt,
       outcome: claim.outcome,
-      artifacts: claim.artifacts.map(keep),
+      artifacts: claim.artifacts.map((artifact) => store.put(artifact)),
+      transcript: kept(),
       next: step.on[claim.outcome],
     };
   } finally {

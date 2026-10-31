@@ -35,7 +35,11 @@ async function engineWith<N extends string>(
  * `again`, has a budget of 2 and the given limits. The script's `$1` is a file it may append to,
  * named `started` in the returned directory.
  */
-function engineRunning(t: TestContext, script: string, limits = { idle: 1, attempt: 5 }) {
+function engineRunning(
+  t: TestContext,
+  script: string,
+  limits = { idle: 1, attempt: 5, transcript: 65536 },
+) {
   return engineWith(t, (directory) =>
     defineWorkflow({
       start: "build",
@@ -66,7 +70,7 @@ function engineAwaiting(t: TestContext) {
           run: ["true"],
           on: { done: "end" },
           budget: 1,
-          limits: { idle: 1, attempt: 5 },
+          limits: { idle: 1, attempt: 5, transcript: 65536 },
         },
       },
     }),
@@ -88,7 +92,7 @@ async function engineReceiving(t: TestContext, inputs: readonly Input[], script:
           run: ["sh", "-c", script, "sh", join(directory, "received")],
           on: { done: "end" },
           budget: 1,
-          limits: { idle: 1, attempt: 5 },
+          limits: { idle: 1, attempt: 5, transcript: 65536 },
         },
       },
     }),
@@ -112,7 +116,7 @@ type Claim = {
  * the approval step `review`.
  */
 async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
-  const limits = { idle: 1, attempt: 5 };
+  const limits = { idle: 1, attempt: 5, transcript: 65536 };
 
   const started = await engineWith(t, (directory) =>
     defineWorkflow({
@@ -475,7 +479,7 @@ test("a step that declares the decision receives none before the owner decides",
 });
 
 test("a decision about an earlier subject is not given as the decision", async (t) => {
-  const limits = { idle: 1, attempt: 5 };
+  const limits = { idle: 1, attempt: 5, transcript: 65536 };
 
   const { engine, directory } = await engineWith(t, (directory) =>
     defineWorkflow({
@@ -544,7 +548,7 @@ test("an agent step runs its harness adapter, which is given the agent", async (
           inputs: [],
           on: { done: "end" },
           budget: 1,
-          limits: { idle: 1, attempt: 5 },
+          limits: { idle: 1, attempt: 5, transcript: 65536 },
         },
       },
     }),
@@ -571,7 +575,7 @@ test("a commission whose command step leads to an approval step awaits the owner
           run: ["sh", "-c", `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`],
           on: { done: "review" },
           budget: 1,
-          limits: { idle: 1, attempt: 5 },
+          limits: { idle: 1, attempt: 5, transcript: 65536 },
         },
         review: { kind: "approval", on: { approve: "end" } },
       },
@@ -662,6 +666,41 @@ test("a step attempted again on the same subject and inputs escalates instead", 
   assert.equal(await readFile(join(directory, "started"), "utf8"), "started\n");
 });
 
+test("a completed attempt keeps its stdout and stderr as its transcript", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `echo hello; sleep 0.1; echo oops >&2
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+
+  assert.equal(engine.transcript("first", 1).toString(), "hello\noops\n");
+});
+
+test("an escalated attempt keeps its transcript", async (t) => {
+  const { engine } = await engineRunning(t, "echo failing; exit 3");
+
+  await engine.advance("first");
+
+  assert.equal(engine.transcript("first", 1).toString(), "failing\n");
+});
+
+test("a step that writes past its transcript limit is stopped and escalates", async (t) => {
+  const { engine } = await engineRunning(t, "head -c 2000 /dev/zero; sleep 5", {
+    idle: 5,
+    attempt: 10,
+    transcript: 1000,
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: "Step build wrote more than its transcript limit of 1000 bytes.",
+  });
+  assert.equal(engine.transcript("first", 1).length, 1000);
+});
+
 test("a step that is idle for its idle limit is stopped and escalates", async (t) => {
   const { engine } = await engineRunning(t, "sleep 5");
 
@@ -686,6 +725,7 @@ test("a step that runs for its attempt limit is stopped and escalates", async (t
   const { engine } = await engineRunning(t, "while true; do echo tick; sleep 0.2; done", {
     idle: 1,
     attempt: 1,
+    transcript: 65536,
   });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
@@ -699,7 +739,7 @@ test("an attempt held by a live engine is left attempting", async (t) => {
   const { engine, directory, options } = await engineRunning(
     t,
     `echo started >> "$1"; sleep 1; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
-    { idle: 5, attempt: 5 },
+    { idle: 5, attempt: 5, transcript: 65536 },
   );
 
   const running = engine.advance("first");
@@ -719,6 +759,7 @@ test(
     const { engine, directory, options } = await engineRunning(t, `echo $$ > "$1"; exec sleep 30`, {
       idle: 60,
       attempt: 60,
+      transcript: 65536,
     });
 
     const crashing = join(directory, "crashing.ts");
@@ -749,6 +790,7 @@ test("an attempt cancelled from another engine is stopped and escalates", async 
   const { engine, directory, options } = await engineRunning(t, `echo started >> "$1"; sleep 30`, {
     idle: 60,
     attempt: 60,
+    transcript: 65536,
   });
 
   const running = engine.advance("first");

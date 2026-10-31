@@ -23,11 +23,15 @@ export type Decision = {
 
 export type Artifact = Document | Decision;
 
-/** Keeps artifacts and their bodies in `directory`, each under the sha256 of its bytes. */
+/**
+ * Keeps artifacts, their bodies and transcripts in `directory`, each under the sha256 of its
+ * bytes.
+ */
 export function createStore(directory: string) {
   mkdirSync(directory, { recursive: true });
 
-  function keep(bytes: string): string {
+  function keep(data: string | Buffer): string {
+    const bytes = Buffer.from(data);
     const hash = createHash("sha256").update(bytes).digest("hex");
     const path = join(directory, hash);
 
@@ -51,6 +55,14 @@ export function createStore(directory: string) {
   }
 
   return {
+    /** Keeps bytes, such as a transcript, and returns their hash. */
+    keep,
+
+    /** Reads back the bytes kept under `hash`. */
+    read(hash: string): Buffer {
+      return readFileSync(join(directory, hash));
+    },
+
     /** Keeps an artifact and returns its hash, which covers its kind, fields and body hash. */
     put(artifact: Artifact): string {
       const { kind, fields } = artifact;

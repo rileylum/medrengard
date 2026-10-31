@@ -15,13 +15,13 @@ export type Agent = {
 };
 
 // What every step that starts a program declares: its inputs, its outcomes' edges, the attempts it
-// may start between the owner's decisions, and the seconds without stdout or stderr output (idle)
-// or in all (attempt) after which an attempt is stopped.
+// may start between the owner's decisions, and its limits. An attempt is stopped after `idle`
+// seconds without stdout or stderr output, `attempt` seconds in all, or `transcript` bytes of it.
 type Program<N extends string> = {
   inputs: readonly Input[];
   on: Record<string, N | "end">;
   budget: number;
-  limits: { idle: number; attempt: number };
+  limits: { idle: number; attempt: number; transcript: number };
 };
 
 /**
@@ -56,19 +56,22 @@ type AttemptStarted<N extends string> = {
   process: { pid: number; start: number };
 };
 
-// artifacts are the hashes of the artifacts the attempt claimed, in the order claimed.
+// artifacts are the hashes of the artifacts the attempt claimed, in the order claimed;
+// transcript is the hash of its stdout and stderr.
 type AttemptCompleted<N extends string> = {
   type: "attempt-completed";
   step: N;
   attempt: number;
   outcome: string;
   artifacts: readonly string[];
+  transcript: string;
   next: N | "end";
 };
 
 // lazy: reason is free text for the owner. When an observer needs to group escalations,
 // add a closed set of causes beside it; the text stays, as the why.
-type Escalated = { type: "escalated"; reason: string; attempt?: number };
+// transcript is there when the attempt's program ran; an interrupted attempt's is lost.
+type Escalated = { type: "escalated"; reason: string; attempt?: number; transcript?: string };
 
 // decision and subject are artifact hashes; any feedback lives in the decision artifact.
 type Decided<N extends string> = {
