@@ -15,6 +15,8 @@ import {
   type Input,
   type Workflow,
 } from "./replay.ts";
+import { parseWorkflow } from "./definition.ts";
+import { hasExactly, isText } from "./json.ts";
 import { createStore, type Artifact, type Commit, type Document } from "./store.ts";
 
 type Options = { log: string; workflows: Record<string, Workflow> };
@@ -62,8 +64,22 @@ export function createEngine({ log, workflows }: Options) {
     return events as Log;
   }
 
+  // Parsed once per definition; a definition never changes under its hash.
+  const definitions = new Map<string, Workflow>();
+
+  // The workflow definition the commission started with, as stored then.
+  function definitionOf(events: Log): Workflow {
+    const { workflow, definition } = events[0];
+
+    if (!definitions.has(definition)) {
+      definitions.set(definition, parseWorkflow(workflow, store.read(definition).toString()));
+    }
+
+    return definitions.get(definition)!;
+  }
+
   function write(commission: string, events: Log, event: Log[1]): void {
-    replay(workflows[events[0].workflow], [...events, event]);
+    replay(definitionOf(events), [...events, event]);
     insert.run(commission, events.length, JSON.stringify(event));
   }
 
@@ -74,9 +90,18 @@ export function createEngine({ log, workflows }: Options) {
       commission: string,
       request: { title: string; body: string },
     ): void {
+      if (!Object.hasOwn(workflows, workflow)) {
+        throw new Error(`There is no workflow named ${workflow}.`);
+      }
+
+      // Parsed as it will be read back, so a definition that could not run is refused now.
+      const text = JSON.stringify(workflows[workflow]);
+      const parsed = parseWorkflow(workflow, text);
+
       const event: Commissioned = {
         type: "commissioned",
         workflow,
+        definition: store.keep(text),
         request: store.put({
           kind: "document",
           fields: { title: request.title },
@@ -84,7 +109,7 @@ export function createEngine({ log, workflows }: Options) {
         }),
       };
 
-      replay(workflows[workflow], [event]);
+      replay(parsed, [event]);
       insert.run(commission, 0, JSON.stringify(event));
     },
 
@@ -92,7 +117,7 @@ export function createEngine({ log, workflows }: Options) {
     state(commission: string): CommissionState {
       const events = read(commission);
 
-      return replay(workflows[events[0].workflow], events);
+      return replay(definitionOf(events), events);
     },
 
     /** Reads the transcript of the commission's attempt numbered `attempt`. */
@@ -125,7 +150,7 @@ export function createEngine({ log, workflows }: Options) {
       { subject, outcome, feedback }: { subject: string; outcome: string; feedback?: string },
     ) {
       const events = read(commission);
-      const workflow = workflows[events[0].workflow];
+      const workflow = definitionOf(events);
       const state = replay(workflow, events);
 
       if (state.status !== "awaiting" && state.status !== "escalated") {
@@ -165,7 +190,7 @@ export function createEngine({ log, workflows }: Options) {
     /** Asks the engine running the commission's attempt to stop it; that engine escalates. */
     cancel(commission: string): void {
       const events = read(commission);
-      const state = replay(workflows[events[0].workflow], events);
+      const state = replay(definitionOf(events), events);
 
       if (state.status !== "attempting") {
         throw new Error(
@@ -183,7 +208,7 @@ export function createEngine({ log, workflows }: Options) {
     async advance(commission: string): Promise<CommissionState> {
       for (;;) {
         const events = read(commission);
-        const workflow = workflows[events[0].workflow];
+        const workflow = definitionOf(events);
         const state = replay(workflow, events);
 
         if (state.status === "attempting") {
@@ -952,19 +977,4 @@ async function materialise(
   return why === undefined
     ? undefined
     : `The ${artifact.kind} materialiser failed for step ${name}: ${why}`;
-}
-
-function isText(value: unknown): value is string {
-  return value === String(value);
-}
-
-// True for a plain JSON object with exactly these keys.
-function hasExactly(value: unknown, keys: readonly string[]): value is object {
-  if (value === null || value === undefined || Object.getPrototypeOf(value) !== Object.prototype) {
-    return false;
-  }
-
-  const present = Object.keys(value);
-
-  return present.length === keys.length && keys.every((key) => present.includes(key));
 }

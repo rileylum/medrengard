@@ -720,6 +720,62 @@ test("a step whose workspace is a document subject finds its body there", async 
   assert.equal(await readFile(join(directory, "seen"), "utf8"), "Say hello.");
 });
 
+test("a commission runs on the workflow definition it started with", async (t) => {
+  const { options } = await engineRunning(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const { build } = options.workflows;
+
+  const edited = createEngine({
+    ...options,
+    workflows: {
+      build: defineWorkflow({
+        start: "build",
+        steps: {
+          build: { ...build.steps.build, on: { done: "review" } },
+          review: { kind: "approval", on: { approve: "end" } },
+        },
+      }),
+    },
+  });
+
+  assert.partialDeepStrictEqual(await edited.advance("first"), { status: "finished", by: "end" });
+});
+
+test("a workflow whose budget is not a positive integer cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        steps: { build: { ...stepRunning("true", "end"), budget: 0 } },
+      }),
+    ),
+    { message: "Workflow build is invalid: step build's budget must be a positive integer." },
+  );
+});
+
+test("a workflow whose limit is not positive cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        steps: {
+          build: {
+            ...stepRunning("true", "end"),
+            limits: { idle: 0, attempt: 5, transcript: 65536 },
+          },
+        },
+      }),
+    ),
+    {
+      message:
+        "Workflow build is invalid: step build's idle limit must be a positive number of seconds, at most 2147483.",
+    },
+  );
+});
+
 test("a commission whose command step leads to an approval step awaits the owner", async (t) => {
   const { engine } = await engineWith(t, () =>
     defineWorkflow({
@@ -791,7 +847,9 @@ test("a step whose program cannot start escalates its commission", async (t) => 
     workflows: { build: { ...build, steps: { build: missing } } },
   });
 
-  assert.partialDeepStrictEqual(await engine.advance("first"), {
+  engine.commission("build", "second", { title: "Greet", body: "Say hello." });
+
+  assert.partialDeepStrictEqual(await engine.advance("second"), {
     status: "escalated",
     step: { name: "build" },
     reason: "Step build could not start: ENOENT.",

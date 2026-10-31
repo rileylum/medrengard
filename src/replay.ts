@@ -41,10 +41,15 @@ export type Workflow<N extends string = string> = {
   steps: { [K in N]: K extends "end" ? never : Step<NoInfer<N>> };
 };
 
-// lazy: workflow names the definition by key in the engine's workflows. When a commission
-// must keep running after its definition is edited, record the definitions by hash instead.
-// request is the hash of the owner's request, the commission's first subject.
-export type Commissioned = { type: "commissioned"; workflow: string; request: string };
+// workflow is the definition's name; definition is the hash of the definition as it was when the
+// commission started, which the commission runs on. request is the hash of the owner's request,
+// the commission's first subject.
+export type Commissioned = {
+  type: "commissioned";
+  workflow: string;
+  definition: string;
+  request: string;
+};
 
 // subject and inputs name what the attempt was given, by hash, inputs in the order declared.
 // process names the engine process running the attempt, so another engine can tell a live
