@@ -53,7 +53,7 @@ ${script}
               model: "a-model",
               prompt: "Plan the change.",
             },
-            inputs: [],
+            inputs: {},
             on: { done: "end" },
             budget: 1,
             // The system, Node and this repository to run the adapter, and the test's directory
@@ -72,7 +72,7 @@ ${script}
               environment: [],
               workspace: "write",
             },
-            limits: { idle: 5, attempt: 10, transcript: 65536 },
+            limits: { idle: 5, attempt: 10, transcript: 65536, input: 65536 },
           },
         },
       }),

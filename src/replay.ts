@@ -1,11 +1,20 @@
 /**
- * A position in the commission a step can be given as an input: its current subject, or the
- * owner's latest decision about that subject, if there is one.
+ * What the engine gives a step under one of its input names: the commission's current subject;
+ * the owner's request; or a query over every artifact in the commission's record, oldest first:
+ * the request, the artifacts steps claimed and the owner's decisions. A query's fields each narrow
+ * what it names: `from` to the steps it lists, `kind` to one artifact kind, `about` to judgements
+ * about the current subject, earlier subjects or any, and `take` to the latest or all of them,
+ * all if left out.
  */
-// lazy: a closed set, because so far every input is a position the engine derives. Open it, as
-// an open vocabulary like kinds (principle 3), when a step needs an input this set cannot name,
-// such as the evidence about the subject.
-export type Input = "subject" | "decision";
+export type Query<N extends string = string> =
+  | "subject"
+  | "request"
+  | {
+      from?: readonly N[];
+      kind?: string;
+      about?: "subject" | "earlier" | "any";
+      take?: "latest" | "all";
+    };
 
 /**
  * A reusable agent: the harness adapter program that runs it, and the model and prompt it is
@@ -41,14 +50,15 @@ export type Access = {
 // What every step that starts a program declares: its inputs, whether its workspace is built from
 // the subject or starts empty, its outcomes' edges, the attempts it may start between the owner's
 // decisions, its access, and its limits. An attempt is stopped after `idle`
-// seconds without stdout or stderr output, `attempt` seconds in all, or `transcript` bytes of it.
+// seconds without stdout or stderr output, `attempt` seconds in all, or `transcript` bytes of it,
+// and never starts if the bodies of its inputs total more than `input` bytes.
 type Program<N extends string> = {
-  inputs: readonly Input[];
+  inputs: Readonly<Record<string, Query<N>>>;
   workspace: "subject" | "empty";
   on: Record<string, N | "end">;
   budget: number;
   access: Access;
-  limits: { idle: number; attempt: number; transcript: number };
+  limits: { idle: number; attempt: number; transcript: number; input: number };
 };
 
 /**
@@ -76,7 +86,8 @@ export type Commissioned = {
   request: string;
 };
 
-// subject and inputs name what the attempt was given, by hash, inputs in the order declared.
+// subject and inputs name what the attempt was given, by hash: each input's artifacts, oldest
+// first, inputs in the order declared.
 // process names the engine process running the attempt, so another engine can tell a live
 // attempt from an interrupted one.
 type AttemptStarted<N extends string> = {
@@ -84,18 +95,19 @@ type AttemptStarted<N extends string> = {
   step: N;
   attempt: number;
   subject: string;
-  inputs: readonly { name: Input; hash: string }[];
+  inputs: readonly { name: string; hashes: readonly string[] }[];
   process: { pid: number; start: number };
 };
 
-// artifacts are the artifacts the attempt claimed, in the order claimed, each with the files its
-// verifier kept, by name; transcript is the hash of its stdout and stderr.
+// artifacts are the artifacts the attempt claimed, in the order claimed, each with its kind, so a
+// query can select by kind without the store, and the files its verifier kept, by name; transcript
+// is the hash of its stdout and stderr.
 type AttemptCompleted<N extends string> = {
   type: "attempt-completed";
   step: N;
   attempt: number;
   outcome: string;
-  artifacts: readonly { hash: string; kept: Readonly<Record<string, string>> }[];
+  artifacts: readonly { hash: string; kind: string; kept: Readonly<Record<string, string>> }[];
   transcript: string;
   next: N | "end";
 };

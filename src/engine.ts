@@ -7,12 +7,11 @@ import { dirname, join, relative, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import {
-  assertNever,
   replay,
   type Commissioned,
   type CommissionEvent,
   type CommissionState,
-  type Input,
+  type Query,
   type Workflow,
 } from "./replay.ts";
 import { parseWorkflow } from "./definition.ts";
@@ -266,12 +265,28 @@ export function createEngine({ log, workflows }: Options) {
           continue;
         }
 
-        // An input with nothing to resolve to, such as a decision not yet made, is left out.
-        const given = step.inputs.flatMap((input) => {
-          const hash = resolve(input, state);
+        const given = Object.entries(step.inputs).map(([input, query]) => ({
+          name: input,
+          hashes: resolve(query, state, events),
+        }));
 
-          return hash === undefined ? [] : [{ name: input, hash }];
-        });
+        const inputs = given.map(({ name, hashes }) => ({
+          name,
+          artifacts: hashes.map((hash) => ({ hash, artifact: store.get(hash) })),
+        }));
+
+        const bytes = inputs
+          .flatMap(({ artifacts }) => artifacts)
+          .reduce((sum, { artifact }) => sum + Buffer.byteLength(artifact.body ?? ""), 0);
+
+        if (bytes > step.limits.input) {
+          write(commission, events, {
+            type: "escalated",
+            reason: `Step ${name}'s inputs are ${bytes} bytes, over its input limit of ${step.limits.input}.`,
+          });
+
+          continue;
+        }
 
         // A repeat would see what the earlier attempt saw, so only a decision can justify it.
         const repeated = attempts.some(
@@ -304,8 +319,6 @@ export function createEngine({ log, workflows }: Options) {
         write(commission, events, started);
 
         const cancelled = () => requested.get(commission, attempt) !== undefined;
-
-        const inputs = given.map((input) => ({ ...input, artifact: store.get(input.hash) }));
 
         write(
           commission,
@@ -346,19 +359,51 @@ function startOf(pid: number): number | undefined {
   return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
 }
 
-// The artifact an input names in the commission's current state, if there is one.
+// The artifacts a query names in the commission's events and current state, oldest first: none
+// when there is nothing to name, such as a decision not yet made.
 function resolve(
-  input: Input,
+  query: Query,
   state: Extract<CommissionState, { status: "ready" }>,
-): string | undefined {
-  switch (input) {
+  events: Log,
+): string[] {
+  switch (query) {
     case "subject":
-      return state.subject;
-    case "decision":
-      return state.decision;
-    default:
-      return assertNever(input);
+      return [state.subject];
+    case "request":
+      return [events[0].request];
+    default: {
+      const { from, kind, about, take } = query;
+
+      const named = recorded(events).flatMap((artifact) =>
+        (from === undefined || (artifact.step !== undefined && from.includes(artifact.step))) &&
+        (kind === undefined || artifact.kind === kind) &&
+        (about === undefined ||
+          (artifact.about !== undefined &&
+            (about === "any" || (about === "subject") === (artifact.about === state.subject))))
+          ? [artifact.hash]
+          : [],
+      );
+
+      return take === "latest" ? named.slice(-1) : named;
+    }
   }
+}
+
+// Every artifact in the commission's record, oldest first, with the step that claimed or decided
+// it and, for a judgement, the subject it is about. The request has no step.
+function recorded(events: Log): { hash: string; kind: string; step?: string; about?: string }[] {
+  return events.flatMap((event) => {
+    switch (event.type) {
+      case "commissioned":
+        return [{ hash: event.request, kind: "document" }];
+      case "attempt-completed":
+        return event.artifacts.map(({ hash, kind }) => ({ hash, kind, step: event.step }));
+      case "decided":
+        return [{ hash: event.decision, kind: "decision", step: event.step, about: event.subject }];
+      default:
+        return [];
+    }
+  });
 }
 
 // The files a verifier kept for the artifact `hash`; none for the request, which no verifier saw.
@@ -393,7 +438,10 @@ type Given = {
   step: string;
   attempt: number;
   subject: Subject;
-  inputs: readonly { name: Input; hash: string; artifact: Artifact }[];
+  inputs: readonly {
+    name: string;
+    artifacts: readonly { hash: string; artifact: Artifact }[];
+  }[];
 };
 
 type Store = ReturnType<typeof createStore>;
@@ -442,24 +490,32 @@ function membersOf(group: number): number[] {
     .map(Number);
 }
 
-// Writes input.json and each declared input's body, named after the input. The sandbox binds the
-// input read-only.
+// Writes input.json, listing each declared input's artifacts, and each body as <input>/<hash>.
+// The sandbox binds the input read-only.
 async function prepare(input: string, step: Runnable, given: Given): Promise<void> {
   await mkdir(input);
 
-  const inputs: Partial<
-    Record<Input, { hash: string; kind: string; fields: Artifact["fields"]; body?: string }>
-  > = {};
+  const inputs = new Map<
+    string,
+    { hash: string; kind: string; fields: Artifact["fields"]; body?: string }[]
+  >();
 
-  for (const { name, hash, artifact } of given.inputs) {
-    const { kind, fields } = artifact;
+  for (const { name, artifacts } of given.inputs) {
+    const listed = [];
 
-    if (artifact.body !== undefined) {
-      await writeFile(join(input, name), artifact.body);
-      inputs[name] = { hash, kind, fields, body: name };
-    } else {
-      inputs[name] = { hash, kind, fields };
+    for (const { hash, artifact } of artifacts) {
+      const { kind, fields } = artifact;
+
+      if (artifact.body === undefined) {
+        listed.push({ hash, kind, fields });
+      } else {
+        await mkdir(join(input, name), { recursive: true });
+        await writeFile(join(input, name, hash), artifact.body);
+        listed.push({ hash, kind, fields, body: `${name}/${hash}` });
+      }
     }
+
+    inputs.set(name, listed);
   }
 
   const encoded = {
@@ -467,7 +523,7 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
     step: given.step,
     attempt: given.attempt,
     outcomes: Object.keys(step.on),
-    inputs,
+    inputs: Object.fromEntries(inputs),
     // Left out of a command step's input.json, which has no agent.
     agent:
       step.kind === "agent" ? { model: step.agent.model, prompt: step.agent.prompt } : undefined,
@@ -628,7 +684,11 @@ async function run(
       step: name,
       attempt,
       outcome: claim.outcome,
-      artifacts: verified.map(({ artifact, kept }) => ({ hash: store.put(artifact), kept })),
+      artifacts: verified.map(({ artifact, kept }) => ({
+        hash: store.put(artifact),
+        kind: artifact.kind,
+        kept,
+      })),
       transcript: kept(),
       next: step.on[claim.outcome],
     };

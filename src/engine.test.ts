@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createEngine } from "./engine.ts";
-import { defineWorkflow, type Access, type Input, type Workflow } from "./replay.ts";
+import { defineWorkflow, type Access, type Query, type Workflow } from "./replay.ts";
 
 // The system's programs, read-only.
 const system = ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
@@ -53,7 +53,7 @@ async function engineWith<N extends string>(
 function engineRunning(
   t: TestContext,
   script: string,
-  limits = { idle: 1, attempt: 5, transcript: 65536 },
+  limits = { idle: 1, attempt: 5, transcript: 65536, input: 65536 },
 ) {
   return engineWith(t, (directory) =>
     defineWorkflow({
@@ -62,7 +62,7 @@ function engineRunning(
         build: {
           kind: "command",
           workspace: "empty",
-          inputs: [],
+          inputs: {},
           run: ["sh", "-c", script, "sh", join(directory, "started")],
           on: { done: "end", again: "build" },
           access,
@@ -84,12 +84,12 @@ function engineAwaiting(t: TestContext) {
         build: {
           kind: "command",
           workspace: "empty",
-          inputs: [],
+          inputs: {},
           run: ["true"],
           on: { done: "end" },
           access,
           budget: 1,
-          limits: { idle: 1, attempt: 5, transcript: 65536 },
+          limits: { idle: 1, attempt: 5, transcript: 65536, input: 65536 },
         },
       },
     }),
@@ -100,7 +100,11 @@ function engineAwaiting(t: TestContext) {
  * Starts an engine with a single command step that declares `inputs`, runs `script` and ends on
  * `done`. The script's `$1` is the directory `received` in the returned directory, empty at start.
  */
-async function engineReceiving(t: TestContext, inputs: readonly Input[], script: string) {
+async function engineReceiving(
+  t: TestContext,
+  inputs: Readonly<Record<string, Query<"build">>>,
+  script: string,
+) {
   const started = await engineWith(t, (directory) =>
     defineWorkflow({
       start: "build",
@@ -113,7 +117,7 @@ async function engineReceiving(t: TestContext, inputs: readonly Input[], script:
           on: { done: "end" },
           access,
           budget: 1,
-          limits: { idle: 1, attempt: 5, transcript: 65536 },
+          limits: { idle: 1, attempt: 5, transcript: 65536, input: 65536 },
         },
       },
     }),
@@ -137,7 +141,7 @@ type Claim = {
  * the approval step `review`.
  */
 async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
-  const limits = { idle: 1, attempt: 5, transcript: 65536 };
+  const limits = { idle: 1, attempt: 5, transcript: 65536, input: 65536 };
 
   const started = await engineWith(t, (directory) =>
     defineWorkflow({
@@ -146,7 +150,7 @@ async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
         build: {
           kind: "command",
           workspace: "empty",
-          inputs: [],
+          inputs: {},
           run: [
             "sh",
             "-c",
@@ -161,11 +165,11 @@ async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
         read: {
           kind: "command",
           workspace: "empty",
-          inputs: ["subject"],
+          inputs: { subject: "subject" },
           run: [
             "sh",
             "-c",
-            `cp "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            `cp -r "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
             "sh",
             join(directory, "received"),
           ],
@@ -203,12 +207,12 @@ function stepRunning<N extends string>(script: string, next: N, args: readonly s
   return {
     kind: "command",
     workspace: "empty",
-    inputs: [],
+    inputs: {},
     run: ["sh", "-c", script, "sh", ...args],
     on: { done: next },
     access,
     budget: 1,
-    limits: { idle: 5, attempt: 10, transcript: 65536 },
+    limits: { idle: 5, attempt: 10, transcript: 65536, input: 65536 },
   } as const;
 }
 
@@ -275,8 +279,8 @@ test("a commission's request is its first subject, kept in the store", async (t)
 test("a step that declares the subject receives it in its input", async (t) => {
   const { engine, directory } = await engineReceiving(
     t,
-    ["subject"],
-    `cp "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    { subject: "subject" },
+    `cp -r "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
   );
 
   const subject = subjectOf(engine);
@@ -291,17 +295,19 @@ test("a step that declares the subject receives it in its input", async (t) => {
     attempt: 1,
     outcomes: ["done"],
     inputs: {
-      subject: { hash: subject, kind: "document", fields: { title: "Greet" }, body: "subject" },
+      subject: [
+        { hash: subject, kind: "document", fields: { title: "Greet" }, body: `subject/${subject}` },
+      ],
     },
   });
 
-  assert.equal(await readFile(join(received, "subject"), "utf8"), "Say hello.");
+  assert.equal(await readFile(join(received, "subject", subject), "utf8"), "Say hello.");
 });
 
 test("a step that declares no inputs receives only input.json", async (t) => {
   const { engine, directory } = await engineReceiving(
     t,
-    [],
+    {},
     `ls -A "$MEDRENGARD_IN" > "$1/listing"; cp "$MEDRENGARD_IN/input.json" "$1"
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
   );
@@ -317,10 +323,10 @@ test("a step that declares no inputs receives only input.json", async (t) => {
 test("a step cannot write to its input", async (t) => {
   const { engine } = await engineReceiving(
     t,
-    ["subject"],
-    `test -f "$MEDRENGARD_IN/subject" &&
+    { subject: "subject" },
+    `body=$(ls -d "$MEDRENGARD_IN"/subject/*) && test -f "$body" &&
      ! touch "$MEDRENGARD_IN/note" 2> /dev/null &&
-     ! (echo changed > "$MEDRENGARD_IN/subject") 2> /dev/null &&
+     ! (echo changed > "$body") 2> /dev/null &&
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
   );
 
@@ -340,7 +346,7 @@ function engineConfined(t: TestContext, confined: (directory: string) => Access,
         build: {
           kind: "command",
           workspace: "empty",
-          inputs: [],
+          inputs: {},
           run: [
             "sh",
             "-c",
@@ -352,7 +358,7 @@ function engineConfined(t: TestContext, confined: (directory: string) => Access,
           on: { done: "end" },
           budget: 1,
           access: confined(directory),
-          limits: { idle: 5, attempt: 10, transcript: 65536 },
+          limits: { idle: 5, attempt: 10, transcript: 65536, input: 65536 },
         },
       },
     }),
@@ -462,11 +468,11 @@ test("a claimed document becomes the subject the next step receives", async (t) 
   });
 
   assert.equal(
-    JSON.parse(await readFile(join(received, "input.json"), "utf8")).inputs.subject.hash,
+    JSON.parse(await readFile(join(received, "input.json"), "utf8")).inputs.subject[0].hash,
     subject,
   );
 
-  assert.equal(await readFile(join(received, "subject"), "utf8"), "Do it.");
+  assert.equal(await readFile(join(received, "subject", subject), "utf8"), "Do it.");
 });
 
 test("a claim with a field output.json does not define escalates", async (t) => {
@@ -600,9 +606,9 @@ test("a claimed body that is not UTF-8 escalates", async (t) => {
 test("a step that declares the decision receives the owner's feedback", async (t) => {
   const { engine, directory } = await engineReceiving(
     t,
-    ["decision"],
+    { decision: { kind: "decision", about: "subject", take: "latest" } },
     // -f, since the first attempt's copies are read-only.
-    `cp -f "$MEDRENGARD_IN"/* "$1"; exit 3`,
+    `cp -rf "$MEDRENGARD_IN"/* "$1"; exit 3`,
   );
 
   await engine.advance("first");
@@ -615,21 +621,27 @@ test("a step that declares the decision receives the owner's feedback", async (t
   const received = join(directory, "received");
   const input = JSON.parse(await readFile(join(received, "input.json"), "utf8"));
 
-  assert.partialDeepStrictEqual(input.inputs.decision, { kind: "decision", body: "decision" });
+  const [decision] = input.inputs.decision;
 
-  assert.deepEqual(engine.artifact(input.inputs.decision.hash), {
+  assert.equal(input.inputs.decision.length, 1);
+  assert.partialDeepStrictEqual(decision, { kind: "decision", body: `decision/${decision.hash}` });
+
+  assert.deepEqual(engine.artifact(decision.hash), {
     kind: "decision",
     fields: { outcome: "retry", subject },
     body: "Use fewer words.",
   });
 
-  assert.equal(await readFile(join(received, "decision"), "utf8"), "Use fewer words.");
+  assert.equal(
+    await readFile(join(received, "decision", decision.hash), "utf8"),
+    "Use fewer words.",
+  );
 });
 
 test("a step that declares the decision receives none before the owner decides", async (t) => {
   const { engine, directory } = await engineReceiving(
     t,
-    ["decision"],
+    { decision: { kind: "decision", about: "subject", take: "latest" } },
     `cp "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
   );
 
@@ -637,11 +649,11 @@ test("a step that declares the decision receives none before the owner decides",
 
   const input = JSON.parse(await readFile(join(directory, "received", "input.json"), "utf8"));
 
-  assert.deepEqual(input.inputs, {});
+  assert.deepEqual(input.inputs, { decision: [] });
 });
 
-test("a decision about an earlier subject is not given as the decision", async (t) => {
-  const limits = { idle: 1, attempt: 5, transcript: 65536 };
+test("a decision about an earlier subject is history, not about the current one", async (t) => {
+  const limits = { idle: 1, attempt: 5, transcript: 65536, input: 65536 };
 
   const { engine, directory } = await engineWith(t, (directory) =>
     defineWorkflow({
@@ -651,7 +663,7 @@ test("a decision about an earlier subject is not given as the decision", async (
         build: {
           kind: "command",
           workspace: "empty",
-          inputs: [],
+          inputs: {},
           run: [
             "sh",
             "-c",
@@ -666,7 +678,10 @@ test("a decision about an earlier subject is not given as the decision", async (
         read: {
           kind: "command",
           workspace: "empty",
-          inputs: ["decision"],
+          inputs: {
+            current: { kind: "decision", about: "subject" },
+            history: { kind: "decision", about: "earlier" },
+          },
           run: [
             "sh",
             "-c",
@@ -688,7 +703,171 @@ test("a decision about an earlier subject is not given as the decision", async (
 
   const input = JSON.parse(await readFile(join(directory, "input.json"), "utf8"));
 
-  assert.deepEqual(input.inputs, {});
+  assert.deepEqual(input.inputs.current, []);
+  assert.equal(input.inputs.history.length, 1);
+
+  assert.partialDeepStrictEqual(engine.artifact(input.inputs.history[0].hash), {
+    kind: "decision",
+    fields: { outcome: "approve" },
+    body: "Plan it.",
+  });
+});
+
+test("a step that queries a step's latest artifact receives it after the subject moved on", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "design",
+      steps: {
+        design: stepRunning(
+          `printf 'Do it.' > "$MEDRENGARD_OUT/plan.md"
+           echo '${JSON.stringify(planAt("plan.md"))}' > "$MEDRENGARD_OUT/output.json"`,
+          "develop",
+        ),
+        develop: stepRunning(committing, "review"),
+        review: {
+          ...stepRunning(
+            `cp -r "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+            [directory],
+          ),
+          inputs: { plan: { from: ["design"], take: "latest" } },
+        },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const input = JSON.parse(await readFile(join(directory, "input.json"), "utf8"));
+
+  const [plan] = input.inputs.plan;
+
+  assert.equal(input.inputs.plan.length, 1);
+
+  assert.deepEqual(engine.artifact(plan.hash), {
+    kind: "document",
+    fields: { title: "Plan" },
+    body: "Do it.",
+  });
+
+  assert.equal(await readFile(join(directory, "plan", plan.hash), "utf8"), "Do it.");
+});
+
+test("a step that declares the request receives it after the subject moved on", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "design",
+      steps: {
+        design: stepRunning(
+          `printf 'Do it.' > "$MEDRENGARD_OUT/plan.md"
+           echo '${JSON.stringify(planAt("plan.md"))}' > "$MEDRENGARD_OUT/output.json"`,
+          "develop",
+        ),
+        develop: {
+          ...stepRunning(
+            `cp -r "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+            [directory],
+          ),
+          inputs: { request: "request" },
+        },
+      },
+    }),
+  );
+
+  const request = subjectOf(engine);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const input = JSON.parse(await readFile(join(directory, "input.json"), "utf8"));
+
+  assert.deepEqual(
+    input.inputs.request.map(({ hash }: { hash: string }) => hash),
+    [request],
+  );
+
+  assert.equal(await readFile(join(directory, "request", request), "utf8"), "Say hello.");
+});
+
+test("a step that queries all of a step's artifacts receives each, oldest first", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "design",
+      steps: {
+        design: stepRunning(
+          `echo started >> "$1"; wc -l < "$1" > "$MEDRENGARD_OUT/plan.md"
+           echo '${JSON.stringify(planAt("plan.md"))}' > "$MEDRENGARD_OUT/output.json"`,
+          "review",
+          [join(directory, "started")],
+        ),
+        review: { kind: "approval", on: { changes: "design", approve: "read" } },
+        read: {
+          ...stepRunning(
+            `cp -r "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+            [join(directory, "received")],
+          ),
+          inputs: { plans: { from: ["design"], take: "all" } },
+        },
+      },
+    }),
+  );
+
+  await mkdir(join(directory, "received"));
+  await engine.advance("first");
+  const first = subjectOf(engine);
+  engine.decide("first", { subject: first, outcome: "changes" });
+  await engine.advance("first");
+  const second = subjectOf(engine);
+  engine.decide("first", { subject: second, outcome: "approve" });
+  await engine.advance("first");
+
+  const received = join(directory, "received");
+  const input = JSON.parse(await readFile(join(received, "input.json"), "utf8"));
+
+  assert.deepEqual(input.inputs, {
+    plans: [
+      { hash: first, kind: "document", fields: { title: "Plan" }, body: `plans/${first}` },
+      { hash: second, kind: "document", fields: { title: "Plan" }, body: `plans/${second}` },
+    ],
+  });
+
+  assert.equal(await readFile(join(received, "plans", first), "utf8"), "1\n");
+  assert.equal(await readFile(join(received, "plans", second), "utf8"), "2\n");
+});
+
+test("a step that queries a kind receives only artifacts of that kind", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "design",
+      steps: {
+        design: stepRunning(
+          `printf 'Do it.' > "$MEDRENGARD_OUT/plan.md"
+           echo '${JSON.stringify(planAt("plan.md"))}' > "$MEDRENGARD_OUT/output.json"`,
+          "develop",
+        ),
+        develop: stepRunning(committing, "read"),
+        read: {
+          ...stepRunning(
+            `cp "$MEDRENGARD_IN/input.json" "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "review",
+            [directory],
+          ),
+          inputs: { commits: { kind: "commit" } },
+        },
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+
+  const input = JSON.parse(await readFile(join(directory, "input.json"), "utf8"));
+
+  assert.deepEqual(
+    input.inputs.commits.map(({ hash }: { hash: string }) => hash),
+    [subjectOf(engine)],
+  );
 });
 
 test("an agent step runs its harness adapter, which is given the agent", async (t) => {
@@ -712,11 +891,11 @@ test("an agent step runs its harness adapter, which is given the agent", async (
             model: "a-model",
             prompt: "Plan the change.",
           },
-          inputs: [],
+          inputs: {},
           on: { done: "end" },
           access,
           budget: 1,
-          limits: { idle: 1, attempt: 5, transcript: 65536 },
+          limits: { idle: 1, attempt: 5, transcript: 65536, input: 65536 },
         },
       },
     }),
@@ -889,6 +1068,51 @@ test("a workflow whose budget is not a positive integer cannot be commissioned",
   );
 });
 
+test("a workflow whose input queries a step it does not have cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow<string>({
+        start: "build",
+        steps: { build: { ...stepRunning("true", "end"), inputs: { plan: { from: ["design"] } } } },
+      }),
+    ),
+    {
+      message:
+        "Workflow build is invalid: step build's inputs must each be subject, request, or a query of its steps, a kind, a subject and latest or all.",
+    },
+  );
+});
+
+test("a workflow whose input queries a kind there is not cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        steps: { build: { ...stepRunning("true", "end"), inputs: { plans: { kind: "plan" } } } },
+      }),
+    ),
+    {
+      message:
+        "Workflow build is invalid: step build's inputs must each be subject, request, or a query of its steps, a kind, a subject and latest or all.",
+    },
+  );
+});
+
+test("a workflow whose input name is not a plain file name cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        steps: { build: { ...stepRunning("true", "end"), inputs: { "../plan": "request" } } },
+      }),
+    ),
+    {
+      message:
+        "Workflow build is invalid: step build's input names must each be letters, digits, - or _, starting with a letter.",
+    },
+  );
+});
+
 test("a workflow whose limit is not positive cannot be commissioned", async (t) => {
   await assert.rejects(
     engineWith(t, () =>
@@ -897,7 +1121,7 @@ test("a workflow whose limit is not positive cannot be commissioned", async (t) 
         steps: {
           build: {
             ...stepRunning("true", "end"),
-            limits: { idle: 0, attempt: 5, transcript: 65536 },
+            limits: { idle: 0, attempt: 5, transcript: 65536, input: 65536 },
           },
         },
       }),
@@ -917,12 +1141,12 @@ test("a commission whose command step leads to an approval step awaits the owner
         build: {
           kind: "command",
           workspace: "empty",
-          inputs: [],
+          inputs: {},
           run: ["sh", "-c", `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`],
           on: { done: "review" },
           access,
           budget: 1,
-          limits: { idle: 1, attempt: 5, transcript: 65536 },
+          limits: { idle: 1, attempt: 5, transcript: 65536, input: 65536 },
         },
         review: { kind: "approval", on: { approve: "end" } },
       },
@@ -1042,6 +1266,7 @@ test("a step that writes past its transcript limit is stopped and escalates", as
     idle: 5,
     attempt: 10,
     transcript: 1000,
+    input: 65536,
   });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
@@ -1050,6 +1275,30 @@ test("a step that writes past its transcript limit is stopped and escalates", as
     reason: "Step build wrote more than its transcript limit of 1000 bytes.",
   });
   assert.equal(engine.transcript("first", 1).length, 1000);
+});
+
+test("a step whose inputs are over its input limit escalates without starting", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          ...stepRunning("true", "end"),
+          inputs: { request: "request" },
+          limits: { idle: 5, attempt: 10, transcript: 65536, input: 9 },
+        },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: "Step build's inputs are 10 bytes, over its input limit of 9.",
+  });
+
+  // An attempt that started would have a transcript, even an empty one.
+  assert.throws(() => engine.transcript("first", 1));
 });
 
 test("a step that is idle for its idle limit is stopped and escalates", async (t) => {
@@ -1077,6 +1326,7 @@ test("a step that runs for its attempt limit is stopped and escalates", async (t
     idle: 1,
     attempt: 1,
     transcript: 65536,
+    input: 65536,
   });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
@@ -1091,7 +1341,7 @@ test("a stopped step has its grace period between SIGTERM and SIGKILL", async (t
     t,
     `trap 'sleep 0.5; echo stopped gracefully > "$1"; exit 0' TERM
      while true; do echo tick; sleep 0.1; done`,
-    { idle: 5, attempt: 1, transcript: 65536 },
+    { idle: 5, attempt: 1, transcript: 65536, input: 65536 },
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "escalated" });
@@ -1102,7 +1352,7 @@ test("an attempt held by a live engine is left attempting", async (t) => {
   const { engine, directory, options } = await engineRunning(
     t,
     `echo started >> "$1"; sleep 1; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
-    { idle: 5, attempt: 5, transcript: 65536 },
+    { idle: 5, attempt: 5, transcript: 65536, input: 65536 },
   );
 
   const running = engine.advance("first");
@@ -1126,6 +1376,7 @@ test(
         idle: 60,
         attempt: 60,
         transcript: 65536,
+        input: 65536,
       },
     );
 
@@ -1155,6 +1406,7 @@ test("an attempt cancelled from another engine is stopped and escalates", async 
     idle: 60,
     attempt: 60,
     transcript: 65536,
+    input: 65536,
   });
 
   const running = engine.advance("first");

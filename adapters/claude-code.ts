@@ -35,8 +35,8 @@ if (!modes.includes(mode)) {
 // SAFETY: the engine encodes input.json for an agent step with these fields.
 const given = JSON.parse(readFileSync(join(input, "input.json"), "utf8")) as Given;
 
-const contract = `You are a step in a workflow. Your inputs are in ${input}: input.json lists them,
-and each body is the file beside it that its "body" names.
+const contract = `You are a step in a workflow. Your inputs are in ${input}: input.json lists each
+input's artifacts, and each body is the file its "body" names, relative to ${input}.
 
 When you are done, write ${join(output, "output.json")} as JSON:
 {"outcome": one of ${JSON.stringify(given.outcomes)}, "artifacts": [...]}.

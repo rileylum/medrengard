@@ -2,6 +2,13 @@ import { normalize } from "node:path";
 import { hasExactly, isRecord, isText } from "./json.ts";
 import type { Workflow } from "./replay.ts";
 
+// lazy: the built-in kinds, until kinds are definitions.
+const kinds = ["document", "commit", "decision"];
+
+// An input name, which is also a directory in the step's input, so it cannot leave that directory
+// or collide with input.json.
+const inputName = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
 // A variable name the shell can pass on.
 const variable = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -64,7 +71,7 @@ export function parseWorkflow(name: string, text: string): Workflow {
     const harness = agent?.harness;
     const argv = kind === "command" ? step.run : harness?.run;
     const seconds = { idle: limits?.idle, attempt: limits?.attempt };
-    const transcript = limits?.transcript;
+    const bytes = { transcript: limits?.transcript, input: limits?.input };
 
     const fields = ["kind", "workspace", "inputs", program, "on", "budget", "access", "limits"];
 
@@ -76,11 +83,34 @@ export function parseWorkflow(name: string, text: string): Workflow {
       throw invalid(`step ${name}'s workspace must be subject or empty`);
     }
 
+    if (isRecord(inputs) && !Object.keys(inputs).every((input) => inputName.test(input))) {
+      throw invalid(
+        `step ${name}'s input names must each be letters, digits, - or _, starting with a letter`,
+      );
+    }
+
     if (
-      !Array.isArray(inputs) ||
-      !inputs.every((input) => input === "subject" || input === "decision")
+      !isRecord(inputs) ||
+      !Object.values(inputs).every(
+        (query) =>
+          query === "subject" ||
+          query === "request" ||
+          (isRecord(query) &&
+            Object.entries(query).every(
+              ([field, value]) =>
+                (field === "from" &&
+                  Array.isArray(value) &&
+                  value.every((from) => names.includes(from))) ||
+                (field === "kind" && kinds.includes(value)) ||
+                (field === "about" &&
+                  (value === "subject" || value === "earlier" || value === "any")) ||
+                (field === "take" && (value === "latest" || value === "all")),
+            )),
+      )
     ) {
-      throw invalid(`step ${name}'s inputs must each be subject or decision`);
+      throw invalid(
+        `step ${name}'s inputs must each be subject, request, or a query of its steps, a kind, a subject and latest or all`,
+      );
     }
 
     if (
@@ -140,8 +170,8 @@ export function parseWorkflow(name: string, text: string): Workflow {
       throw invalid(`step ${name}'s workspace access must be read or write`);
     }
 
-    if (!hasExactly(limits, ["idle", "attempt", "transcript"])) {
-      throw invalid(`step ${name}'s limits must be idle, attempt and transcript`);
+    if (!hasExactly(limits, ["idle", "attempt", "transcript", "input"])) {
+      throw invalid(`step ${name}'s limits must be idle, attempt, transcript and input`);
     }
 
     for (const [limit, value] of Object.entries(seconds)) {
@@ -152,8 +182,10 @@ export function parseWorkflow(name: string, text: string): Workflow {
       }
     }
 
-    if (!Number.isInteger(transcript) || transcript <= 0) {
-      throw invalid(`step ${name}'s transcript limit must be a positive integer`);
+    for (const [limit, value] of Object.entries(bytes)) {
+      if (!Number.isInteger(value) || value <= 0) {
+        throw invalid(`step ${name}'s ${limit} limit must be a positive integer`);
+      }
     }
   }
 
