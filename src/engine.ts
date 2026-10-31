@@ -97,6 +97,45 @@ export function createEngine({ log, workflows }: Options) {
       return store.get(hash);
     },
 
+    /**
+     * Records the owner's decision about the commission's current subject. At an approval step
+     * the outcome must be one the step declares; on an escalation it is retry or abandon.
+     */
+    decide(commission: string, { subject, outcome }: { subject: string; outcome: string }) {
+      const events = read(commission);
+      const workflow = workflows[events[0].workflow];
+      const state = replay(workflow, events);
+
+      if (state.status !== "awaiting" && state.status !== "escalated") {
+        throw new Error(`Commission ${commission} is ${state.status}, so no decision can be made.`);
+      }
+
+      if (subject !== state.subject) {
+        throw new Error(`Commission ${commission} is about ${state.subject}, not ${subject}.`);
+      }
+
+      const name = state.step.name;
+      const step = workflow.steps[name];
+      const on = step.kind === "approval" ? step.on : { retry: name, abandon: "end" };
+
+      if (!Object.hasOwn(on, outcome)) {
+        throw new Error(`Step ${name} does not declare outcome "${outcome}".`);
+      }
+
+      const event = {
+        type: "decided",
+        step: name,
+        decision: store.put({ kind: "decision", fields: { outcome, subject } }),
+        outcome,
+        subject,
+        next: on[outcome],
+      } as const;
+
+      write(commission, events, event);
+
+      return replay(workflow, [...events, event]);
+    },
+
     /** Asks the engine running the commission's attempt to stop it; that engine escalates. */
     cancel(commission: string): void {
       const events = read(commission);

@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import { defineWorkflow, replay } from "./replay.ts";
 
 const startingAt = (kind: "agent" | "approval") =>
-  defineWorkflow({ start: "second", steps: { first: { kind: "agent" }, second: { kind } } });
+  defineWorkflow({
+    start: "second",
+    steps: { first: { kind: "agent" }, second: kind === "approval" ? { kind, on: {} } : { kind } },
+  });
 
 test("a commission starting at an agent step is ready at its start step", () => {
   assert.partialDeepStrictEqual(
@@ -55,7 +58,7 @@ test("a completed attempt leaves the commission awaiting at a next approval step
   // When another test needs a non-command next step, let the helper take both kinds.
   const workflow = defineWorkflow({
     start: "second",
-    steps: { first: { kind: "approval" }, second: { kind: "agent" } },
+    steps: { first: { kind: "approval", on: {} }, second: { kind: "agent" } },
   });
 
   assert.partialDeepStrictEqual(

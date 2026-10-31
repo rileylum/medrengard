@@ -12,7 +12,7 @@ type Step<N extends string> =
       budget: number;
       limits: { idle: number; attempt: number };
     }
-  | { kind: "approval" };
+  | { kind: "approval"; on: Record<string, N | "end"> };
 
 /** A workflow over its step names `N`; `start` must name one of its steps, and `end` is reserved. */
 export type Workflow<N extends string = string> = {

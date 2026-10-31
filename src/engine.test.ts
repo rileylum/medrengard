@@ -7,42 +7,79 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createEngine } from "./engine.ts";
-import { defineWorkflow } from "./replay.ts";
+import { defineWorkflow, type Workflow } from "./replay.ts";
 
 /**
- * Starts an engine whose one workflow, `build`, has a single command step that runs `script`,
- * ends on `done`, repeats on `again`, has a budget of 2 and the given limits. The script's `$1`
- * is a file it may append to, named `started` in the returned directory. Returns the options too,
- * so a test can start a second engine on the same log.
+ * Starts an engine whose one workflow, `build`, is made by `workflow` from the test's directory,
+ * and commissions `first` under it. Returns the options too, so a test can start a second engine
+ * on the same log.
  */
-async function engineRunning(t: TestContext, script: string, limits = { idle: 1, attempt: 5 }) {
+async function engineWith<N extends string>(
+  t: TestContext,
+  workflow: (directory: string) => Workflow<N>,
+) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
   t.after(() => rm(directory, { recursive: true, force: true }));
 
-  const options = {
-    log: join(directory, "log.sqlite"),
-    workflows: {
-      build: defineWorkflow({
-        start: "build",
-        steps: {
-          build: {
-            kind: "command",
-            run: ["sh", "-c", script, "sh", join(directory, "started")],
-            on: { done: "end", again: "build" },
-            budget: 2,
-            limits,
-          },
-        },
-      }),
-    },
-  };
-
+  const options = { log: join(directory, "log.sqlite"), workflows: { build: workflow(directory) } };
   const engine = createEngine(options);
 
   engine.commission("build", "first", { title: "Greet", body: "Say hello." });
 
   return { engine, directory, options };
+}
+
+/**
+ * Starts an engine with a single command step that runs `script`, ends on `done`, repeats on
+ * `again`, has a budget of 2 and the given limits. The script's `$1` is a file it may append to,
+ * named `started` in the returned directory.
+ */
+function engineRunning(t: TestContext, script: string, limits = { idle: 1, attempt: 5 }) {
+  return engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          kind: "command",
+          run: ["sh", "-c", script, "sh", join(directory, "started")],
+          on: { done: "end", again: "build" },
+          budget: 2,
+          limits,
+        },
+      },
+    }),
+  );
+}
+
+/** Starts an engine whose commission awaits the owner at `review`, before a command step. */
+function engineAwaiting(t: TestContext) {
+  return engineWith(t, () =>
+    defineWorkflow({
+      start: "review",
+      steps: {
+        review: { kind: "approval", on: { approve: "build", reject: "end" } },
+        build: {
+          kind: "command",
+          run: ["true"],
+          on: { done: "end" },
+          budget: 1,
+          limits: { idle: 1, attempt: 5 },
+        },
+      },
+    }),
+  );
+}
+
+/** The commission's current subject, which a decision must name. */
+function subjectOf(engine: ReturnType<typeof createEngine>): string {
+  const state = engine.state("first");
+
+  if (state.status === "finished") {
+    throw new Error("A finished commission has no subject.");
+  }
+
+  return state.subject;
 }
 
 /** Waits until the step has written to its `started` file. */
@@ -253,4 +290,58 @@ test("a commission without an attempt in flight cannot be cancelled", async (t) 
   assert.throws(() => engine.cancel("first"), {
     message: "Commission first is ready, so no attempt can be cancelled.",
   });
+});
+
+test("an approval decision leaves the commission ready at the next step", async (t) => {
+  const { engine } = await engineAwaiting(t);
+
+  assert.partialDeepStrictEqual(
+    engine.decide("first", { subject: subjectOf(engine), outcome: "approve" }),
+    { status: "ready", step: { name: "build" } },
+  );
+});
+
+test("a decision about a stale subject is refused and records nothing", async (t) => {
+  const { engine } = await engineAwaiting(t);
+
+  assert.throws(() => engine.decide("first", { subject: "stale", outcome: "approve" }), {
+    message: `Commission first is about ${subjectOf(engine)}, not stale.`,
+  });
+  assert.partialDeepStrictEqual(engine.state("first"), { status: "awaiting" });
+});
+
+test("a decision with an undeclared outcome is refused and records nothing", async (t) => {
+  const { engine } = await engineAwaiting(t);
+
+  assert.throws(() => engine.decide("first", { subject: subjectOf(engine), outcome: "ship" }), {
+    message: 'Step review does not declare outcome "ship".',
+  });
+  assert.partialDeepStrictEqual(engine.state("first"), { status: "awaiting" });
+});
+
+test("a retry renews the budget of the escalated step", async (t) => {
+  const { engine, directory } = await engineRunning(
+    t,
+    `echo started >> "$1"; echo '{"outcome":"again"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+  engine.decide("first", { subject: subjectOf(engine), outcome: "retry" });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build has spent its budget of 2 attempts.",
+  });
+  assert.equal(await readFile(join(directory, "started"), "utf8"), "started\n".repeat(4));
+});
+
+test("an abandon decision finishes the escalated commission as abandoned", async (t) => {
+  const { engine } = await engineRunning(t, "exit 1");
+
+  await engine.advance("first");
+
+  assert.partialDeepStrictEqual(
+    engine.decide("first", { subject: subjectOf(engine), outcome: "abandon" }),
+    { status: "finished", by: "abandoned" },
+  );
 });

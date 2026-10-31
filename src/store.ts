@@ -14,7 +14,10 @@ import { join } from "node:path";
 /** A document artifact, such as the owner's request: a title and a text body. */
 export type Document = { kind: "document"; fields: { title: string }; body: string };
 
-export type Artifact = Document;
+/** The owner's decision: an outcome about a subject, named by its hash. */
+export type Decision = { kind: "decision"; fields: { outcome: string; subject: string } };
+
+export type Artifact = Document | Decision;
 
 /** Keeps artifacts and their bodies in `directory`, each under the sha256 of its bytes. */
 export function createStore(directory: string) {
@@ -45,14 +48,22 @@ export function createStore(directory: string) {
 
   return {
     /** Keeps an artifact and returns its hash, which covers its kind, fields and body hash. */
-    put({ kind, fields, body }: Artifact): string {
-      // lazy: fields hash in the order they were written. Sort them once a kind has more than one.
-      return keep(JSON.stringify({ kind, fields, body: keep(body) }));
+    put(artifact: Artifact): string {
+      const { kind, fields } = artifact;
+      const body = "body" in artifact ? keep(artifact.body) : null;
+
+      // lazy: fields hash in the order they were written. Sort them once a kind can be
+      // written by something other than the engine.
+      return keep(JSON.stringify({ kind, fields, body }));
     },
 
     /** Reads back the artifact kept under `hash`. */
     get(hash: string): Artifact {
       const { kind, fields, body } = JSON.parse(readFileSync(join(directory, hash), "utf8"));
+
+      if (body === null) {
+        return { kind, fields };
+      }
 
       return { kind, fields, body: readFileSync(join(directory, body), "utf8") };
     },
