@@ -116,6 +116,29 @@ test("a commission's request is its first subject, kept in the store", async (t)
   });
 });
 
+test("a commission whose command step leads to an approval step awaits the owner", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          kind: "command",
+          run: ["sh", "-c", `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`],
+          on: { done: "review" },
+          budget: 1,
+          limits: { idle: 1, attempt: 5 },
+        },
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "awaiting",
+    step: { name: "review" },
+  });
+});
+
 test("a step that exits non-zero escalates its commission", async (t) => {
   const { engine } = await engineRunning(
     t,
