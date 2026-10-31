@@ -1,6 +1,6 @@
 /**
  * The commit kind's verifier: accepts a claimed SHA that is the workspace's HEAD and not already
- * the commission's subject.
+ * the commission's subject, keeping a Git bundle of it.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -33,6 +33,12 @@ const verdict =
       ? { accepted: false, reason: `HEAD is ${head}, not ${fields.sha}.` }
       : subject.kind === "commit" && subject.fields.sha === fields.sha
         ? { accepted: false, reason: `${fields.sha} is already the subject.` }
-        : { accepted: true };
+        : { accepted: true, keep: ["commit.bundle"] };
+
+if (verdict.accepted) {
+  execFileSync("git", ["bundle", "create", "--quiet", join(output, "commit.bundle"), "HEAD"], {
+    stdio: "ignore",
+  });
+}
 
 writeFileSync(join(output, "output.json"), JSON.stringify(verdict));

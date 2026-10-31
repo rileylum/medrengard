@@ -277,7 +277,11 @@ export function createEngine({ log, workflows }: Options) {
               commission,
               step: name,
               attempt,
-              subject: { hash: state.subject, artifact: store.get(state.subject) },
+              subject: {
+                hash: state.subject,
+                artifact: store.get(state.subject),
+                kept: keptOf(events, state.subject),
+              },
               inputs,
             },
             cancelled,
@@ -318,6 +322,21 @@ function resolve(
   }
 }
 
+// The files a verifier kept for the artifact `hash`; none for the request, which no verifier saw.
+function keptOf(events: Log, hash: string): Readonly<Record<string, string>> {
+  for (const event of events) {
+    const found =
+      event.type === "attempt-completed" &&
+      event.artifacts.find((artifact) => artifact.hash === hash);
+
+    if (found) {
+      return found.kept;
+    }
+  }
+
+  return {};
+}
+
 // Only the owner renews a budget or permits a repeat: both count from the latest decision.
 function sinceDecision(events: Log): Log[number][] {
   return events.slice(events.findLastIndex((event) => event.type === "decided") + 1);
@@ -325,13 +344,16 @@ function sinceDecision(events: Log): Log[number][] {
 
 type Runnable = Extract<Workflow["steps"][string], { kind: "agent" | "command" }>;
 
+// The commission's subject, with the files its verifier kept.
+type Subject = { hash: string; artifact: Artifact; kept: Readonly<Record<string, string>> };
+
 // What an attempt is given: the domain values its input.json encodes, and the commission's
 // subject, which verifiers judge a claim against.
 type Given = {
   commission: string;
   step: string;
   attempt: number;
-  subject: { hash: string; artifact: Artifact };
+  subject: Subject;
   inputs: readonly { name: Input; hash: string; artifact: Artifact }[];
 };
 
@@ -416,6 +438,15 @@ async function run(
 
   try {
     await mkdir(workspace);
+
+    if (step.workspace === "subject") {
+      const failed = await materialise(directory, workspace, name, given.subject, store);
+
+      if (failed !== undefined) {
+        return escalate(failed);
+      }
+    }
+
     await prepare(input, step, given);
     await mkdir(output);
 
@@ -504,14 +535,20 @@ async function run(
       return escalate(claim.reason);
     }
 
-    // A document's kind has no verifier; a commit's does.
+    // A document's kind has no verifier; a commit's does, and keeps files.
+    const verified = [];
+
     for (const artifact of claim.artifacts) {
       if (artifact.kind === "commit") {
-        const rejected = await verify(directory, workspace, name, artifact, given.subject);
+        const result = await verify(directory, workspace, name, artifact, given.subject, store);
 
-        if (rejected !== undefined) {
-          return escalate(rejected);
+        if ("reason" in result) {
+          return escalate(result.reason);
         }
+
+        verified.push({ artifact, kept: result.kept });
+      } else {
+        verified.push({ artifact, kept: {} });
       }
     }
 
@@ -520,7 +557,7 @@ async function run(
       step: name,
       attempt,
       outcome: claim.outcome,
-      artifacts: claim.artifacts.map((artifact) => store.put(artifact)),
+      artifacts: verified.map(({ artifact, kept }) => ({ hash: store.put(artifact), kept })),
       transcript: kept(),
       next: step.on[claim.outcome],
     };
@@ -594,7 +631,6 @@ async function parse(
     return { reason: `Step ${name} claimed artifacts that are not a list.` };
   }
 
-  const root = await realpath(output);
   const artifacts: (Document | Commit)[] = [];
 
   for (const artifact of claimed) {
@@ -644,14 +680,11 @@ async function parse(
       };
     }
 
-    // Resolved first, so neither .. nor a symbolic link can reach outside the output.
-    const path = await realpath(join(output, body)).catch(() => undefined);
+    const read = await readUnder(output, body, documentKind.body);
 
-    if (path !== undefined && relative(root, path).split(sep)[0] === "..") {
+    if (read === "outside") {
       return { reason: `Step ${name} claimed a body outside its output: ${JSON.stringify(body)}.` };
     }
-
-    const read = path === undefined ? undefined : await readAtMost(path, documentKind.body);
 
     if (read === undefined) {
       return { reason: `Step ${name} claimed a body it did not write: ${JSON.stringify(body)}.` };
@@ -677,6 +710,26 @@ async function parse(
   return { outcome, artifacts };
 }
 
+// Reads the file `path` names under `root`, as readAtMost does. Resolved first, so neither .. nor a
+// symbolic link can reach outside root.
+async function readUnder(
+  root: string,
+  path: string,
+  limit: number,
+): Promise<Buffer | "outside" | undefined> {
+  const real = await realpath(join(root, path)).catch(() => undefined);
+
+  if (real === undefined) {
+    return undefined;
+  }
+
+  if (relative(await realpath(root), real).split(sep)[0] === "..") {
+    return "outside";
+  }
+
+  return readAtMost(real, limit);
+}
+
 // Reads a regular file, stopping one byte past `limit`, so a file over its limit, or still growing,
 // is never read whole; undefined when there is no regular file. Non-blocking, so a FIFO cannot hang
 // the engine.
@@ -692,17 +745,24 @@ async function readAtMost(path: string, limit: number): Promise<Buffer | undefin
       return undefined;
     }
 
-    const buffer = Buffer.alloc(limit + 1);
+    // In chunks, so memory follows the file's size rather than the limit.
+    const chunks: Buffer[] = [];
     let length = 0;
 
     for (;;) {
-      const { bytesRead } = await file.read(buffer, length, buffer.length - length, length);
+      const chunk = Buffer.alloc(Math.min(64 * 1024, limit + 1 - length));
+      const { bytesRead } = await file.read(chunk, 0, chunk.length, length);
 
-      if (bytesRead === 0 || length + bytesRead === buffer.length) {
-        return buffer.subarray(0, length + bytesRead);
+      if (bytesRead === 0) {
+        return Buffer.concat(chunks);
       }
 
+      chunks.push(chunk.subarray(0, bytesRead));
       length += bytesRead;
+
+      if (length > limit) {
+        return Buffer.concat(chunks);
+      }
     }
   } catch {
     return undefined;
@@ -711,46 +771,39 @@ async function readAtMost(path: string, limit: number): Promise<Buffer | undefin
   }
 }
 
-// lazy: the commit kind's verifier is built in, beside the engine. Name it in the kind's
-// definition, by hash, with definitions by hash.
-const commitVerifier = [
-  process.execPath,
-  join(import.meta.dirname, "..", "verifiers", "commit.ts"),
-] as const;
+// lazy: the built-in kinds' verifier and materialisers are found beside the engine. Name them in
+// the kinds' definitions, by hash, with definitions by hash.
+const builtIn = (path: string) =>
+  [process.execPath, join(import.meta.dirname, "..", path)] as const;
 
-// The seconds a verifier may run before it is stopped and the claim escalates.
-const verifierLimit = 30;
+const commitVerifier = builtIn("verifiers/commit.ts");
 
-// Runs the commit verifier on a claim in the attempt's workspace. Returns undefined when it
-// accepts, else the reason to escalate.
-// lazy: the workspace is not read-only to the verifier; the sandbox makes it so.
-async function verify(
-  directory: string,
-  workspace: string,
-  name: string,
-  claim: Commit,
-  subject: { hash: string; artifact: Artifact },
+const materialisers = {
+  document: builtIn("materialisers/document.ts"),
+  commit: builtIn("materialisers/commit.ts"),
+};
+
+// The seconds a verifier or materialiser may run before it is stopped.
+const builtInLimit = 60;
+
+// lazy: a constant, in bytes. Make it the kind's, with definitions by hash.
+const keptLimit = 64 * 1024 * 1024;
+
+// A kept file is named by a plain file name, so it can be written anywhere without a path.
+const plainName = /^(?!\.\.?$)[A-Za-z0-9._-]+$/;
+
+// Runs a built-in program in `cwd` with `input` and `output` as its directories, stopped after
+// builtInLimit. Returns why it failed, or undefined when it exited 0.
+async function runBuiltIn(
+  argv: readonly [string, ...string[]],
+  cwd: string,
+  input: string,
+  output: string,
 ): Promise<string | undefined> {
-  const area = await mkdtemp(join(directory, "verifier-"));
-  const input = join(area, "input");
-  const output = join(area, "output");
-  const failed = (why: string) => `The commit verifier failed on step ${name}'s claim: ${why}`;
-
-  await mkdir(input);
-  await mkdir(output);
-
-  await writeFile(
-    join(input, "claim.json"),
-    JSON.stringify({
-      fields: claim.fields,
-      subject: { hash: subject.hash, kind: subject.artifact.kind, fields: subject.artifact.fields },
-    }),
-  );
-
-  const [command, ...args] = commitVerifier;
+  const [command, ...args] = argv;
 
   const child = spawn(command, args, {
-    cwd: workspace,
+    cwd,
     env: { PATH: process.env.PATH, MEDRENGARD_IN: input, MEDRENGARD_OUT: output },
     stdio: "ignore",
     detached: true,
@@ -761,22 +814,63 @@ async function verify(
   const limit = setTimeout(() => {
     late = true;
     stop(child);
-  }, verifierLimit * 1000);
+  }, builtInLimit * 1000);
 
   const closed = await once(child, "close")
     .catch((error: NodeJS.ErrnoException) => error)
     .finally(() => clearTimeout(limit));
 
   if (closed instanceof Error) {
-    return failed(`it could not start: ${closed.code}.`);
+    return `it could not start: ${closed.code}.`;
   }
 
   if (late) {
-    return failed(`it reached its limit of ${verifierLimit} s.`);
+    return `it reached its limit of ${builtInLimit} s.`;
   }
 
-  if (closed[0] !== 0) {
-    return failed(`it exited with code ${closed[0]}.`);
+  return closed[0] === 0 ? undefined : `it exited with code ${closed[0]}.`;
+}
+
+// Makes an input and an output directory for a built-in program, inside the attempt's directory.
+async function areaFor(directory: string, program: string) {
+  const area = await mkdtemp(join(directory, `${program}-`));
+  const input = join(area, "input");
+  const output = join(area, "output");
+
+  await mkdir(input);
+  await mkdir(output);
+
+  return { input, output };
+}
+
+// Runs the commit verifier on a claim in the attempt's workspace, and stores the files it keeps.
+// lazy: the workspace is not read-only to the verifier; the sandbox makes it so.
+async function verify(
+  directory: string,
+  workspace: string,
+  name: string,
+  claim: Commit,
+  subject: Subject,
+  store: Store,
+): Promise<{ kept: Record<string, string> } | { reason: string }> {
+  const { input, output } = await areaFor(directory, "verifier");
+
+  const failed = (why: string) => ({
+    reason: `The commit verifier failed on step ${name}'s claim: ${why}`,
+  });
+
+  await writeFile(
+    join(input, "claim.json"),
+    JSON.stringify({
+      fields: claim.fields,
+      subject: { hash: subject.hash, kind: subject.artifact.kind, fields: subject.artifact.fields },
+    }),
+  );
+
+  const why = await runBuiltIn(commitVerifier, workspace, input, output);
+
+  if (why !== undefined) {
+    return failed(why);
   }
 
   const bytes = await readAtMost(join(output, "output.json"), claimLimit);
@@ -788,15 +882,76 @@ async function verify(
     verdict = undefined;
   }
 
-  if (verdict?.accepted === true) {
-    return undefined;
-  }
-
   if (verdict?.accepted === false && isText(verdict.reason)) {
-    return `Step ${name} claimed a commit its verifier rejected: ${verdict.reason}`;
+    return { reason: `Step ${name} claimed a commit its verifier rejected: ${verdict.reason}` };
   }
 
-  return failed("it wrote no valid output.json.");
+  if (verdict?.accepted !== true || !Array.isArray(verdict.keep)) {
+    return failed("it wrote no valid output.json.");
+  }
+
+  const kept: Record<string, string> = {};
+
+  for (const file of verdict.keep) {
+    if (!isText(file) || !plainName.test(file)) {
+      return failed(`it kept a file without a plain name: ${JSON.stringify(file)}.`);
+    }
+
+    const read = await readUnder(output, file, keptLimit);
+
+    if (read === undefined || read === "outside" || read.length > keptLimit) {
+      return failed(`it kept ${file}, which is missing or over its limit of ${keptLimit} bytes.`);
+    }
+
+    kept[file] = store.keep(read);
+  }
+
+  return { kept };
+}
+
+// Builds the workspace from the subject with its kind's materialiser. Returns why it failed, or
+// undefined.
+async function materialise(
+  directory: string,
+  workspace: string,
+  name: string,
+  subject: Subject,
+  store: Store,
+): Promise<string | undefined> {
+  const { artifact } = subject;
+
+  if (artifact.kind === "decision") {
+    throw new Error("A decision is a judgement, never the subject.");
+  }
+
+  const { input, output } = await areaFor(directory, "materialiser");
+
+  await mkdir(join(input, "kept"));
+
+  for (const [file, hash] of Object.entries(subject.kept)) {
+    await writeFile(join(input, "kept", file), store.read(hash));
+  }
+
+  if (artifact.body !== undefined) {
+    await writeFile(join(input, "body"), artifact.body);
+  }
+
+  await writeFile(
+    join(input, "artifact.json"),
+    JSON.stringify({
+      hash: subject.hash,
+      kind: artifact.kind,
+      fields: artifact.fields,
+      body: artifact.body === undefined ? undefined : "body",
+      kept: Object.fromEntries(Object.keys(subject.kept).map((file) => [file, `kept/${file}`])),
+    }),
+  );
+
+  const why = await runBuiltIn(materialisers[artifact.kind], workspace, input, output);
+
+  return why === undefined
+    ? undefined
+    : `The ${artifact.kind} materialiser failed for step ${name}: ${why}`;
 }
 
 function isText(value: unknown): value is string {

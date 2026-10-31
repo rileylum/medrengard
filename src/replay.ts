@@ -14,11 +14,13 @@ export type Agent = {
   prompt: string;
 };
 
-// What every step that starts a program declares: its inputs, its outcomes' edges, the attempts it
-// may start between the owner's decisions, and its limits. An attempt is stopped after `idle`
+// What every step that starts a program declares: its inputs, whether its workspace is built from
+// the subject or starts empty, its outcomes' edges, the attempts it may start between the owner's
+// decisions, and its limits. An attempt is stopped after `idle`
 // seconds without stdout or stderr output, `attempt` seconds in all, or `transcript` bytes of it.
 type Program<N extends string> = {
   inputs: readonly Input[];
+  workspace: "subject" | "empty";
   on: Record<string, N | "end">;
   budget: number;
   limits: { idle: number; attempt: number; transcript: number };
@@ -56,14 +58,14 @@ type AttemptStarted<N extends string> = {
   process: { pid: number; start: number };
 };
 
-// artifacts are the hashes of the artifacts the attempt claimed, in the order claimed;
-// transcript is the hash of its stdout and stderr.
+// artifacts are the artifacts the attempt claimed, in the order claimed, each with the files its
+// verifier kept, by name; transcript is the hash of its stdout and stderr.
 type AttemptCompleted<N extends string> = {
   type: "attempt-completed";
   step: N;
   attempt: number;
   outcome: string;
-  artifacts: readonly string[];
+  artifacts: readonly { hash: string; kept: Readonly<Record<string, string>> }[];
   transcript: string;
   next: N | "end";
 };
@@ -175,7 +177,7 @@ function apply<N extends string>(
       // lazy: every kind a step can claim is a subject, so the last artifact claimed is the
       // subject. Record each artifact's role once a step can claim a judgement.
       if (event.artifacts.length > 0) {
-        return arrive(workflow, event.next, event.artifacts.at(-1)!, undefined);
+        return arrive(workflow, event.next, event.artifacts.at(-1)!.hash, undefined);
       }
 
       return arrive(workflow, event.next, state.subject, state.decision);

@@ -46,6 +46,7 @@ function engineRunning(
       steps: {
         build: {
           kind: "command",
+          workspace: "empty",
           inputs: [],
           run: ["sh", "-c", script, "sh", join(directory, "started")],
           on: { done: "end", again: "build" },
@@ -66,6 +67,7 @@ function engineAwaiting(t: TestContext) {
         review: { kind: "approval", on: { approve: "build", reject: "end" } },
         build: {
           kind: "command",
+          workspace: "empty",
           inputs: [],
           run: ["true"],
           on: { done: "end" },
@@ -88,6 +90,7 @@ async function engineReceiving(t: TestContext, inputs: readonly Input[], script:
       steps: {
         build: {
           kind: "command",
+          workspace: "empty",
           inputs,
           run: ["sh", "-c", script, "sh", join(directory, "received")],
           on: { done: "end" },
@@ -124,6 +127,7 @@ async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
       steps: {
         build: {
           kind: "command",
+          workspace: "empty",
           inputs: [],
           run: [
             "sh",
@@ -137,6 +141,7 @@ async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
         },
         read: {
           kind: "command",
+          workspace: "empty",
           inputs: ["subject"],
           run: [
             "sh",
@@ -160,23 +165,26 @@ async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
 }
 
 /**
- * A script that commits in a new repository in its workspace and claims `done` with that commit,
- * or with `$claimed` if set. Its dates are fixed, so every run makes the same commit.
+ * A script that commits plan.txt in a new repository in its workspace and claims `done` with that
+ * commit, or with `$claimed` if set. Its dates are fixed, so every run makes the same commit.
  */
 const committing = `git init -q
+  printf 'Do it.\\n' > plan.txt
+  git add plan.txt
   GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z \\
     git -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false \\
-    commit -q --allow-empty --no-verify -m Plan
+    commit -q --no-verify -m Plan
   sha=\${claimed:-$(git rev-parse HEAD)}
   echo "{\\"outcome\\":\\"done\\",\\"artifacts\\":[{\\"kind\\":\\"commit\\",\\"fields\\":{\\"sha\\":\\"$sha\\"}}]}" \\
     > "$MEDRENGARD_OUT/output.json"`;
 
-/** A command step that runs `script` and leads on `done` to `next`. */
-function stepRunning<N extends string>(script: string, next: N) {
+/** A command step that runs `script`, with `args` as its `$1` on, and leads on `done` to `next`. */
+function stepRunning<N extends string>(script: string, next: N, args: readonly string[] = []) {
   return {
     kind: "command",
+    workspace: "empty",
     inputs: [],
-    run: ["sh", "-c", script],
+    run: ["sh", "-c", script, "sh", ...args],
     on: { done: next },
     budget: 1,
     limits: { idle: 5, attempt: 10, transcript: 65536 },
@@ -512,6 +520,7 @@ test("a decision about an earlier subject is not given as the decision", async (
         review: { kind: "approval", on: { approve: "build" } },
         build: {
           kind: "command",
+          workspace: "empty",
           inputs: [],
           run: [
             "sh",
@@ -525,6 +534,7 @@ test("a decision about an earlier subject is not given as the decision", async (
         },
         read: {
           kind: "command",
+          workspace: "empty",
           inputs: ["decision"],
           run: [
             "sh",
@@ -556,6 +566,7 @@ test("an agent step runs its harness adapter, which is given the agent", async (
       steps: {
         plan: {
           kind: "agent",
+          workspace: "empty",
           agent: {
             harness: {
               run: [
@@ -660,6 +671,55 @@ test("a claimed commit that is not a SHA escalates", async (t) => {
   });
 });
 
+test("a step whose workspace is a commit subject works in its checkout", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(committing, "check"),
+        check: {
+          ...stepRunning(
+            `{ cat plan.txt; git rev-parse HEAD; git status --porcelain; } > "$1"
+             echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "review",
+            [join(directory, "seen")],
+          ),
+          workspace: "subject",
+        },
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+
+  const commit = engine.artifact(subjectOf(engine));
+
+  assert.equal(commit.kind, "commit");
+  assert.equal(await readFile(join(directory, "seen"), "utf8"), `Do it.\n${commit.fields.sha}\n`);
+});
+
+test("a step whose workspace is a document subject finds its body there", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "read",
+      steps: {
+        read: {
+          ...stepRunning(
+            `cp document "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+            [join(directory, "seen")],
+          ),
+          workspace: "subject",
+        },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.equal(await readFile(join(directory, "seen"), "utf8"), "Say hello.");
+});
+
 test("a commission whose command step leads to an approval step awaits the owner", async (t) => {
   const { engine } = await engineWith(t, () =>
     defineWorkflow({
@@ -667,6 +727,7 @@ test("a commission whose command step leads to an approval step awaits the owner
       steps: {
         build: {
           kind: "command",
+          workspace: "empty",
           inputs: [],
           run: ["sh", "-c", `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`],
           on: { done: "review" },

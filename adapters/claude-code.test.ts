@@ -39,6 +39,7 @@ ${script}
         steps: {
           plan: {
             kind: "agent",
+            workspace: "empty",
             agent: {
               harness: {
                 run: ["env", `PATH=${directory}:${process.env.PATH}`, process.execPath, adapter],
