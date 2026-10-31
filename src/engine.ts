@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { readFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { constants, readFileSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -422,6 +422,16 @@ async function run(
 
 type Claim = { outcome: string; artifacts: Document[] };
 
+// The largest output.json the engine reads, in bytes.
+const claimLimit = 64 * 1024;
+
+// lazy: the built-in document kind is a constant, its limits in bytes. Make kinds definitions,
+// recorded by hash, with definitions by hash.
+const documentKind = { title: 200, body: 1024 * 1024 };
+
+// Fatal, so invalid bytes are refused rather than replaced; the byte order mark is kept as written.
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
 // Parses the claim a step wrote to `output`, or gives the reason it is invalid. Everything in the
 // output directory is the step's doing, so any failure to read it is the step's.
 async function parse(
@@ -429,16 +439,20 @@ async function parse(
   name: string,
   output: string,
 ): Promise<Claim | { reason: string }> {
-  const text = await readFile(join(output, "output.json"), "utf8").catch(() => undefined);
+  const bytes = await readAtMost(join(output, "output.json"), claimLimit);
 
-  if (text === undefined) {
+  if (bytes === undefined) {
     return { reason: `Step ${name} exited 0 without a readable output.json.` };
+  }
+
+  if (bytes.length > claimLimit) {
+    return { reason: `Step ${name} wrote an output.json over its limit of ${claimLimit} bytes.` };
   }
 
   let claim;
 
   try {
-    claim = JSON.parse(text);
+    claim = JSON.parse(utf8.decode(bytes));
   } catch {
     return { reason: `Step ${name} wrote an output.json that is not JSON.` };
   }
@@ -495,6 +509,12 @@ async function parse(
       return { reason: `Step ${name} claimed a document that is not a title and a body path.` };
     }
 
+    if (Buffer.byteLength(title) > documentKind.title) {
+      return {
+        reason: `Step ${name} claimed a document title over its limit of ${documentKind.title} bytes.`,
+      };
+    }
+
     // Resolved first, so neither .. nor a symbolic link can reach outside the output.
     const path = await realpath(join(output, body)).catch(() => undefined);
 
@@ -502,16 +522,64 @@ async function parse(
       return { reason: `Step ${name} claimed a body outside its output: ${JSON.stringify(body)}.` };
     }
 
-    const text = path && (await readFile(path, "utf8").catch(() => undefined));
+    const read = path === undefined ? undefined : await readAtMost(path, documentKind.body);
 
-    if (text === undefined) {
+    if (read === undefined) {
       return { reason: `Step ${name} claimed a body it did not write: ${JSON.stringify(body)}.` };
+    }
+
+    if (read.length > documentKind.body) {
+      return {
+        reason: `Step ${name} claimed a body over its limit of ${documentKind.body} bytes: ${JSON.stringify(body)}.`,
+      };
+    }
+
+    let text;
+
+    try {
+      text = utf8.decode(read);
+    } catch {
+      return { reason: `Step ${name} claimed a body that is not UTF-8: ${JSON.stringify(body)}.` };
     }
 
     artifacts.push({ kind: "document", fields: { title }, body: text });
   }
 
   return { outcome, artifacts };
+}
+
+// Reads a regular file, stopping one byte past `limit`, so a file over its limit, or still growing,
+// is never read whole; undefined when there is no regular file. Non-blocking, so a FIFO cannot hang
+// the engine.
+async function readAtMost(path: string, limit: number): Promise<Buffer | undefined> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK).catch(() => undefined);
+
+  if (file === undefined) {
+    return undefined;
+  }
+
+  try {
+    if (!(await file.stat()).isFile()) {
+      return undefined;
+    }
+
+    const buffer = Buffer.alloc(limit + 1);
+    let length = 0;
+
+    for (;;) {
+      const { bytesRead } = await file.read(buffer, length, buffer.length - length, length);
+
+      if (bytesRead === 0 || length + bytesRead === buffer.length) {
+        return buffer.subarray(0, length + bytesRead);
+      }
+
+      length += bytesRead;
+    }
+  } catch {
+    return undefined;
+  } finally {
+    await file.close();
+  }
 }
 
 function isText(value: unknown): value is string {

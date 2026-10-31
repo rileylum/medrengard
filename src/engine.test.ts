@@ -369,6 +369,61 @@ test("a claimed body outside the step's output escalates", async (t) => {
   });
 });
 
+test("an output.json over its size limit escalates", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `{ printf '{"outcome":"done","padding":"'; head -c 65536 /dev/zero | tr '\\0' a; printf '"}'; } \\
+       > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: "Step build wrote an output.json over its limit of 65536 bytes.",
+  });
+});
+
+test("a claimed document title over its size limit escalates", async (t) => {
+  const { engine } = await engineClaiming(t, `printf 'Do it.' > "$MEDRENGARD_OUT/plan.md"`, {
+    outcome: "done",
+    artifacts: [{ kind: "document", fields: { title: "a".repeat(201) }, body: "plan.md" }],
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: "Step build claimed a document title over its limit of 200 bytes.",
+  });
+});
+
+test("a claimed body over its size limit escalates", async (t) => {
+  const { engine } = await engineClaiming(
+    t,
+    `head -c 1048577 /dev/zero | tr '\\0' a > "$MEDRENGARD_OUT/plan.md"`,
+    planAt("plan.md"),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: 'Step build claimed a body over its limit of 1048576 bytes: "plan.md".',
+  });
+});
+
+test("a claimed body that is not UTF-8 escalates", async (t) => {
+  const { engine } = await engineClaiming(
+    t,
+    `printf 'Do \\377.' > "$MEDRENGARD_OUT/plan.md"`,
+    planAt("plan.md"),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: 'Step build claimed a body that is not UTF-8: "plan.md".',
+  });
+});
+
 test("a commission whose command step leads to an approval step awaits the owner", async (t) => {
   const { engine } = await engineWith(t, () =>
     defineWorkflow({
