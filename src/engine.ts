@@ -153,8 +153,23 @@ export function createEngine({ log, workflows }: Options) {
       throw new Error(`Commission ${commission} has no transcript for attempt ${attempt}.`);
     },
 
-    /** Reads the artifact kept under `hash`. */
+    /**
+     * Reads the artifact kept under `hash`. Only a hash the log names as an artifact is read: the
+     * store also keeps bodies, transcripts and definitions, which are not artifacts, and a hash is
+     * a file name, so an unchecked one could read outside the store.
+     */
     artifact(hash: string): Artifact {
+      // lazy: scans the whole log. Index artifact hashes once a log is large enough to notice.
+      const named = commissioned
+        .all()
+        .some(({ commission }) =>
+          recorded(read(String(commission))).some((artifact) => artifact.hash === hash),
+        );
+
+      if (!named) {
+        throw new Error(`There is no artifact ${hash}.`);
+      }
+
       return store.get(hash);
     },
 
@@ -222,12 +237,22 @@ export function createEngine({ log, workflows }: Options) {
       );
     },
 
-    /** Attempts ready steps until the commission is awaiting, escalated or finished. */
-    async advance(commission: string): Promise<CommissionState> {
+    /**
+     * Attempts ready steps until the commission is awaiting, escalated or finished. Once `signal`
+     * aborts, the running attempt finishes and no other starts: the commission is left ready.
+     */
+    async advance(
+      commission: string,
+      { signal }: { signal?: AbortSignal } = {},
+    ): Promise<CommissionState> {
       for (;;) {
         const events = read(commission);
         const workflow = definitionOf(events);
         const state = replay(workflow, events);
+
+        if (state.status === "ready" && signal?.aborted) {
+          return state;
+        }
 
         if (state.status === "attempting") {
           const started = events.findLast((event) => event.type === "attempt-started")!;

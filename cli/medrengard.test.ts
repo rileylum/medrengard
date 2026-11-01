@@ -15,7 +15,8 @@ const repository = join(import.meta.dirname, "..");
  * Writes a factory in a new directory, with the workflow `build`, whose command step prints hello,
  * claims `done` and awaits the owner at `review`; the workflow `failing`, whose step exits 3; and
  * the workflow `slow`, whose step appends start, then end half a second later, to the directory's
- * `steps` file and leads to `review`. Its log is in the directory's `state`.
+ * `steps` file and leads to `review`; and the workflow `twice`, whose two such steps lead to
+ * `review`. Its log is in the directory's `state`.
  */
 async function factoryIn(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
@@ -35,6 +36,20 @@ async function factoryIn(t: TestContext) {
        limits: { idle: 5, attempt: 10, transcript: 65536, input: 65536 },
      }) as const;
 
+     const slow = {
+       ...step(""),
+       run: [
+         "sh", "-c",
+         \`echo start >> "$1"; sleep 0.5; echo end >> "$1"
+          echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`,
+         "sh", ${JSON.stringify(join(directory, "steps"))},
+       ],
+       access: {
+         ...contract,
+         paths: [...contract.paths, { path: ${JSON.stringify(directory)}, mode: "write" }],
+       },
+     } as const;
+
      export default {
        log: "state/log.sqlite",
        workflows: {
@@ -51,20 +66,15 @@ async function factoryIn(t: TestContext) {
          slow: defineWorkflow({
            start: "build",
            steps: {
-             build: {
-               ...step(""),
-               run: [
-                 "sh", "-c",
-                 \`echo start >> "$1"; sleep 0.5; echo end >> "$1"
-                  echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`,
-                 "sh", ${JSON.stringify(join(directory, "steps"))},
-               ],
-               access: {
-                 ...contract,
-                 paths: [...contract.paths, { path: ${JSON.stringify(directory)}, mode: "write" }],
-               },
-               on: { done: "review" },
-             },
+             build: { ...slow, on: { done: "review" } },
+             review: { kind: "approval", on: { approve: "end" } },
+           },
+         }),
+         twice: defineWorkflow({
+           start: "build",
+           steps: {
+             build: { ...slow, on: { done: "again" } },
+             again: { ...slow, on: { done: "review" } },
              review: { kind: "approval", on: { approve: "end" } },
            },
          }),
@@ -379,3 +389,42 @@ test(
     assert.equal(await readFile(join(directory, "steps"), "utf8"), "start\n");
   },
 );
+
+test(
+  "a stopped runner starts no further step of the commission it is running",
+  { timeout: 10_000 },
+  async (t) => {
+    const { directory, factory } = await factoryIn(t);
+
+    commissionAll(factory, "twice", ["first"]);
+
+    const { child, exited } = runner(t, factory);
+
+    await untilStarted(directory);
+
+    child.kill("SIGTERM");
+
+    const [code] = await exited;
+
+    assert.equal(code, 0);
+    assert.partialDeepStrictEqual(JSON.parse(run(["state", "first", "--json"], factory).stdout), {
+      status: "ready",
+      step: { name: "again" },
+    });
+    assert.equal(await readFile(join(directory, "steps"), "utf8"), "start\nend\n");
+  },
+);
+
+test("the CLI refuses an unknown artifact by its hash", async (t) => {
+  const { factory } = await factoryIn(t);
+
+  const { status, stderr } = run(["artifact", "missing", "--json"], factory);
+
+  assert.deepEqual(
+    { status, stderr: JSON.parse(stderr) },
+    {
+      status: 1,
+      stderr: { error: "There is no artifact missing." },
+    },
+  );
+});

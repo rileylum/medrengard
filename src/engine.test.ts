@@ -5,6 +5,7 @@ import { once } from "node:events";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { setTimeout as sleep } from "node:timers/promises";
 import { createEngine } from "./engine.ts";
 import { defineWorkflow, type Access, type Query, type Workflow } from "./replay.ts";
@@ -1676,4 +1677,34 @@ test("an abandon decision finishes the escalated commission as abandoned", async
     engine.decide("first", { subject: subjectOf(engine), outcome: "abandon" }),
     { status: "finished", by: "abandoned" },
   );
+});
+
+test("an advance whose signal aborts finishes the running attempt and starts no other", async (t) => {
+  const { engine, directory } = await engineRunning(t, `${claimingAgain}; sleep 0.3`);
+  const stop = new AbortController();
+  const advancing = engine.advance("first", { signal: stop.signal });
+
+  while ((await readFile(join(directory, "started"), "utf8").catch(() => "")) === "") {
+    await sleep(20);
+  }
+
+  stop.abort();
+
+  assert.partialDeepStrictEqual(await advancing, { status: "ready", step: { name: "build" } });
+  assert.equal(await readFile(join(directory, "started"), "utf8"), "started\n");
+});
+
+test("an artifact the log does not name is refused by its hash", async (t) => {
+  const { engine, options } = await engineRunning(t, "true");
+
+  // The definition is in the store, but it is not an artifact.
+  const first = new DatabaseSync(options.log)
+    .prepare("SELECT event FROM events WHERE position = 0")
+    .get()!;
+
+  const { definition } = JSON.parse(String(first.event));
+
+  for (const hash of ["missing", "../log.sqlite", definition]) {
+    assert.throws(() => engine.artifact(hash), { message: `There is no artifact ${hash}.` });
+  }
 });

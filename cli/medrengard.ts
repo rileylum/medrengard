@@ -219,16 +219,17 @@ async function runner(engine: ReturnType<typeof Create>, parallel: number): Prom
   // The commissions whose advance may start a step, which the limit counts.
   const stepping = new Set<string>();
 
-  let stopping = false;
+  // Aborted by the first stop, so each advance returns once its running step ends.
+  const stopping = new AbortController();
 
   print({ parallel }, `running at most ${parallel} steps in parallel\n`);
 
   const stop = () => {
-    if (stopping) {
+    if (stopping.signal.aborted) {
       process.exit(130);
     }
 
-    stopping = true;
+    stopping.abort();
 
     const waiting = [...stepping].flatMap((commission) => {
       const state = engine.state(commission);
@@ -250,7 +251,7 @@ async function runner(engine: ReturnType<typeof Create>, parallel: number): Prom
     }
 
     const done = engine
-      .advance(commission)
+      .advance(commission, { signal: stopping.signal })
       .then(
         (state) => {
           // Still attempting: another live engine holds the attempt.
@@ -274,7 +275,7 @@ async function runner(engine: ReturnType<typeof Create>, parallel: number): Prom
     advancing.set(commission, done);
   };
 
-  while (!stopping) {
+  while (!stopping.signal.aborted) {
     for (const { commission, state } of engine.commissions()) {
       if (advancing.has(commission)) {
         continue;
