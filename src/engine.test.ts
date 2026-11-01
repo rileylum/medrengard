@@ -983,6 +983,193 @@ test("a claimed commit that is not a SHA escalates", async (t) => {
   });
 });
 
+/** A claim of the verdict `verdict`, as outcome too, with `summary` and the findings at `body`. */
+function verdictOf(verdict: string, summary: string, body: string) {
+  return {
+    outcome: verdict,
+    artifacts: [{ kind: "verdict", fields: { verdict, summary }, body }],
+  };
+}
+
+/**
+ * Starts an engine whose `develop` step commits, then whose `check` step writes `findings` and
+ * claims `claim`, leading on pass or fail to `read`, which copies its input into the directory
+ * `received` and leads to the approval step `review`. `read` is given the subject and the evidence.
+ */
+async function engineJudging(t: TestContext, claim: Claim, findings = "") {
+  const started = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "develop",
+      steps: {
+        develop: stepRunning(committing, "check"),
+        check: {
+          ...stepRunning(
+            `printf '${findings}' > "$MEDRENGARD_OUT/findings.md"
+             echo '${JSON.stringify(claim)}' > "$MEDRENGARD_OUT/output.json"`,
+            "read",
+          ),
+          on: { pass: "read", fail: "read" },
+        },
+        read: {
+          ...stepRunning(
+            `cp -r "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "review",
+            [join(directory, "received")],
+          ),
+          inputs: { subject: "subject", evidence: { kind: "verdict", about: "subject" } },
+        },
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  await mkdir(join(started.directory, "received"));
+
+  return started;
+}
+
+test("a claimed verdict is about the subject, which it leaves unchanged", async (t) => {
+  const { engine, directory } = await engineJudging(
+    t,
+    verdictOf("fail", "Two tests fail.", "findings.md"),
+    "plan.txt is wrong.",
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+
+  const subject = subjectOf(engine);
+  const received = join(directory, "received");
+  const input = JSON.parse(await readFile(join(received, "input.json"), "utf8"));
+
+  assert.equal(engine.artifact(subject).kind, "commit");
+  assert.equal(input.inputs.subject[0].hash, subject);
+  assert.equal(input.inputs.evidence.length, 1);
+
+  assert.deepEqual(engine.artifact(input.inputs.evidence[0].hash), {
+    kind: "verdict",
+    fields: { verdict: "fail", summary: "Two tests fail.", subject },
+    body: "plan.txt is wrong.",
+  });
+});
+
+test("a claimed pass verdict without findings is recorded without a body", async (t) => {
+  const { engine, directory } = await engineJudging(t, {
+    outcome: "pass",
+    artifacts: [{ kind: "verdict", fields: { verdict: "pass" } }],
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+
+  const input = JSON.parse(await readFile(join(directory, "received", "input.json"), "utf8"));
+
+  assert.deepEqual(engine.artifact(input.inputs.evidence[0].hash), {
+    kind: "verdict",
+    fields: { verdict: "pass", subject: subjectOf(engine) },
+  });
+});
+
+test("a claimed verdict that is not the outcome escalates", async (t) => {
+  const { engine } = await engineJudging(t, {
+    ...verdictOf("fail", "Two tests fail.", "findings.md"),
+    outcome: "pass",
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "check" },
+    reason: "Step check claimed a fail verdict with the outcome pass.",
+  });
+});
+
+test("a claimed verdict that names its own subject escalates", async (t) => {
+  const { engine } = await engineJudging(t, {
+    outcome: "pass",
+    artifacts: [{ kind: "verdict", fields: { verdict: "pass", subject: "0".repeat(64) } }],
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "check" },
+    reason:
+      "Step check claimed a verdict that is not pass or fail, an optional summary and an optional body path.",
+  });
+});
+
+test("a claimed verdict summary over its size limit escalates", async (t) => {
+  const { engine } = await engineJudging(t, verdictOf("pass", "x".repeat(201), "findings.md"));
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "check" },
+    reason: "Step check claimed a verdict summary over its limit of 200 bytes.",
+  });
+});
+
+test("after a fix, the verdict on the replaced commit is history, not evidence", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "develop",
+      steps: {
+        develop: stepRunning(committing, "check"),
+        // Fails the first time it runs and passes after.
+        check: {
+          ...stepRunning(
+            `if [ -e "$1" ]; then v=pass; else v=fail; touch "$1"; fi
+             echo "{\\"outcome\\":\\"$v\\",\\"artifacts\\":[{\\"kind\\":\\"verdict\\",\\"fields\\":{\\"verdict\\":\\"$v\\"}}]}" \\
+               > "$MEDRENGARD_OUT/output.json"`,
+            "read",
+            [join(directory, "failed")],
+          ),
+          on: { pass: "read", fail: "fix" },
+          budget: 2,
+        },
+        fix: {
+          ...stepRunning(
+            `printf 'Do it well.\\n' > plan.txt
+             git -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false \\
+               commit -q --no-verify -am Fix
+             echo "{\\"outcome\\":\\"done\\",\\"artifacts\\":[{\\"kind\\":\\"commit\\",\\"fields\\":{\\"sha\\":\\"$(git rev-parse HEAD)\\"}}]}" \\
+               > "$MEDRENGARD_OUT/output.json"`,
+            "check",
+          ),
+          workspace: "subject",
+        },
+        read: {
+          ...stepRunning(
+            `cp "$MEDRENGARD_IN/input.json" "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "review",
+            [directory],
+          ),
+          inputs: {
+            evidence: { kind: "verdict", about: "subject" },
+            history: { kind: "verdict", about: "earlier" },
+          },
+        },
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+
+  const subject = subjectOf(engine);
+  const input = JSON.parse(await readFile(join(directory, "input.json"), "utf8"));
+  const [evidence] = input.inputs.evidence;
+  const [history] = input.inputs.history;
+
+  assert.equal(input.inputs.evidence.length, 1);
+  assert.equal(input.inputs.history.length, 1);
+
+  assert.deepEqual(engine.artifact(evidence.hash).fields, { verdict: "pass", subject });
+
+  const replaced = engine.artifact(history.hash);
+
+  assert.ok(replaced.kind === "verdict");
+  assert.equal(replaced.fields.verdict, "fail");
+  assert.notEqual(replaced.fields.subject, subject);
+  assert.equal(engine.artifact(replaced.fields.subject).kind, "commit");
+});
+
 test("a step whose workspace is a commit subject works in its checkout", async (t) => {
   const { engine, directory } = await engineWith(t, (directory) =>
     defineWorkflow({

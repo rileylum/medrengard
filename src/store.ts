@@ -24,7 +24,17 @@ export type Decision = {
 /** A commit, named by its SHA. */
 export type Commit = { kind: "commit"; fields: { sha: string }; body?: undefined };
 
-export type Artifact = Document | Commit | Decision;
+/**
+ * A step's verdict about a subject, named by its hash: pass or fail, with an optional one-line
+ * summary and the findings as an optional body.
+ */
+export type Verdict = {
+  kind: "verdict";
+  fields: { verdict: "pass" | "fail"; subject: string; summary?: string };
+  body?: string;
+};
+
+export type Artifact = Document | Commit | Verdict | Decision;
 
 /**
  * Keeps artifacts, their bodies and transcripts in `directory`, each under the sha256 of its

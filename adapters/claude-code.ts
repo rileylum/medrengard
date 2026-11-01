@@ -44,7 +44,10 @@ Leave out "artifacts" to claim none. To claim a document, which becomes what the
 write its body as a file in ${output} and add
 {"kind": "document", "fields": {"title": "..."}, "body": "<its path relative to ${output}>"}.
 To claim a commit instead, commit in your working directory and add
-{"kind": "commit", "fields": {"sha": "<the full SHA of HEAD>"}}.`;
+{"kind": "commit", "fields": {"sha": "<the full SHA of HEAD>"}}.
+To give a verdict on what the workflow is about, claim the outcome "pass" or "fail" and add
+{"kind": "verdict", "fields": {"verdict": the same word, "summary": "<one line>"},
+"body": "<path of your findings file relative to ${output}>"}; summary and body are optional.`;
 
 // Streamed, so the engine sees output while the agent works; plain -p prints only at the end, which
 // the idle limit would stop.

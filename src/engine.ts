@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import {
   replay,
+  subjects,
   type Commissioned,
   type CommissionEvent,
   type CommissionState,
@@ -17,7 +18,7 @@ import {
 import { parseWorkflow } from "./definition.ts";
 import { hasExactly, isText } from "./json.ts";
 import { confine } from "./sandbox.ts";
-import { createStore, type Artifact, type Commit, type Document } from "./store.ts";
+import { createStore, type Artifact, type Commit, type Document, type Verdict } from "./store.ts";
 
 type Options = { log: string; workflows: Record<string, Workflow> };
 
@@ -392,12 +393,23 @@ function resolve(
 // Every artifact in the commission's record, oldest first, with the step that claimed or decided
 // it and, for a judgement, the subject it is about. The request has no step.
 function recorded(events: Log): { hash: string; kind: string; step?: string; about?: string }[] {
+  // The subject of the attempt in flight, which every judgement it claims is about.
+  let judged = events[0].request;
+
   return events.flatMap((event) => {
     switch (event.type) {
       case "commissioned":
         return [{ hash: event.request, kind: "document" }];
+      case "attempt-started":
+        judged = event.subject;
+
+        return [];
       case "attempt-completed":
-        return event.artifacts.map(({ hash, kind }) => ({ hash, kind, step: event.step }));
+        return event.artifacts.map(({ hash, kind }) =>
+          subjects.includes(kind)
+            ? { hash, kind, step: event.step }
+            : { hash, kind, step: event.step, about: judged },
+        );
       case "decided":
         return [{ hash: event.decision, kind: "decision", step: event.step, about: event.subject }];
       default:
@@ -656,7 +668,7 @@ async function run(
       );
     }
 
-    const claim = await parse(step, name, output);
+    const claim = await parse(step, name, output, given.subject.hash);
 
     if ("reason" in claim) {
       return escalate(claim.reason);
@@ -697,7 +709,7 @@ async function run(
   }
 }
 
-type Claim = { outcome: string; artifacts: (Document | Commit)[] };
+type Claim = { outcome: string; artifacts: (Document | Commit | Verdict)[] };
 
 // The largest output.json the engine reads, in bytes.
 const claimLimit = 64 * 1024;
@@ -705,6 +717,9 @@ const claimLimit = 64 * 1024;
 // lazy: the built-in document kind is a constant, its limits in bytes. Make kinds definitions,
 // recorded by hash, with definitions by hash.
 const documentKind = { title: 200, body: 1024 * 1024 };
+
+// lazy: the built-in verdict kind, as the document kind.
+const verdictKind = { summary: 200, body: 1024 * 1024 };
 
 // Fatal, so invalid bytes are refused rather than replaced; the byte order mark is kept as written.
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -715,6 +730,7 @@ async function parse(
   step: Runnable,
   name: string,
   output: string,
+  subject: string,
 ): Promise<Claim | { reason: string }> {
   const bytes = await readAtMost(join(output, "output.json"), claimLimit);
 
@@ -760,7 +776,7 @@ async function parse(
     return { reason: `Step ${name} claimed artifacts that are not a list.` };
   }
 
-  const artifacts: (Document | Commit)[] = [];
+  const artifacts: (Document | Commit | Verdict)[] = [];
 
   for (const artifact of claimed) {
     if (artifact?.kind === "decision") {
@@ -781,6 +797,59 @@ async function parse(
       }
 
       artifacts.push({ kind: "commit", fields: { sha } });
+
+      continue;
+    }
+
+    if (artifact?.kind === "verdict") {
+      const { fields, body } = artifact;
+      const verdict = fields?.verdict;
+      const summary = fields?.summary;
+
+      if (
+        !(
+          hasExactly(artifact, ["kind", "fields"]) ||
+          hasExactly(artifact, ["kind", "fields", "body"])
+        ) ||
+        !(hasExactly(fields, ["verdict"]) || hasExactly(fields, ["verdict", "summary"])) ||
+        (verdict !== "pass" && verdict !== "fail") ||
+        (summary !== undefined && !isText(summary)) ||
+        (body !== undefined && !isText(body))
+      ) {
+        return {
+          reason: `Step ${name} claimed a verdict that is not pass or fail, an optional summary and an optional body path.`,
+        };
+      }
+
+      // The verdict is the kind's outcome field, so the edge followed is the verdict given.
+      if (verdict !== outcome) {
+        return { reason: `Step ${name} claimed a ${verdict} verdict with the outcome ${outcome}.` };
+      }
+
+      if (summary !== undefined && Buffer.byteLength(summary) > verdictKind.summary) {
+        return {
+          reason: `Step ${name} claimed a verdict summary over its limit of ${verdictKind.summary} bytes.`,
+        };
+      }
+
+      const findings =
+        body === undefined ? undefined : await readBody(name, output, body, verdictKind.body);
+
+      if (findings !== undefined && "reason" in findings) {
+        return findings;
+      }
+
+      // The engine names the subject: the one the attempt was given, which the step judged.
+      const judged: Verdict = {
+        kind: "verdict",
+        fields: summary === undefined ? { verdict, subject } : { verdict, subject, summary },
+      };
+
+      if (findings !== undefined) {
+        judged.body = findings.text;
+      }
+
+      artifacts.push(judged);
 
       continue;
     }
@@ -809,34 +878,51 @@ async function parse(
       };
     }
 
-    const read = await readUnder(output, body, documentKind.body);
+    const read = await readBody(name, output, body, documentKind.body);
 
-    if (read === "outside") {
-      return { reason: `Step ${name} claimed a body outside its output: ${JSON.stringify(body)}.` };
+    if ("reason" in read) {
+      return read;
     }
 
-    if (read === undefined) {
-      return { reason: `Step ${name} claimed a body it did not write: ${JSON.stringify(body)}.` };
-    }
-
-    if (read.length > documentKind.body) {
-      return {
-        reason: `Step ${name} claimed a body over its limit of ${documentKind.body} bytes: ${JSON.stringify(body)}.`,
-      };
-    }
-
-    let text;
-
-    try {
-      text = utf8.decode(read);
-    } catch {
-      return { reason: `Step ${name} claimed a body that is not UTF-8: ${JSON.stringify(body)}.` };
-    }
-
-    artifacts.push({ kind: "document", fields: { title }, body: text });
+    artifacts.push({ kind: "document", fields: { title }, body: read.text });
   }
 
   return { outcome, artifacts };
+}
+
+// Reads the body a claim names under `output` as UTF-8 text of at most `limit` bytes, or gives the
+// reason it cannot.
+async function readBody(
+  name: string,
+  output: string,
+  body: string,
+  limit: number,
+): Promise<{ text: string } | { reason: string }> {
+  const read = await readUnder(output, body, limit);
+
+  if (read === "outside") {
+    return { reason: `Step ${name} claimed a body outside its output: ${JSON.stringify(body)}.` };
+  }
+
+  if (read === undefined) {
+    return { reason: `Step ${name} claimed a body it did not write: ${JSON.stringify(body)}.` };
+  }
+
+  if (read.length > limit) {
+    return {
+      reason: `Step ${name} claimed a body over its limit of ${limit} bytes: ${JSON.stringify(body)}.`,
+    };
+  }
+
+  let text;
+
+  try {
+    text = utf8.decode(read);
+  } catch {
+    return { reason: `Step ${name} claimed a body that is not UTF-8: ${JSON.stringify(body)}.` };
+  }
+
+  return { text };
 }
 
 // Reads the file `path` names under `root`, as readAtMost does. Resolved first, so neither .. nor a
@@ -1049,8 +1135,8 @@ async function materialise(
 ): Promise<string | undefined> {
   const { artifact } = subject;
 
-  if (artifact.kind === "decision") {
-    throw new Error("A decision is a judgement, never the subject.");
+  if (artifact.kind === "decision" || artifact.kind === "verdict") {
+    throw new Error(`A ${artifact.kind} is a judgement, never the subject.`);
   }
 
   const { input, output } = await areaFor(directory, "materialiser");

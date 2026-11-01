@@ -159,6 +159,10 @@ export type CommissionState<N extends string = string> =
     }
   | { status: "finished"; by: "end" | "abandoned" };
 
+/** The artifact kinds that are subjects; every other kind is a judgement. */
+// lazy: the roles of the built-in kinds, until kinds are definitions that declare their role.
+export const subjects: readonly string[] = ["document", "commit"];
+
 /** Declares a workflow, so the compiler checks that every step name it uses exists. */
 export function defineWorkflow<N extends string>(workflow: Workflow<N>): Workflow<N> {
   return workflow;
@@ -216,10 +220,13 @@ function apply<N extends string>(
         return { status: "finished", by: "end" };
       }
 
-      // lazy: every kind a step can claim is a subject, so the last artifact claimed is the
-      // subject. Record each artifact's role once a step can claim a judgement.
-      if (event.artifacts.length > 0) {
-        return arrive(workflow, event.next, event.artifacts.at(-1)!.hash, undefined);
+      {
+        // A judgement, such as a verdict, leaves the subject where it was.
+        const subject = event.artifacts.findLast(({ kind }) => subjects.includes(kind));
+
+        if (subject !== undefined) {
+          return arrive(workflow, event.next, subject.hash, undefined);
+        }
       }
 
       return arrive(workflow, event.next, state.subject, state.decision);

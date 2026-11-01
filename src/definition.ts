@@ -3,7 +3,7 @@ import { hasExactly, isRecord, isText } from "./json.ts";
 import type { Workflow } from "./replay.ts";
 
 // lazy: the built-in kinds, until kinds are definitions.
-const kinds = ["document", "commit", "decision"];
+const kinds = ["document", "commit", "verdict", "decision"];
 
 // An input name, which is also a directory in the step's input, so it cannot leave that directory
 // or collide with input.json.
