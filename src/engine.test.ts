@@ -25,6 +25,9 @@ const access: Access = {
   workspace: "write",
 };
 
+// Every kind a step may claim, so a test step is refused only by the claim it tests.
+const claims = ["document", "commit", "verdict"];
+
 /**
  * Starts an engine whose one workflow, `build`, is made by `workflow` from the test's directory,
  * and commissions `first` under it. Returns the options too, so a test can start a second engine
@@ -62,6 +65,7 @@ function engineRunning(
       steps: {
         build: {
           kind: "command",
+          claims,
           workspace: "empty",
           inputs: {},
           run: ["sh", "-c", script, "sh", join(directory, "started")],
@@ -84,6 +88,7 @@ function engineAwaiting(t: TestContext) {
         review: { kind: "approval", on: { approve: "build", reject: "end" } },
         build: {
           kind: "command",
+          claims,
           workspace: "empty",
           inputs: {},
           run: ["true"],
@@ -112,6 +117,7 @@ async function engineReceiving(
       steps: {
         build: {
           kind: "command",
+          claims,
           workspace: "empty",
           inputs,
           run: ["sh", "-c", script, "sh", join(directory, "received")],
@@ -150,6 +156,7 @@ async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
       steps: {
         build: {
           kind: "command",
+          claims,
           workspace: "empty",
           inputs: {},
           run: [
@@ -165,6 +172,7 @@ async function engineClaiming(t: TestContext, setup: string, claim: Claim) {
         },
         read: {
           kind: "command",
+          claims,
           workspace: "empty",
           inputs: { subject: "subject" },
           run: [
@@ -203,10 +211,21 @@ const committing = `git init -q
   echo "{\\"outcome\\":\\"done\\",\\"artifacts\\":[{\\"kind\\":\\"commit\\",\\"fields\\":{\\"sha\\":\\"$sha\\"}}]}" \\
     > "$MEDRENGARD_OUT/output.json"`;
 
+/**
+ * What follows `committing` to claim its commit again, with a report whose bytes `writer` prints.
+ */
+function reporting(writer: string) {
+  return `
+  ${writer} > "$MEDRENGARD_OUT/report.md"
+  echo "{\\"outcome\\":\\"done\\",\\"artifacts\\":[{\\"kind\\":\\"commit\\",\\"fields\\":{\\"sha\\":\\"$sha\\"},\\"body\\":\\"report.md\\"}]}" \\
+    > "$MEDRENGARD_OUT/output.json"`;
+}
+
 /** A command step that runs `script`, with `args` as its `$1` on, and leads on `done` to `next`. */
 function stepRunning<N extends string>(script: string, next: N, args: readonly string[] = []) {
   return {
     kind: "command",
+    claims,
     workspace: "empty",
     inputs: {},
     run: ["sh", "-c", script, "sh", ...args],
@@ -290,7 +309,8 @@ test("a step that declares the subject receives it in its input", async (t) => {
 
   const received = join(directory, "received");
 
-  assert.deepEqual(JSON.parse(await readFile(join(received, "input.json"), "utf8")), {
+  // The kinds the step may claim are the next test's.
+  assert.partialDeepStrictEqual(JSON.parse(await readFile(join(received, "input.json"), "utf8")), {
     commission: "first",
     step: "build",
     attempt: 1,
@@ -303,6 +323,39 @@ test("a step that declares the subject receives it in its input", async (t) => {
   });
 
   assert.equal(await readFile(join(received, "subject", subject), "utf8"), "Say hello.");
+});
+
+test("a step's input.json lists the kinds it may claim, with their fields and body", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          ...stepRunning(
+            `cp "$MEDRENGARD_IN/input.json" "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+            [directory],
+          ),
+          claims: ["verdict"],
+        },
+      },
+    }),
+  );
+
+  await engine.advance("first");
+
+  assert.deepEqual(JSON.parse(await readFile(join(directory, "input.json"), "utf8")).claims, {
+    verdict: {
+      description:
+        "Your verdict on what the workflow is about. Its optional summary is one line, and its optional body your findings.",
+      fields: {
+        verdict: { limit: 4, required: true, values: ["pass", "fail"] },
+        summary: { limit: 200 },
+      },
+      body: { required: false, limit: 1048576 },
+      outcome: "verdict",
+    },
+  });
 });
 
 test("a step that declares no inputs receives only input.json", async (t) => {
@@ -346,6 +399,7 @@ function engineConfined(t: TestContext, confined: (directory: string) => Access,
       steps: {
         build: {
           kind: "command",
+          claims,
           workspace: "empty",
           inputs: {},
           run: [
@@ -499,6 +553,28 @@ test("a claimed artifact of an undeclared kind escalates", async (t) => {
   });
 });
 
+test("a claimed artifact of a kind its step does not declare escalates", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          ...stepRunning(
+            `echo '{"outcome":"done","artifacts":[{"kind":"verdict","fields":{"verdict":"pass"}}]}' > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+          ),
+          claims: ["document"],
+        },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: 'Step build claimed an artifact of undeclared kind: "verdict".',
+  });
+});
+
 test("a claimed decision escalates, since only the owner decides", async (t) => {
   const { engine } = await engineClaiming(t, "true", {
     outcome: "done",
@@ -515,13 +591,13 @@ test("a claimed decision escalates, since only the owner decides", async (t) => 
 test("a claimed document without a title escalates", async (t) => {
   const { engine } = await engineClaiming(t, `printf 'Do it.' > "$MEDRENGARD_OUT/plan.md"`, {
     outcome: "done",
-    artifacts: [{ kind: "document", fields: { name: "Plan" }, body: "plan.md" }],
+    artifacts: [{ kind: "document", fields: {}, body: "plan.md" }],
   });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
-    reason: "Step build claimed a document that is not a title and a body path.",
+    reason: "Step build claimed a document without its title.",
   });
 });
 
@@ -663,6 +739,7 @@ test("a decision about an earlier subject is history, not about the current one"
         review: { kind: "approval", on: { approve: "build" } },
         build: {
           kind: "command",
+          claims,
           workspace: "empty",
           inputs: {},
           run: [
@@ -678,6 +755,7 @@ test("a decision about an earlier subject is history, not about the current one"
         },
         read: {
           kind: "command",
+          claims,
           workspace: "empty",
           inputs: {
             current: { kind: "decision", about: "subject" },
@@ -878,6 +956,7 @@ test("an agent step runs its harness adapter, which is given the agent", async (
       steps: {
         plan: {
           kind: "agent",
+          claims,
           workspace: "empty",
           agent: {
             harness: {
@@ -931,6 +1010,44 @@ test("a claimed commit at the workspace HEAD becomes the subject", async (t) => 
   assert.match(commit.fields.sha, /^[0-9a-f]{40}$/);
 });
 
+test("a claimed commit with a report keeps the report as its body", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(`${committing}${reporting("printf 'Ran the tests.'")}`, "review"),
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  await engine.advance("first");
+
+  const commit = engine.artifact(subjectOf(engine));
+
+  assert.deepEqual(commit, {
+    kind: "commit",
+    fields: { sha: commit.fields.sha },
+    body: "Ran the tests.",
+  });
+});
+
+test("a claimed commit report over its size limit escalates", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(`${committing}${reporting("head -c 1048577 /dev/zero")}`, "end"),
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: 'Step build claimed a body over its limit of 1048576 bytes: "report.md".',
+  });
+});
+
 test("a claimed commit that is not the workspace HEAD escalates", async (t) => {
   const { engine } = await engineWith(t, () =>
     defineWorkflow({
@@ -978,10 +1095,13 @@ test("a claimed commit that is not a SHA escalates", async (t) => {
     }),
   );
 
-  assert.partialDeepStrictEqual(await engine.advance("first"), {
-    status: "escalated",
-    reason: "Step build claimed a commit that is not a SHA.",
-  });
+  const state = await engine.advance("first");
+
+  assert.equal(state.status, "escalated");
+  assert.match(
+    state.reason,
+    /^Step build claimed a commit its verifier rejected: HEAD is [0-9a-f]{40}, not main\.$/,
+  );
 });
 
 /** A claim of the verdict `verdict`, as outcome too, with `summary` and the findings at `body`. */
@@ -1078,7 +1198,7 @@ test("a claimed verdict that is not the outcome escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "check" },
-    reason: "Step check claimed a fail verdict with the outcome pass.",
+    reason: "Step check claimed a verdict whose verdict is fail, not its outcome pass.",
   });
 });
 
@@ -1091,8 +1211,19 @@ test("a claimed verdict that names its own subject escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "check" },
-    reason:
-      "Step check claimed a verdict that is not pass or fail, an optional summary and an optional body path.",
+    reason: 'Step check claimed a verdict with fields its kind does not define: ["subject"].',
+  });
+});
+
+test("a claimed verdict that is not pass or fail escalates", async (t) => {
+  const { engine } = await engineJudging(t, {
+    outcome: "pass",
+    artifacts: [{ kind: "verdict", fields: { verdict: "maybe" } }],
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step check claimed a verdict verdict that is not one of pass, fail.",
   });
 });
 
@@ -1301,6 +1432,23 @@ test("a workflow whose input name is not a plain file name cannot be commissione
   );
 });
 
+test("a workflow whose step claims a kind a step may not claim cannot be commissioned", async (t) => {
+  for (const kind of ["memo", "decision"]) {
+    await assert.rejects(
+      engineWith(t, () =>
+        defineWorkflow({
+          start: "build",
+          steps: { build: { ...stepRunning("true", "end"), claims: [kind] } },
+        }),
+      ),
+      {
+        message:
+          "Workflow build is invalid: step build's claims must each be a kind a step may claim: document, commit, verdict.",
+      },
+    );
+  }
+});
+
 test("a workflow whose limit is not positive cannot be commissioned", async (t) => {
   await assert.rejects(
     engineWith(t, () =>
@@ -1328,6 +1476,7 @@ test("a commission whose command step leads to an approval step awaits the owner
       steps: {
         build: {
           kind: "command",
+          claims,
           workspace: "empty",
           inputs: {},
           run: ["sh", "-c", `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`],

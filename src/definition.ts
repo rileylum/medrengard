@@ -1,9 +1,10 @@
 import { normalize } from "node:path";
 import { hasExactly, isRecord, isText } from "./json.ts";
+import { kinds as claimable } from "./kinds.ts";
 import type { Workflow } from "./replay.ts";
 
-// lazy: the built-in kinds, until kinds are definitions.
-const kinds = ["document", "commit", "verdict", "decision"];
+// Every kind a query can name: those a step may claim, and the owner's decision.
+const kinds = [...claimable.keys(), "decision"];
 
 // An input name, which is also a directory in the step's input, so it cannot leave that directory
 // or collide with input.json.
@@ -64,7 +65,7 @@ export function parseWorkflow(name: string, text: string): Workflow {
     }
 
     const program = kind === "command" ? "run" : "agent";
-    const { workspace, inputs, budget, access, limits } = step;
+    const { workspace, inputs, claims, budget, access, limits } = step;
     const { paths, network, environment } = access ?? {};
     const workspaceAccess = access?.workspace;
     const { agent } = step;
@@ -73,7 +74,17 @@ export function parseWorkflow(name: string, text: string): Workflow {
     const seconds = { idle: limits?.idle, attempt: limits?.attempt };
     const bytes = { transcript: limits?.transcript, input: limits?.input };
 
-    const fields = ["kind", "workspace", "inputs", program, "on", "budget", "access", "limits"];
+    const fields = [
+      "kind",
+      "workspace",
+      "inputs",
+      "claims",
+      program,
+      "on",
+      "budget",
+      "access",
+      "limits",
+    ];
 
     if (!hasExactly(step, fields)) {
       throw invalid(`step ${name} does not have exactly the fields a ${kind} step defines`);
@@ -110,6 +121,12 @@ export function parseWorkflow(name: string, text: string): Workflow {
     ) {
       throw invalid(
         `step ${name}'s inputs must each be subject, request, or a query of its steps, a kind, a subject and latest or all`,
+      );
+    }
+
+    if (!Array.isArray(claims) || !claims.every((claim) => isText(claim) && claimable.has(claim))) {
+      throw invalid(
+        `step ${name}'s claims must each be a kind a step may claim: ${[...claimable.keys()].join(", ")}`,
       );
     }
 

@@ -11,30 +11,11 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-/** A document artifact, such as the owner's request: a title and a text body. */
-export type Document = { kind: "document"; fields: { title: string }; body: string };
-
-/** The owner's decision: an outcome about a subject, named by its hash, and any feedback. */
-export type Decision = {
-  kind: "decision";
-  fields: { outcome: string; subject: string };
-  body?: string;
-};
-
-/** A commit, named by its SHA. */
-export type Commit = { kind: "commit"; fields: { sha: string }; body?: undefined };
-
 /**
- * A step's verdict about a subject, named by its hash: pass or fail, with an optional one-line
- * summary and the findings as an optional body.
+ * An artifact: its kind, its fields, and its body, if it has one. Its kind's definition says
+ * which fields and body it may have; the store keeps whatever it is given.
  */
-export type Verdict = {
-  kind: "verdict";
-  fields: { verdict: "pass" | "fail"; subject: string; summary?: string };
-  body?: string;
-};
-
-export type Artifact = Document | Commit | Verdict | Decision;
+export type Artifact = { kind: string; fields: Readonly<Record<string, string>>; body?: string };
 
 /**
  * Keeps artifacts, their bodies and transcripts in `directory`, each under the sha256 of its

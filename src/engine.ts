@@ -16,9 +16,10 @@ import {
   type Workflow,
 } from "./replay.ts";
 import { parseWorkflow } from "./definition.ts";
-import { hasExactly, isText } from "./json.ts";
+import { hasExactly, isRecord, isText } from "./json.ts";
 import { confine } from "./sandbox.ts";
-import { createStore, type Artifact, type Commit, type Document, type Verdict } from "./store.ts";
+import { kinds } from "./kinds.ts";
+import { createStore, type Artifact } from "./store.ts";
 
 type Options = { log: string; workflows: Record<string, Workflow> };
 
@@ -565,6 +566,14 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
     attempt: given.attempt,
     outcomes: Object.keys(step.on),
     inputs: Object.fromEntries(inputs),
+    // What a claim of each kind holds; the programs behind a kind are the engine's, not the step's.
+    claims: Object.fromEntries(
+      step.claims.map((kind) => {
+        const { description, fields, body, outcome } = kinds.get(kind)!;
+
+        return [kind, { description, fields, body, outcome }];
+      }),
+    ),
     // Left out of a command step's input.json, which has no agent.
     agent:
       step.kind === "agent" ? { model: step.agent.model, prompt: step.agent.prompt } : undefined,
@@ -703,11 +712,11 @@ async function run(
       return escalate(claim.reason);
     }
 
-    // A document's kind has no verifier; a commit's does, and keeps files.
+    // Each artifact whose kind has a verifier is accepted by it, which may keep files.
     const verified = [];
 
     for (const artifact of claim.artifacts) {
-      if (artifact.kind === "commit") {
+      if (kinds.get(artifact.kind)!.verifier !== undefined) {
         const result = await verify(directory, workspace, name, artifact, given.subject, store);
 
         if ("reason" in result) {
@@ -738,17 +747,10 @@ async function run(
   }
 }
 
-type Claim = { outcome: string; artifacts: (Document | Commit | Verdict)[] };
+type Claim = { outcome: string; artifacts: Artifact[] };
 
 // The largest output.json the engine reads, in bytes.
 const claimLimit = 64 * 1024;
-
-// lazy: the built-in document kind is a constant, its limits in bytes. Make kinds definitions,
-// recorded by hash, with definitions by hash.
-const documentKind = { title: 200, body: 1024 * 1024 };
-
-// lazy: the built-in verdict kind, as the document kind.
-const verdictKind = { summary: 200, body: 1024 * 1024 };
 
 // Fatal, so invalid bytes are refused rather than replaced; the byte order mark is kept as written.
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -805,115 +807,111 @@ async function parse(
     return { reason: `Step ${name} claimed artifacts that are not a list.` };
   }
 
-  const artifacts: (Document | Commit | Verdict)[] = [];
+  const artifacts: Artifact[] = [];
 
   for (const artifact of claimed) {
-    if (artifact?.kind === "decision") {
+    // Every property read below is checked before it is used.
+    const { kind, fields, body } = artifact ?? {};
+
+    if (kind === "decision") {
       return { reason: `Step ${name} claimed a decision, which only the owner makes.` };
     }
 
-    if (artifact?.kind === "commit") {
-      const { fields } = artifact;
-      const sha = fields?.sha;
-
-      if (
-        !hasExactly(artifact, ["kind", "fields"]) ||
-        !hasExactly(fields, ["sha"]) ||
-        !isText(sha) ||
-        !/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)
-      ) {
-        return { reason: `Step ${name} claimed a commit that is not a SHA.` };
-      }
-
-      artifacts.push({ kind: "commit", fields: { sha } });
-
-      continue;
-    }
-
-    if (artifact?.kind === "verdict") {
-      const { fields, body } = artifact;
-      const verdict = fields?.verdict;
-      const summary = fields?.summary;
-
-      if (
-        !(
-          hasExactly(artifact, ["kind", "fields"]) ||
-          hasExactly(artifact, ["kind", "fields", "body"])
-        ) ||
-        !(hasExactly(fields, ["verdict"]) || hasExactly(fields, ["verdict", "summary"])) ||
-        (verdict !== "pass" && verdict !== "fail") ||
-        (summary !== undefined && !isText(summary)) ||
-        (body !== undefined && !isText(body))
-      ) {
-        return {
-          reason: `Step ${name} claimed a verdict that is not pass or fail, an optional summary and an optional body path.`,
-        };
-      }
-
-      // The verdict is the kind's outcome field, so the edge followed is the verdict given.
-      if (verdict !== outcome) {
-        return { reason: `Step ${name} claimed a ${verdict} verdict with the outcome ${outcome}.` };
-      }
-
-      if (summary !== undefined && Buffer.byteLength(summary) > verdictKind.summary) {
-        return {
-          reason: `Step ${name} claimed a verdict summary over its limit of ${verdictKind.summary} bytes.`,
-        };
-      }
-
-      const findings =
-        body === undefined ? undefined : await readBody(name, output, body, verdictKind.body);
-
-      if (findings !== undefined && "reason" in findings) {
-        return findings;
-      }
-
-      // The engine names the subject: the one the attempt was given, which the step judged.
-      const judged: Verdict = {
-        kind: "verdict",
-        fields: summary === undefined ? { verdict, subject } : { verdict, subject, summary },
-      };
-
-      if (findings !== undefined) {
-        judged.body = findings.text;
-      }
-
-      artifacts.push(judged);
-
-      continue;
-    }
-
-    if (artifact?.kind !== "document") {
+    if (!isText(kind) || !step.claims.includes(kind)) {
       return {
-        reason: `Step ${name} claimed an artifact of undeclared kind: ${JSON.stringify(artifact?.kind)}.`,
+        reason: `Step ${name} claimed an artifact of undeclared kind: ${JSON.stringify(kind)}.`,
       };
     }
 
-    const { fields, body } = artifact;
-    const title = fields?.title;
+    // The definition allows only kinds in the table, so the step's claims name one.
+    const definition = kinds.get(kind)!;
 
     if (
-      !hasExactly(artifact, ["kind", "fields", "body"]) ||
-      !hasExactly(fields, ["title"]) ||
-      !isText(title) ||
-      !isText(body)
+      !isRecord(fields) ||
+      !hasExactly(artifact, body === undefined ? ["kind", "fields"] : ["kind", "fields", "body"])
     ) {
-      return { reason: `Step ${name} claimed a document that is not a title and a body path.` };
-    }
-
-    if (Buffer.byteLength(title) > documentKind.title) {
       return {
-        reason: `Step ${name} claimed a document title over its limit of ${documentKind.title} bytes.`,
+        reason: `Step ${name} claimed a ${kind} that is not a kind, its fields and a body path.`,
       };
     }
 
-    const read = await readBody(name, output, body, documentKind.body);
+    // The engine names a judgement's subject, so a claimed subject is refused here as undefined.
+    const undefinedFields = Object.keys(fields).filter(
+      (field) => !Object.hasOwn(definition.fields, field),
+    );
+
+    if (undefinedFields.length > 0) {
+      return {
+        reason: `Step ${name} claimed a ${kind} with fields its kind does not define: ${JSON.stringify(undefinedFields)}.`,
+      };
+    }
+
+    const given = new Map(Object.entries(fields));
+    const parsed: Record<string, string> = {};
+
+    for (const [field, rule] of Object.entries(definition.fields)) {
+      const value = given.get(field);
+
+      if (value === undefined) {
+        if (rule.required) {
+          return { reason: `Step ${name} claimed a ${kind} without its ${field}.` };
+        }
+
+        continue;
+      }
+
+      if (!isText(value)) {
+        return { reason: `Step ${name} claimed a ${kind} ${field} that is not text.` };
+      }
+
+      if (rule.values !== undefined && !rule.values.includes(value)) {
+        return {
+          reason: `Step ${name} claimed a ${kind} ${field} that is not one of ${rule.values.join(", ")}.`,
+        };
+      }
+
+      if (Buffer.byteLength(value) > rule.limit) {
+        return {
+          reason: `Step ${name} claimed a ${kind} ${field} over its limit of ${rule.limit} bytes.`,
+        };
+      }
+
+      parsed[field] = value;
+    }
+
+    // The kind's outcome field, such as a verdict's, so the edge followed is the judgement given.
+    if (definition.outcome !== undefined && parsed[definition.outcome] !== outcome) {
+      return {
+        reason: `Step ${name} claimed a ${kind} whose ${definition.outcome} is ${parsed[definition.outcome]}, not its outcome ${outcome}.`,
+      };
+    }
+
+    // The engine names a judgement's subject: the one the attempt was given, which the step judged.
+    if (definition.role === "judgement") {
+      parsed.subject = subject;
+    }
+
+    if (body === undefined) {
+      if (definition.body.required) {
+        return { reason: `Step ${name} claimed a ${kind} without its body.` };
+      }
+
+      artifacts.push({ kind, fields: parsed });
+
+      continue;
+    }
+
+    if (!isText(body)) {
+      return { reason: `Step ${name} claimed a ${kind} body that is not a path.` };
+    }
+
+    const read = await readBody(name, output, body, definition.body.limit);
 
     if ("reason" in read) {
       return read;
     }
 
-    artifacts.push({ kind: "document", fields: { title }, body: read.text });
+    artifacts.push({ kind, fields: parsed, body: read.text });
   }
 
   return { outcome, artifacts };
@@ -1015,18 +1013,6 @@ async function readAtMost(path: string, limit: number): Promise<Buffer | undefin
   }
 }
 
-// lazy: the built-in kinds' verifier and materialisers are found beside the engine. Name them in
-// the kinds' definitions, by hash, with definitions by hash.
-const builtIn = (path: string) =>
-  [process.execPath, join(import.meta.dirname, "..", path)] as const;
-
-const commitVerifier = builtIn("verifiers/commit.ts");
-
-const materialisers = {
-  document: builtIn("materialisers/document.ts"),
-  commit: builtIn("materialisers/commit.ts"),
-};
-
 // The seconds a verifier or materialiser may run before it is stopped.
 const builtInLimit = 60;
 
@@ -1087,20 +1073,21 @@ async function areaFor(directory: string, program: string) {
   return { input, output };
 }
 
-// Runs the commit verifier on a claim in the attempt's workspace, and stores the files it keeps.
+// Runs the claim's kind's verifier in the attempt's workspace, and stores the files it keeps.
 // lazy: the workspace is not read-only to the verifier; the sandbox makes it so.
 async function verify(
   directory: string,
   workspace: string,
   name: string,
-  claim: Commit,
+  claim: Artifact,
   subject: Subject,
   store: Store,
 ): Promise<{ kept: Record<string, string> } | { reason: string }> {
   const { input, output } = await areaFor(directory, "verifier");
+  const { kind } = claim;
 
   const failed = (why: string) => ({
-    reason: `The commit verifier failed on step ${name}'s claim: ${why}`,
+    reason: `The ${kind} verifier failed on step ${name}'s claim: ${why}`,
   });
 
   await writeFile(
@@ -1111,7 +1098,7 @@ async function verify(
     }),
   );
 
-  const why = await runBuiltIn(commitVerifier, workspace, input, output);
+  const why = await runBuiltIn(kinds.get(kind)!.verifier!, workspace, input, output);
 
   if (why !== undefined) {
     return failed(why);
@@ -1127,7 +1114,7 @@ async function verify(
   }
 
   if (verdict?.accepted === false && isText(verdict.reason)) {
-    return { reason: `Step ${name} claimed a commit its verifier rejected: ${verdict.reason}` };
+    return { reason: `Step ${name} claimed a ${kind} its verifier rejected: ${verdict.reason}` };
   }
 
   if (verdict?.accepted !== true || !Array.isArray(verdict.keep)) {
@@ -1164,8 +1151,10 @@ async function materialise(
 ): Promise<string | undefined> {
   const { artifact } = subject;
 
-  if (artifact.kind === "decision" || artifact.kind === "verdict") {
-    throw new Error(`A ${artifact.kind} is a judgement, never the subject.`);
+  const materialiser = kinds.get(artifact.kind)?.materialiser;
+
+  if (materialiser === undefined) {
+    return `Step ${name}'s workspace cannot be built from a ${artifact.kind}, whose kind has no materialiser.`;
   }
 
   const { input, output } = await areaFor(directory, "materialiser");
@@ -1191,7 +1180,7 @@ async function materialise(
     }),
   );
 
-  const why = await runBuiltIn(materialisers[artifact.kind], workspace, input, output);
+  const why = await runBuiltIn(materialiser, workspace, input, output);
 
   return why === undefined
     ? undefined

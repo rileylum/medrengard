@@ -54,6 +54,7 @@ export default {
           kind: "command",
           workspace: "empty",
           inputs: { request: "request" },
+          claims: ["document"],
           run: [
             "sh",
             "-c",
@@ -72,6 +73,7 @@ export default {
           kind: "command",
           workspace: "subject",
           inputs: {},
+          claims: ["verdict"],
           run: [
             "sh",
             "-c",
@@ -120,17 +122,20 @@ outcome to the next step or to `end`.
 
 There are three kinds of step:
 
-| Kind       | Runs                                 | Fields besides `kind` and `on`                               |
-| ---------- | ------------------------------------ | ------------------------------------------------------------ |
-| `command`  | the owner's program, `run`           | `run`, `workspace`, `inputs`, `budget`, `access`, `limits`   |
-| `agent`    | an agent through its harness adapter | `agent`, `workspace`, `inputs`, `budget`, `access`, `limits` |
-| `approval` | nothing: it waits for the owner      | none                                                         |
+| Kind       | Runs                                 | Fields besides `kind` and `on`                                         |
+| ---------- | ------------------------------------ | ---------------------------------------------------------------------- |
+| `command`  | the owner's program, `run`           | `run`, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`   |
+| `agent`    | an agent through its harness adapter | `agent`, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits` |
+| `approval` | nothing: it waits for the owner      | none                                                                   |
 
 The fields of a command or agent step:
 
 - `workspace`: `"empty"`, or `"subject"` to build the working directory from the current subject. A
   commit is checked out with its history; a document is written to the file `document`.
 - `inputs`: what the step is given, by name. See [Inputs](#inputs).
+- `claims`: the artifact kinds the step may claim, such as `["commit"]`; `[]` for none. A claim of
+  any other kind escalates. A step need not claim what it lists. See
+  [the step contract](#the-step-contract) for the kinds.
 - `budget`: the attempts the step may start between the owner's decisions, above zero. It bounds
   every loop: a step that has spent its budget escalates.
 - `access`: what the step's process may read, write and reach. See [Access](#access).
@@ -280,6 +285,7 @@ const design = {
   },
   workspace: "empty",
   inputs: { request: "request" },
+  claims: ["document"],
   on: { done: "approve" },
   budget: 1,
   access: claudeCode,
@@ -289,8 +295,8 @@ const design = {
 
 - `--permission-mode acceptEdits`, the default, lets the agent edit files but not run commands.
   `bypassPermissions` lets it do anything its access allows, so the sandbox is its only boundary.
-- The adapter tells the agent where its inputs are and how to claim a document, a commit or a
-  verdict.
+- The adapter tells the agent where its inputs are, and how to claim each kind its step's `claims`
+  lists, from the kinds' rules in `input.json`.
 - `claudeCode` passes `CLAUDE_CODE_OAUTH_TOKEN` and the `GIT_AUTHOR_*` and `GIT_COMMITTER_*`
   variables from the engine's environment. Set them before you run the engine.
 - `claudeCode` grants the adapter's real directory. If you reach this repository through a
@@ -308,7 +314,8 @@ Every command and agent step is a program, started:
 - with only the environment its access names.
 
 `input.json` lists each input's artifacts, oldest first, always as a list. A body is a file at
-`<input>/<hash>`, and `body` holds that path:
+`<input>/<hash>`, and `body` holds that path. `claims` holds the rules of each kind the step may
+claim, so a program can tell its agent how to claim them:
 
 ```json
 {
@@ -323,6 +330,17 @@ Every command and agent step is a program, started:
     "evidence": [
       { "hash": "41ab…", "kind": "verdict", "fields": { "verdict": "pass", "subject": "77d0…" } }
     ]
+  },
+  "claims": {
+    "verdict": {
+      "description": "Your verdict on what the workflow is about. …",
+      "fields": {
+        "verdict": { "limit": 4, "required": true, "values": ["pass", "fail"] },
+        "summary": { "limit": 200 }
+      },
+      "body": { "required": false, "limit": 1048576 },
+      "outcome": "verdict"
+    }
   },
   "agent": { "model": "sonnet", "prompt": "Review the change against the plan." }
 }
@@ -341,7 +359,9 @@ Every command and agent step is a program, started:
 ```json
 {
   "outcome": "done",
-  "artifacts": [{ "kind": "commit", "fields": { "sha": "<the full SHA of HEAD>" } }]
+  "artifacts": [
+    { "kind": "commit", "fields": { "sha": "<the full SHA of HEAD>" }, "body": "report.md" }
+  ]
 }
 ```
 
@@ -363,11 +383,12 @@ The kinds a step can claim:
 | Kind       | Role      | Fields                                   | Body                     | Checked by the engine                                     |
 | ---------- | --------- | ---------------------------------------- | ------------------------ | --------------------------------------------------------- |
 | `document` | subject   | `title`, at most 200 bytes               | required, UTF-8, 1 MiB   | nothing more                                              |
-| `commit`   | subject   | `sha`                                    | none                     | the SHA is the workspace HEAD and not already the subject |
+| `commit`   | subject   | `sha`, at most 64 bytes                  | optional report, 1 MiB   | the SHA is the workspace HEAD and not already the subject |
 | `verdict`  | judgement | `verdict` (`pass` or `fail`), `summary`? | optional findings, 1 MiB | `verdict` equals the outcome                              |
 
-The latest subject claimed becomes the subject. A verdict leaves the subject alone, and the engine
-records it as about the subject the attempt was given. Only the owner makes a decision: a step that
+Every body is UTF-8. A field the kind does not define escalates. The latest subject claimed becomes
+the subject. A judgement such as a verdict leaves the subject alone, and the engine adds the
+`subject` field: the subject the attempt was given. A claim that names its own `subject` escalates. Only the owner makes a decision: a step that
 claims one escalates.
 
 How the attempt ends:

@@ -1,3 +1,5 @@
+import { kinds } from "./kinds.ts";
+
 /**
  * What the engine gives a step under one of its input names: the commission's current subject;
  * the owner's request; or a query over every artifact in the commission's record, oldest first:
@@ -47,13 +49,14 @@ export type Access = {
   workspace: "read" | "write";
 };
 
-// What every step that starts a program declares: its inputs, whether its workspace is built from
-// the subject or starts empty, its outcomes' edges, the attempts it may start between the owner's
-// decisions, its access, and its limits. An attempt is stopped after `idle`
+// What every step that starts a program declares: its inputs, the artifact kinds it may claim,
+// whether its workspace is built from the subject or starts empty, its outcomes' edges, the
+// attempts it may start between the owner's decisions, its access, and its limits. An attempt is stopped after `idle`
 // seconds without stdout or stderr output, `attempt` seconds in all, or `transcript` bytes of it,
 // and never starts if the bodies of its inputs total more than `input` bytes.
 type Program<N extends string> = {
   inputs: Readonly<Record<string, Query<N>>>;
+  claims: readonly string[];
   workspace: "subject" | "empty";
   on: Record<string, N | "end">;
   budget: number;
@@ -159,9 +162,10 @@ export type CommissionState<N extends string = string> =
     }
   | { status: "finished"; by: "end" | "abandoned" };
 
-/** The artifact kinds that are subjects; every other kind is a judgement. */
-// lazy: the roles of the built-in kinds, until kinds are definitions that declare their role.
-export const subjects: readonly string[] = ["document", "commit"];
+/** The artifact kinds that are subjects; every other kind, the owner's decision included, is a judgement. */
+export const subjects: readonly string[] = [...kinds].flatMap(([name, kind]) =>
+  kind.role === "subject" ? [name] : [],
+);
 
 /** Declares a workflow, so the compiler checks that every step name it uses exists. */
 export function defineWorkflow<N extends string>(workflow: Workflow<N>): Workflow<N> {

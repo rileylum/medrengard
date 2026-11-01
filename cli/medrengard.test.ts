@@ -31,7 +31,7 @@ async function factoryIn(t: TestContext) {
      import { contract } from ${JSON.stringify(join(repository, "defaults/access.ts"))};
 
      const step = (script: string) => ({
-       kind: "command", workspace: "empty", inputs: {}, access: contract,
+       kind: "command", workspace: "empty", inputs: {}, claims: ["document"], access: contract,
        run: ["sh", "-c", script], budget: 1,
        limits: { idle: 5, attempt: 10, transcript: 65536, input: 65536 },
      }) as const;

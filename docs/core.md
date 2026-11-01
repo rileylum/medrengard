@@ -59,7 +59,7 @@ Every step except an approval step is a program. The engine starts it with:
 
 An attended step has the owner's terminal, recorded through a pseudo-terminal. An unattended step gets empty stdin, and its stdout and stderr are its transcript.
 
-`input.json` names the commission, step, attempt and declared outcomes, and lists each declared input's artifacts, oldest first, as a list even when it holds one artifact or none; an agent step's also carries its agent. `output.json` holds one outcome and the claimed artifacts. Bodies are files, referenced by path: an input's body is at `<input>/<hash>` under `MEDRENGARD_IN`.
+`input.json` names the commission, step, attempt and declared outcomes, and lists each declared input's artifacts, oldest first, as a list even when it holds one artifact or none; the rules of each kind the step may claim; an agent step's also carries its agent. `output.json` holds one outcome and the claimed artifacts. Bodies are files, referenced by path: an input's body is at `<input>/<hash>` under `MEDRENGARD_IN`.
 
 The exit code reports the step's health; the outcome reports its result. A test run that finds failures exits 0 with a failing verdict. When the step ends:
 
@@ -121,7 +121,7 @@ A step's budget counts its attempts since the commission's latest decision, so o
 
 **Artifact kinds**
 
-A kind is data: a name; a role, subject or judgement; a schema for its fields, each with a size limit; whether it has a body, with its media types and size limit; and optionally a verifier, a materialiser and an outcome field. An artifact's hash covers its kind, fields and body hash, the same way for every kind. A judgement's subject is always named by artifact hash.
+A step declares the kinds it may claim; a claim of any other kind is invalid. A kind is data: a name; a role, subject or judgement; a schema for its fields, each with a size limit; whether it has a body, with its media types and size limit; and optionally a verifier, a materialiser and an outcome field. An artifact's hash covers its kind, fields and body hash, the same way for every kind. A judgement's subject is always named by artifact hash.
 
 A verifier is a program run after a claim parses, under the step contract:
 

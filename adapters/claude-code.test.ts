@@ -4,6 +4,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createEngine } from "../src/engine.ts";
+import { kinds } from "../src/kinds.ts";
 import { defineWorkflow } from "../src/replay.ts";
 
 const adapter = join(import.meta.dirname, "claude-code.ts");
@@ -39,6 +40,7 @@ ${script}
         steps: {
           plan: {
             kind: "agent",
+            claims: ["document"],
             workspace: "empty",
             agent: {
               harness: {
@@ -117,6 +119,22 @@ test("the Claude Code adapter runs claude headless with the agent, whose claim c
   ]);
   assert.ok(prompt.startsWith("Plan the change.\n"));
   assert.ok(prompt.includes('["done"]'));
+});
+
+test("the Claude Code adapter tells the agent how to claim only the kinds its step may claim", async (t) => {
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+
+  const prompt = (await readFile(join(directory, "arguments"), "utf8")).split("\0").at(-2)!;
+
+  assert.ok(prompt.includes(kinds.get("document")!.description));
+  assert.ok(prompt.includes('"title"'));
+  assert.ok(!prompt.includes(kinds.get("commit")!.description));
+  assert.ok(!prompt.includes(kinds.get("verdict")!.description));
 });
 
 test("the Claude Code adapter runs claude in the permission mode its harness names", async (t) => {
