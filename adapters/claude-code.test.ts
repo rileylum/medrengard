@@ -4,7 +4,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createEngine } from "../src/engine.ts";
-import { kinds } from "../src/kinds.ts";
+import { builtIn } from "../defaults/kinds.ts";
 import { defineWorkflow } from "../src/replay.ts";
 
 const adapter = join(import.meta.dirname, "claude-code.ts");
@@ -33,6 +33,7 @@ ${script}
   await chmod(claude, 0o755);
 
   const engine = createEngine({
+    kinds: builtIn,
     log: join(directory, "log.sqlite"),
     workflows: {
       build: defineWorkflow({
@@ -131,10 +132,10 @@ test("the Claude Code adapter tells the agent how to claim only the kinds its st
 
   const prompt = (await readFile(join(directory, "arguments"), "utf8")).split("\0").at(-2)!;
 
-  assert.ok(prompt.includes(kinds.get("document")!.description));
+  assert.ok(prompt.includes(builtIn.document.description));
   assert.ok(prompt.includes('"title"'));
-  assert.ok(!prompt.includes(kinds.get("commit")!.description));
-  assert.ok(!prompt.includes(kinds.get("verdict")!.description));
+  assert.ok(!prompt.includes(builtIn.commit.description));
+  assert.ok(!prompt.includes(builtIn.verdict.description));
 });
 
 test("the Claude Code adapter runs claude in the permission mode its harness names", async (t) => {

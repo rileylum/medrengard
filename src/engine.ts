@@ -8,20 +8,20 @@ import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import {
   replay,
-  subjects,
   type Commissioned,
   type CommissionEvent,
   type CommissionState,
+  type Definition,
   type Query,
   type Workflow,
 } from "./replay.ts";
-import { parseWorkflow } from "./definition.ts";
+import { parseDefinition } from "./definition.ts";
 import { hasExactly, isRecord, isText } from "./json.ts";
 import { confine } from "./sandbox.ts";
-import { kinds } from "./kinds.ts";
+import type { Kind, Kinds, Program } from "./kinds.ts";
 import { createStore, type Artifact } from "./store.ts";
 
-type Options = { log: string; workflows: Record<string, Workflow> };
+type Options = { log: string; workflows: Record<string, Workflow>; kinds: Kinds };
 
 type Log = [Commissioned, ...Exclude<CommissionEvent, Commissioned>[]];
 
@@ -29,7 +29,7 @@ type Log = [Commissioned, ...Exclude<CommissionEvent, Commissioned>[]];
  * Runs commissions through the owner's workflows, keeping every event in the SQLite log at `log`
  * and every artifact in the store beside it.
  */
-export function createEngine({ log, workflows }: Options) {
+export function createEngine({ log, workflows, kinds }: Options) {
   const database = new DatabaseSync(log);
   const store = createStore(join(dirname(log), "store"));
 
@@ -76,14 +76,14 @@ export function createEngine({ log, workflows }: Options) {
   }
 
   // Parsed once per definition; a definition never changes under its hash.
-  const definitions = new Map<string, Workflow>();
+  const definitions = new Map<string, Definition>();
 
-  // The workflow definition the commission started with, as stored then.
-  function definitionOf(events: Log): Workflow {
+  // The workflow and kinds the commission started with, as stored then.
+  function definitionOf(events: Log): Definition {
     const { workflow, definition } = events[0];
 
     if (!definitions.has(definition)) {
-      definitions.set(definition, parseWorkflow(workflow, store.read(definition).toString()));
+      definitions.set(definition, parseDefinition(workflow, store.read(definition).toString()));
     }
 
     return definitions.get(definition)!;
@@ -106,8 +106,8 @@ export function createEngine({ log, workflows }: Options) {
       }
 
       // Parsed as it will be read back, so a definition that could not run is refused now.
-      const text = JSON.stringify(workflows[workflow]);
-      const parsed = parseWorkflow(workflow, text);
+      const text = JSON.stringify({ workflow: workflows[workflow], kinds });
+      const parsed = parseDefinition(workflow, text);
 
       const event: Commissioned = {
         type: "commissioned",
@@ -161,11 +161,13 @@ export function createEngine({ log, workflows }: Options) {
      */
     artifact(hash: string): Artifact {
       // lazy: scans the whole log. Index artifact hashes once a log is large enough to notice.
-      const named = commissioned
-        .all()
-        .some(({ commission }) =>
-          recorded(read(String(commission))).some((artifact) => artifact.hash === hash),
+      const named = commissioned.all().some(({ commission }) => {
+        const events = read(String(commission));
+
+        return recorded(events, definitionOf(events).kinds).some(
+          (artifact) => artifact.hash === hash,
         );
+      });
 
       if (!named) {
         throw new Error(`There is no artifact ${hash}.`);
@@ -184,8 +186,9 @@ export function createEngine({ log, workflows }: Options) {
       { subject, outcome, feedback }: { subject: string; outcome: string; feedback?: string },
     ) {
       const events = read(commission);
-      const workflow = definitionOf(events);
-      const state = replay(workflow, events);
+      const definition = definitionOf(events);
+      const { workflow } = definition;
+      const state = replay(definition, events);
 
       if (state.status !== "awaiting" && state.status !== "escalated") {
         throw new Error(`Commission ${commission} is ${state.status}, so no decision can be made.`);
@@ -218,7 +221,7 @@ export function createEngine({ log, workflows }: Options) {
 
       write(commission, events, event);
 
-      return replay(workflow, [...events, event]);
+      return replay(definition, [...events, event]);
     },
 
     /** Asks the engine running the commission's attempt to stop it; that engine escalates. */
@@ -248,8 +251,9 @@ export function createEngine({ log, workflows }: Options) {
     ): Promise<CommissionState> {
       for (;;) {
         const events = read(commission);
-        const workflow = definitionOf(events);
-        const state = replay(workflow, events);
+        const definition = definitionOf(events);
+        const { workflow } = definition;
+        const state = replay(definition, events);
 
         if (state.status === "ready" && signal?.aborted) {
           return state;
@@ -298,7 +302,7 @@ export function createEngine({ log, workflows }: Options) {
 
         const given = Object.entries(step.inputs).map(([input, query]) => ({
           name: input,
-          hashes: resolve(query, state, events),
+          hashes: resolve(query, state, events, definition.kinds),
         }));
 
         const inputs = given.map(({ name, hashes }) => ({
@@ -360,6 +364,7 @@ export function createEngine({ log, workflows }: Options) {
               commission,
               step: name,
               attempt,
+              kinds: definition.kinds,
               subject: {
                 hash: state.subject,
                 artifact: store.get(state.subject),
@@ -396,6 +401,7 @@ function resolve(
   query: Query,
   state: Extract<CommissionState, { status: "ready" }>,
   events: Log,
+  kinds: Kinds,
 ): string[] {
   switch (query) {
     case "subject":
@@ -405,7 +411,7 @@ function resolve(
     default: {
       const { from, kind, about, take } = query;
 
-      const named = recorded(events).flatMap((artifact) =>
+      const named = recorded(events, kinds).flatMap((artifact) =>
         (from === undefined || (artifact.step !== undefined && from.includes(artifact.step))) &&
         (kind === undefined || artifact.kind === kind) &&
         (about === undefined ||
@@ -422,7 +428,10 @@ function resolve(
 
 // Every artifact in the commission's record, oldest first, with the step that claimed or decided
 // it and, for a judgement, the subject it is about. The request has no step.
-function recorded(events: Log): { hash: string; kind: string; step?: string; about?: string }[] {
+function recorded(
+  events: Log,
+  kinds: Kinds,
+): { hash: string; kind: string; step?: string; about?: string }[] {
   // The subject of the attempt in flight, which every judgement it claims is about.
   let judged = events[0].request;
 
@@ -436,7 +445,7 @@ function recorded(events: Log): { hash: string; kind: string; step?: string; abo
         return [];
       case "attempt-completed":
         return event.artifacts.map(({ hash, kind }) =>
-          subjects.includes(kind)
+          kinds[kind]?.role === "subject"
             ? { hash, kind, step: event.step }
             : { hash, kind, step: event.step, about: judged },
         );
@@ -473,12 +482,13 @@ type Runnable = Extract<Workflow["steps"][string], { kind: "agent" | "command" }
 // The commission's subject, with the files its verifier kept.
 type Subject = { hash: string; artifact: Artifact; kept: Readonly<Record<string, string>> };
 
-// What an attempt is given: the domain values its input.json encodes, and the commission's
-// subject, which verifiers judge a claim against.
+// What an attempt is given: the domain values its input.json encodes, the commission's subject,
+// which verifiers judge a claim against, and the kinds its claims are judged by.
 type Given = {
   commission: string;
   step: string;
   attempt: number;
+  kinds: Kinds;
   subject: Subject;
   inputs: readonly {
     name: string;
@@ -493,14 +503,14 @@ type Ending = Extract<CommissionEvent, { type: "attempt-completed" | "escalated"
 // The time a stopped step has to exit after SIGTERM before it gets SIGKILL.
 const grace = 5000;
 
-// Sends SIGTERM to the child's process group, then SIGKILL after the grace period. A sandboxed
-// step's group leader is bwrap, which dies at once on SIGTERM and takes the step with it, so it
-// is spared the SIGTERM and the step has its grace period.
-function stop(child: ChildProcess, leader: "bwrap" | "program"): void {
+// Sends SIGTERM to the child's process group, then SIGKILL after the grace period. The group's
+// leader is bwrap, which dies at once on SIGTERM and takes the program with it, so it is spared
+// the SIGTERM and the program has its grace period.
+function stop(child: ChildProcess): void {
   const group = child.pid!;
 
   for (const pid of membersOf(group)) {
-    if (leader === "program" || pid !== group) {
+    if (pid !== group) {
       try {
         process.kill(pid, "SIGTERM");
       } catch {
@@ -569,7 +579,7 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
     // What a claim of each kind holds; the programs behind a kind are the engine's, not the step's.
     claims: Object.fromEntries(
       step.claims.map((kind) => {
-        const { description, fields, body, outcome } = kinds.get(kind)!;
+        const { description, fields, body, outcome } = given.kinds[kind];
 
         return [kind, { description, fields, body, outcome }];
       }),
@@ -612,7 +622,14 @@ async function run(
     await mkdir(workspace);
 
     if (step.workspace === "subject") {
-      const failed = await materialise(directory, workspace, name, given.subject, store);
+      const failed = await materialise(
+        directory,
+        workspace,
+        name,
+        given.subject,
+        given.kinds,
+        store,
+      );
 
       if (failed !== undefined) {
         return escalate(failed);
@@ -644,7 +661,7 @@ async function run(
     const stopFor = (reason: string) => {
       if (stopped === undefined) {
         stopped = reason;
-        stop(child, "bwrap");
+        stop(child);
       }
     };
 
@@ -706,7 +723,7 @@ async function run(
       );
     }
 
-    const claim = await parse(step, name, output, given.subject.hash);
+    const claim = await parse(step, name, output, given.subject.hash, given.kinds);
 
     if ("reason" in claim) {
       return escalate(claim.reason);
@@ -716,8 +733,18 @@ async function run(
     const verified = [];
 
     for (const artifact of claim.artifacts) {
-      if (kinds.get(artifact.kind)!.verifier !== undefined) {
-        const result = await verify(directory, workspace, name, artifact, given.subject, store);
+      const { verifier } = given.kinds[artifact.kind];
+
+      if (verifier !== undefined) {
+        const result = await verify(
+          directory,
+          workspace,
+          name,
+          artifact,
+          verifier,
+          given.subject,
+          store,
+        );
 
         if ("reason" in result) {
           return escalate(result.reason);
@@ -762,6 +789,7 @@ async function parse(
   name: string,
   output: string,
   subject: string,
+  kinds: Kinds,
 ): Promise<Claim | { reason: string }> {
   const bytes = await readAtMost(join(output, "output.json"), claimLimit);
 
@@ -824,7 +852,7 @@ async function parse(
     }
 
     // The definition allows only kinds in the table, so the step's claims name one.
-    const definition = kinds.get(kind)!;
+    const definition: Kind = kinds[kind];
 
     if (
       !isRecord(fields) ||
@@ -1014,7 +1042,6 @@ async function readAtMost(path: string, limit: number): Promise<Buffer | undefin
 }
 
 // The seconds a verifier or materialiser may run before it is stopped.
-const builtInLimit = 60;
 
 // lazy: a constant, in bytes. Make it the kind's, with definitions by hash.
 const keptLimit = 64 * 1024 * 1024;
@@ -1022,29 +1049,24 @@ const keptLimit = 64 * 1024 * 1024;
 // A kept file is named by a plain file name, so it can be written anywhere without a path.
 const plainName = /^(?!\.\.?$)[A-Za-z0-9._-]+$/;
 
-// Runs a built-in program in `cwd` with `input` and `output` as its directories, stopped after
-// builtInLimit. Returns why it failed, or undefined when it exited 0.
-async function runBuiltIn(
-  argv: readonly [string, ...string[]],
-  cwd: string,
+// Runs a kind's program in `workspace` under its access, with `input` and `output` as its
+// directories, stopped after its limit. Returns why it failed, or undefined when it exited 0.
+async function runProgram(
+  program: Program,
+  workspace: string,
   input: string,
   output: string,
 ): Promise<string | undefined> {
-  const [command, ...args] = argv;
+  const { command, args, env } = confine(program.access, { workspace, input, output }, program.run);
 
-  const child = spawn(command, args, {
-    cwd,
-    env: { PATH: process.env.PATH, MEDRENGARD_IN: input, MEDRENGARD_OUT: output },
-    stdio: "ignore",
-    detached: true,
-  });
+  const child = spawn(command, args, { cwd: workspace, env, stdio: "ignore", detached: true });
 
   let late = false;
 
   const limit = setTimeout(() => {
     late = true;
-    stop(child, "program");
-  }, builtInLimit * 1000);
+    stop(child);
+  }, program.limit * 1000);
 
   const closed = await once(child, "close")
     .catch((error: NodeJS.ErrnoException) => error)
@@ -1055,7 +1077,7 @@ async function runBuiltIn(
   }
 
   if (late) {
-    return `it reached its limit of ${builtInLimit} s.`;
+    return `it reached its limit of ${program.limit} s.`;
   }
 
   return closed[0] === 0 ? undefined : `it exited with code ${closed[0]}.`;
@@ -1080,6 +1102,7 @@ async function verify(
   workspace: string,
   name: string,
   claim: Artifact,
+  verifier: Program,
   subject: Subject,
   store: Store,
 ): Promise<{ kept: Record<string, string> } | { reason: string }> {
@@ -1090,15 +1113,20 @@ async function verify(
     reason: `The ${kind} verifier failed on step ${name}'s claim: ${why}`,
   });
 
+  if (claim.body !== undefined) {
+    await writeFile(join(input, "body"), claim.body);
+  }
+
   await writeFile(
     join(input, "claim.json"),
     JSON.stringify({
       fields: claim.fields,
+      body: claim.body === undefined ? undefined : "body",
       subject: { hash: subject.hash, kind: subject.artifact.kind, fields: subject.artifact.fields },
     }),
   );
 
-  const why = await runBuiltIn(kinds.get(kind)!.verifier!, workspace, input, output);
+  const why = await runProgram(verifier, workspace, input, output);
 
   if (why !== undefined) {
     return failed(why);
@@ -1147,11 +1175,12 @@ async function materialise(
   workspace: string,
   name: string,
   subject: Subject,
+  kinds: Kinds,
   store: Store,
 ): Promise<string | undefined> {
   const { artifact } = subject;
 
-  const materialiser = kinds.get(artifact.kind)?.materialiser;
+  const materialiser = kinds[artifact.kind]?.materialiser;
 
   if (materialiser === undefined) {
     return `Step ${name}'s workspace cannot be built from a ${artifact.kind}, whose kind has no materialiser.`;
@@ -1180,7 +1209,7 @@ async function materialise(
     }),
   );
 
-  const why = await runBuiltIn(materialiser, workspace, input, output);
+  const why = await runProgram(materialiser, workspace, input, output);
 
   return why === undefined
     ? undefined

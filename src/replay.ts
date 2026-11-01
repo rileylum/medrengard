@@ -1,4 +1,4 @@
-import { kinds } from "./kinds.ts";
+import type { Kinds } from "./kinds.ts";
 
 /**
  * What the engine gives a step under one of its input names: the commission's current subject;
@@ -162,10 +162,8 @@ export type CommissionState<N extends string = string> =
     }
   | { status: "finished"; by: "end" | "abandoned" };
 
-/** The artifact kinds that are subjects; every other kind, the owner's decision included, is a judgement. */
-export const subjects: readonly string[] = [...kinds].flatMap(([name, kind]) =>
-  kind.role === "subject" ? [name] : [],
-);
+/** What a commission runs on: its workflow and the kinds of artifact the factory defined. */
+export type Definition<N extends string = string> = { workflow: Workflow<N>; kinds: Kinds };
 
 /** Declares a workflow, so the compiler checks that every step name it uses exists. */
 export function defineWorkflow<N extends string>(workflow: Workflow<N>): Workflow<N> {
@@ -174,14 +172,14 @@ export function defineWorkflow<N extends string>(workflow: Workflow<N>): Workflo
 
 /** Rebuilds a commission's state from its workflow and its events. */
 export function replay<N extends string>(
-  workflow: Workflow<N>,
+  { workflow, kinds }: Definition<N>,
   events: readonly [Commissioned, ...Exclude<CommissionEvent<NoInfer<N>>, Commissioned>[]],
 ): CommissionState<N> {
   const [{ request }, ...rest] = events;
   let state = arrive(workflow, workflow.start, request, undefined);
 
   for (const event of rest) {
-    state = apply(workflow, state, event);
+    state = apply(workflow, kinds, state, event);
   }
 
   return state;
@@ -204,6 +202,7 @@ function arrive<N extends string>(
 
 function apply<N extends string>(
   workflow: Workflow<N>,
+  kinds: Kinds,
   state: CommissionState<N>,
   event: Exclude<CommissionEvent<N>, Commissioned>,
 ): CommissionState<N> {
@@ -226,7 +225,7 @@ function apply<N extends string>(
 
       {
         // A judgement, such as a verdict, leaves the subject where it was.
-        const subject = event.artifacts.findLast(({ kind }) => subjects.includes(kind));
+        const subject = event.artifacts.findLast(({ kind }) => kinds[kind]?.role === "subject");
 
         if (subject !== undefined) {
           return arrive(workflow, event.next, subject.hash, undefined);

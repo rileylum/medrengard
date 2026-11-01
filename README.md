@@ -4,8 +4,7 @@ A framework for building a personal software factory: workflows that take an ide
 
 Medrengard is being rewritten from first principles. [`docs/core.md`](docs/core.md) holds what it is
 and the rules it keeps; this file shows how to use what exists so far. The engine, the sandbox, the
-CLI and a Claude Code adapter run. Observers, attended steps and kinds as definitions do not exist
-yet.
+CLI and a Claude Code adapter run. Observers and attended steps do not exist yet.
 
 ## Contents
 
@@ -14,6 +13,7 @@ yet.
 - [Workflows](#workflows)
 - [Inputs](#inputs)
 - [Access](#access)
+- [Kinds](#kinds)
 - [Agents and the Claude Code adapter](#agents-and-the-claude-code-adapter)
 - [The step contract](#the-step-contract)
 - [The engine in TypeScript](#the-engine-in-typescript)
@@ -33,18 +33,21 @@ checkout of this repository.
 ## A first factory
 
 A factory is a TypeScript module whose default export is the engine's options: where the log lives,
-and the workflows by name. This one replies to the request, checks the reply and asks the owner.
+the kinds of artifact its steps claim, and the workflows by name. This one replies to the request, checks the reply and asks the owner.
 
 ```ts
 // factory.ts
 import { defineWorkflow } from "medrengard/src/replay.ts";
 import { contract } from "medrengard/defaults/access.ts";
+import { builtIn } from "medrengard/defaults/kinds.ts";
 
 const limits = { idle: 60, attempt: 600, transcript: 1024 * 1024, input: 1024 * 1024 };
 
 export default {
   // Relative to this file.
   log: "state/log.sqlite",
+  // Document, commit and verdict. See Kinds.
+  kinds: builtIn,
   workflows: {
     greet: defineWorkflow({
       start: "write",
@@ -260,6 +263,57 @@ const cloning = {
 };
 ```
 
+## Kinds
+
+A kind says what an artifact of it holds, and how the engine checks a claim of it. The factory
+passes its kinds by name; `medrengard/defaults/kinds.ts` exports the built-ins as `builtIn`, to use
+as they are, change, or add to:
+
+```ts
+import { contract } from "medrengard/defaults/access.ts";
+import { builtIn } from "medrengard/defaults/kinds.ts";
+import type { Kind } from "medrengard/src/kinds.ts";
+
+// A judgement, so the subject stays the commit it was opened for.
+const pullRequest: Kind = {
+  role: "judgement",
+  description: "The pull request you opened for what the workflow is about.",
+  fields: { url: { limit: 2048, required: true }, number: { limit: 16, required: true } },
+  body: { required: false, limit: 64 * 1024 },
+};
+
+export const kinds = { ...builtIn, "pull-request": pullRequest };
+```
+
+- `role`: a `subject`, which becomes what the commission is about, or a `judgement` about it. The
+  engine adds a judgement's `subject` field, so a judgement cannot define one.
+- `description`: one line that tells a step what the kind is and how to claim it. The Claude Code
+  adapter passes it to the agent.
+- `fields`: each field's rule by name. Every field is text of at most `limit` bytes; `required:
+  true` makes it required, and `values` limits it to a list.
+- `body`: whether a UTF-8 body is required, and its `limit` in bytes.
+- `outcome`, optional: a required field with `values` that must equal the claimed outcome, as a
+  verdict's `verdict` does.
+- `verifier` and `materialiser`, optional: programs, each a `run`, an `access` and a `limit` in
+  seconds. Each runs in its own sandbox, like a step; leaving the sandbox is an access you write,
+  such as `full`.
+
+The kinds must include `document`, the kind of the owner's request, and cannot include `decision`,
+which only the owner makes. A name holds letters, digits and `-`, starting with a letter. A
+commission records the kinds it started with, beside its workflow: editing a kind affects only new
+commissions.
+
+A verifier runs after a claim of its kind parses, in the attempt's workspace, in the mode its access
+gives. Its `MEDRENGARD_IN` holds `claim.json`, with the claim's `fields`, its `body` as a path to
+the file `body` when it has one, and the commission's current `subject`. It writes `output.json`:
+`{ "accepted": true, "keep": [...] }`, naming files in its `MEDRENGARD_OUT` for the store to keep,
+each at most 64 MiB; or `{ "accepted": false, "reason": "..." }`, and the commission escalates with
+the reason.
+
+A materialiser builds a later step's workspace from a subject, in an empty workspace. Its
+`MEDRENGARD_IN` holds `artifact.json`, with the artifact's `hash`, `kind`, `fields`, `body` and
+`kept` files as paths, and those files. A subject kind without one cannot be a step's workspace.
+
 ## Agents and the Claude Code adapter
 
 An agent is a harness adapter to run, a model and a prompt. The adapter is a program like any
@@ -378,7 +432,7 @@ claim, so a program can tell its agent how to claim them:
 }
 ```
 
-The kinds a step can claim:
+The built-in kinds:
 
 | Kind       | Role      | Fields                                   | Body                     | Checked by the engine                                     |
 | ---------- | --------- | ---------------------------------------- | ------------------------ | --------------------------------------------------------- |
@@ -388,8 +442,8 @@ The kinds a step can claim:
 
 Every body is UTF-8. A field the kind does not define escalates. The latest subject claimed becomes
 the subject. A judgement such as a verdict leaves the subject alone, and the engine adds the
-`subject` field: the subject the attempt was given. A claim that names its own `subject` escalates. Only the owner makes a decision: a step that
-claims one escalates.
+`subject` field: the subject the attempt was given. A claim that names its own `subject` escalates.
+Only the owner makes a decision: a step that claims one escalates.
 
 How the attempt ends:
 
@@ -409,7 +463,11 @@ The CLI is a thin layer over `createEngine`, and so is any other client:
 import { createEngine } from "medrengard/src/engine.ts";
 import factory from "./factory.ts";
 
-const engine = createEngine({ log: "/var/tmp/factory/log.sqlite", workflows: factory.workflows });
+const engine = createEngine({
+  log: "/var/tmp/factory/log.sqlite",
+  kinds: factory.kinds,
+  workflows: factory.workflows,
+});
 
 // Starts a commission: the request is its first subject.
 engine.commission("greet", "first", { title: "Greet", body: "Say hello." });

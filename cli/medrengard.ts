@@ -28,7 +28,7 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
   artifact   <hash>
 
 The factory is --factory <path>, or else MEDRENGARD_FACTORY: a module whose default export is the
-engine's options, { log, workflows }, with log relative to the module.`;
+engine's options, { log, kinds, workflows }, with log relative to the module.`;
 
 // Each command's positional arguments and the options it takes besides --json and --factory.
 const commands = new Map([
@@ -123,7 +123,7 @@ try {
 
   mkdirSync(dirname(log), { recursive: true });
 
-  const engine = createEngine({ log, workflows: options.workflows });
+  const engine = createEngine({ log, workflows: options.workflows, kinds: options.kinds });
   const [first, second] = args;
 
   switch (command) {

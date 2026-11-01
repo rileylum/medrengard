@@ -7,7 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as sleep } from "node:timers/promises";
+import { builtIn } from "../defaults/kinds.ts";
 import { createEngine } from "./engine.ts";
+import type { Kind, Kinds } from "./kinds.ts";
 import { defineWorkflow, type Access, type Query, type Workflow } from "./replay.ts";
 
 // The system's programs, read-only.
@@ -30,18 +32,25 @@ const claims = ["document", "commit", "verdict"];
 
 /**
  * Starts an engine whose one workflow, `build`, is made by `workflow` from the test's directory,
- * and commissions `first` under it. Returns the options too, so a test can start a second engine
+ * with the kinds `kinds` makes from it, the built-ins unless given, and commissions `first` under
+ * it. Returns the options too, so a test can start a second engine
  * on the same log.
  */
 async function engineWith<N extends string>(
   t: TestContext,
   workflow: (directory: string) => Workflow<N>,
+  kinds: (directory: string) => Kinds = () => builtIn,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
   t.after(() => rm(directory, { recursive: true, force: true }));
 
-  const options = { log: join(directory, "log.sqlite"), workflows: { build: workflow(directory) } };
+  const options = {
+    log: join(directory, "log.sqlite"),
+    kinds: kinds(directory),
+    workflows: { build: workflow(directory) },
+  };
+
   const engine = createEngine(options);
 
   engine.commission("build", "first", { title: "Greet", body: "Say hello." });
@@ -1856,4 +1865,240 @@ test("an artifact the log does not name is refused by its hash", async (t) => {
   for (const hash of ["missing", "../log.sqlite", definition]) {
     assert.throws(() => engine.artifact(hash), { message: `There is no artifact ${hash}.` });
   }
+});
+
+/** A judgement kind of the factory's own: a required note of at most 20 bytes and an optional body. */
+const memo: Kind = {
+  role: "judgement",
+  description: "A memo.",
+  fields: { note: { limit: 20, required: true } },
+  body: { required: false, limit: 100 },
+};
+
+/** What a step writes to claim a memo. */
+type MemoClaim = { kind: "memo"; fields: { note: string }; body?: string };
+
+/** A claim of `done` with a memo whose note is `note`, and whose body, if any, is memo.md. */
+function memoClaim(note: string, body?: string) {
+  const claimed: MemoClaim = { kind: "memo", fields: { note } };
+
+  if (body !== undefined) {
+    claimed.body = body;
+  }
+
+  return `echo '${JSON.stringify({ outcome: "done", artifacts: [claimed] })}' > "$MEDRENGARD_OUT/output.json"`;
+}
+
+/**
+ * Starts an engine with the kinds `kinds`, whose step `build` claims memos by running `script`
+ * and leads to `read`, which copies its input.json, with every memo, into the returned directory.
+ */
+function engineWithMemos(t: TestContext, kinds: Kinds, script: string) {
+  return engineWith(
+    t,
+    (directory) =>
+      defineWorkflow({
+        start: "build",
+        steps: {
+          build: { ...stepRunning(script, "read"), claims: ["memo"] },
+          read: {
+            ...stepRunning(
+              `cp "$MEDRENGARD_IN/input.json" "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+              "review",
+              [directory],
+            ),
+            inputs: { memos: { kind: "memo" } },
+          },
+          review: { kind: "approval", on: { approve: "end" } },
+        },
+      }),
+    () => kinds,
+  );
+}
+
+test("a kind the factory defines can be claimed, and a query of it receives the claim", async (t) => {
+  const { engine, directory } = await engineWithMemos(
+    t,
+    { ...builtIn, memo },
+    memoClaim("Looks fine."),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+
+  const input = JSON.parse(await readFile(join(directory, "input.json"), "utf8"));
+
+  assert.deepEqual(
+    input.inputs.memos.map(({ kind, fields }: { kind: string; fields: object }) => ({
+      kind,
+      fields,
+    })),
+    [{ kind: "memo", fields: { note: "Looks fine.", subject: subjectOf(engine) } }],
+  );
+});
+
+test("a commission runs on the kinds it started with after the factory edits one", async (t) => {
+  const { options } = await engineWithMemos(t, { ...builtIn, memo }, memoClaim("Looks fine."));
+
+  // The same factory, its memo's note now at most 1 byte, so the claim would be over it.
+  const edited = createEngine({
+    ...options,
+    kinds: { ...builtIn, memo: { ...memo, fields: { note: { limit: 1, required: true } } } },
+  });
+
+  assert.partialDeepStrictEqual(await edited.advance("first"), { status: "awaiting" });
+});
+
+test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
+  const { document } = builtIn;
+
+  const refused: [object, string][] = [
+    [
+      { memo },
+      "The kinds are invalid: they must include document, the kind of the owner's request.",
+    ],
+    [
+      { document, decision: memo },
+      "The kinds are invalid: decision is the owner's, so no kind can be named decision.",
+    ],
+    [
+      { document, "a memo": memo },
+      'The kinds are invalid: "a memo" is not letters, digits or -, starting with a letter.',
+    ],
+    [
+      { document, memo: { ...memo, role: "note" } },
+      "Kind memo is invalid: its role must be subject or judgement.",
+    ],
+    [
+      { document, memo: { ...memo, colour: "red" } },
+      "Kind memo is invalid: it does not have exactly the fields a kind defines.",
+    ],
+    [
+      { document, memo: { ...memo, description: 1 } },
+      "Kind memo is invalid: its description must be text.",
+    ],
+    [
+      { document, memo: { ...memo, fields: { note: { limit: 0 } } } },
+      "Kind memo is invalid: field note's limit must be a positive integer.",
+    ],
+    [
+      { document, memo: { ...memo, fields: { note: { limit: 9, values: "a" } } } },
+      "Kind memo is invalid: field note's values must be a list of text.",
+    ],
+    [
+      { document, memo: { ...memo, fields: { note: { limit: 9, required: false } } } },
+      "Kind memo is invalid: field note may only be required: true.",
+    ],
+    [
+      { document, memo: { ...memo, fields: { subject: { limit: 64 } } } },
+      "Kind memo is invalid: the engine names a judgement's subject, so it cannot define a subject field.",
+    ],
+    [
+      { document, memo: { ...memo, body: { required: true } } },
+      "Kind memo is invalid: its body must be whether it is required, and its limit, a positive integer.",
+    ],
+    [
+      { document, memo: { ...memo, outcome: "note" } },
+      "Kind memo is invalid: its outcome must name a required field with values.",
+    ],
+    [
+      { document, memo: { ...memo, verifier: { run: ["true"], access, limit: 0 } } },
+      "Kind memo is invalid: its verifier's limit must be a positive number of seconds, at most 2147483.",
+    ],
+    [
+      { document, memo: { ...memo, verifier: { run: [], access, limit: 1 } } },
+      "Kind memo is invalid: its verifier's program must be a command and its arguments.",
+    ],
+    [
+      {
+        document,
+        memo: {
+          ...memo,
+          materialiser: { run: ["true"], access: { ...access, network: "yes" }, limit: 1 },
+        },
+      },
+      "Kind memo is invalid: its materialiser's network access must be true or false.",
+    ],
+  ];
+
+  for (const [kinds, message] of refused) {
+    // SAFETY: each is a kinds value the type would refuse, which the engine must refuse too.
+    await assert.rejects(
+      engineWith(
+        t,
+        () => defineWorkflow({ start: "build", steps: { build: stepRunning("true", "end") } }),
+        () => kinds as Kinds,
+      ),
+      { message },
+    );
+  }
+});
+
+/**
+ * Starts an engine whose step `build` claims a memo with the body "Why.", and whose memo kind has
+ * a verifier that runs `script` under `verifying` for at most `limit` seconds, its `$1` the test's
+ * directory.
+ */
+function engineVerifying(t: TestContext, script: string, verifying = access, limit = 5) {
+  return engineWith(
+    t,
+    () =>
+      defineWorkflow({
+        start: "build",
+        steps: {
+          build: {
+            ...stepRunning(
+              `printf 'Why.' > "$MEDRENGARD_OUT/memo.md"; ${memoClaim("Looks fine.", "memo.md")}`,
+              "end",
+            ),
+            claims: ["memo"],
+          },
+        },
+      }),
+    (directory) => ({
+      ...builtIn,
+      memo: {
+        ...memo,
+        verifier: { run: ["sh", "-c", script, "sh", directory], access: verifying, limit },
+      },
+    }),
+  );
+}
+
+test("a kind's verifier sees the claim's fields and body, and its rejection escalates", async (t) => {
+  const { engine, directory } = await engineVerifying(
+    t,
+    `cp -r "$MEDRENGARD_IN"/. "$1"; echo '{"accepted":false,"reason":"No."}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build claimed a memo its verifier rejected: No.",
+  });
+
+  const claim = JSON.parse(await readFile(join(directory, "claim.json"), "utf8"));
+
+  assert.partialDeepStrictEqual(claim, { fields: { note: "Looks fine." }, body: "body" });
+  assert.equal(await readFile(join(directory, claim.body), "utf8"), "Why.");
+});
+
+test("a kind's verifier whose access makes the workspace read-only cannot write to it", async (t) => {
+  const { engine } = await engineVerifying(
+    t,
+    `touch written && echo '{"accepted":true,"keep":[]}' > "$MEDRENGARD_OUT/output.json"`,
+    { ...access, workspace: "read" },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "The memo verifier failed on step build's claim: it exited with code 1.",
+  });
+});
+
+test("a kind's verifier past its limit is stopped and escalates", async (t) => {
+  const { engine } = await engineVerifying(t, "sleep 5", access, 1);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "The memo verifier failed on step build's claim: it reached its limit of 1 s.",
+  });
 });

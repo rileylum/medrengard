@@ -29,6 +29,7 @@ async function factoryIn(t: TestContext) {
     factory,
     `import { defineWorkflow } from ${JSON.stringify(join(repository, "src/replay.ts"))};
      import { contract } from ${JSON.stringify(join(repository, "defaults/access.ts"))};
+     import { builtIn } from ${JSON.stringify(join(repository, "defaults/kinds.ts"))};
 
      const step = (script: string) => ({
        kind: "command", workspace: "empty", inputs: {}, claims: ["document"], access: contract,
@@ -52,6 +53,7 @@ async function factoryIn(t: TestContext) {
 
      export default {
        log: "state/log.sqlite",
+       kinds: builtIn,
        workflows: {
          build: defineWorkflow({
            start: "build",

@@ -123,9 +123,11 @@ A step's budget counts its attempts since the commission's latest decision, so o
 
 A step declares the kinds it may claim; a claim of any other kind is invalid. A kind is data: a name; a role, subject or judgement; a schema for its fields, each with a size limit; whether it has a body, with its media types and size limit; and optionally a verifier, a materialiser and an outcome field. An artifact's hash covers its kind, fields and body hash, the same way for every kind. A judgement's subject is always named by artifact hash.
 
+A kind's verifier and materialiser are programs, each with its own access and time limit, run in a sandbox like a step's. A factory defines its kinds; a commission records them by hash with its workflow, and they must include document and cannot include decision.
+
 A verifier is a program run after a claim parses, under the step contract:
 
-- the attempt's workspace, read-only, as its working directory;
+- the attempt's workspace as its working directory, in the mode its access gives: read-only for the built-in commit verifier;
 - `MEDRENGARD_IN` holding `claim.json`: the claim's fields, its body and the commission's current subject;
 - `MEDRENGARD_OUT`, where it writes `output.json`: accepted, with the files to keep, or rejected, with a reason.
 
