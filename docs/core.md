@@ -103,9 +103,9 @@ Five events are the whole log vocabulary:
 
 - `commissioned`: the workflow, its definitions by hash and the request artifact.
 - `attempt-started`: the step and attempt, the subject and each input's artifacts by hash; spends one unit of the step's budget.
-- `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, and the next step or end.
+- `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, its transcript and, when it wrote to stderr, its errors, and the next step or end.
 - `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, and the next step or end.
-- `escalated`: the reason, and the attempt if one was involved.
+- `escalated`: the reason, and the attempt if one was involved, with its transcript and errors when its program ran. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it.
 
 Transitions:
 

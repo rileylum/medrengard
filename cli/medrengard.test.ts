@@ -82,7 +82,7 @@ async function factoryIn(t: TestContext) {
          }),
          failing: defineWorkflow({
            start: "build",
-           steps: { build: { ...step("exit 3"), on: { done: "end" } } },
+           steps: { build: { ...step("echo broke >&2; exit 3"), on: { done: "end" } } },
          }),
        },
      };`,
@@ -429,4 +429,38 @@ test("the CLI refuses an unknown artifact by its hash", async (t) => {
       stderr: { error: "There is no artifact missing." },
     },
   );
+});
+
+test("the CLI shows a commission's record for people, and as the engine's record with --json", async (t) => {
+  const { factory } = await factoryIn(t);
+
+  run(["commission", "build", "first", "--title", "Greet", "--body", "Say hello."], factory);
+  run(["advance", "first"], factory);
+
+  const { status, stdout } = run(["show", "first"], factory);
+
+  assert.equal(status, 0);
+  assert.match(stdout, /^first: awaiting at review\n/);
+  assert.match(stdout, /^request +[0-9a-f]{8} +Greet$/m);
+  assert.match(stdout, /^1 build +done$/m);
+
+  const record = JSON.parse(run(["show", "first", "--json"], factory).stdout);
+
+  assert.partialDeepStrictEqual(record, {
+    state: { status: "awaiting" },
+    entries: [{ entry: "attempt", attempt: 1, step: "build", outcome: "done" }],
+  });
+});
+
+test("the CLI prints an attempt's errors", async (t) => {
+  const { factory } = await factoryIn(t);
+
+  run(["commission", "failing", "first", "--title", "Greet", "--body", "Say hello."], factory);
+  run(["advance", "first"], factory);
+
+  assert.deepEqual(run(["errors", "first", "1"], factory), {
+    status: 0,
+    stdout: "broke\n",
+    stderr: "",
+  });
 });

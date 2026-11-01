@@ -26,6 +26,31 @@ const logWait = 5000;
 
 type Options = { log: string; workflows: Record<string, Workflow>; kinds: Kinds };
 
+/**
+ * One entry in a commission's record: an attempt, with the outcome it claimed and its artifacts,
+ * or the reason it escalated; an escalation before any attempt started, such as a spent budget;
+ * or the owner's decision, with any feedback.
+ */
+export type Entry =
+  | {
+      entry: "attempt";
+      attempt: number;
+      step: string;
+      outcome: string;
+      artifacts: { hash: string; artifact: Artifact }[];
+      errors: boolean;
+    }
+  | { entry: "attempt"; attempt: number; step: string; escalated: string; errors: boolean }
+  | { entry: "escalation"; step: string; reason: string }
+  | { entry: "decision"; step: string; outcome: string; subject: string; feedback?: string };
+
+/** A commission's state, its request and its record, oldest first. */
+export type CommissionRecord = {
+  state: CommissionState;
+  request: { hash: string; artifact: Artifact };
+  entries: Entry[];
+};
+
 type Log = [Commissioned, ...Exclude<CommissionEvent, Commissioned>[]];
 
 /**
@@ -94,6 +119,21 @@ export function createEngine({ log, workflows, kinds }: Options) {
     return definitions.get(definition)!;
   }
 
+  // The event that ended the commission's attempt numbered `attempt`, with its transcript.
+  function endingOf(commission: string, attempt: number) {
+    for (const event of read(commission)) {
+      if (
+        (event.type === "attempt-completed" || event.type === "escalated") &&
+        event.attempt === attempt &&
+        event.transcript !== undefined
+      ) {
+        return event;
+      }
+    }
+
+    throw new Error(`Commission ${commission} has no transcript for attempt ${attempt}.`);
+  }
+
   function write(commission: string, events: Log, event: Log[1]): void {
     replay(definitionOf(events), [...events, event]);
     insert.run(commission, events.length, JSON.stringify(event));
@@ -146,17 +186,90 @@ export function createEngine({ log, workflows, kinds }: Options) {
 
     /** Reads the transcript of the commission's attempt numbered `attempt`. */
     transcript(commission: string, attempt: number): Buffer {
-      for (const event of read(commission)) {
-        if (
-          (event.type === "attempt-completed" || event.type === "escalated") &&
-          event.attempt === attempt &&
-          event.transcript !== undefined
-        ) {
-          return store.read(event.transcript);
+      return store.read(endingOf(commission, attempt).transcript!);
+    },
+
+    /** Reads what the commission's attempt numbered `attempt` wrote to stderr: empty for none. */
+    errors(commission: string, attempt: number): Buffer {
+      const { errors } = endingOf(commission, attempt);
+
+      return errors === undefined ? Buffer.alloc(0) : store.read(errors);
+    },
+
+    /**
+     * The commission's record, oldest first: each attempt with what it claimed or why it
+     * escalated, each escalation before an attempt, and each decision with its feedback.
+     */
+    record(commission: string): CommissionRecord {
+      const events = read(commission);
+      const definition = definitionOf(events);
+      const entries: Entry[] = [];
+
+      // After the first event, commissioned, which holds the request.
+      for (let position = 1; position < events.length; position += 1) {
+        const event = events[position];
+
+        // The step an escalation is at: where the commission was just before it.
+        // SAFETY: position is at least 1, so the slice starts with the commissioned event.
+        const before = replay(definition, events.slice(0, position) as Log);
+        const at = before.status === "finished" ? "" : before.step.name;
+
+        switch (event.type) {
+          case "attempt-completed":
+            entries.push({
+              entry: "attempt",
+              attempt: event.attempt,
+              step: event.step,
+              outcome: event.outcome,
+              artifacts: event.artifacts.map(({ hash }) => ({ hash, artifact: store.get(hash) })),
+              errors: event.errors !== undefined,
+            });
+            break;
+          case "escalated":
+            entries.push(
+              event.attempt === undefined
+                ? { entry: "escalation", step: at, reason: event.reason }
+                : {
+                    entry: "attempt",
+                    attempt: event.attempt,
+                    step: at,
+                    escalated: event.reason,
+                    errors: event.errors !== undefined,
+                  },
+            );
+            break;
+          case "decided": {
+            const decision: Entry = {
+              entry: "decision",
+              step: event.step,
+              outcome: event.outcome,
+              subject: event.subject,
+            };
+
+            const { body } = store.get(event.decision);
+
+            if (body !== undefined) {
+              decision.feedback = body;
+            }
+
+            entries.push(decision);
+
+            break;
+          }
+
+          // An attempt-started event is read through the event that ends its attempt.
+          default:
+            break;
         }
       }
 
-      throw new Error(`Commission ${commission} has no transcript for attempt ${attempt}.`);
+      const { request } = events[0];
+
+      return {
+        state: replay(definition, events),
+        request: { hash: request, artifact: store.get(request) },
+        entries,
+      };
     },
 
     /**
@@ -166,19 +279,28 @@ export function createEngine({ log, workflows, kinds }: Options) {
      */
     artifact(hash: string): Artifact {
       // lazy: scans the whole log. Index artifact hashes once a log is large enough to notice.
-      const named = commissioned.all().some(({ commission }) => {
-        const events = read(String(commission));
+      const named = new Set(
+        commissioned.all().flatMap(({ commission }) => {
+          const events = read(String(commission));
 
-        return recorded(events, definitionOf(events).kinds).some(
-          (artifact) => artifact.hash === hash,
-        );
-      });
+          return recorded(events, definitionOf(events).kinds).map((artifact) => artifact.hash);
+        }),
+      );
 
-      if (!named) {
+      // A prefix as short as the 8 characters `show` prints is unique in any one owner's log.
+      const matches = [...named].filter(
+        (each) => each === hash || (hash.length >= 8 && each.startsWith(hash)),
+      );
+
+      if (matches.length === 0) {
         throw new Error(`There is no artifact ${hash}.`);
       }
 
-      return store.get(hash);
+      if (matches.length > 1) {
+        throw new Error(`The prefix ${hash} names more than one artifact.`);
+      }
+
+      return store.get(matches[0]);
     },
 
     /**
@@ -610,18 +732,26 @@ async function run(
   const input = join(directory, "input");
   const output = join(directory, "output");
 
-  // stdout and stderr together, in the order they arrive, up to the transcript limit.
+  // stdout and stderr together, in the order they arrive, up to the transcript limit; and the
+  // stderr of it alone, as the attempt's errors.
   const transcript: Buffer[] = [];
+  const errors: Buffer[] = [];
   let written = 0;
 
-  const kept = () => store.keep(Buffer.concat(transcript));
+  // Stores the transcript, and the errors when there are any, on the event that ends the attempt.
+  const recorded = <E extends Ending>(event: Omit<E, "transcript">): E => {
+    // SAFETY: E is the event given, with the transcript every ending event can carry.
+    const ended = { ...event, transcript: store.keep(Buffer.concat(transcript)) } as E;
 
-  const escalate = (reason: string): Ending => ({
-    type: "escalated",
-    reason,
-    attempt,
-    transcript: kept(),
-  });
+    if (errors.length > 0) {
+      ended.errors = store.keep(Buffer.concat(errors));
+    }
+
+    return ended;
+  };
+
+  const escalate = (reason: string): Ending =>
+    recorded<Extract<Ending, { type: "escalated" }>>({ type: "escalated", reason, attempt });
 
   try {
     await mkdir(workspace);
@@ -686,13 +816,18 @@ async function run(
       }
     }, 1000);
 
-    const record = (chunk: Buffer) => {
+    const record = (into: Buffer[] | undefined) => (chunk: Buffer) => {
       idle.refresh();
 
       const room = step.limits.transcript - written;
+      const kept = chunk.subarray(0, Math.max(room, 0));
 
-      transcript.push(chunk.subarray(0, Math.max(room, 0)));
+      transcript.push(kept);
       written += chunk.length;
+
+      if (into !== undefined && kept.length > 0) {
+        into.push(kept);
+      }
 
       if (written > step.limits.transcript) {
         stopFor(
@@ -701,8 +836,8 @@ async function run(
       }
     };
 
-    child.stdout.on("data", record);
-    child.stderr.on("data", record);
+    child.stdout.on("data", record(undefined));
+    child.stderr.on("data", record(errors));
 
     const closed = await once(child, "close")
       .catch((error: NodeJS.ErrnoException) => error)
@@ -761,7 +896,7 @@ async function run(
       }
     }
 
-    return {
+    return recorded<Extract<Ending, { type: "attempt-completed" }>>({
       type: "attempt-completed",
       step: name,
       attempt,
@@ -771,9 +906,8 @@ async function run(
         kind: artifact.kind,
         kept,
       })),
-      transcript: kept(),
       next: step.on[claim.outcome],
-    };
+    });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -1064,7 +1198,21 @@ async function runProgram(
 ): Promise<string | undefined> {
   const { command, args, env } = confine(program.access, { workspace, input, output }, program.run);
 
-  const child = spawn(command, args, { cwd: workspace, env, stdio: "ignore", detached: true });
+  const child = spawn(command, args, {
+    cwd: workspace,
+    env,
+    stdio: ["ignore", "ignore", "pipe"],
+    detached: true,
+  });
+
+  // Only the end of its stderr is kept, which is where a failing program says why.
+  let tail = Buffer.alloc(0);
+  let written = 0;
+
+  child.stderr.on("data", (chunk: Buffer) => {
+    tail = Buffer.concat([tail, chunk]).subarray(-stderrTail);
+    written += chunk.length;
+  });
 
   let late = false;
 
@@ -1081,12 +1229,22 @@ async function runProgram(
     return `it could not start: ${closed.code}.`;
   }
 
+  const stderr =
+    written === 0
+      ? ""
+      : written > stderrTail
+        ? ` The last ${stderrTail} bytes of its stderr: ${JSON.stringify(tail.toString())}.`
+        : ` Its stderr: ${JSON.stringify(tail.toString())}.`;
+
   if (late) {
-    return `it reached its limit of ${program.limit} s.`;
+    return `it reached its limit of ${program.limit} s.${stderr}`;
   }
 
-  return closed[0] === 0 ? undefined : `it exited with code ${closed[0]}.`;
+  return closed[0] === 0 ? undefined : `it exited with code ${closed[0]}.${stderr}`;
 }
+
+// The bytes of a failing kind program's stderr its escalation reason ends with.
+const stderrTail = 1024;
 
 // Makes an input and an output directory for a built-in program, inside the attempt's directory.
 async function areaFor(directory: string, program: string) {

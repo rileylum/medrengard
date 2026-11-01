@@ -2090,7 +2090,8 @@ test("a kind's verifier whose access makes the workspace read-only cannot write 
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
-    reason: "The memo verifier failed on step build's claim: it exited with code 1.",
+    reason:
+      "The memo verifier failed on step build's claim: it exited with code 1. Its stderr: \"touch: cannot touch 'written': Read-only file system\\n\".",
   });
 });
 
@@ -2125,4 +2126,98 @@ test("an engine waits for another process's write to the log instead of failing"
   );
 
   await once(holder, "exit");
+});
+
+test("a step's stderr is kept apart from its transcript as its errors", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `echo hello; sleep 0.1; echo oops >&2
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+
+  assert.equal(engine.transcript("first", 1).toString(), "hello\noops\n");
+  assert.equal(engine.errors("first", 1).toString(), "oops\n");
+});
+
+test("a step that writes nothing to stderr has no errors", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `echo hello; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+
+  assert.equal(engine.errors("first", 1).length, 0);
+  assert.partialDeepStrictEqual(engine.record("first").entries, [{ errors: false }]);
+});
+
+test("a failing verifier's stderr ends the reason its commission escalates", async (t) => {
+  const { engine } = await engineVerifying(t, `echo "fatal: no repository" >&2; exit 3`);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason:
+      'The memo verifier failed on step build\'s claim: it exited with code 3. Its stderr: "fatal: no repository\\n".',
+  });
+});
+
+test("a failing verifier's stderr over 1 KiB is given as its last 1024 bytes", async (t) => {
+  const { engine } = await engineVerifying(
+    t,
+    `head -c 2000 /dev/zero | tr '\\0' a >&2; echo end >&2; exit 3`,
+  );
+
+  const state = await engine.advance("first");
+
+  assert.equal(state.status, "escalated");
+  assert.equal(
+    state.reason,
+    `The memo verifier failed on step build's claim: it exited with code 3. The last 1024 bytes of its stderr: "${"a".repeat(1020)}end\\n".`,
+  );
+});
+
+test("a commission's record lists its attempts, claims, escalations and decisions in order", async (t) => {
+  const { engine } = await engineRunning(t, `${claimingAgain}; echo careful >&2`);
+
+  await engine.advance("first");
+
+  const subject = subjectOf(engine);
+
+  engine.decide("first", { subject, outcome: "abandon", feedback: "Enough." });
+
+  const record = engine.record("first");
+
+  assert.partialDeepStrictEqual(record, {
+    state: { status: "finished", by: "abandoned" },
+    request: { artifact: { kind: "document", fields: { title: "Greet" }, body: "Say hello." } },
+  });
+  assert.partialDeepStrictEqual(record.entries, [
+    {
+      entry: "attempt",
+      attempt: 1,
+      step: "build",
+      outcome: "again",
+      artifacts: [{ artifact: { kind: "document", fields: { title: "Plan" }, body: "1\n" } }],
+      errors: true,
+    },
+    { entry: "attempt", attempt: 2, step: "build", outcome: "again", errors: true },
+    {
+      entry: "escalation",
+      step: "build",
+      reason: "Step build has spent its budget of 2 attempts.",
+    },
+    { entry: "decision", step: "build", outcome: "abandon", subject, feedback: "Enough." },
+  ]);
+});
+
+test("an artifact can be named by a unique prefix of its hash of at least 8 characters", async (t) => {
+  const { engine } = await engineRunning(t, "true");
+  const subject = subjectOf(engine);
+
+  assert.deepEqual(engine.artifact(subject.slice(0, 8)), engine.artifact(subject));
+  assert.throws(() => engine.artifact(subject.slice(0, 7)), {
+    message: `There is no artifact ${subject.slice(0, 7)}.`,
+  });
 });

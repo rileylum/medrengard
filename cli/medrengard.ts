@@ -11,7 +11,7 @@ import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import type { createEngine as Create } from "../src/engine.ts";
+import type { CommissionRecord, createEngine as Create, Entry } from "../src/engine.ts";
 import type { CommissionState } from "../src/replay.ts";
 import type { Artifact } from "../src/store.ts";
 
@@ -20,12 +20,14 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
   commission <workflow> <commission> --title <title> (--body <text> | --body-file <path>)
   advance    <commission>
   state      <commission>
+  show       <commission>
   commissions
   run        [--parallel <n>]
   decide     <commission> <outcome> --subject <hash> [--feedback <text> | --feedback-file <path>]
   cancel     <commission>
   transcript <commission> <attempt>
-  artifact   <hash>
+  errors     <commission> <attempt>
+  artifact   <hash or a prefix of at least 8 characters>
 
 The factory is --factory <path>, or else MEDRENGARD_FACTORY: a module whose default export is the
 engine's options, { log, kinds, workflows }, with log relative to the module.`;
@@ -35,6 +37,8 @@ const commands = new Map([
   ["commission", { arguments: 2, options: ["title", "body", "body-file"] }],
   ["advance", { arguments: 1, options: [] }],
   ["state", { arguments: 1, options: [] }],
+  ["show", { arguments: 1, options: [] }],
+  ["errors", { arguments: 2, options: [] }],
   ["commissions", { arguments: 0, options: [] }],
   ["run", { arguments: 0, options: ["parallel"] }],
   ["decide", { arguments: 2, options: ["subject", "feedback", "feedback-file"] }],
@@ -92,7 +96,7 @@ if (
   (command === "commission" &&
     (values.title === undefined || (values.body ?? values["body-file"]) === undefined)) ||
   (command === "decide" && values.subject === undefined) ||
-  (command === "transcript" && !/^[1-9]\d*$/.test(args[1])) ||
+  ((command === "transcript" || command === "errors") && !/^[1-9]\d*$/.test(args[1])) ||
   !/^[1-9]\d*$/.test(values.parallel ?? "1")
 ) {
   refuseUsage();
@@ -144,8 +148,14 @@ try {
       engine.cancel(first);
       print(null, "");
       break;
+    case "show":
+      printRecord(first, engine.record(first));
+      break;
     case "transcript":
       process.stdout.write(engine.transcript(first, Number(second)));
+      break;
+    case "errors":
+      process.stdout.write(engine.errors(first, Number(second)));
       break;
     case "artifact":
       printArtifact(engine.artifact(first));
@@ -179,6 +189,7 @@ function refuseUsage(): never {
 // Every result the CLI prints, as JSON with --json.
 type Printed =
   | CommissionState
+  | CommissionRecord
   | Artifact
   | null
   | { commission: string; state: CommissionState }[]
@@ -300,4 +311,89 @@ function printArtifact(artifact: Artifact): void {
   const body = artifact.body === undefined ? [] : ["", artifact.body];
 
   print(artifact, `${[artifact.kind, ...fields, ...body].join("\n")}\n`);
+}
+
+// An artifact on one line: `label`, the start of its hash, and its fields but the subject.
+function line(label: string, hash: string, artifact: Artifact): string {
+  const fields = Object.entries(artifact.fields)
+    .filter(([name]) => name !== "subject")
+    .map(([, value]) => value);
+
+  return [label.padEnd(8), hash.slice(0, 8), ...fields].join("  ");
+}
+
+// An artifact in full, as `artifact` prints it, indented under a heading.
+function full(hash: string, artifact: Artifact): string {
+  const fields = Object.entries(artifact.fields)
+    .filter(([name]) => name !== "subject")
+    .map(([name, value]) => `${name}: ${value}`);
+
+  const body = artifact.body === undefined ? [] : ["", artifact.body.trimEnd()];
+
+  return [`${artifact.kind} ${hash}`, ...fields, ...body].join("\n");
+}
+
+// One line for an entry in the record, after its attempt number or a blank where it has none.
+function entryLines(entry: Entry): string[] {
+  const at = entry.step.padEnd(12);
+
+  switch (entry.entry) {
+    case "attempt": {
+      const number = String(entry.attempt).padEnd(2);
+
+      const errors = entry.errors
+        ? `  (errors: medrengard errors <commission> ${entry.attempt})`
+        : "";
+
+      if ("escalated" in entry) {
+        return [`${number}${at} escalated: ${entry.escalated}${errors}`];
+      }
+
+      return [
+        `${number}${at} ${entry.outcome}${errors}`,
+        ...entry.artifacts.map(
+          ({ hash, artifact }) => `    ${line(artifact.kind, hash, artifact)}`,
+        ),
+      ];
+    }
+
+    case "escalation":
+      return [`  ${at} escalated: ${entry.reason}`];
+    case "decision":
+      return [
+        `  ${at} ${entry.outcome}${entry.feedback === undefined ? "" : `: ${JSON.stringify(entry.feedback)}`}`,
+      ];
+  }
+}
+
+// The record for the owner: where the commission is, every entry in order, and then what it is
+// about now with every judgement about that, in full, as an owner reads at a gate.
+function printRecord(commission: string, record: CommissionRecord): void {
+  const { state, request, entries } = record;
+
+  const where =
+    state.status === "finished"
+      ? `finished by ${state.by}`
+      : `${state.status} at ${state.step.name}`;
+
+  const lines = [
+    `${commission}: ${where}`,
+    ...(state.status === "escalated" ? [`reason: ${state.reason}`] : []),
+    line("request", request.hash, request.artifact),
+    ...entries.flatMap(entryLines),
+  ];
+
+  if (state.status !== "finished") {
+    const claimed = entries.flatMap((entry) => ("artifacts" in entry ? entry.artifacts : []));
+    const subject = claimed.find(({ hash }) => hash === state.subject);
+    const evidence = claimed.filter(({ artifact }) => artifact.fields.subject === state.subject);
+
+    lines.push("", "Subject:", full(state.subject, subject?.artifact ?? request.artifact));
+
+    for (const { hash, artifact } of evidence) {
+      lines.push("", full(hash, artifact));
+    }
+  }
+
+  print(record, `${lines.join("\n")}\n`);
 }

@@ -487,23 +487,29 @@ if (state.status === "awaiting" || state.status === "escalated") {
   });
 }
 
-// What attempt 1 wrote to stdout and stderr.
+// What attempt 1 wrote to stdout and stderr, and to stderr alone.
 console.log(engine.transcript("first", 1).toString());
+console.log(engine.errors("first", 1).toString());
+
+// The commission's record: each attempt with its claims or why it escalated, and each decision.
+console.log(engine.record("first").entries);
 
 // Every commission in the log, oldest first, with its state.
 console.log(engine.commissions());
 ```
 
-| Method                                                | Returns                                                                        |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `commission(workflow, commission, { title, body })`   | nothing; refuses an unknown workflow or an invalid one                         |
-| `advance(commission, { signal? })`                    | the state it stopped at; once `signal` aborts, it starts no further attempt    |
-| `state(commission)`                                   | the state, replayed from the log                                               |
-| `commissions()`                                       | `{ commission, state }[]`, oldest first                                        |
-| `decide(commission, { subject, outcome, feedback? })` | the new state; refuses a stale subject or undeclared outcome                   |
-| `cancel(commission)`                                  | nothing; the engine running the attempt stops it and escalates                 |
-| `transcript(commission, attempt)`                     | the attempt's stdout and stderr as a `Buffer`                                  |
-| `artifact(hash)`                                      | `{ kind, fields, body? }`; refuses a hash the log does not name as an artifact |
+| Method                                                | Returns                                                                             |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `commission(workflow, commission, { title, body })`   | nothing; refuses an unknown workflow or an invalid one                              |
+| `advance(commission, { signal? })`                    | the state it stopped at; once `signal` aborts, it starts no further attempt         |
+| `state(commission)`                                   | the state, replayed from the log                                                    |
+| `commissions()`                                       | `{ commission, state }[]`, oldest first                                             |
+| `decide(commission, { subject, outcome, feedback? })` | the new state; refuses a stale subject or undeclared outcome                        |
+| `cancel(commission)`                                  | nothing; the engine running the attempt stops it and escalates                      |
+| `record(commission)`                                  | `{ state, request, entries }`: every attempt, escalation and decision, oldest first |
+| `errors(commission, attempt)`                         | what the attempt wrote to stderr, as a `Buffer`; empty for none                     |
+| `transcript(commission, attempt)`                     | the attempt's stdout and stderr as a `Buffer`                                       |
+| `artifact(hash)`                                      | `{ kind, fields, body? }`; refuses a hash the log does not name as an artifact      |
 
 A state has a `status`:
 
@@ -523,12 +529,14 @@ medrengard <command> [--json] [--factory <path>]
   commission <workflow> <commission> --title <title> (--body <text> | --body-file <path>)
   advance    <commission>
   state      <commission>
+  show       <commission>
   commissions
   run        [--parallel <n>]
   decide     <commission> <outcome> --subject <hash> [--feedback <text> | --feedback-file <path>]
   cancel     <commission>
   transcript <commission> <attempt>
-  artifact   <hash>
+  errors     <commission> <attempt>
+  artifact   <hash or a prefix of at least 8 characters>
 ```
 
 - The factory is `--factory <path>`, or else `MEDRENGARD_FACTORY`. The CLI never guesses one,
@@ -538,9 +546,13 @@ medrengard <command> [--json] [--factory <path>]
   output is for people, not for parsing.
 - Exit codes: 0 when the call succeeded, an escalation included; 1 when the engine refused or
   failed; 2 for a usage error.
-- `artifact` takes a full hash, and refuses one the log does not name as an artifact. A step's
-  verdicts and the owner's decisions have hashes the CLI does not list yet; `state` shows the
-  subject's and the latest decision's.
+- `show` prints the commission's record: one line per attempt with what it claimed, each
+  escalation and each decision with its feedback, then the current subject and every judgement
+  about it in full. It is what the owner reads at a gate. With `--json` it prints
+  `engine.record`.
+- `transcript` prints everything an attempt wrote; `errors` prints its stderr alone.
+- `artifact` takes a hash, or a unique prefix of at least 8 characters, as `show` prints them, and
+  refuses one the log does not name as an artifact. `decide` takes the full hash.
 - `run` advances every ready commission, at most `--parallel` steps at once (1 by default), oldest
   commission first. It prints one line per result, and keeps looking for ready commissions until it
   is stopped. A first Ctrl-C starts nothing new and waits for the running steps, leaving each
