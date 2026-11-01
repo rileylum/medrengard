@@ -59,7 +59,7 @@ Every step except an approval step is a program. The engine starts it with:
 
 An attended step has the owner's terminal, recorded through a pseudo-terminal. An unattended step gets empty stdin, and its stdout and stderr are its transcript.
 
-`input.json` names the commission, step, attempt, declared outcomes and declared inputs; an agent step's also carries its agent. `output.json` holds one outcome and the claimed artifacts. Bodies are files, referenced by path.
+`input.json` names the commission, step, attempt and declared outcomes, and lists each declared input's artifacts, oldest first, as a list even when it holds one artifact or none; an agent step's also carries its agent. `output.json` holds one outcome and the claimed artifacts. Bodies are files, referenced by path: an input's body is at `<input>/<hash>` under `MEDRENGARD_IN`.
 
 The exit code reports the step's health; the outcome reports its result. A test run that finds failures exits 0 with a failing verdict. When the step ends:
 
@@ -70,6 +70,22 @@ The exit code reports the step's health; the outcome reports its result. A test 
 - the owner cancels: the engine stops the step the same way, and the commission escalates naming the cancellation.
 
 The owner's request is the commission's first artifact, a document, and a decision with its feedback is a judgement. Steps receive both as declared inputs, like any other artifact.
+
+**Inputs**
+
+A step declares each input as a name and a query. The name is the input's directory under `MEDRENGARD_IN`: letters, digits, `-` and `_`, starting with a letter. A query is one of:
+
+- `subject`: the current subject;
+- `request`: the owner's request;
+- a query over the commission's record: every artifact, oldest first, which is the request, each artifact a step claimed, and each decision. Each field narrows it, and every field is optional:
+  - `from`: the steps that claimed or decided it; the request has none;
+  - `kind`: one artifact kind;
+  - `about`: judgements only, about the current subject (the evidence), earlier subjects (history), or any;
+  - `take`: the latest, or all, which is the default.
+
+The commission is refused before it starts if a query names a step the workflow lacks, a kind there is not, or a field or value a query does not define. Passing new data between steps is a new query in the workflow, not a change to the core.
+
+A step's input limit bounds the bytes of all its input bodies together. Over it, the commission escalates before an attempt starts, so no budget is spent.
 
 The JSON files are a wire format. The engine encodes `input.json` from its domain types and parses `output.json` into them, or escalates; the domain model is never shaped by the JSON.
 
@@ -86,16 +102,16 @@ Replay derives a commission's state; none is stored.
 Five events are the whole log vocabulary:
 
 - `commissioned`: the workflow, its definitions by hash and the request artifact.
-- `attempt-started`: the step and attempt; spends one unit of the step's budget.
-- `attempt-completed`: the attempt, its outcome, the recorded artifacts and the next step or end.
+- `attempt-started`: the step and attempt, the subject and each input's artifacts by hash; spends one unit of the step's budget.
+- `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, and the next step or end.
 - `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, and the next step or end.
 - `escalated`: the reason, and the attempt if one was involved.
 
 Transitions:
 
 - Commissioned, the commission is ready or awaiting, by its start step's kind.
-- Ready, with budget left and the step not yet attempted on the same subject and inputs, an attempt starts.
-- Ready, with the budget spent or the step already attempted on the same subject and inputs, the commission escalates.
+- Ready, with budget left, inputs within the input limit and the step not yet attempted on the same subject and inputs, an attempt starts.
+- Ready, with the budget spent, inputs over the input limit or the step already attempted on the same subject and inputs, the commission escalates.
 - Attempting, a valid claim completes the attempt and follows the outcome's edge. An invalid claim, a non-zero exit, a reached limit, the owner cancelling or an interruption found on replay escalates.
 - Awaiting, a decision naming the current subject and a declared outcome follows its edge. A stale or undeclared decision is refused and records nothing.
 - Escalated, a decision to retry makes the step ready again; a decision to abandon finishes the commission.
@@ -117,11 +133,13 @@ Kept files go to the store, attached to the artifact. A rejected claim or a fail
 
 A materialiser is a program that builds a later step's workspace from an artifact and its kept files, in an empty directory. A kind's outcome field must equal the outcome of the step that claims it.
 
+The latest subject artifact an attempt claims becomes the subject; a judgement leaves the subject where it was. A judgement a step claims is about the subject that attempt was given.
+
 Built in:
 
 - Document: a subject with a title and a required markdown, HTML or text body. No verifier; its materialiser writes the body.
 - Commit: a subject with a SHA and an optional report. Its verifier accepts a SHA that is the workspace HEAD and not already the current subject, and keeps a Git bundle; its materialiser clones the bundle at that SHA.
-- Verdict: a judgement with pass or fail and its findings, and an optional summary. Its outcome field is the verdict.
+- Verdict: a judgement with pass or fail, an optional one-line summary and its findings as an optional text body. Its outcome field is the verdict. The step never names the subject; the engine records the one the attempt was given.
 - Decision: a judgement with the owner's outcome and optional feedback.
 
 Decisions are the owner's. A decision renews budgets, approves a subject and resolves escalations, so only the owner makes one, at an approval step or on an escalated commission. A step that claims a decision escalates. Cancelling is not a decision: it stops an attempt and escalates, and the owner then decides on the escalation. A model's choice is an outcome or a judgement, routed like any other.
@@ -142,6 +160,7 @@ _Definition: what the owner writes; data, verified before anything runs._
 - Artifact kind: a role, subject or judgement, a schema and a body rule, with an optional verifier, materialiser and outcome field. Built in: document (with a media type), commit, verdict and decision.
 - Outcome: a label a step declares; the engine routes on it.
 - Access: what a step's process may read, write and reach.
+- Query: what a step declares to name the artifacts one of its inputs holds.
 - Budget: the attempts a step may spend between the owner's decisions.
 - Limit: any other declared bound, such as time, size or disk.
 
@@ -161,7 +180,7 @@ _Execution: the core. The commission is the aggregate root._
 _Step contract: the process boundary._
 
 - Workspace: the directory a step's process runs in.
-- Input: the directory holding a step's `input.json` and the bodies of its declared artifacts.
+- Input: what a step declares by name and query, and receives as the artifacts the query names. Every input's bodies sit in `MEDRENGARD_IN`, beside `input.json`.
 - Output: the directory where a step writes its claim, `output.json`, and the files it refers to.
 - Sandbox: the confinement that enforces a step's access.
 - Harness adapter: the program that translates the step contract into a harness's own interface; vendor concepts stop there.
