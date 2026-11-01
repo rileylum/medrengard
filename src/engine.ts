@@ -66,6 +66,10 @@ export function createEngine({ log, workflows }: Options) {
   function read(commission: string): Log {
     const events = select.all(commission).map(({ event }) => JSON.parse(String(event)));
 
+    if (events.length === 0) {
+      throw new Error(`There is no commission named ${commission}.`);
+    }
+
     // SAFETY: only commission and write insert here, and commission writes the first event.
     return events as Log;
   }

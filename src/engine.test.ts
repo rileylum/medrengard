@@ -1608,6 +1608,17 @@ test("an attempt cancelled from another engine is stopped and escalates", async 
   });
 });
 
+test("a commission that was never started is refused by name", async (t) => {
+  const { engine } = await engineRunning(t, "true");
+  const refused = { message: "There is no commission named missing." };
+
+  assert.throws(() => engine.state("missing"), refused);
+  await assert.rejects(engine.advance("missing"), refused);
+  assert.throws(() => engine.decide("missing", { subject: "a", outcome: "retry" }), refused);
+  assert.throws(() => engine.cancel("missing"), refused);
+  assert.throws(() => engine.transcript("missing", 1), refused);
+});
+
 test("a commission without an attempt in flight cannot be cancelled", async (t) => {
   const { engine } = await engineRunning(t, "true");
 
