@@ -15,8 +15,8 @@ const repository = join(import.meta.dirname, "..");
  * Writes a factory in a new directory, with the workflow `build`, whose command step prints hello,
  * claims `done` and awaits the owner at `review`; the workflow `failing`, whose step exits 3; and
  * the workflow `slow`, whose step appends start, then end half a second later, to the directory's
- * `steps` file and leads to `review`; and the workflow `twice`, whose two such steps lead to
- * `review`. Its log is in the directory's `state`.
+ * `steps` file and leads to `review`; the workflow `twice`, whose two such steps lead to `review`; and the workflow
+ * `noting`, whose step writes two notes and leads to `review`. Its log is in the directory's `state`.
  */
 async function factoryIn(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
@@ -77,6 +77,17 @@ async function factoryIn(t: TestContext) {
            steps: {
              build: { ...slow, on: { done: "again" } },
              again: { ...slow, on: { done: "review" } },
+             review: { kind: "approval", on: { approve: "end" } },
+           },
+         }),
+         noting: defineWorkflow({
+           start: "build",
+           steps: {
+             build: {
+               ...step(\`echo 'Reading the request.' >&3; echo 'Writing the reply.' >&3
+                 echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`),
+               on: { done: "review" },
+             },
              review: { kind: "approval", on: { approve: "end" } },
            },
          }),
@@ -463,4 +474,36 @@ test("the CLI prints an attempt's errors", async (t) => {
     stdout: "broke\n",
     stderr: "",
   });
+});
+
+test("watch prints a commission's attempts and notes, and stops once it awaits the owner", async (t) => {
+  const { factory } = await factoryIn(t);
+
+  run(["commission", "noting", "first", "--title", "Greet", "--body", "Say hello."], factory);
+
+  const watching = spawn(process.execPath, [cli, "watch", "first"], {
+    cwd: tmpdir(),
+    env: { ...process.env, MEDRENGARD_FACTORY: factory },
+  });
+
+  let printed = "";
+
+  watching.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+    printed += chunk;
+  });
+
+  run(["advance", "first"], factory);
+
+  const [code] = await once(watching, "exit");
+
+  assert.equal(code, 0);
+  assert.equal(
+    printed,
+    `1 build        started
+     Reading the request.
+     Writing the reply.
+1 build        done
+first: awaiting at review
+`,
+  );
 });

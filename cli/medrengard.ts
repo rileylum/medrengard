@@ -21,6 +21,7 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
   advance    <commission>
   state      <commission>
   show       <commission>
+  watch      <commission>
   commissions
   run        [--parallel <n>]
   decide     <commission> <outcome> --subject <hash> [--feedback <text> | --feedback-file <path>]
@@ -38,6 +39,7 @@ const commands = new Map([
   ["advance", { arguments: 1, options: [] }],
   ["state", { arguments: 1, options: [] }],
   ["show", { arguments: 1, options: [] }],
+  ["watch", { arguments: 1, options: [] }],
   ["errors", { arguments: 2, options: [] }],
   ["commissions", { arguments: 0, options: [] }],
   ["run", { arguments: 0, options: ["parallel"] }],
@@ -150,6 +152,9 @@ try {
       break;
     case "show":
       printRecord(first, engine.record(first));
+      break;
+    case "watch":
+      await watch(engine, first);
       break;
     case "transcript":
       process.stdout.write(engine.transcript(first, Number(second)));
@@ -333,36 +338,95 @@ function full(hash: string, artifact: Artifact): string {
   return [`${artifact.kind} ${hash}`, ...fields, ...body].join("\n");
 }
 
-// One line for an entry in the record, after its attempt number or a blank where it has none.
-function entryLines(entry: Entry): string[] {
+// The lines for an entry in the record, each with a key that names it, so `watch` prints each
+// once: an attempt's start, each of its notes, and its ending; or an escalation or a decision.
+function linesOf(index: number, entry: Entry): [string, string][] {
   const at = entry.step.padEnd(12);
 
   switch (entry.entry) {
     case "attempt": {
       const number = String(entry.attempt).padEnd(2);
+      const start: [string, string] = [`${index}:start`, `${number}${at} started`];
+
+      const notes = entry.notes.map((note, n): [string, string] => [
+        `${index}:${n}`,
+        `     ${note}`,
+      ]);
+
+      if ("running" in entry) {
+        return [start, ...notes];
+      }
 
       const errors = entry.errors
         ? `  (errors: medrengard errors <commission> ${entry.attempt})`
         : "";
 
-      if ("escalated" in entry) {
-        return [`${number}${at} escalated: ${entry.escalated}${errors}`];
-      }
+      const ending =
+        "escalated" in entry
+          ? `${number}${at} escalated: ${entry.escalated}${errors}`
+          : [
+              `${number}${at} ${entry.outcome}${errors}`,
+              ...entry.artifacts.map(
+                ({ hash, artifact }) => `    ${line(artifact.kind, hash, artifact)}`,
+              ),
+            ].join("\n");
 
-      return [
-        `${number}${at} ${entry.outcome}${errors}`,
-        ...entry.artifacts.map(
-          ({ hash, artifact }) => `    ${line(artifact.kind, hash, artifact)}`,
-        ),
-      ];
+      return [start, ...notes, [`${index}:end`, ending]];
     }
 
     case "escalation":
-      return [`  ${at} escalated: ${entry.reason}`];
-    case "decision":
-      return [
-        `  ${at} ${entry.outcome}${entry.feedback === undefined ? "" : `: ${JSON.stringify(entry.feedback)}`}`,
-      ];
+      return [[`${index}`, `  ${at} escalated: ${entry.reason}`]];
+    case "decision": {
+      const feedback = entry.feedback === undefined ? "" : `: ${JSON.stringify(entry.feedback)}`;
+
+      return [[`${index}`, `  ${at} ${entry.outcome}${feedback}`]];
+    }
+  }
+}
+
+// Where the commission is, in a few words.
+function where(state: CommissionState): string {
+  return state.status === "finished"
+    ? `finished by ${state.by}`
+    : `${state.status} at ${state.step.name}`;
+}
+
+// Follows the commission, printing each attempt, note, escalation and decision once, as the log
+// records it, until the commission awaits the owner, escalates or finishes.
+async function watch(engine: ReturnType<typeof Create>, commission: string): Promise<void> {
+  const printed = new Set<string>();
+
+  for (;;) {
+    const record = engine.record(commission);
+
+    for (const [index, entry] of record.entries.entries()) {
+      for (const [key, text] of linesOf(index, entry)) {
+        if (!printed.has(key)) {
+          printed.add(key);
+
+          if (!json) {
+            process.stdout.write(`${text}\n`);
+          }
+        }
+      }
+    }
+
+    const { state } = record;
+
+    if (
+      state.status === "awaiting" ||
+      state.status === "escalated" ||
+      state.status === "finished"
+    ) {
+      const reason = state.status === "escalated" ? `\nreason: ${state.reason}` : "";
+
+      print(record, `${commission}: ${where(state)}${reason}\n`);
+
+      return;
+    }
+
+    // The log has no notifications, so watch looks again.
+    await sleep(500);
   }
 }
 
@@ -371,16 +435,18 @@ function entryLines(entry: Entry): string[] {
 function printRecord(commission: string, record: CommissionRecord): void {
   const { state, request, entries } = record;
 
-  const where =
-    state.status === "finished"
-      ? `finished by ${state.by}`
-      : `${state.status} at ${state.step.name}`;
+  // An attempt shows as its ending, or as started while it runs; its notes are watch's.
+  const timeline = entries.flatMap((entry, index) =>
+    linesOf(index, entry)
+      .filter(([key]) => (key.endsWith(":start") ? "running" in entry : !/:\d+$/.test(key)))
+      .map(([, text]) => text),
+  );
 
   const lines = [
-    `${commission}: ${where}`,
+    `${commission}: ${where(state)}`,
     ...(state.status === "escalated" ? [`reason: ${state.reason}`] : []),
     line("request", request.hash, request.artifact),
-    ...entries.flatMap(entryLines),
+    ...timeline,
   ];
 
   if (state.status !== "finished") {

@@ -128,6 +128,9 @@ type Escalated = {
   errors?: string;
 };
 
+// note is one line the attempt's program wrote to fd 3 for the owner, recorded as it arrives.
+type Noted = { type: "noted"; attempt: number; note: string };
+
 // decision and subject are artifact hashes; any feedback lives in the decision artifact.
 type Decided<N extends string> = {
   type: "decided";
@@ -143,6 +146,7 @@ export type CommissionEvent<N extends string = string> =
   | AttemptStarted<N>
   | AttemptCompleted<N>
   | Escalated
+  | Noted
   | Decided<N>;
 
 // decision is the owner's latest decision about the current subject; one about an earlier
@@ -241,6 +245,13 @@ function apply<N extends string>(
       }
 
       return arrive(workflow, event.next, state.subject, state.decision);
+    // A note says what an attempt in flight is doing; it changes nothing.
+    case "noted":
+      if (state.status !== "attempting") {
+        throw new Error(`A note cannot arrive while the commission is ${state.status}.`);
+      }
+
+      return state;
     case "escalated":
       if (state.status !== "ready" && state.status !== "attempting") {
         throw new Error(`A commission cannot escalate while it is ${state.status}.`);

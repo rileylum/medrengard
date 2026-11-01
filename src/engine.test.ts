@@ -2221,3 +2221,53 @@ test("an artifact can be named by a unique prefix of its hash of at least 8 char
     message: `There is no artifact ${subject.slice(0, 7)}.`,
   });
 });
+
+test("a step's notes on fd 3 are recorded as they arrive, in order", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `echo first >&3; sleep 0.5; printf 'second\\nthird' >&3
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const advancing = engine.advance("first");
+
+  // Before the step ends, its first note is in the record already.
+  for (;;) {
+    const [entry] = engine.record("first").entries;
+
+    if (entry?.entry === "attempt" && entry.notes.length > 0) {
+      assert.partialDeepStrictEqual(entry, { entry: "attempt", running: true, notes: ["first"] });
+      break;
+    }
+
+    await sleep(20);
+  }
+
+  await advancing;
+
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    { entry: "attempt", outcome: "done", notes: ["first", "second", "third"] },
+  ]);
+});
+
+test("a note over its limit stops the step, which escalates", async (t) => {
+  const { engine } = await engineRunning(t, `head -c 5000 /dev/zero | tr '\\0' a >&3; sleep 5`);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build wrote a note over its limit of 4096 bytes.",
+  });
+});
+
+test("a step's notes count toward its transcript limit", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `for n in 1 2 3 4 5 6 7 8 9 10; do echo "note $n" >&3; done; sleep 5`,
+    { idle: 5, attempt: 10, transcript: 40, input: 65536 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build wrote more than its transcript limit of 40 bytes.",
+  });
+});

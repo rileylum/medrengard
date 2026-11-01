@@ -138,6 +138,44 @@ test("the Claude Code adapter tells the agent how to claim only the kinds its st
   assert.ok(!prompt.includes(builtIn.verdict.description));
 });
 
+test("the Claude Code adapter notes what the agent says, each tool it uses and how it finished", async (t) => {
+  const events = [
+    { type: "system", subtype: "init" },
+    {
+      type: "assistant",
+      message: {
+        content: [
+          { type: "text", text: "Reading the codec first.\nThen planning." },
+          { type: "tool_use", name: "Bash", input: { command: "git clone --no-local /repo ." } },
+          { type: "tool_use", name: "Read", input: { file_path: "shared/src/net/codec.ts" } },
+        ],
+      },
+    },
+    { type: "result", is_error: false, num_turns: 3, duration_ms: 1500, total_cost_usd: 0.0123 },
+  ];
+
+  const { engine } = await engineWithClaude(
+    t,
+    `${events.map((event) => `echo '${JSON.stringify(event)}'`).join("\n")}
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    {
+      outcome: "done",
+      notes: [
+        "Reading the codec first. Then planning.",
+        "Bash: git clone --no-local /repo .",
+        "Read: shared/src/net/codec.ts",
+        "Finished in 1.5 s, 3 turns, $0.0123.",
+      ],
+    },
+  ]);
+  assert.match(engine.transcript("first", 1).toString(), /"type":"result"/);
+});
+
 test("the Claude Code adapter runs claude in the permission mode its harness names", async (t) => {
   const { engine, directory } = await engineWithClaude(
     t,

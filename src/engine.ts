@@ -27,20 +27,29 @@ const logWait = 5000;
 type Options = { log: string; workflows: Record<string, Workflow>; kinds: Kinds };
 
 /**
- * One entry in a commission's record: an attempt, with the outcome it claimed and its artifacts,
- * or the reason it escalated; an escalation before any attempt started, such as a spent budget;
- * or the owner's decision, with any feedback.
+ * One entry in a commission's record: an attempt, with its notes so far, and once it ends the
+ * outcome it claimed and its artifacts, or the reason it escalated; an escalation before any
+ * attempt started, such as a spent budget; or the owner's decision, with any feedback.
  */
 export type Entry =
+  | { entry: "attempt"; attempt: number; step: string; notes: string[]; running: true }
   | {
       entry: "attempt";
       attempt: number;
       step: string;
+      notes: string[];
       outcome: string;
       artifacts: { hash: string; artifact: Artifact }[];
       errors: boolean;
     }
-  | { entry: "attempt"; attempt: number; step: string; escalated: string; errors: boolean }
+  | {
+      entry: "attempt";
+      attempt: number;
+      step: string;
+      notes: string[];
+      escalated: string;
+      errors: boolean;
+    }
   | { entry: "escalation"; step: string; reason: string }
   | { entry: "decision"; step: string; outcome: string; subject: string; feedback?: string };
 
@@ -214,29 +223,54 @@ export function createEngine({ log, workflows, kinds }: Options) {
         const before = replay(definition, events.slice(0, position) as Log);
         const at = before.status === "finished" ? "" : before.step.name;
 
+        // An attempt's entry, by its number, so its notes and its ending join it.
+        const entryOf = (number: number) =>
+          entries.findIndex((each) => each.entry === "attempt" && each.attempt === number);
+
+        const notesOf = (number: number) => {
+          const found = entries[entryOf(number)];
+
+          return found?.entry === "attempt" ? found.notes : [];
+        };
+
         switch (event.type) {
-          case "attempt-completed":
+          case "attempt-started":
             entries.push({
               entry: "attempt",
               attempt: event.attempt,
               step: event.step,
+              notes: [],
+              running: true,
+            });
+            break;
+          case "noted":
+            notesOf(event.attempt).push(event.note);
+            break;
+          case "attempt-completed":
+            entries[entryOf(event.attempt)] = {
+              entry: "attempt",
+              attempt: event.attempt,
+              step: event.step,
+              notes: notesOf(event.attempt),
               outcome: event.outcome,
               artifacts: event.artifacts.map(({ hash }) => ({ hash, artifact: store.get(hash) })),
               errors: event.errors !== undefined,
-            });
+            };
             break;
           case "escalated":
-            entries.push(
-              event.attempt === undefined
-                ? { entry: "escalation", step: at, reason: event.reason }
-                : {
-                    entry: "attempt",
-                    attempt: event.attempt,
-                    step: at,
-                    escalated: event.reason,
-                    errors: event.errors !== undefined,
-                  },
-            );
+            if (event.attempt === undefined) {
+              entries.push({ entry: "escalation", step: at, reason: event.reason });
+            } else {
+              entries[entryOf(event.attempt)] = {
+                entry: "attempt",
+                attempt: event.attempt,
+                step: at,
+                notes: notesOf(event.attempt),
+                escalated: event.reason,
+                errors: event.errors !== undefined,
+              };
+            }
+
             break;
           case "decided": {
             const decision: Entry = {
@@ -257,7 +291,6 @@ export function createEngine({ log, workflows, kinds }: Options) {
             break;
           }
 
-          // An attempt-started event is read through the event that ends its attempt.
           default:
             break;
         }
@@ -482,27 +515,30 @@ export function createEngine({ log, workflows, kinds }: Options) {
 
         const cancelled = () => requested.get(commission, attempt) !== undefined;
 
-        write(
-          commission,
-          [...events, started],
-          await run(
-            step,
-            {
-              commission,
-              step: name,
-              attempt,
-              kinds: definition.kinds,
-              subject: {
-                hash: state.subject,
-                artifact: store.get(state.subject),
-                kept: keptOf(events, state.subject),
-              },
-              inputs,
+        // Each note the attempt writes is an event of its own, after attempt-started.
+        const note = (text: string) =>
+          write(commission, read(commission), { type: "noted", attempt, note: text });
+
+        const ending = await run(
+          step,
+          {
+            commission,
+            step: name,
+            attempt,
+            kinds: definition.kinds,
+            subject: {
+              hash: state.subject,
+              artifact: store.get(state.subject),
+              kept: keptOf(events, state.subject),
             },
-            cancelled,
-            store,
-          ),
+            inputs,
+          },
+          cancelled,
+          note,
+          store,
         );
+
+        write(commission, read(commission), ending);
       }
     },
   };
@@ -627,6 +663,9 @@ type Store = ReturnType<typeof createStore>;
 
 type Ending = Extract<CommissionEvent, { type: "attempt-completed" | "escalated" }>;
 
+// The bytes one note may hold: a line for the owner to read, not a log.
+const noteLimit = 4096;
+
 // The time a stopped step has to exit after SIGTERM before it gets SIGKILL.
 const grace = 5000;
 
@@ -724,6 +763,7 @@ async function run(
   step: Runnable,
   given: Given,
   cancelled: () => boolean,
+  note: (text: string) => void,
   store: Store,
 ): Promise<Ending> {
   const { step: name, attempt } = given;
@@ -786,7 +826,8 @@ async function run(
     const child = spawn(command, args, {
       cwd: workspace,
       env,
-      stdio: ["ignore", "pipe", "pipe"],
+      // fd 3 is the step's notes for the owner, one per line.
+      stdio: ["ignore", "pipe", "pipe", "pipe"],
       detached: true,
     });
 
@@ -836,8 +877,57 @@ async function run(
       }
     };
 
-    child.stdout.on("data", record(undefined));
-    child.stderr.on("data", record(errors));
+    child.stdout!.on("data", record(undefined));
+    child.stderr!.on("data", record(errors));
+
+    // The part of a note whose line has not ended yet.
+    let pending = Buffer.alloc(0);
+
+    // Records each complete line as a note, unless it is empty. A note's bytes count toward the
+    // transcript limit, so notes are bounded with everything else the step writes.
+    const noteFrom = (chunk: Buffer) => {
+      idle.refresh();
+      written += chunk.length;
+
+      if (written > step.limits.transcript) {
+        stopFor(
+          `Step ${name} wrote more than its transcript limit of ${step.limits.transcript} bytes.`,
+        );
+
+        return;
+      }
+
+      pending = Buffer.concat([pending, chunk]);
+
+      for (let end = pending.indexOf(10); end !== -1; end = pending.indexOf(10)) {
+        noteLine(pending.subarray(0, end));
+        pending = pending.subarray(end + 1);
+      }
+
+      if (pending.length > noteLimit) {
+        noteLine(pending);
+      }
+    };
+
+    const noteLine = (line: Buffer) => {
+      if (stopped !== undefined) {
+        return;
+      }
+
+      if (line.length > noteLimit) {
+        stopFor(`Step ${name} wrote a note over its limit of ${noteLimit} bytes.`);
+
+        return;
+      }
+
+      const text = line.toString().trimEnd();
+
+      if (text !== "") {
+        note(text);
+      }
+    };
+
+    child.stdio[3]!.on("data", noteFrom);
 
     const closed = await once(child, "close")
       .catch((error: NodeJS.ErrnoException) => error)
@@ -846,6 +936,9 @@ async function run(
         clearTimeout(overall);
         clearInterval(cancel);
       });
+
+    // A last note need not end its line.
+    noteLine(pending);
 
     if (closed instanceof Error) {
       return escalate(`Step ${name} could not start: ${closed.code}.`);

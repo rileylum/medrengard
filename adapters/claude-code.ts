@@ -9,7 +9,7 @@
  */
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 // The part of a kind the adapter explains to the agent.
@@ -98,8 +98,93 @@ const claude = spawn(
     given.agent.model,
     `${given.agent.prompt}\n\n${contract}`,
   ],
-  { stdio: ["ignore", "inherit", "inherit"] },
+  // stdout is read, to note what the agent does, and passed on unchanged as the transcript.
+  { stdio: ["ignore", "pipe", "inherit"] },
 );
+
+// The longest note the adapter writes; a longer message is cut, and says so with "…".
+const noteLength = 200;
+
+// Writes one note for the owner to fd 3, the step contract's notes.
+function note(text: string): void {
+  const line = text.replace(/\s+/g, " ").trim();
+
+  if (line !== "") {
+    writeSync(3, `${line.length > noteLength ? `${line.slice(0, noteLength - 1)}…` : line}\n`);
+  }
+}
+
+// The parts of a tool's input that say what it did, as Claude Code's tools name them.
+type ToolInput = {
+  command?: string;
+  file_path?: string;
+  pattern?: string;
+  path?: string;
+  description?: string;
+};
+
+// A tool call as a note: the tool, and its command, file or pattern.
+function toolNote(name: string, input: ToolInput): string {
+  const said = input.command ?? input.file_path ?? input.pattern ?? input.path ?? input.description;
+
+  return `${name}: ${said ?? JSON.stringify(input)}`;
+}
+
+// One stream-json event: what the agent said, each tool it called, and how the run finished.
+// lazy: only the event fields the notes need; the transcript keeps the rest.
+type StreamEvent = {
+  type?: string;
+  message?: {
+    content?: { type: string; text?: string; name?: string; input?: ToolInput }[];
+  };
+  is_error?: boolean;
+  num_turns?: number;
+  duration_ms?: number;
+  total_cost_usd?: number;
+};
+
+function notesOf(event: StreamEvent): void {
+  if (event.type === "assistant") {
+    for (const block of event.message?.content ?? []) {
+      if (block.type === "text" && block.text !== undefined) {
+        note(block.text);
+      } else if (block.type === "tool_use" && block.name !== undefined) {
+        note(toolNote(block.name, block.input ?? {}));
+      }
+    }
+  }
+
+  if (event.type === "result") {
+    const how = event.is_error ? "Failed" : "Finished";
+
+    note(
+      `${how} in ${(event.duration_ms ?? 0) / 1000} s, ${event.num_turns} turns, $${event.total_cost_usd}.`,
+    );
+  }
+}
+
+let partial = "";
+
+claude.stdout.on("data", (chunk: Buffer) => {
+  process.stdout.write(chunk);
+
+  const lines = (partial + chunk.toString()).split("\n");
+
+  partial = lines.pop()!;
+
+  for (const line of lines) {
+    let event;
+
+    try {
+      event = JSON.parse(line);
+    } catch {
+      // Not stream-json, such as a warning: the transcript has it, and it is no note.
+      continue;
+    }
+
+    notesOf(event);
+  }
+});
 
 const closed = await once(claude, "close").catch((error: NodeJS.ErrnoException) => error);
 

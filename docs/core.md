@@ -55,6 +55,7 @@ Every step except an approval step is a program. The engine starts it with:
 - its workspace as the working directory;
 - `MEDRENGARD_IN`: a read-only directory holding `input.json` and the bodies of the step's declared inputs;
 - `MEDRENGARD_OUT`: an empty directory where the step writes `output.json` and the files its artifacts refer to;
+- file descriptor 3, where the step may write notes for the owner, one per line, each at most 4096 bytes and all counted with its transcript;
 - only the environment its access declares.
 
 An attended step has the owner's terminal, recorded through a pseudo-terminal. An unattended step gets empty stdin, and its stdout and stderr are its transcript.
@@ -99,12 +100,13 @@ Replay derives a commission's state; none is stored.
 - Escalated: paused for the owner, with a reason.
 - Finished: an edge reached the end, or the owner abandoned the commission; what finished it is recorded.
 
-Five events are the whole log vocabulary:
+Six events are the whole log vocabulary:
 
 - `commissioned`: the workflow, its definitions by hash and the request artifact.
 - `attempt-started`: the step and attempt, the subject and each input's artifacts by hash; spends one unit of the step's budget.
 - `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, its transcript and, when it wrote to stderr, its errors, and the next step or end.
 - `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, and the next step or end.
+- `noted`: the attempt and one note it wrote for the owner, recorded as it arrives. It changes no state.
 - `escalated`: the reason, and the attempt if one was involved, with its transcript and errors when its program ran. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it.
 
 Transitions:

@@ -365,7 +365,11 @@ Every command and agent step is a program, started:
 - in its workspace;
 - with `MEDRENGARD_IN`: a read-only directory holding `input.json` and its inputs' bodies;
 - with `MEDRENGARD_OUT`: an empty directory for `output.json` and the bodies it claims;
-- with only the environment its access names.
+- with only the environment its access names;
+- with file descriptor 3 open for notes: short lines for the owner about what the step is doing,
+  such as `echo "Running the tests" >&3`. Each note is recorded as it arrives, so `watch` shows
+  it at once. A note is at most 4096 bytes, and notes count toward the transcript limit. The
+  Claude Code adapter notes what the agent says, each tool it uses and how it finished.
 
 `input.json` lists each input's artifacts, oldest first, always as a list. A body is a file at
 `<input>/<hash>`, and `body` holds that path. `claims` holds the rules of each kind the step may
@@ -530,6 +534,7 @@ medrengard <command> [--json] [--factory <path>]
   advance    <commission>
   state      <commission>
   show       <commission>
+  watch      <commission>
   commissions
   run        [--parallel <n>]
   decide     <commission> <outcome> --subject <hash> [--feedback <text> | --feedback-file <path>]
@@ -550,6 +555,10 @@ medrengard <command> [--json] [--factory <path>]
   escalation and each decision with its feedback, then the current subject and every judgement
   about it in full. It is what the owner reads at a gate. With `--json` it prints
   `engine.record`.
+- `watch` follows a commission as the log records it: each attempt as it starts, its notes as
+  they arrive, its ending, and each escalation and decision. It stops once the commission awaits
+  the owner, escalates or finishes; on one that already has, it prints the whole story. `show`
+  leaves the notes out.
 - `transcript` prints everything an attempt wrote; `errors` prints its stderr alone.
 - `artifact` takes a hash, or a unique prefix of at least 8 characters, as `show` prints them, and
   refuses one the log does not name as an artifact. `decide` takes the full hash.
