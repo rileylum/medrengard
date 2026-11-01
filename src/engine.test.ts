@@ -2102,3 +2102,27 @@ test("a kind's verifier past its limit is stopped and escalates", async (t) => {
     reason: "The memo verifier failed on step build's claim: it reached its limit of 1 s.",
   });
 });
+
+test("an engine waits for another process's write to the log instead of failing", async (t) => {
+  const { engine, options } = await engineAwaiting(t);
+
+  // Another process holds the log's write lock for half a second.
+  const holder = spawn(process.execPath, [
+    "-e",
+    `const { DatabaseSync } = require("node:sqlite");
+     const log = new DatabaseSync(${JSON.stringify(options.log)});
+     log.exec("BEGIN IMMEDIATE");
+     console.log("locked");
+     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+     log.exec("COMMIT");`,
+  ]);
+
+  await once(holder.stdout, "data");
+
+  assert.partialDeepStrictEqual(
+    engine.decide("first", { subject: subjectOf(engine), outcome: "approve" }),
+    { status: "ready" },
+  );
+
+  await once(holder, "exit");
+});

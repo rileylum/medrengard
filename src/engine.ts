@@ -21,6 +21,9 @@ import { confine } from "./sandbox.ts";
 import type { Kind, Kinds, Program } from "./kinds.ts";
 import { createStore, type Artifact } from "./store.ts";
 
+// The milliseconds a write waits for another process's write to the log.
+const logWait = 5000;
+
 type Options = { log: string; workflows: Record<string, Workflow>; kinds: Kinds };
 
 type Log = [Commissioned, ...Exclude<CommissionEvent, Commissioned>[]];
@@ -30,7 +33,9 @@ type Log = [Commissioned, ...Exclude<CommissionEvent, Commissioned>[]];
  * and every artifact in the store beside it.
  */
 export function createEngine({ log, workflows, kinds }: Options) {
-  const database = new DatabaseSync(log);
+  // Another engine or CLI call may be writing to the same log; waiting for it is bounded, and past
+  // the bound the call fails as "database is locked". Writes are single events, so 5 s is ample.
+  const database = new DatabaseSync(log, { timeout: logWait });
   const store = createStore(join(dirname(log), "store"));
 
   // The primary key refuses a second event at the same position, so a concurrent writer fails
