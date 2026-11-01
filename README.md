@@ -142,7 +142,19 @@ The fields of a command or agent step:
 
 The engine refuses a workflow it could not run as written when it is commissioned, not halfway
 through. A commission runs on the definition it started with: editing the factory affects only new
-commissions.
+commissions. The definition holds `run` as argv, not the program it names, so editing a script that
+`run` points at changes every commission that runs it next. To pin a prompt, put its text in the
+definition, not a path to it.
+
+`src/replay.ts` exports the types `Workflow`, `Agent`, `Access` and `Query`. A `run` is a non-empty
+argv, `readonly [string, ...string[]]`: a function that builds steps from a `string[]` must declare
+that type, or the compiler refuses it.
+
+Each attempt's workspace, input and output are a directory under the system temp directory
+(`TMPDIR`, else `/tmp`), deleted when the attempt ends; an attempt interrupted by a second Ctrl-C
+leaves its directory behind. The workspace has no size limit yet. A
+step that installs dependencies there, on a RAM-backed `/tmp`, holds that memory until it ends: run
+the engine with `TMPDIR` on disk.
 
 A step is never attempted twice on the same subject and inputs without the owner's decision between.
 The second time, the commission escalates instead.
@@ -160,8 +172,8 @@ review: {
     subject: "subject",
     // The owner's request.
     request: "request",
-    // The latest artifact the design step claimed: the plan, after the subject became a commit.
-    plan: { from: ["design"], take: "latest" },
+    // The latest document the design step claimed: the plan, after the subject became a commit.
+    plan: { from: ["design"], kind: "document", take: "latest" },
     // Every verdict about the current subject: the evidence.
     evidence: { kind: "verdict", about: "subject" },
     // The owner's latest decision about the current subject, with its feedback.
@@ -182,6 +194,12 @@ claimed and each decision the owner made. Each field narrows it, and every field
 
 `{ kind: "verdict", about: "earlier" }`, for instance, gives a fix step the verdicts on the commits
 its earlier fixes replaced. A query that finds nothing gives an empty list, not an error.
+
+A decision on an escalation is decided at the escalated step, so `from` keeps it too. Without a
+`kind`, `{ from: ["design"], take: "latest" }` gives the owner's retry, not the plan, once design
+has escalated and been retried.
+
+A decision's fields are its `outcome` and the `subject` it names; the owner's feedback is its body.
 
 An input name is also a directory in the step's input, so it may hold only letters, digits, `-` and
 `_`, starting with a letter.
@@ -212,13 +230,20 @@ const access: Access = {
 The workspace, the input (read-only) and the output are always there, and `PATH`, `MEDRENGARD_IN`
 and `MEDRENGARD_OUT` are always set.
 
-`medrengard/defaults/access.ts` holds four values to use as they are or to change one dial of:
+`medrengard/defaults/access.ts` holds four values to use as they are or to change one dial of.
+"The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they
+exist.
 
 - `full`: everything the engine can reach; in practice no sandbox.
-- `home`: the system, and the owner's home to read and write, with the network and environment.
-- `contract`: only the step contract and the system's programs.
-- `claudeCode`: what the Claude Code adapter needs. Its home is empty, so the owner's settings,
-  skills, hooks and MCP servers never load.
+- `home`: the system, a fresh `/tmp` of 256 MiB, and the owner's home to read and write, with the
+  network and the whole environment.
+- `contract`: the system and a fresh `/tmp` of 256 MiB. No home, no network and no `HOME`, so a
+  program that needs a home or a cache, such as `npm`, must be pointed at `/tmp`.
+- `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
+  256 MiB, Node's installation, the `adapters` directory and the `claude` executable to read, the
+  network, and `HOME`, `LANG`, the token and the Git identity. Its home is empty, so the owner's
+  settings, skills, hooks and MCP servers never load. A path under the home, such as a repository,
+  stays invisible until you add it: the deeper entry wins.
 
 ```ts
 import { contract } from "medrengard/defaults/access.ts";
@@ -242,7 +267,13 @@ const design = {
   kind: "agent",
   agent: {
     harness: {
-      run: ["node", "medrengard/adapters/claude-code.ts", "--permission-mode", "bypassPermissions"],
+      // An absolute path: the program runs in its workspace.
+      run: [
+        "node",
+        "/path/to/medrengard/adapters/claude-code.ts",
+        "--permission-mode",
+        "bypassPermissions",
+      ],
     },
     model: "sonnet",
     prompt: "Read the request and write a plan for it.",
@@ -262,6 +293,10 @@ const design = {
   verdict.
 - `claudeCode` passes `CLAUDE_CODE_OAUTH_TOKEN` and the `GIT_AUTHOR_*` and `GIT_COMMITTER_*`
   variables from the engine's environment. Set them before you run the engine.
+- `claudeCode` grants the adapter's real directory. If you reach this repository through a
+  symlink, pass the adapter's real path (`fs.realpathSync`), or the sandbox cannot see it.
+- A file path in `run`, such as the adapter's, must be absolute: every step's program starts in its
+  workspace.
 
 ## The step contract
 
@@ -424,8 +459,11 @@ medrengard <command> [--json] [--factory <path>]
   output is for people, not for parsing.
 - Exit codes: 0 when the call succeeded, an escalation included; 1 when the engine refused or
   failed; 2 for a usage error.
+- `artifact` takes a full hash. A step's verdicts and the owner's decisions have hashes the CLI
+  does not list yet; `state` shows the subject's and the latest decision's.
 - `run` advances every ready commission, at most `--parallel` steps at once (1 by default), oldest
-  commission first. It prints one line per result. A first Ctrl-C starts nothing new and waits for
+  commission first. It prints one line per result, and keeps looking for ready commissions until it
+  is stopped. A first Ctrl-C starts nothing new and waits for
   the running steps; a second exits at once, and each interrupted attempt escalates when next
   advanced.
 
