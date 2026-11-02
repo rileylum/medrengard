@@ -2382,3 +2382,66 @@ test("a step's notes count toward its transcript limit", async (t) => {
     reason: "Step build wrote more than its transcript limit of 40 bytes.",
   });
 });
+
+test("every event carries the time the engine wrote it, and the record each attempt's start and end", async (t) => {
+  const before = Date.now();
+
+  const { engine, options } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(
+          `sleep 0.2; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+          "review",
+        ),
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  await engine.advance("first");
+  engine.decide("first", { subject: subjectOf(engine), outcome: "approve" });
+
+  const after = Date.now();
+  const log = new DatabaseSync(options.log);
+
+  t.after(() => log.close());
+
+  const times = log
+    .prepare("SELECT event FROM events WHERE commission = 'first' ORDER BY position")
+    .all()
+    .map(({ event }) => JSON.parse(String(event)).at);
+
+  assert.equal(times.length, 4);
+  assert.ok(times.every((at) => Number.isInteger(at) && at >= before && at <= after));
+
+  const [attempt, decision] = engine.record("first").entries;
+
+  assert.ok(attempt.entry === "attempt" && "outcome" in attempt);
+  assert.ok(attempt.ended! - attempt.started! >= 200);
+  assert.equal(attempt.started, times[1]);
+  assert.equal(attempt.ended, times[2]);
+  assert.ok(decision.entry === "decision");
+  assert.equal(decision.at, times[3]);
+});
+
+test("a log written before events carried times still reads, without them", async (t) => {
+  const { engine, options } = await engineRunning(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+
+  const log = new DatabaseSync(options.log);
+
+  t.after(() => log.close());
+  log.exec("UPDATE events SET event = json_remove(event, '$.at')");
+
+  const [attempt] = engine.record("first").entries;
+
+  assert.partialDeepStrictEqual(attempt, { entry: "attempt", outcome: "done" });
+  assert.ok(attempt.entry === "attempt" && "ended" in attempt);
+  assert.equal(attempt.started, undefined);
+  assert.equal(attempt.ended, undefined);
+});

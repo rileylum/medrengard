@@ -30,15 +30,25 @@ type Options = { log: string; workflows: Record<string, Workflow>; kinds: Kinds 
 /**
  * One entry in a commission's record: an attempt, with its notes so far, and once it ends the
  * outcome it claimed and its artifacts, or the reason it escalated; an escalation before any
- * attempt started, such as a spent budget; or the owner's decision, with any feedback.
+ * attempt started, such as a spent budget; or the owner's decision, with any feedback. Times are
+ * milliseconds since the epoch, absent for events written before the log kept them.
  */
 export type Entry =
-  | { entry: "attempt"; attempt: number; step: string; notes: string[]; running: true }
   | {
       entry: "attempt";
       attempt: number;
       step: string;
       notes: string[];
+      started?: number;
+      running: true;
+    }
+  | {
+      entry: "attempt";
+      attempt: number;
+      step: string;
+      notes: string[];
+      started?: number;
+      ended?: number;
       outcome: string;
       artifacts: { hash: string; artifact: Artifact }[];
       errors: boolean;
@@ -48,11 +58,20 @@ export type Entry =
       attempt: number;
       step: string;
       notes: string[];
+      started?: number;
+      ended?: number;
       escalated: string;
       errors: boolean;
     }
-  | { entry: "escalation"; step: string; reason: string }
-  | { entry: "decision"; step: string; outcome: string; subject: string; feedback?: string };
+  | { entry: "escalation"; step: string; reason: string; at?: number }
+  | {
+      entry: "decision";
+      step: string;
+      outcome: string;
+      subject: string;
+      feedback?: string;
+      at?: number;
+    };
 
 /** A commission's state, its request and its record, oldest first. */
 export type CommissionRecord = {
@@ -61,7 +80,7 @@ export type CommissionRecord = {
   entries: Entry[];
 };
 
-type Log = [Commissioned, ...Exclude<CommissionEvent, Commissioned>[]];
+type Log = [Commissioned & { at?: number }, ...Exclude<CommissionEvent, Commissioned>[]];
 
 /**
  * Runs commissions through the owner's workflows, keeping every event in the SQLite log at `log`
@@ -146,7 +165,7 @@ export function createEngine({ log, workflows, kinds }: Options) {
 
   function write(commission: string, events: Log, event: Log[1]): void {
     replay(definitionOf(events), [...events, event]);
-    insert.run(commission, events.length, JSON.stringify(event));
+    insert.run(commission, events.length, JSON.stringify({ ...event, at: Date.now() }));
   }
 
   return {
@@ -183,7 +202,7 @@ export function createEngine({ log, workflows, kinds }: Options) {
       };
 
       replay(parsed, [event]);
-      insert.run(commission, 0, JSON.stringify(event));
+      insert.run(commission, 0, JSON.stringify({ ...event, at: Date.now() }));
     },
 
     /** Replays the commission's state from the log. */
@@ -241,6 +260,13 @@ export function createEngine({ log, workflows, kinds }: Options) {
           return found?.entry === "attempt" ? found.notes : [];
         };
 
+        // When the attempt started, as far as the log has it.
+        const startOf = (number: number) => {
+          const found = entries[entryOf(number)];
+
+          return found?.entry === "attempt" ? found.started : undefined;
+        };
+
         switch (event.type) {
           case "attempt-started":
             entries.push({
@@ -248,6 +274,7 @@ export function createEngine({ log, workflows, kinds }: Options) {
               attempt: event.attempt,
               step: event.step,
               notes: [],
+              started: event.at,
               running: true,
             });
             break;
@@ -260,6 +287,8 @@ export function createEngine({ log, workflows, kinds }: Options) {
               attempt: event.attempt,
               step: event.step,
               notes: notesOf(event.attempt),
+              started: startOf(event.attempt),
+              ended: event.at,
               outcome: event.outcome,
               artifacts: event.artifacts.map(({ hash }) => ({ hash, artifact: store.get(hash) })),
               errors: event.errors !== undefined,
@@ -267,13 +296,15 @@ export function createEngine({ log, workflows, kinds }: Options) {
             break;
           case "escalated":
             if (event.attempt === undefined) {
-              entries.push({ entry: "escalation", step: at, reason: event.reason });
+              entries.push({ entry: "escalation", step: at, reason: event.reason, at: event.at });
             } else {
               entries[entryOf(event.attempt)] = {
                 entry: "attempt",
                 attempt: event.attempt,
                 step: at,
                 notes: notesOf(event.attempt),
+                started: startOf(event.attempt),
+                ended: event.at,
                 escalated: event.reason,
                 errors: event.errors !== undefined,
               };
@@ -286,6 +317,7 @@ export function createEngine({ log, workflows, kinds }: Options) {
               step: event.step,
               outcome: event.outcome,
               subject: event.subject,
+              at: event.at,
             };
 
             const { body } = store.get(event.decision);

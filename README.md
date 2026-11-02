@@ -574,10 +574,11 @@ medrengard <command> [--json] [--factory <path>]
   output is for people, not for parsing.
 - Exit codes: 0 when the call succeeded, an escalation included; 1 when the engine refused or
   failed; 2 for a usage error.
-- `show` prints the commission's record: one line per attempt with what it claimed, each
-  escalation and each decision with its feedback, then the current subject and every judgement
+- `show` prints the commission's record: one line per attempt with what it claimed and how long
+  it took, each escalation and each decision with its feedback, then the current subject and every judgement
   about it in full. It is what the owner reads at a gate. With `--json` it prints
-  `engine.record`.
+  `engine.record`, whose times are milliseconds since the epoch. A log written before events
+  carried times shows no durations.
 - `watch` follows a commission as the log records it: each attempt as it starts, its notes as
   they arrive, its ending, and each escalation and decision. It stops once the commission awaits
   the owner, escalates or finishes; on one that already has, it prints the whole story. `show`

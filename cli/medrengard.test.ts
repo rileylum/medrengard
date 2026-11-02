@@ -453,7 +453,7 @@ test("the CLI shows a commission's record for people, and as the engine's record
   assert.equal(status, 0);
   assert.match(stdout, /^first: awaiting at review\n/);
   assert.match(stdout, /^request +[0-9a-f]{8} +Greet$/m);
-  assert.match(stdout, /^1 build +done$/m);
+  assert.match(stdout, /^1 build +done \(\d+\.\d s\)$/m);
 
   const record = JSON.parse(run(["show", "first", "--json"], factory).stdout);
 
@@ -497,13 +497,8 @@ test("watch prints a commission's attempts and notes, and stops once it awaits t
   const [code] = await once(watching, "exit");
 
   assert.equal(code, 0);
-  assert.equal(
+  assert.match(
     printed,
-    `1 build        started
-     Reading the request.
-     Writing the reply.
-1 build        done
-first: awaiting at review
-`,
+    /^1 build {8}started\n {5}Reading the request\.\n {5}Writing the reply\.\n1 build {8}done \(\d+\.\d s\)\nfirst: awaiting at review\n$/,
   );
 });

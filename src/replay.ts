@@ -142,13 +142,16 @@ type Decided<N extends string> = {
   next: N | "end";
 };
 
-export type CommissionEvent<N extends string = string> =
+// at is when the engine wrote the event, in milliseconds since the epoch; an event written before
+// events carried times has none.
+export type CommissionEvent<N extends string = string> = (
   | Commissioned
   | AttemptStarted<N>
   | AttemptCompleted<N>
   | Escalated
   | Noted
-  | Decided<N>;
+  | Decided<N>
+) & { at?: number };
 
 // decision is the owner's latest decision about the current subject; one about an earlier
 // subject is history.

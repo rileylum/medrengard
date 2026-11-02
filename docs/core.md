@@ -100,7 +100,7 @@ Replay derives a commission's state; none is stored.
 - Escalated: paused for the owner, with a reason.
 - Finished: an edge reached the end, or the owner abandoned the commission; what finished it is recorded.
 
-Six events are the whole log vocabulary:
+Six events are the whole log vocabulary. Each carries the time the engine wrote it:
 
 - `commissioned`: the workflow, its definitions by hash and the request artifact.
 - `attempt-started`: the step and attempt, the subject and each input's artifacts by hash; spends one unit of the step's budget.

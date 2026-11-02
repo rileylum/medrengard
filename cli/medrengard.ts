@@ -361,11 +361,17 @@ function linesOf(index: number, entry: Entry): [string, string][] {
         ? `  (errors: medrengard errors <commission> ${entry.attempt})`
         : "";
 
+      // Left out for an attempt the log has no times for.
+      const took =
+        entry.started === undefined || entry.ended === undefined
+          ? ""
+          : ` (${((entry.ended - entry.started) / 1000).toFixed(1)} s)`;
+
       const ending =
         "escalated" in entry
-          ? `${number}${at} escalated: ${entry.escalated}${errors}`
+          ? `${number}${at} escalated${took}: ${entry.escalated}${errors}`
           : [
-              `${number}${at} ${entry.outcome}${errors}`,
+              `${number}${at} ${entry.outcome}${took}${errors}`,
               ...entry.artifacts.map(
                 ({ hash, artifact }) => `    ${line(artifact.kind, hash, artifact)}`,
               ),
