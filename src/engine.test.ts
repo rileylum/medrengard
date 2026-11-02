@@ -2447,6 +2447,24 @@ test("a log written before events carried times still reads, without them", asyn
   assert.equal(attempt.ended, undefined);
 });
 
+/**
+ * Parses the JSON `text` with each string and number replaced by its JSON type, so a test pins
+ * the fields and their types, to every depth; a field named in `kept` keeps its value.
+ */
+function typesIn(text: string, kept: readonly string[]) {
+  return JSON.parse(text, (key, value) => {
+    if (kept.includes(key) || isRecord(value) || Array.isArray(value)) {
+      return value;
+    }
+
+    if (isText(value)) {
+      return "string";
+    }
+
+    return Number.isFinite(value) ? "number" : value;
+  });
+}
+
 // Constraint 7: the log's vocabulary is pinned, so a new event type or field fails here until it
 // is added on purpose. Each value is replaced by its type, so the shape is pinned to every depth.
 test("the log's events are exactly the six types, each with its pinned fields", async (t) => {
@@ -2473,23 +2491,10 @@ test("the log's events are exactly the six types, each with its pinned fields", 
 
   t.after(() => log.close());
 
-  // Each event with its values replaced by their JSON types, except its type and its records.
   const vocabulary = log
     .prepare("SELECT event FROM events WHERE commission = 'first' ORDER BY position")
     .all()
-    .map(({ event }) =>
-      JSON.parse(String(event), (key, value) => {
-        if (key === "type" || isRecord(value) || Array.isArray(value)) {
-          return value;
-        }
-
-        if (isText(value)) {
-          return "string";
-        }
-
-        return Number.isFinite(value) ? "number" : value;
-      }),
-    );
+    .map(({ event }) => typesIn(String(event), ["type"]));
 
   const started = (inputs: readonly { name: string; hashes: readonly string[] }[]) => ({
     type: "attempt-started",
@@ -2540,5 +2545,101 @@ test("the log's events are exactly the six types, each with its pinned fields", 
       errors: "string",
       at: "number",
     },
+  ]);
+});
+
+// Constraint 7: the step contract is pinned, so a new variable, descriptor or input.json field
+// fails here until it is added on purpose. output.json's fields are pinned where they are parsed:
+// a claim with a field output.json does not define escalates.
+test("an agent step is started with exactly the pinned environment, descriptors and input.json", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "plan",
+      steps: {
+        plan: {
+          kind: "agent",
+          claims,
+          workspace: "empty",
+          agent: {
+            harness: {
+              run: [
+                "sh",
+                "-c",
+                `tr '\\0' '\\n' < /proc/$$/environ | cut -d= -f1 | sort > "$1/environment"
+                 ls /proc/$$/fd > "$1/descriptors"; ls -A "$MEDRENGARD_IN" > "$1/listing"
+                 cp "$MEDRENGARD_IN/input.json" "$1"
+                 echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+                "sh",
+                directory,
+              ],
+            },
+            model: "a-model",
+            prompt: "Plan the change.",
+            skills: [skillAt(directory, "tdd", { "SKILL.md": "Test first.\n" })],
+          },
+          inputs: { request: "request" },
+          on: { done: "end" },
+          access,
+          budget: 1,
+          limits: { idle: 5, attempt: 10, transcript: 65536, input: 65536 },
+        },
+      },
+    }),
+  );
+
+  await engine.advance("first");
+
+  const read = (name: string) => readFile(join(directory, name), "utf8");
+
+  // PATH is the engine's own, given to every step whatever its access; PWD is bwrap's --chdir.
+  assert.equal(await read("environment"), "MEDRENGARD_IN\nMEDRENGARD_OUT\nPATH\nPWD\n");
+  assert.equal(await read("descriptors"), "0\n1\n2\n3\n");
+  assert.equal(await read("listing"), ".skills\ninput.json\nrequest\n");
+
+  // A kind's rules are its schema, defined by the kind, so only the keys of each are pinned here.
+  const { claims: rules, ...input } = typesIn(await read("input.json"), []);
+
+  assert.deepEqual(input, {
+    commission: "string",
+    step: "string",
+    attempt: "number",
+    outcomes: ["string"],
+    inputs: {
+      request: [{ hash: "string", kind: "string", fields: { title: "string" }, body: "string" }],
+    },
+    agent: {
+      model: "string",
+      prompt: "string",
+      skills: [{ name: "string", path: "string" }],
+    },
+  });
+  assert.deepEqual(
+    Object.entries(rules).map(([kind, rule]) => [kind, isRecord(rule) ? Object.keys(rule) : rule]),
+    [
+      ["document", ["description", "fields", "body"]],
+      ["commit", ["description", "fields", "body"]],
+      ["verdict", ["description", "fields", "body", "outcome"]],
+    ],
+  );
+});
+
+test("a command step's input.json has no agent", async (t) => {
+  const { engine, directory } = await engineReceiving(
+    t,
+    {},
+    `cp "$MEDRENGARD_IN/input.json" "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+
+  const input = JSON.parse(await readFile(join(directory, "received", "input.json"), "utf8"));
+
+  assert.deepEqual(Object.keys(input), [
+    "commission",
+    "step",
+    "attempt",
+    "outcomes",
+    "inputs",
+    "claims",
   ]);
 });
