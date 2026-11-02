@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createEngine } from "../src/engine.ts";
@@ -12,10 +12,16 @@ const adapter = join(import.meta.dirname, "claude-code.ts");
 /**
  * Starts an engine whose one agent step, `plan`, runs the Claude Code adapter with a fake `claude`
  * on its PATH, and commissions `first`. The fake runs `script`; its arguments are in the returned
- * directory's `arguments` file, and its input and output directories in `directories`, each ended
- * by a NUL.
+ * directory's `arguments` file, its input and output directories in `directories`, each ended by a
+ * NUL, and the variable that keeps CLAUDE.md out in `claude-mds`. The agent declares a skill for
+ * each of `skills`, its SKILL.md by name.
  */
-async function engineWithClaude(t: TestContext, script: string, args: readonly string[] = []) {
+async function engineWithClaude(
+  t: TestContext,
+  script: string,
+  args: readonly string[] = [],
+  skills: Readonly<Record<string, string>> = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -27,10 +33,19 @@ async function engineWithClaude(t: TestContext, script: string, args: readonly s
     `#!/bin/sh
 printf '%s\\0' "$@" > "${join(directory, "arguments")}"
 printf '%s\\0' "$MEDRENGARD_IN" "$MEDRENGARD_OUT" > "${join(directory, "directories")}"
+printf '%s' "$CLAUDE_CODE_DISABLE_CLAUDE_MDS" > "${join(directory, "claude-mds")}"
 ${script}
 `,
   );
   await chmod(claude, 0o755);
+
+  const paths = [];
+
+  for (const [name, text] of Object.entries(skills)) {
+    await mkdir(join(directory, "skills", name), { recursive: true });
+    await writeFile(join(directory, "skills", name, "SKILL.md"), text);
+    paths.push(join(directory, "skills", name));
+  }
 
   const engine = createEngine({
     kinds: builtIn,
@@ -55,6 +70,7 @@ ${script}
               },
               model: "a-model",
               prompt: "Plan the change.",
+              skills: paths,
             },
             inputs: {},
             on: { done: "end" },
@@ -67,6 +83,7 @@ ${script}
                   path,
                   mode: "read" as const,
                 })),
+                { path: "/tmp", mode: "empty", size: 16 * 1024 * 1024 },
                 { path: dirname(dirname(process.execPath)), mode: "read" },
                 { path: join(import.meta.dirname, ".."), mode: "read" },
                 { path: directory, mode: "write" },
@@ -85,6 +102,30 @@ ${script}
   engine.commission("build", "first", { title: "Greet", body: "Say hello." });
 
   return { engine, directory };
+}
+
+// What every agent runs without: Claude Code's bundled skills, its built-in plugins, memory and
+// attribution, as Claude Code 2.1.316 names them. design and doctor survive disableBundledSkills.
+const hermetic = {
+  disableBundledSkills: true,
+  skillOverrides: { design: "off", doctor: "off" },
+  autoMemoryEnabled: false,
+  attribution: false,
+  enabledPlugins: {
+    "cc-plugin-agents-md@builtin": false,
+    "cc-plugin-telemetry@builtin": false,
+    "cc-plugin-plugin-authoring@builtin": false,
+  },
+};
+
+/** The fake claude's arguments, as the adapter gave them. */
+async function argumentsOf(directory: string): Promise<string[]> {
+  return (await readFile(join(directory, "arguments"), "utf8")).split("\0").slice(0, -1);
+}
+
+/** The value the adapter gave `flag`, or undefined if it did not give it. */
+function valueOf(argv: readonly string[], flag: string): string | undefined {
+  return argv.includes(flag) ? argv[argv.indexOf(flag) + 1] : undefined;
 }
 
 test("the Claude Code adapter runs claude headless with the agent, whose claim completes the attempt", async (t) => {
@@ -106,18 +147,24 @@ test("the Claude Code adapter runs claude headless with the agent, whose claim c
   assert.equal(print, "-p");
 
   // Edits only, in the workspace and the step's input and output: shell commands stay refused.
+  // Only the default tools, and nothing of Claude Code's own loads.
   assert.deepEqual(rest.slice(0, -1), [
     "--output-format",
     "stream-json",
     "--verbose",
     "--permission-mode",
     "acceptEdits",
+    "--settings",
+    JSON.stringify(hermetic),
     "--add-dir",
     input,
     output,
+    "--tools",
+    "Bash,Read,Edit,Write",
     "--model",
     "a-model",
   ]);
+  assert.equal(await readFile(join(directory, "claude-mds"), "utf8"), "1");
   assert.ok(prompt.startsWith("Plan the change.\n"));
   assert.ok(prompt.includes('["done"]'));
 });
@@ -190,14 +237,73 @@ test("the Claude Code adapter runs claude in the permission mode its harness nam
   assert.equal(argv[argv.indexOf("--permission-mode") + 1], "bypassPermissions");
 });
 
-test("the Claude Code adapter refuses arguments it does not define", async (t) => {
-  const { engine } = await engineWithClaude(t, "true", ["--permission-mode", "plan"]);
+test("the Claude Code adapter gives claude the tools, effort and budget its harness names", async (t) => {
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    ["--tools", "Bash,Read,Write", "--effort", "high", "--max-budget-usd", "2.5"],
+  );
 
-  assert.partialDeepStrictEqual(await engine.advance("first"), {
-    status: "escalated",
-    reason: "Step plan exited with code 2.",
-  });
+  await engine.advance("first");
+
+  const argv = await argumentsOf(directory);
+
+  assert.equal(valueOf(argv, "--tools"), "Bash,Read,Write");
+  assert.equal(valueOf(argv, "--effort"), "high");
+  assert.equal(valueOf(argv, "--max-budget-usd"), "2.5");
 });
+
+test("the Claude Code adapter turns the agent's skills into a plugin, and gives it the Skill tool", async (t) => {
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `while [ $# -gt 0 ]; do [ "$1" = --plugin-dir ] && cp -r "$2" "${"$"}{0%/claude}/plugin"; shift; done
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    ["--tools", "Bash,Read"],
+    { tdd: "Test first.\n" },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const plugin = join(directory, "plugin");
+
+  assert.equal(valueOf(await argumentsOf(directory), "--tools"), "Bash,Read,Skill");
+  assert.deepEqual(
+    JSON.parse(await readFile(join(plugin, ".claude-plugin", "plugin.json"), "utf8")),
+    { name: "medrengard" },
+  );
+  assert.equal(await readFile(join(plugin, "skills", "tdd", "SKILL.md"), "utf8"), "Test first.\n");
+});
+
+test("the Claude Code adapter without skills loads no plugin", async (t) => {
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+
+  assert.ok(!(await argumentsOf(directory)).includes("--plugin-dir"));
+});
+
+for (const args of [
+  ["--permission-mode", "plan"],
+  ["--effort", "extreme"],
+  ["--max-budget-usd", "0"],
+  ["--max-budget-usd", "lots"],
+  ["--tools", ""],
+  ["--tools", "Bash,,Read"],
+  ["--colour", "red"],
+  ["--effort"],
+]) {
+  test(`the Claude Code adapter refuses ${JSON.stringify(args)}`, async (t) => {
+    const { engine } = await engineWithClaude(t, "true", args);
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      reason: "Step plan exited with code 2.",
+    });
+  });
+}
 
 test("a Claude Code run that fails escalates its commission", async (t) => {
   const { engine } = await engineWithClaude(t, `echo '{"type":"result","is_error":true}'; exit 3`);

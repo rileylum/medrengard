@@ -2,15 +2,21 @@
  * The Claude Code harness adapter: runs the step's agent through `claude -p` and exits as it does.
  * The agent writes the claim itself, so the engine judges it like any step's.
  *
- * Usage: claude-code.ts [--permission-mode acceptEdits|bypassPermissions]
+ * Usage: claude-code.ts [--permission-mode acceptEdits|bypassPermissions] [--tools <names>]
+ *                       [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]
  *
  * acceptEdits, the default, lets the agent edit files but not run commands. bypassPermissions
- * lets it do anything its step's access allows, so the sandbox is its only boundary.
+ * lets it do anything its step's access allows, so the sandbox is its only boundary. --tools is a
+ * comma-separated list of Claude Code's tools, Bash,Read,Edit,Write unless given; an agent with
+ * skills also gets Skill. Nothing else of Claude Code's own loads: no bundled skills or built-in
+ * plugins, no memory, no CLAUDE.md, and no attribution in commits.
  */
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readFileSync, writeSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseArgs } from "node:util";
 
 // The part of a kind the adapter explains to the agent.
 type Kind = {
@@ -24,24 +30,57 @@ type Kind = {
 type Given = {
   outcomes: string[];
   claims: Record<string, Kind>;
-  agent: { model: string; prompt: string };
+  agent: { model: string; prompt: string; skills: { name: string; path: string }[] };
 };
 
 const input = process.env.MEDRENGARD_IN!;
 const output = process.env.MEDRENGARD_OUT!;
 
-const modes = ["acceptEdits", "bypassPermissions"];
-const args = process.argv.slice(2);
-const mode = args.length === 0 ? "acceptEdits" : args[1];
+const usage = `Usage: claude-code.ts [--permission-mode acceptEdits|bypassPermissions] [--tools <names>]
+                      [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]`;
 
-if (!(args.length === 0 || (args.length === 2 && args[0] === "--permission-mode"))) {
-  console.error("Usage: claude-code.ts [--permission-mode acceptEdits|bypassPermissions]");
+// Exits as a usage error, which the engine records as the attempt's errors.
+function refuse(problem: string): never {
+  console.error(`${problem}\n${usage}`);
   process.exit(2);
 }
 
+let options;
+
+try {
+  ({ values: options } = parseArgs({
+    options: {
+      "permission-mode": { type: "string", default: "acceptEdits" },
+      tools: { type: "string", default: "Bash,Read,Edit,Write" },
+      effort: { type: "string" },
+      "max-budget-usd": { type: "string" },
+    },
+  }));
+} catch (error) {
+  refuse(error instanceof Error ? error.message : String(error));
+}
+
+const modes = ["acceptEdits", "bypassPermissions"];
+const efforts = ["low", "medium", "high", "xhigh", "max"];
+const mode = options["permission-mode"];
+const { effort } = options;
+const budget = options["max-budget-usd"];
+const tools = options.tools.split(",");
+
 if (!modes.includes(mode)) {
-  console.error(`The permission mode must be one of ${modes.join(", ")}, not ${mode}.`);
-  process.exit(2);
+  refuse(`The permission mode must be one of ${modes.join(", ")}, not ${mode}.`);
+}
+
+if (!tools.every((tool) => /^[A-Za-z]+$/.test(tool))) {
+  refuse(`The tools must be tool names separated by commas, not ${JSON.stringify(options.tools)}.`);
+}
+
+if (effort !== undefined && !efforts.includes(effort)) {
+  refuse(`The effort must be one of ${efforts.join(", ")}, not ${effort}.`);
+}
+
+if (budget !== undefined && !(Number(budget) > 0)) {
+  refuse(`The budget must be a positive number of dollars, not ${budget}.`);
 }
 
 // SAFETY: the engine encodes input.json for an agent step with these fields.
@@ -79,6 +118,40 @@ When you are done, write ${join(output, "output.json")} as JSON:
 {"outcome": one of ${JSON.stringify(given.outcomes)}, "artifacts": [...]}.
 Leave out "artifacts" to claim none. ${claiming}`;
 
+// Everything Claude Code loads of its own that these settings turn off, as 2.1.316 names it; design
+// and doctor are bundled skills that disableBundledSkills leaves.
+const hermetic = {
+  disableBundledSkills: true,
+  skillOverrides: { design: "off", doctor: "off" },
+  autoMemoryEnabled: false,
+  attribution: false,
+  enabledPlugins: {
+    "cc-plugin-agents-md@builtin": false,
+    "cc-plugin-telemetry@builtin": false,
+    "cc-plugin-plugin-authoring@builtin": false,
+  },
+};
+
+// The agent's skills as one plugin, built outside the read-only input; its skills are named
+// medrengard:<skill>.
+function pluginOf(skills: Given["agent"]["skills"]): string {
+  const plugin = mkdtempSync(join(tmpdir(), "medrengard-plugin-"));
+
+  mkdirSync(join(plugin, ".claude-plugin"));
+  writeFileSync(
+    join(plugin, ".claude-plugin", "plugin.json"),
+    JSON.stringify({ name: "medrengard" }),
+  );
+
+  for (const { name, path } of skills) {
+    cpSync(join(input, path), join(plugin, "skills", name), { recursive: true });
+  }
+
+  return plugin;
+}
+
+const { skills } = given.agent;
+
 // Streamed, so the engine sees output while the agent works; plain -p prints only at the end, which
 // the idle limit would stop.
 const claude = spawn(
@@ -90,16 +163,27 @@ const claude = spawn(
     "--verbose",
     "--permission-mode",
     mode,
-    // Before --model, which ends this list of directories.
+    "--settings",
+    JSON.stringify(hermetic),
+    ...(effort === undefined ? [] : ["--effort", effort]),
+    ...(budget === undefined ? [] : ["--max-budget-usd", budget]),
+    ...(skills.length === 0 ? [] : ["--plugin-dir", pluginOf(skills)]),
+    // --add-dir and --tools each take a list, which the next flag ends.
     "--add-dir",
     input,
     output,
+    "--tools",
+    [...tools, ...(skills.length === 0 ? [] : ["Skill"])].join(","),
     "--model",
     given.agent.model,
     `${given.agent.prompt}\n\n${contract}`,
   ],
-  // stdout is read, to note what the agent does, and passed on unchanged as the transcript.
-  { stdio: ["ignore", "pipe", "inherit"] },
+  {
+    // CLAUDE.md loads as Claude Code's own, not through a plugin, so only this variable keeps it out.
+    env: { ...process.env, CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" },
+    // stdout is read, to note what the agent does, and passed on unchanged as the transcript.
+    stdio: ["ignore", "pipe", "inherit"],
+  },
 );
 
 // The longest note the adapter writes; a longer message is cut, and says so with "…".

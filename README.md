@@ -354,6 +354,14 @@ const design = {
   directory; an agent cannot have two of one name. Leave `skills` out for none.
 - `--permission-mode acceptEdits`, the default, lets the agent edit files but not run commands.
   `bypassPermissions` lets it do anything its access allows, so the sandbox is its only boundary.
+- `--tools Bash,Read,Write` names the Claude Code tools the agent gets, `Bash,Read,Edit,Write` if
+  left out. An agent with skills also gets `Skill`, and its skills load as the plugin
+  `medrengard`, named `medrengard:<skill>`.
+- `--effort low|medium|high|xhigh|max` and `--max-budget-usd 2` pass on to `claude`. The budget
+  is checked after each turn, so a run can spend a little past it; over it, the attempt fails.
+- Nothing else of Claude Code's own loads: no bundled skills or built-in plugins, no memory, no
+  `CLAUDE.md` or `AGENTS.md`, and no `Co-Authored-By` in the agent's commits. Some of the settings
+  that do this are undocumented, as of Claude Code 2.1.316.
 - The adapter tells the agent where its inputs are, and how to claim each kind its step's `claims`
   lists, from the kinds' rules in `input.json`.
 - `claudeCode` passes `CLAUDE_CODE_OAUTH_TOKEN` and the `GIT_AUTHOR_*` and `GIT_COMMITTER_*`
