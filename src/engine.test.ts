@@ -482,7 +482,7 @@ test("a step whose access makes its workspace read-only cannot write to it", asy
   assert.equal(engine.transcript("first", 1).toString(), "read-only\n");
 });
 
-test("a step gets only the environment its access names", async (t) => {
+test("a step gets only the environment its access names, PATH included", async (t) => {
   process.env.MEDRENGARD_TEST_SHOWN = "shown";
   process.env.MEDRENGARD_TEST_HIDDEN = "hidden";
   t.after(() => {
@@ -493,11 +493,13 @@ test("a step gets only the environment its access names", async (t) => {
   const { engine } = await engineConfined(
     t,
     () => ({ ...access, environment: ["MEDRENGARD_TEST_SHOWN"] }),
-    `echo "$MEDRENGARD_TEST_SHOWN" "$MEDRENGARD_TEST_HIDDEN"`,
+    // The environment sh was started with, before it sets a PATH of its own.
+    `echo "$MEDRENGARD_TEST_SHOWN" "$MEDRENGARD_TEST_HIDDEN"
+     tr '\\0' '\\n' < /proc/$$/environ | grep -c '^PATH='`,
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
-  assert.equal(engine.transcript("first", 1).toString(), "shown \n");
+  assert.equal(engine.transcript("first", 1).toString(), "shown \n0\n");
 });
 
 test("a step without network access has only a loopback interface", async (t) => {
@@ -2591,8 +2593,8 @@ test("an agent step is started with exactly the pinned environment, descriptors 
 
   const read = (name: string) => readFile(join(directory, name), "utf8");
 
-  // PATH is the engine's own, given to every step whatever its access; PWD is bwrap's --chdir.
-  assert.equal(await read("environment"), "MEDRENGARD_IN\nMEDRENGARD_OUT\nPATH\nPWD\n");
+  // The step's access names no variables; PWD is bwrap's --chdir.
+  assert.equal(await read("environment"), "MEDRENGARD_IN\nMEDRENGARD_OUT\nPWD\n");
   assert.equal(await read("descriptors"), "0\n1\n2\n3\n");
   assert.equal(await read("listing"), ".skills\ninput.json\nrequest\n");
 

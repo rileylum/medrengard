@@ -67,7 +67,6 @@ export function confine(access: Access, areas: Areas, argv: readonly [string, ..
     ],
     env: {
       ...passed,
-      PATH: process.env.PATH,
       MEDRENGARD_IN: areas.input,
       MEDRENGARD_OUT: areas.output,
     },

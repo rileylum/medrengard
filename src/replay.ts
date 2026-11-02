@@ -37,8 +37,9 @@ export type Agent = {
  * whatever is there. The workspace, the input (read-only) and the output are always there, the
  * workspace in the mode `workspace` gives.
  *
- * `environment` names the variables passed through from the engine's own environment, or "all".
- * `PATH`, `MEDRENGARD_IN` and `MEDRENGARD_OUT` are always set, over any passed through.
+ * `environment` names the variables passed through from the engine's own environment, or "all";
+ * PATH among them, or a step finds commands only by the system's default search path.
+ * `MEDRENGARD_IN` and `MEDRENGARD_OUT` are always set, over any passed through.
  */
 export type Access = {
   paths: readonly (

@@ -237,8 +237,9 @@ const access: Access = {
 };
 ```
 
-The workspace, the input (read-only) and the output are always there, and `PATH`, `MEDRENGARD_IN`
-and `MEDRENGARD_OUT` are always set.
+The workspace, the input (read-only) and the output are always there, and `MEDRENGARD_IN` and
+`MEDRENGARD_OUT` are always set. `PATH` is passed like any other variable, only when `environment`
+names it; without it a step finds commands only in the system's default search path.
 
 `medrengard/defaults/access.ts` holds four values to use as they are or to change one dial of.
 "The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they
@@ -247,11 +248,11 @@ exist.
 - `full`: everything the engine can reach; in practice no sandbox.
 - `home`: the system, a fresh `/tmp` of 256 MiB, and the owner's home to read and write, with the
   network and the whole environment.
-- `contract`: the system and a fresh `/tmp` of 256 MiB. No home, no network and no `HOME`, so a
+- `contract`: the system, a fresh `/tmp` of 256 MiB and `PATH`. No home, no network and no `HOME`, so a
   program that needs a home or a cache, such as `npm`, must be pointed at `/tmp`.
 - `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
   256 MiB, Node's installation, the `adapters` directory and the `claude` executable to read, the
-  network, and `HOME`, `LANG`, the token and the Git identity. Its home is empty, so the owner's
+  network, and `PATH`, `HOME`, `LANG`, the token and the Git identity. Its home is empty, so the owner's
   settings, skills, hooks and MCP servers never load. A path under the home, such as a repository,
   stays invisible until you add it: the deeper entry wins.
 

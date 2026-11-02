@@ -37,7 +37,7 @@ export const home: Access = {
 export const contract: Access = {
   paths: [...system, tmp],
   network: false,
-  environment: [],
+  environment: ["PATH"],
   workspace: "write",
 };
 
@@ -60,6 +60,7 @@ export const claudeCode: Access = {
   ],
   network: true,
   environment: [
+    "PATH",
     "HOME",
     "LANG",
     "CLAUDE_CODE_OAUTH_TOKEN",
