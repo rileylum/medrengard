@@ -152,6 +152,9 @@ function pluginOf(skills: Given["agent"]["skills"]): string {
 
 const { skills } = given.agent;
 
+// The tools the agent declares: its harness's, and Skill when it has skills.
+const declared = [...tools, ...(skills.length === 0 ? [] : ["Skill"])];
+
 // Streamed, so the engine sees output while the agent works; plain -p prints only at the end, which
 // the idle limit would stop.
 const claude = spawn(
@@ -173,7 +176,7 @@ const claude = spawn(
     input,
     output,
     "--tools",
-    [...tools, ...(skills.length === 0 ? [] : ["Skill"])].join(","),
+    declared.join(","),
     "--model",
     given.agent.model,
     `${given.agent.prompt}\n\n${contract}`,
@@ -218,6 +221,13 @@ function toolNote(name: string, input: ToolInput): string {
 // lazy: only the event fields the notes need; the transcript keeps the rest.
 type StreamEvent = {
   type?: string;
+  subtype?: string;
+  // What claude loaded, in its init event.
+  tools?: string[];
+  skills?: string[];
+  plugins?: { name: string }[];
+  mcp_servers?: { name: string }[];
+  agents?: string[];
   message?: {
     content?: { type: string; text?: string; name?: string; input?: ToolInput }[];
   };
@@ -227,7 +237,40 @@ type StreamEvent = {
   total_cost_usd?: number;
 };
 
+// Records on stderr and in a note what claude loaded that the agent did not declare, and lets it
+// run: a leak is for the owner to see and fix, not a reason to stop.
+function leaksOf(init: StreamEvent): void {
+  const extra = (loaded: string[], allowed: string[]) =>
+    loaded.filter((name) => !allowed.includes(name));
+
+  const leaks = Object.entries({
+    tools: extra(init.tools ?? [], declared),
+    skills: extra(
+      init.skills ?? [],
+      skills.map(({ name }) => `medrengard:${name}`),
+    ),
+    plugins: extra(
+      (init.plugins ?? []).map(({ name }) => name),
+      skills.length === 0 ? [] : ["medrengard"],
+    ),
+    "MCP servers": (init.mcp_servers ?? []).map(({ name }) => name),
+    // Listed subagents can only start through Task.
+    subagents: (init.tools ?? []).includes("Task") ? (init.agents ?? []) : [],
+  }).flatMap(([what, names]) => (names.length === 0 ? [] : [`${what} ${JSON.stringify(names)}`]));
+
+  if (leaks.length > 0) {
+    const leak = `Claude Code loaded what the agent did not declare: ${leaks.join(", ")}.`;
+
+    console.error(leak);
+    note(leak);
+  }
+}
+
 function notesOf(event: StreamEvent): void {
+  if (event.type === "system" && event.subtype === "init") {
+    leaksOf(event);
+  }
+
   if (event.type === "assistant") {
     for (const block of event.message?.content ?? []) {
       if (block.type === "text" && block.text !== undefined) {

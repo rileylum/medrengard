@@ -314,3 +314,58 @@ test("a Claude Code run that fails escalates its commission", async (t) => {
     reason: "Step plan exited with code 3.",
   });
 });
+
+test("the Claude Code adapter records what claude loaded that the agent did not declare", async (t) => {
+  const init = {
+    type: "system",
+    subtype: "init",
+    tools: ["Bash", "Read", "Skill", "Task", "WebFetch"],
+    skills: ["medrengard:tdd", "design"],
+    plugins: [{ name: "medrengard" }, { name: "cc-plugin-telemetry" }],
+    mcp_servers: [{ name: "github", status: "connected" }],
+    agents: ["general-purpose"],
+  };
+
+  const { engine } = await engineWithClaude(
+    t,
+    `echo '${JSON.stringify(init)}'
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    ["--tools", "Bash,Read,Task"],
+    { tdd: "Test first.\n" },
+  );
+
+  const leak =
+    'Claude Code loaded what the agent did not declare: tools ["WebFetch"], skills ["design"], plugins ["cc-plugin-telemetry"], MCP servers ["github"], subagents ["general-purpose"].';
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    { outcome: "done", notes: [leak], errors: true },
+  ]);
+  assert.equal(engine.errors("first", 1).toString(), `${leak}\n`);
+});
+
+test("the Claude Code adapter records nothing when claude loaded only what the agent declared", async (t) => {
+  const init = {
+    type: "system",
+    subtype: "init",
+    tools: ["Bash", "Read", "Edit", "Write", "Skill"],
+    skills: ["medrengard:tdd"],
+    plugins: [{ name: "medrengard" }],
+    mcp_servers: [],
+    agents: ["general-purpose"],
+  };
+
+  const { engine } = await engineWithClaude(
+    t,
+    `echo '${JSON.stringify(init)}'
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    [],
+    { tdd: "Test first.\n" },
+  );
+
+  await engine.advance("first");
+
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    { outcome: "done", notes: [], errors: false },
+  ]);
+});

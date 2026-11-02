@@ -362,6 +362,10 @@ const design = {
 - Nothing else of Claude Code's own loads: no bundled skills or built-in plugins, no memory, no
   `CLAUDE.md` or `AGENTS.md`, and no `Co-Authored-By` in the agent's commits. Some of the settings
   that do this are undocumented, as of Claude Code 2.1.316.
+- If `claude` loads tools, skills, plugins or MCP servers the agent did not declare, the adapter
+  records them as the attempt's errors and as a note, and the attempt carries on. Its subagents
+  count only when it has the `Task` tool. `CLAUDE.md` is not listed by `claude`, so this check
+  cannot see it.
 - The adapter tells the agent where its inputs are, and how to claim each kind its step's `claims`
   lists, from the kinds' rules in `input.json`.
 - `claudeCode` passes `CLAUDE_CODE_OAUTH_TOKEN` and the `GIT_AUTHOR_*` and `GIT_COMMITTER_*`
