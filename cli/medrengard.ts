@@ -12,6 +12,7 @@ import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import type { CommissionRecord, createEngine as Create, Entry } from "../src/engine.ts";
+import { isRecord } from "../src/json.ts";
 import type { CommissionState } from "../src/replay.ts";
 import type { Artifact } from "../src/store.ts";
 
@@ -125,6 +126,9 @@ try {
   const feedback = textOf(values.feedback, values["feedback-file"]);
   const path = resolve(factory);
   const options = (await import(pathToFileURL(path).href)).default;
+
+  refuseFactory(path, isRecord(options) ? Object.keys(options) : []);
+
   const log = resolve(dirname(path), options.log);
 
   mkdirSync(dirname(log), { recursive: true });
@@ -183,6 +187,25 @@ try {
 
   process.stderr.write(json ? `${JSON.stringify({ error: message })}\n` : `${message}\n`);
   process.exitCode = 1;
+}
+
+// The factory module is the owner's code, so its shape is checked here, before the engine sees it;
+// a misspelled key would otherwise be dropped and fail later, far from the cause.
+function refuseFactory(path: string, given: readonly string[]): void {
+  const keys = ["log", "kinds", "workflows"];
+  const missing = keys.filter((key) => !given.includes(key));
+  const extra = given.filter((key) => !keys.includes(key));
+
+  if (missing.length > 0 || extra.length > 0) {
+    const problems = [
+      ...(missing.length > 0 ? [`missing ${missing.join(", ")}`] : []),
+      ...(extra.length > 0 ? [`not allowed ${extra.join(", ")}`] : []),
+    ];
+
+    throw new Error(
+      `Factory ${path} must default-export { log, kinds, workflows }: ${problems.join(", ")}.`,
+    );
+  }
 }
 
 function refuseUsage(): never {

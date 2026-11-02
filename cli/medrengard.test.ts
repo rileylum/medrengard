@@ -224,6 +224,23 @@ test("the CLI without a factory exits 2 naming both ways to give one", () => {
   assert.match(stderr, /MEDRENGARD_FACTORY/);
 });
 
+test("the CLI refuses a factory whose default export is not exactly { log, kinds, workflows }", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const factory = join(directory, "factory.ts");
+
+  await writeFile(factory, `export default { log: "log.sqlite", kinds: {}, workflow: {} };`);
+
+  assert.deepEqual(run(["state", "first"], factory), {
+    status: 1,
+    stdout: "",
+    stderr: `Factory ${factory} must default-export { log, kinds, workflows }: missing workflows, not allowed workflow.\n`,
+  });
+  assert.ok(!existsSync(join(directory, "log.sqlite")));
+});
+
 // A line the runner prints with --json, as far as the tests read it.
 type Line = {
   parallel?: number;
