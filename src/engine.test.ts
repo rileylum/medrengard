@@ -10,6 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { setTimeout as sleep } from "node:timers/promises";
 import { builtIn } from "../defaults/kinds.ts";
 import { createEngine } from "./engine.ts";
+import { isRecord, isText } from "./json.ts";
 import type { Kind, Kinds } from "./kinds.ts";
 import { defineWorkflow, type Access, type Query, type Workflow } from "./replay.ts";
 
@@ -2444,4 +2445,100 @@ test("a log written before events carried times still reads, without them", asyn
   assert.ok(attempt.entry === "attempt" && "ended" in attempt);
   assert.equal(attempt.started, undefined);
   assert.equal(attempt.ended, undefined);
+});
+
+// Constraint 7: the log's vocabulary is pinned, so a new event type or field fails here until it
+// is added on purpose. Each value is replaced by its type, so the shape is pinned to every depth.
+test("the log's events are exactly the six types, each with its pinned fields", async (t) => {
+  const { engine, options } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(
+          `echo note >&3; echo warning >&2; printf 'Do it.' > "$MEDRENGARD_OUT/plan.md"
+           echo '${JSON.stringify(planAt("plan.md"))}' > "$MEDRENGARD_OUT/output.json"`,
+          "review",
+        ),
+        review: { kind: "approval", on: { approve: "fail" } },
+        fail: { ...stepRunning("echo broken >&2; exit 3", "end"), inputs: { plan: "subject" } },
+      },
+    }),
+  );
+
+  await engine.advance("first");
+  engine.decide("first", { subject: subjectOf(engine), outcome: "approve" });
+  await engine.advance("first");
+
+  const log = new DatabaseSync(options.log);
+
+  t.after(() => log.close());
+
+  // Each event with its values replaced by their JSON types, except its type and its records.
+  const vocabulary = log
+    .prepare("SELECT event FROM events WHERE commission = 'first' ORDER BY position")
+    .all()
+    .map(({ event }) =>
+      JSON.parse(String(event), (key, value) => {
+        if (key === "type" || isRecord(value) || Array.isArray(value)) {
+          return value;
+        }
+
+        if (isText(value)) {
+          return "string";
+        }
+
+        return Number.isFinite(value) ? "number" : value;
+      }),
+    );
+
+  const started = (inputs: readonly { name: string; hashes: readonly string[] }[]) => ({
+    type: "attempt-started",
+    step: "string",
+    attempt: "number",
+    subject: "string",
+    inputs,
+    process: { pid: "number", start: "number" },
+    at: "number",
+  });
+
+  assert.deepEqual(vocabulary, [
+    {
+      type: "commissioned",
+      workflow: "string",
+      definition: "string",
+      request: "string",
+      at: "number",
+    },
+    started([]),
+    { type: "noted", attempt: "number", note: "string", at: "number" },
+    {
+      type: "attempt-completed",
+      step: "string",
+      attempt: "number",
+      outcome: "string",
+      artifacts: [{ hash: "string", kind: "string", kept: {} }],
+      transcript: "string",
+      errors: "string",
+      next: "string",
+      at: "number",
+    },
+    {
+      type: "decided",
+      step: "string",
+      decision: "string",
+      outcome: "string",
+      subject: "string",
+      next: "string",
+      at: "number",
+    },
+    started([{ name: "string", hashes: ["string"] }]),
+    {
+      type: "escalated",
+      reason: "string",
+      attempt: "number",
+      transcript: "string",
+      errors: "string",
+      at: "number",
+    },
+  ]);
 });
