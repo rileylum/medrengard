@@ -156,6 +156,8 @@ test("the Claude Code adapter runs claude headless with the agent, whose claim c
     "acceptEdits",
     "--settings",
     JSON.stringify(hermetic),
+    "--setting-sources",
+    "",
     "--add-dir",
     input,
     output,
@@ -167,6 +169,7 @@ test("the Claude Code adapter runs claude headless with the agent, whose claim c
   assert.equal(await readFile(join(directory, "claude-mds"), "utf8"), "1");
   assert.ok(prompt.startsWith("Plan the change.\n"));
   assert.ok(prompt.includes('["done"]'));
+  assert.ok(!prompt.includes("CLAUDE.md"));
 });
 
 test("the Claude Code adapter tells the agent how to claim only the kinds its step may claim", async (t) => {
@@ -253,6 +256,24 @@ test("the Claude Code adapter gives claude the tools, effort and budget its harn
   assert.equal(valueOf(argv, "--max-budget-usd"), "2.5");
 });
 
+test("the Claude Code adapter tells the agent to follow the repository's CLAUDE.md at the project level", async (t) => {
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    ["--instructions", "project"],
+  );
+
+  await engine.advance("first");
+
+  assert.ok(
+    (await argumentsOf(directory))
+      .at(-1)!
+      .includes(
+        "If the repository you work in has a CLAUDE.md at its root, read it and the files it imports with @, and follow them.",
+      ),
+  );
+});
+
 test("the Claude Code adapter turns the agent's skills into a plugin, and gives it the Skill tool", async (t) => {
   const { engine, directory } = await engineWithClaude(
     t,
@@ -293,6 +314,7 @@ for (const args of [
   ["--tools", ""],
   ["--tools", "Bash,,Read"],
   ["--colour", "red"],
+  ["--instructions", "all"],
   ["--effort"],
 ]) {
   test(`the Claude Code adapter refuses ${JSON.stringify(args)}`, async (t) => {
