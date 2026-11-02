@@ -1,9 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { constants, readdirSync, readFileSync } from "node:fs";
+import { constants, existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -13,6 +13,7 @@ import {
   type CommissionState,
   type Definition,
   type Query,
+  type Skill,
   type Workflow,
 } from "./replay.ts";
 import { parseDefinition } from "./definition.ts";
@@ -159,8 +160,15 @@ export function createEngine({ log, workflows, kinds }: Options) {
         throw new Error(`There is no workflow named ${workflow}.`);
       }
 
-      // Parsed as it will be read back, so a definition that could not run is refused now.
-      const text = JSON.stringify({ workflow: workflows[workflow], kinds });
+      // Parsed as it will be read back, so a definition that could not run is refused now; its
+      // skills are read once it has passed, so editing one later changes no commission.
+      const checked = parseDefinition(
+        workflow,
+        JSON.stringify({ workflow: workflows[workflow], kinds }),
+      );
+
+      const skills = pin(workflow, checked.workflow, store);
+      const text = JSON.stringify({ workflow: workflows[workflow], kinds, skills });
       const parsed = parseDefinition(workflow, text);
 
       const event: Commissioned = {
@@ -470,14 +478,29 @@ export function createEngine({ log, workflows, kinds }: Options) {
           artifacts: hashes.map((hash) => ({ hash, artifact: store.get(hash) })),
         }));
 
-        const bytes = inputs
-          .flatMap(({ artifacts }) => artifacts)
-          .reduce((sum, { artifact }) => sum + Buffer.byteLength(artifact.body ?? ""), 0);
+        const skills = (step.kind === "agent" ? (step.agent.skills ?? []) : []).map((path) => {
+          const { name: skill, files } = definition.skills[path];
+
+          return {
+            name: skill,
+            files: Object.entries(files).map(([file, hash]) => ({ file, bytes: store.read(hash) })),
+          };
+        });
+
+        const bytes =
+          inputs
+            .flatMap(({ artifacts }) => artifacts)
+            .reduce((sum, { artifact }) => sum + Buffer.byteLength(artifact.body ?? ""), 0) +
+          skills
+            .flatMap(({ files }) => files)
+            .reduce((sum, { bytes: file }) => sum + file.length, 0);
 
         if (bytes > step.limits.input) {
+          const what = skills.length === 0 ? "inputs are" : "inputs and skills are";
+
           write(commission, events, {
             type: "escalated",
-            reason: `Step ${name}'s inputs are ${bytes} bytes, over its input limit of ${step.limits.input}.`,
+            reason: `Step ${name}'s ${what} ${bytes} bytes, over its input limit of ${step.limits.input}.`,
           });
 
           continue;
@@ -532,6 +555,7 @@ export function createEngine({ log, workflows, kinds }: Options) {
               kept: keptOf(events, state.subject),
             },
             inputs,
+            skills,
           },
           cancelled,
           note,
@@ -657,6 +681,7 @@ type Given = {
     name: string;
     artifacts: readonly { hash: string; artifact: Artifact }[];
   }[];
+  skills: readonly { name: string; files: readonly { file: string; bytes: Buffer }[] }[];
 };
 
 type Store = ReturnType<typeof createStore>;
@@ -708,6 +733,39 @@ function membersOf(group: number): number[] {
     .map(Number);
 }
 
+// Keeps every file of each skill the workflow's agents declare, refusing a skill without a SKILL.md
+// or an agent with two skills of one name, and returns the skills by path.
+function pin(name: string, workflow: Workflow, store: Store): Definition["skills"] {
+  const invalid = (problem: string) => new Error(`Workflow ${name} is invalid: ${problem}.`);
+  const pinned: Record<string, Skill> = {};
+
+  for (const [step, declared] of Object.entries(workflow.steps)) {
+    const paths = declared.kind === "agent" ? (declared.agent.skills ?? []) : [];
+    const names = paths.map((path) => basename(path));
+    const twice = names.find((skill, index) => names.indexOf(skill) !== index);
+
+    if (twice !== undefined) {
+      throw invalid(`step ${step}'s agent has two skills named ${twice}`);
+    }
+
+    for (const path of paths) {
+      if (!existsSync(join(path, "SKILL.md"))) {
+        throw invalid(`step ${step}'s agent's skill ${path} has no SKILL.md`);
+      }
+
+      const files = readdirSync(path, { recursive: true, withFileTypes: true }).flatMap((entry) => {
+        const file = join(entry.parentPath, entry.name);
+
+        return entry.isDirectory() ? [] : [[relative(path, file), store.keep(readFileSync(file))]];
+      });
+
+      pinned[path] = { name: basename(path), files: Object.fromEntries(files) };
+    }
+  }
+
+  return pinned;
+}
+
 // Writes input.json, listing each declared input's artifacts, and each body as <input>/<hash>.
 // The sandbox binds the input read-only.
 async function prepare(input: string, step: Runnable, given: Given): Promise<void> {
@@ -736,6 +794,14 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
     inputs.set(name, listed);
   }
 
+  // Under .skills, which no input name can be.
+  for (const { name, files } of given.skills) {
+    for (const { file, bytes } of files) {
+      await mkdir(dirname(join(input, ".skills", name, file)), { recursive: true });
+      await writeFile(join(input, ".skills", name, file), bytes);
+    }
+  }
+
   const encoded = {
     commission: given.commission,
     step: given.step,
@@ -752,7 +818,13 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
     ),
     // Left out of a command step's input.json, which has no agent.
     agent:
-      step.kind === "agent" ? { model: step.agent.model, prompt: step.agent.prompt } : undefined,
+      step.kind === "agent"
+        ? {
+            model: step.agent.model,
+            prompt: step.agent.prompt,
+            skills: given.skills.map(({ name }) => ({ name, path: `.skills/${name}` })),
+          }
+        : undefined,
   };
 
   await writeFile(join(input, "input.json"), JSON.stringify(encoded));

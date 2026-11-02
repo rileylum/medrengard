@@ -1,7 +1,7 @@
 import { normalize } from "node:path";
 import { hasExactly, isRecord, isText } from "./json.ts";
 import type { Kinds } from "./kinds.ts";
-import type { Access, Definition, Workflow } from "./replay.ts";
+import type { Access, Definition, Skill, Workflow } from "./replay.ts";
 
 // An input name, which is also a directory in the step's input, so it cannot leave that directory
 // or collide with input.json.
@@ -19,8 +19,11 @@ const longestLimit = 2_147_483;
  */
 export function parseDefinition(name: string, text: string): Definition {
   const kinds = parseKinds(text);
+  // The engine writes the skills, after the workflow has passed; a definition stored before skills
+  // has none.
+  const skills: Record<string, Skill> = JSON.parse(text).skills ?? {};
 
-  return { workflow: parseWorkflow(name, text, kinds), kinds };
+  return { workflow: parseWorkflow(name, text, kinds), kinds, skills };
 }
 
 // A kind's name, which a query, a claim and a message name it by.
@@ -316,14 +319,24 @@ function parseWorkflow(name: string, text: string, defined: Kinds): Workflow {
       );
     }
 
+    const skills = agent?.skills;
+
     if (
       kind === "agent" &&
       (!isText(agent?.model) ||
         !isText(agent?.prompt) ||
-        !hasExactly(agent, ["harness", "model", "prompt"]) ||
+        !(skills === undefined || (Array.isArray(skills) && skills.every(isText))) ||
+        !hasExactly(agent, [
+          "harness",
+          "model",
+          "prompt",
+          ...(skills === undefined ? [] : ["skills"]),
+        ]) ||
         !hasExactly(harness, ["run"]))
     ) {
-      throw invalid(`step ${name}'s agent must be a harness, a model and a prompt`);
+      throw invalid(
+        `step ${name}'s agent must be a harness, a model, a prompt and any skills, a list of paths`,
+      );
     }
 
     if (!Array.isArray(argv) || argv.length === 0 || !argv.every(isText)) {

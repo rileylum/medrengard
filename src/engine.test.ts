@@ -2,9 +2,10 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as sleep } from "node:timers/promises";
 import { builtIn } from "../defaults/kinds.ts";
@@ -997,6 +998,116 @@ test("an agent step runs its harness adapter, which is given the agent", async (
   assert.partialDeepStrictEqual(JSON.parse(await readFile(join(directory, "input.json"), "utf8")), {
     step: "plan",
     agent: { model: "a-model", prompt: "Plan the change." },
+  });
+});
+
+/** Writes a skill named `name` in `directory`, each of `files` at its relative path. */
+function skillAt(directory: string, name: string, files: Readonly<Record<string, string>>) {
+  const skill = join(directory, "skills", name);
+
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(skill, path)), { recursive: true });
+    writeFileSync(join(skill, path), text);
+  }
+
+  return skill;
+}
+
+/**
+ * An agent step whose harness copies its whole input to `$1`, the directory `received`, and
+ * claims `done`; its agent declares `skills`, and its input limit is `input` bytes.
+ */
+function agentWithSkills(directory: string, skills: readonly string[], input = 65536) {
+  return defineWorkflow({
+    start: "plan",
+    steps: {
+      plan: {
+        kind: "agent",
+        claims,
+        workspace: "empty",
+        agent: {
+          harness: {
+            run: [
+              "sh",
+              "-c",
+              `cp -r "$MEDRENGARD_IN/." "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+              "sh",
+              join(directory, "received"),
+            ],
+          },
+          model: "a-model",
+          prompt: "Plan the change.",
+          skills,
+        },
+        inputs: {},
+        on: { done: "end" },
+        access,
+        budget: 1,
+        limits: { idle: 5, attempt: 10, transcript: 65536, input },
+      },
+    },
+  });
+}
+
+test("an agent step is given its agent's skills as they were when the commission started", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    agentWithSkills(directory, [
+      skillAt(directory, "tdd", { "SKILL.md": "Test first.\n", "scripts/red.sh": "exit 1\n" }),
+    ]),
+  );
+
+  await writeFile(join(directory, "skills", "tdd", "SKILL.md"), "Edited after the commission.\n");
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+
+  const received = join(directory, "received");
+  const input = JSON.parse(await readFile(join(received, "input.json"), "utf8"));
+
+  assert.deepEqual(input.agent.skills, [{ name: "tdd", path: ".skills/tdd" }]);
+  assert.equal(await readFile(join(received, ".skills/tdd/SKILL.md"), "utf8"), "Test first.\n");
+  assert.equal(await readFile(join(received, ".skills/tdd/scripts/red.sh"), "utf8"), "exit 1\n");
+});
+
+test("an agent whose skill has no SKILL.md cannot be commissioned", async (t) => {
+  let skill = "";
+
+  await assert.rejects(
+    engineWith(t, (directory) => {
+      skill = skillAt(directory, "tdd", { "README.md": "Test first.\n" });
+
+      return agentWithSkills(directory, [skill]);
+    }),
+    (error: Error) => {
+      assert.equal(
+        error.message,
+        `Workflow build is invalid: step plan's agent's skill ${skill} has no SKILL.md.`,
+      );
+
+      return true;
+    },
+  );
+});
+
+test("an agent with two skills of the same name cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, (directory) =>
+      agentWithSkills(directory, [
+        skillAt(directory, "tdd", { "SKILL.md": "Test first.\n" }),
+        skillAt(join(directory, "other"), "tdd", { "SKILL.md": "Test last.\n" }),
+      ]),
+    ),
+    { message: "Workflow build is invalid: step plan's agent has two skills named tdd." },
+  );
+});
+
+test("an agent step whose skills are over its input limit escalates without starting", async (t) => {
+  const { engine } = await engineWith(t, (directory) =>
+    agentWithSkills(directory, [skillAt(directory, "tdd", { "SKILL.md": "x".repeat(100) })], 64),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step plan's inputs and skills are 100 bytes, over its input limit of 64.",
   });
 });
 

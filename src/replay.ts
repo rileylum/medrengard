@@ -19,13 +19,14 @@ export type Query<N extends string = string> =
     };
 
 /**
- * A reusable agent: the harness adapter program that runs it, and the model and prompt it is
- * given.
+ * A reusable agent: the harness adapter program that runs it, the model and prompt it is given,
+ * and its skills: paths to skill directories, each holding a SKILL.md, named by the directory.
  */
 export type Agent = {
   harness: { run: readonly [string, ...string[]] };
   model: string;
   prompt: string;
+  skills?: readonly string[];
 };
 
 /**
@@ -174,8 +175,18 @@ export type CommissionState<N extends string = string> =
     }
   | { status: "finished"; by: "end" | "abandoned" };
 
-/** What a commission runs on: its workflow and the kinds of artifact the factory defined. */
-export type Definition<N extends string = string> = { workflow: Workflow<N>; kinds: Kinds };
+/** A skill as the commission started with it: its name, and each file's hash by relative path. */
+export type Skill = { name: string; files: Readonly<Record<string, string>> };
+
+/**
+ * What a commission runs on: its workflow, the kinds of artifact the factory defined, and the
+ * skills its agents declare, by path.
+ */
+export type Definition<N extends string = string> = {
+  workflow: Workflow<N>;
+  kinds: Kinds;
+  skills: Readonly<Record<string, Skill>>;
+};
 
 /** Declares a workflow, so the compiler checks that every step name it uses exists. */
 export function defineWorkflow<N extends string>(workflow: Workflow<N>): Workflow<N> {

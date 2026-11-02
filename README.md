@@ -146,13 +146,15 @@ The fields of a command or agent step:
   - `idle`: seconds without output before the step is stopped;
   - `attempt`: seconds in all;
   - `transcript`: bytes of stdout and stderr;
-  - `input`: bytes of all input bodies together. Over it, the step never starts.
+  - `input`: bytes of all input bodies, and an agent's skill files, together. Over it, the step
+    never starts.
 
 The engine refuses a workflow it could not run as written when it is commissioned, not halfway
 through. A commission runs on the definition it started with: editing the factory affects only new
 commissions. The definition holds `run` as argv, not the program it names, so editing a script that
 `run` points at changes every commission that runs it next. To pin a prompt, put its text in the
-definition, not a path to it.
+definition, not a path to it. An agent's skills are read when the commission starts and kept with
+its definition, so editing a skill affects only new commissions.
 
 `src/replay.ts` exports the types `Workflow`, `Agent`, `Access` and `Query`. A `run` is a non-empty
 argv, `readonly [string, ...string[]]`: a function that builds steps from a `string[]` must declare
@@ -316,8 +318,8 @@ A materialiser builds a later step's workspace from a subject, in an empty works
 
 ## Agents and the Claude Code adapter
 
-An agent is a harness adapter to run, a model and a prompt. The adapter is a program like any
-command; `adapters/claude-code.ts` runs the agent through `claude -p`:
+An agent is a harness adapter to run, a model, a prompt and any skills. The adapter is a program
+like any command; `adapters/claude-code.ts` runs the agent through `claude -p`:
 
 ```ts
 import { claudeCode } from "medrengard/defaults/access.ts";
@@ -336,6 +338,7 @@ const design = {
     },
     model: "sonnet",
     prompt: "Read the request and write a plan for it.",
+    skills: ["/path/to/skills/tdd"],
   },
   workspace: "empty",
   inputs: { request: "request" },
@@ -347,6 +350,8 @@ const design = {
 } as const;
 ```
 
+- `skills` are paths to skill directories, each holding a `SKILL.md`. A skill is named by its
+  directory; an agent cannot have two of one name. Leave `skills` out for none.
 - `--permission-mode acceptEdits`, the default, lets the agent edit files but not run commands.
   `bypassPermissions` lets it do anything its access allows, so the sandbox is its only boundary.
 - The adapter tells the agent where its inputs are, and how to claim each kind its step's `claims`
@@ -372,7 +377,8 @@ Every command and agent step is a program, started:
   Claude Code adapter notes what the agent says, each tool it uses and how it finished.
 
 `input.json` lists each input's artifacts, oldest first, always as a list. A body is a file at
-`<input>/<hash>`, and `body` holds that path. `claims` holds the rules of each kind the step may
+`<input>/<hash>`, and `body` holds that path. An agent's skills are directories under `.skills`,
+each listed with its path. `claims` holds the rules of each kind the step may
 claim, so a program can tell its agent how to claim them:
 
 ```json
@@ -400,7 +406,11 @@ claim, so a program can tell its agent how to claim them:
       "outcome": "verdict"
     }
   },
-  "agent": { "model": "sonnet", "prompt": "Review the change against the plan." }
+  "agent": {
+    "model": "sonnet",
+    "prompt": "Review the change against the plan.",
+    "skills": [{ "name": "tdd", "path": ".skills/tdd" }]
+  }
 }
 ```
 

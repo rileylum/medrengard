@@ -157,7 +157,7 @@ _Definition: what the owner writes; data, verified before anything runs._
 - Factory: the owner's workflows, agents and extensions. Medrengard builds factories; it is not one.
 - Workflow: a graph of steps whose edges are labelled by outcome.
 - Step: a node of a workflow, of one kind: an agent step runs an agent through its harness adapter, attended or unattended; a command step runs the owner's program; an approval step waits for the owner's decision.
-- Agent: a reusable definition of harness, model, prompt, skills and MCP servers. The step supplies its workspace and inputs.
+- Agent: a reusable definition of harness, model, prompt and skills. The step supplies its workspace and inputs.
 - Harness: the vendor tool an agent runs in, such as Claude Code, Codex, Pi or OpenCode.
 - Prompt: what the agent is told to do at a step.
 - Skill: packaged instructions or tools given to an agent.
