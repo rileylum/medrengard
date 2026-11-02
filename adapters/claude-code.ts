@@ -4,15 +4,12 @@
  *
  * Usage: claude-code.ts [--permission-mode acceptEdits|bypassPermissions] [--tools <names>]
  *                       [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]
- *                       [--instructions none|project]
  *
  * acceptEdits, the default, lets the agent edit files but not run commands. bypassPermissions
  * lets it do anything its step's access allows, so the sandbox is its only boundary. --tools is a
  * comma-separated list of Claude Code's tools, Bash,Read,Edit,Write unless given; an agent with
- * skills also gets Skill. --instructions project tells the agent to follow the repository's
- * CLAUDE.md; none, the default, does not. Nothing else of Claude Code's own loads: no bundled
- * skills or built-in plugins, no settings files, no memory, no CLAUDE.md of its own accord, and no
- * attribution in commits.
+ * skills also gets Skill. Nothing else of Claude Code's own loads: no bundled skills or built-in
+ * plugins, no settings files, no memory, no CLAUDE.md, and no attribution in commits.
  */
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -40,8 +37,7 @@ const input = process.env.MEDRENGARD_IN!;
 const output = process.env.MEDRENGARD_OUT!;
 
 const usage = `Usage: claude-code.ts [--permission-mode acceptEdits|bypassPermissions] [--tools <names>]
-                      [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]
-                      [--instructions none|project]`;
+                      [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]`;
 
 // Exits as a usage error, which the engine records as the attempt's errors.
 function refuse(problem: string): never {
@@ -58,7 +54,6 @@ try {
       tools: { type: "string", default: "Bash,Read,Edit,Write" },
       effort: { type: "string" },
       "max-budget-usd": { type: "string" },
-      instructions: { type: "string", default: "none" },
     },
   }));
 } catch (error) {
@@ -68,9 +63,6 @@ try {
 const modes = ["acceptEdits", "bypassPermissions"];
 const efforts = ["low", "medium", "high", "xhigh", "max"];
 
-// lazy: no "all", the owner's own CLAUDE.md too: a step's home is empty unless its access gives it
-// the owner's. Add it when an agent's access does.
-const levels = ["none", "project"];
 const mode = options["permission-mode"];
 const { effort } = options;
 const budget = options["max-budget-usd"];
@@ -90,10 +82,6 @@ if (effort !== undefined && !efforts.includes(effort)) {
 
 if (budget !== undefined && !(Number(budget) > 0)) {
   refuse(`The budget must be a positive number of dollars, not ${budget}.`);
-}
-
-if (!levels.includes(options.instructions)) {
-  refuse(`The instructions must be one of ${levels.join(", ")}, not ${options.instructions}.`);
 }
 
 // SAFETY: the engine encodes input.json for an agent step with these fields.
@@ -130,13 +118,6 @@ input's artifacts, and each body is the file its "body" names, relative to ${inp
 When you are done, write ${join(output, "output.json")} as JSON:
 {"outcome": one of ${JSON.stringify(given.outcomes)}, "artifacts": [...]}.
 Leave out "artifacts" to claim none. ${claiming}`;
-
-// Claude Code loads a repository's CLAUDE.md only with its settings, which may hold hooks and MCP
-// servers, and only where it starts, not in a repository cloned after; so the agent is told.
-const instructions =
-  options.instructions === "project"
-    ? "\n\nIf the repository you work in has a CLAUDE.md at its root, read it and the files it imports with @, and follow them."
-    : "";
 
 // Everything Claude Code loads of its own that these settings turn off, as 2.1.316 names it; design
 // and doctor are bundled skills that disableBundledSkills leaves.
@@ -202,7 +183,7 @@ const claude = spawn(
     declared.join(","),
     "--model",
     given.agent.model,
-    `${given.agent.prompt}\n\n${contract}${instructions}`,
+    `${given.agent.prompt}\n\n${contract}`,
   ],
   {
     // CLAUDE.md loads as Claude Code's own, not through a plugin, so only this variable keeps it out.

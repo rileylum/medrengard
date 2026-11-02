@@ -359,13 +359,9 @@ const design = {
   `medrengard`, named `medrengard:<skill>`.
 - `--effort low|medium|high|xhigh|max` and `--max-budget-usd 2` pass on to `claude`. The budget
   is checked after each turn, so a run can spend a little past it; over it, the attempt fails.
-- `--instructions project` tells the agent to follow the repository's `CLAUDE.md` and the files
-  it imports with `@`, such as `AGENTS.md`; `none`, the default, does not. Claude Code does not
-  load them itself: it would load them only together with the repository's settings, which can
-  hold hooks and MCP servers, and only where it starts, not in a repository cloned after.
 - Nothing else of Claude Code's own loads: no bundled skills or built-in plugins, no settings
-  files, no memory, no `CLAUDE.md` or `AGENTS.md` of its own accord, and no `Co-Authored-By` in
-  the agent's commits. Some of the settings that do this are undocumented, as of Claude Code
+  files, no memory, no `CLAUDE.md` or `AGENTS.md`, and no `Co-Authored-By` in the agent's
+  commits. Some of the settings that do this are undocumented, as of Claude Code
   2.1.316.
 - If `claude` loads tools, skills, plugins or MCP servers the agent did not declare, the adapter
   records them as the attempt's errors and as a note, and the attempt carries on. Its subagents
