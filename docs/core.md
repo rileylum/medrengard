@@ -194,7 +194,7 @@ _Step contract: the process boundary._
 
 _Record: the log and the store._
 
-- Event: a past-tense fact about a commission: commissioned, attempt-started, attempt-completed, decided or escalated.
+- Event: a past-tense fact about a commission: commissioned, attempt-started, attempt-completed, noted, decided or escalated.
 - Log: the ordered events of every commission.
 - Store: content-addressed artifact bodies, kept files, transcripts and definitions.
 - Replay: the pure fold from a commission's events to its state.

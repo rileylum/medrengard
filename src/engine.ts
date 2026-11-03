@@ -335,14 +335,12 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       const definition = definitionOf(events);
       const entries: Entry[] = [];
 
+      // The step an escalation is at: where the last edge led, followed as the events go by.
+      let at: string = definition.workflow.start;
+
       // After the first event, commissioned, which holds the request.
       for (let position = 1; position < events.length; position += 1) {
         const event = events[position];
-
-        // The step an escalation is at: where the commission was just before it.
-        // SAFETY: position is at least 1, so the slice starts with the commissioned event.
-        const before = replay(definition, events.slice(0, position) as Log);
-        const at = before.status === "finished" ? "" : before.step.name;
 
         // An attempt's entry, by its number, so its notes and its ending join it.
         const entryOf = (number: number) =>
@@ -393,6 +391,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
               })),
               errors: event.errors !== undefined,
             };
+            at = event.next;
             break;
           case "escalated":
             if (event.attempt === undefined) {
@@ -427,6 +426,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
             }
 
             entries.push(decision);
+            at = event.next;
 
             break;
           }
@@ -1264,6 +1264,10 @@ async function run(
   let erred = false;
   let written = 0;
 
+  // Whether the step's program started: before, such as while its workspace is built, the attempt
+  // has no transcript, rather than an empty one.
+  let ran = false;
+
   // Stores the transcript, and the errors when there are any, on the event that ends the attempt.
   const recorded = <E extends Ending>(event: Omit<E, "transcript">): E => {
     // SAFETY: E is the event given, with the transcript every ending event can carry.
@@ -1277,7 +1281,9 @@ async function run(
   };
 
   const escalate = (reason: string): Ending =>
-    recorded<Extract<Ending, { type: "escalated" }>>({ type: "escalated", reason, attempt });
+    ran
+      ? recorded<Extract<Ending, { type: "escalated" }>>({ type: "escalated", reason, attempt })
+      : { type: "escalated", reason, attempt };
 
   const { disk } = step.limits;
   const overDisk = `Step ${name} used more than its disk limit of ${disk} bytes.`;
@@ -1363,6 +1369,8 @@ async function run(
       step.kind === "agent" ? step.agent.harness.run : step.run,
       bounds,
     );
+
+    ran = true;
 
     // Its own session and process group: stopping the step also stops what it started, and
     // without a controlling terminal the step cannot push input into the owner's.

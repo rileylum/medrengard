@@ -2877,6 +2877,19 @@ test("a kind's materialiser that fails escalates with its stderr, and the step n
   await assert.rejects(readFile(join(directory, "started")), { code: "ENOENT" });
 });
 
+test("an attempt whose workspace could not be built records no transcript, since its step never ran", async (t) => {
+  const { engine } = await engineMaterialising(t, "exit 1");
+
+  await engine.advance("first");
+
+  assert.throws(() => engine.transcript("first", 1), {
+    message: "Commission first has no transcript for attempt 1.",
+  });
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    { entry: "attempt", attempt: 1, errors: false },
+  ]);
+});
+
 test("a kind's materialiser past its limit is stopped and escalates", async (t) => {
   const { engine } = await engineMaterialising(t, "sleep 5", 1);
 
@@ -3829,6 +3842,32 @@ test("a commission's record lists its attempts, claims, escalations and decision
       reason: "Step build has spent its budget of 2 attempts.",
     },
     { entry: "decision", step: "build", outcome: "abandon", subject, feedback: "Enough." },
+  ]);
+});
+
+test("a commission's record names the step each escalation is at, after the commission moved on", async (t) => {
+  const { engine } = await engineAwaiting(t);
+
+  engine.decide("first", {
+    subject: subjectOf(engine),
+    since: sinceOf(engine),
+    outcome: "approve",
+  });
+  // build writes no output.json, so its attempt escalates.
+  await engine.advance("first");
+  engine.decide("first", { subject: subjectOf(engine), since: sinceOf(engine), outcome: "retry" });
+  await engine.advance("first");
+
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    { entry: "decision", step: "review", outcome: "approve" },
+    {
+      entry: "attempt",
+      attempt: 1,
+      step: "build",
+      escalated: "Step build exited 0 without a readable output.json.",
+    },
+    { entry: "decision", step: "build", outcome: "retry" },
+    { entry: "attempt", attempt: 2, step: "build" },
   ]);
 });
 
