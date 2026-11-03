@@ -159,8 +159,7 @@ The fields of a command or agent step:
   - `disk`, optional: bytes its attempt's directory may hold, 4 GiB if left out: the workspace,
     input, output and the areas of its kind's programs. The engine measures it once a second while
     any of them runs and after each ends; over it, the program is stopped and the commission
-    escalates. It can overshoot by a second of writes, so keep `TMPDIR`, where attempts live, on a
-    disk rather than a RAM-backed `/tmp`.
+    escalates. It can overshoot by a second of writes.
 
 A kind's verifier and materialiser get 4 GiB and 1024 processes.
 
@@ -175,11 +174,11 @@ its definition, so editing a skill affects only new commissions.
 argv, `readonly [string, ...string[]]`: a function that builds steps from a `string[]` must declare
 that type, or the compiler refuses it.
 
-Each attempt's workspace, input and output are a directory under the system temp directory
-(`TMPDIR`, else `/tmp`), deleted when the attempt ends; an attempt interrupted by a second Ctrl-C
-leaves its directory behind. The workspace has no size limit yet. A
-step that installs dependencies there, on a RAM-backed `/tmp`, holds that memory until it ends: run
-the engine with `TMPDIR` on disk.
+Each attempt has a directory beside the log, `attempts/<sha256 of the commission>-<attempt>`,
+holding its workspace, input and output, its kind's programs' areas, and its transcript and errors
+as they arrive. It is removed once the attempt's end is written; an attempt whose engine died keeps
+it until the next `advance` finds the attempt interrupted. So attempts live on the log's disk, not
+in `TMPDIR`.
 
 A step is never attempted twice on the same subject and inputs without the owner's decision between.
 The second time, the commission escalates instead.

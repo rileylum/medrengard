@@ -2018,12 +2018,13 @@ test(
 );
 
 test(
-  "an interrupted attempt keeps what its step wrote before its engine died",
+  "an interrupted attempt keeps what its step wrote before its engine died, and leaves no directory",
   { timeout: 10_000 },
   async (t) => {
     const { engine, directory, options } = await engineRunning(
       t,
-      `echo "before the crash"; echo "on stderr" >&2; echo started >> "$1"; exec sleep 30`,
+      `echo "before the crash"; echo "on stderr" >&2; pwd > "$1.workspace"
+       echo started >> "$1"; exec sleep 30`,
       { idle: 60, attempt: 60, transcript: 65536, input: 65536 },
     );
 
@@ -2047,6 +2048,11 @@ test(
     });
     assert.equal(engine.transcript("first", 1).toString(), "before the crash\non stderr\n");
     assert.equal(engine.errors("first", 1).toString(), "on stderr\n");
+
+    // The attempt's directory, its workspace included, was beside the log, and is gone.
+    const workspace = (await readFile(join(directory, "started.workspace"), "utf8")).trim();
+
+    assert.ok(workspace.startsWith(join(directory, "attempts")), workspace);
     assert.deepEqual(await readdir(join(directory, "attempts")), []);
   },
 );

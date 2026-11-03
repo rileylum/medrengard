@@ -14,7 +14,6 @@ import {
   writeSync,
 } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve as resolvePath, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
@@ -115,19 +114,24 @@ export function createEngine({ log, workflows, kinds }: Options) {
 
   const self = { pid: process.pid, start: startOf(process.pid)! };
 
-  // Each running attempt's transcript and errors, written as they arrive, so an engine that dies
-  // mid-attempt leaves them for the one that finds it interrupted.
+  // Each running attempt's directory, named by its commission and attempt, so the engine that
+  // finds an attempt interrupted can take what it spooled and remove what it left.
   const attempts = join(dirname(log), "attempts");
 
   mkdirSync(attempts, { recursive: true });
 
   function spoolOf(commission: string, attempt: number): Spool {
-    const base = join(
+    const directory = join(
       attempts,
       `${createHash("sha256").update(commission).digest("hex")}-${attempt}`,
     );
 
-    return { transcript: `${base}.transcript`, errors: `${base}.errors` };
+    return {
+      directory,
+      work: join(directory, "work"),
+      transcript: join(directory, "transcript"),
+      errors: join(directory, "errors"),
+    };
   }
 
   // What an attempt no engine finished had spooled, in the store, for the escalation that ends
@@ -145,8 +149,7 @@ export function createEngine({ log, workflows, kinds }: Options) {
   }
 
   function unspool(spool: Spool): void {
-    rmSync(spool.transcript, { force: true });
-    rmSync(spool.errors, { force: true });
+    rmSync(spool.directory, { recursive: true, force: true });
   }
 
   // A cancel is a request to the engine running the attempt, not commission state: the
@@ -758,7 +761,9 @@ export function createEngine({ log, workflows, kinds }: Options) {
 }
 
 // Where a running attempt's transcript and errors are written as they arrive.
-type Spool = { transcript: string; errors: string };
+// An attempt's directory: its transcript and errors, written as they arrive, and the work area
+// holding its workspace, input, output and kinds' programs' areas, which the disk limit bounds.
+type Spool = { directory: string; work: string; transcript: string; errors: string };
 
 // The attempts this process is running, across its engines: one it holds but is not running was
 // interrupted.
@@ -1160,7 +1165,13 @@ async function run(
   spool: Spool,
 ): Promise<Ending> {
   const { step: name, attempt } = given;
-  const directory = await mkdtemp(join(tmpdir(), "medrengard-attempt-"));
+  const directory = spool.work;
+
+  // Attempt numbers are not reused, so anything already there is a removal that failed: start
+  // clean.
+  await rm(spool.directory, { recursive: true, force: true });
+  await mkdir(directory, { recursive: true });
+
   const workspace = join(directory, "workspace");
   const input = join(directory, "input");
   const output = join(directory, "output");
