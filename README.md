@@ -176,7 +176,10 @@ The fields of a command or agent step:
 A kind's verifier and materialiser have bounds of their own; see [Kinds](#kinds).
 
 The engine refuses a workflow it could not run as written when it is commissioned, not halfway
-through. A commission runs on the definition it started with, the factory's defaults included:
+through: among others, a step with no outcomes; a step that may claim a kind whose outcome field
+has a value the step has no edge for, such as a verdict's `fail`; and a workspace that may be built
+from a kind without a materialiser. For `"subject"` that is the document and every subject kind
+any step claims; for an input, its `kind`, or else every kind its `from` steps may claim. A commission runs on the definition it started with, the factory's defaults included:
 editing the factory affects only new commissions. The definition holds `run` as argv, not the program it names, so editing a script that
 `run` points at changes every commission that runs it next. To pin a prompt, put its text in the
 definition, not a path to it. An agent's skills are read when the commission starts and kept with

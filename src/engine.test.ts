@@ -30,8 +30,9 @@ const access: Access = {
   workspace: "write",
 };
 
-// Every kind a step may claim, so a test step is refused only by the claim it tests.
-const claims = ["document", "commit", "verdict"];
+// The subject kinds a step may claim, so a test step is refused only by the claim it tests. A
+// verdict is claimed only by steps that route pass and fail.
+const claims = ["document", "commit"];
 
 /**
  * Starts an engine whose one workflow, `build`, is made by `workflow` from the test's directory,
@@ -370,6 +371,7 @@ test("a step's input.json lists the kinds it may claim, with their fields and bo
             [directory],
           ),
           claims: ["verdict"],
+          on: { done: "end", pass: "end", fail: "end" },
         },
       },
     }),
@@ -1546,6 +1548,7 @@ async function engineJudging(t: TestContext, claim: Claim, findings = "") {
              echo '${JSON.stringify(claim)}' > "$MEDRENGARD_OUT/output.json"`,
             "read",
           ),
+          claims: ["verdict"],
           on: { pass: "read", fail: "read" },
         },
         read: {
@@ -1669,6 +1672,7 @@ test("after a fix, the verdict on the replaced commit is history, not evidence",
             "read",
             [join(directory, "failed")],
           ),
+          claims: ["verdict"],
           on: { pass: "read", fail: "fix" },
           budget: 2,
         },
@@ -2022,6 +2026,82 @@ for (const [what, inputs] of [
       {
         message:
           "Workflow build is invalid: step build's workspace must be subject, empty, or one of its inputs that names at most one artifact: subject, request or a query that takes the latest.",
+      },
+    );
+  });
+}
+
+test("a workflow with a step that has no outcomes cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        steps: { build: stepRunning("true", "gate"), gate: { kind: "approval", on: {} } },
+      }),
+    ),
+    { message: "Workflow build is invalid: step gate has no outcomes." },
+  );
+
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        steps: { build: { ...stepRunning("true", "end"), on: {} } },
+      }),
+    ),
+    { message: "Workflow build is invalid: step build has no outcomes." },
+  );
+});
+
+test("a workflow whose step may claim an outcome it has no edge for cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        steps: {
+          build: { ...stepRunning("true", "end"), claims: ["verdict"], on: { pass: "end" } },
+        },
+      }),
+    ),
+    {
+      message:
+        "Workflow build is invalid: step build may claim a verdict whose verdict is fail, an outcome it has no edge for.",
+    },
+  );
+});
+
+for (const [what, workspace, inputs, kind] of [
+  [
+    "an input of a kind",
+    { input: "base" },
+    { base: { kind: "verdict", take: "latest" } },
+    "verdict",
+  ],
+  [
+    "an input from an approval",
+    { input: "base" },
+    { base: { from: ["gate"], take: "latest" } },
+    "decision",
+  ],
+  ["the subject, which may be a kind", "subject", {}, "draft"],
+] as const) {
+  test(`a workflow whose workspace is built from ${what} without a materialiser cannot be commissioned`, async (t) => {
+    await assert.rejects(
+      engineWith(
+        t,
+        () =>
+          defineWorkflow({
+            start: "write",
+            steps: {
+              write: { ...stepRunning("true", "gate"), claims: ["draft"] },
+              gate: { kind: "approval", on: { approve: "build" } },
+              build: { ...stepRunning("true", "end"), inputs, workspace },
+            },
+          }),
+        () => ({ ...builtIn, draft: { ...builtIn.document, materialiser: undefined } }),
+      ),
+      {
+        message: `Workflow build is invalid: step build's workspace may be built from a ${kind}, whose kind has no materialiser.`,
       },
     );
   });
@@ -3814,7 +3894,7 @@ test("an agent step is started with exactly the pinned environment, descriptors 
       steps: {
         plan: {
           kind: "agent",
-          claims,
+          claims: [...claims, "verdict"],
           workspace: "empty",
           agent: {
             harness: {
@@ -3834,7 +3914,7 @@ test("an agent step is started with exactly the pinned environment, descriptors 
             skills: [skillAt(directory, "tdd", { "SKILL.md": "Test first.\n" })],
           },
           inputs: { request: "request" },
-          on: { done: "end" },
+          on: { done: "end", pass: "end", fail: "end" },
           access,
           budget: 1,
           limits: { idle: 5, attempt: 10, transcript: 65536, input: 65536 },
@@ -3859,7 +3939,7 @@ test("an agent step is started with exactly the pinned environment, descriptors 
     commission: "string",
     step: "string",
     attempt: "number",
-    outcomes: ["string"],
+    outcomes: ["string", "string", "string"],
     inputs: {
       request: [{ hash: "string", kind: "string", fields: { title: "string" }, body: "string" }],
     },

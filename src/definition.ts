@@ -345,6 +345,11 @@ function parseWorkflow(
       throw invalid(`step ${name}'s edges must each lead to a step or the end`);
     }
 
+    // An approval with none could never be decided, and a program step's every claim would escalate.
+    if (Object.keys(on).length === 0) {
+      throw invalid(`step ${name} has no outcomes`);
+    }
+
     if (kind === "approval") {
       if (!hasExactly(step, ["kind", "on"])) {
         throw invalid(`step ${name} has fields an approval step does not define`);
@@ -484,9 +489,79 @@ function parseWorkflow(
       throw invalid(`step ${name}'s ${unbounded}`);
     }
 
+    // A kind whose field is the outcome makes each of its values an outcome the step may claim.
+    for (const claim of claims) {
+      const field = defined[claim].outcome;
+      const values = field === undefined ? [] : (defined[claim].fields[field].values ?? []);
+      const unrouted = values.find((value) => !Object.hasOwn(on, value));
+
+      if (unrouted !== undefined) {
+        throw invalid(
+          `step ${name} may claim a ${claim} whose ${field} is ${unrouted}, an outcome it has no edge for`,
+        );
+      }
+    }
+
     Object.assign(step, { limits: whole });
   }
 
   // SAFETY: every field the engine reads was checked above, and each step's limits made whole.
-  return definition as Workflow<string, { limits: Limits }>;
+  const parsed = definition as Workflow<string, { limits: Limits }>;
+
+  refuseUnbuildable(parsed, defined, invalid);
+
+  return parsed;
+}
+
+// Refuses a step whose workspace may be built from an artifact whose kind has no materialiser, so
+// the commission does not find out only once the earlier steps have run. Every kind that could be
+// the subject counts, wherever in the workflow it is claimed.
+function refuseUnbuildable(
+  workflow: Workflow<string, { limits: Limits }>,
+  kinds: Kinds,
+  invalid: (problem: string) => Error,
+): void {
+  const programs = Object.values(workflow.steps).flatMap((step) =>
+    step.kind === "approval" ? [] : [step],
+  );
+
+  const subjects = [
+    "document",
+    ...programs.flatMap((step) => step.claims.filter((kind) => kinds[kind].role === "subject")),
+  ];
+
+  // The kinds the artifacts `from` the steps named may be: a decision from an approval.
+  const claimedBy = (from: readonly string[]) =>
+    from.flatMap((name) => {
+      const step = workflow.steps[name];
+
+      return step.kind === "approval" ? ["decision"] : step.claims;
+    });
+
+  for (const [name, step] of Object.entries(workflow.steps)) {
+    if (step.kind === "approval" || step.workspace === "empty") {
+      continue;
+    }
+
+    const query = step.workspace === "subject" ? "subject" : step.inputs[step.workspace.input];
+
+    const possible =
+      query === "subject"
+        ? subjects
+        : query === "request"
+          ? ["document"]
+          : query.kind !== undefined
+            ? [query.kind]
+            : query.from !== undefined
+              ? claimedBy(query.from)
+              : [...Object.keys(kinds), "decision"];
+
+    const unbuildable = possible.find((kind) => kinds[kind]?.materialiser === undefined);
+
+    if (unbuildable !== undefined) {
+      throw invalid(
+        `step ${name}'s workspace may be built from a ${unbuildable}, whose kind has no materialiser`,
+      );
+    }
+  }
 }

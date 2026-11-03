@@ -111,7 +111,7 @@ async function factoryIn(t: TestContext) {
              build: {
                ...step(\`echo '{"outcome":"pass","artifacts":[{"kind":"memo","fields":{"note":"Checked."}},{"kind":"verdict","fields":{"verdict":"pass"}}]}' > "$MEDRENGARD_OUT/output.json"\`),
                claims: ["memo", "verdict"],
-               on: { pass: "review" },
+               on: { pass: "review", fail: "review" },
              },
              review: { kind: "approval", on: { approve: "end" } },
            },

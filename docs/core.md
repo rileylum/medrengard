@@ -135,7 +135,7 @@ A verifier is a program run after a claim parses, under the step contract:
 
 Kept files go to the store, attached to the artifact. A rejected claim or a failed verifier escalates. The record names the verifier that accepted an artifact, or that its kind has none.
 
-A materialiser is a program that builds a later step's workspace from an artifact and its kept files, in an empty directory. A kind's outcome field must equal the outcome of the step that claims it.
+A materialiser is a program that builds a later step's workspace from an artifact and its kept files, in an empty directory; a workflow whose workspace may be built from a kind without one is refused before it starts. A kind's outcome field must equal the outcome of the step that claims it, and a step that may claim it needs an edge for each of its values.
 
 The latest subject artifact an attempt claims becomes the subject; a judgement leaves the subject where it was. A judgement a step claims is about the subject that attempt was given.
 
