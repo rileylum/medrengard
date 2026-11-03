@@ -1,13 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { constants, existsSync, readdirSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
+import { constants, existsSync, readdirSync, readFileSync, statfsSync } from "node:fs";
+import { lstat, mkdir, mkdtemp, open, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve as resolvePath, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import {
   replay,
+  type Access,
   type Commissioned,
   type CommissionEvent,
   type CommissionState,
@@ -819,6 +820,58 @@ const noteLimit = 4096;
 // once one needs more.
 const defaultBounds: Bounds = { memory: 4 * 1024 * 1024 * 1024, processes: 1024 };
 
+// lazy: a constant, in bytes. The attempt's directory of a step that declares no disk limit.
+const defaultDisk = 4 * 1024 * 1024 * 1024;
+
+// The bytes the files under `directory` take on disk. What vanishes as it is walked counts for
+// nothing; what cannot be read, too, so a step could hide bytes under a directory it locks.
+async function bytesUnder(directory: string): Promise<number> {
+  let total = 0;
+
+  const entries = await readdir(directory, { recursive: true }).catch(() => []);
+
+  for (const entry of entries) {
+    const stats = await lstat(join(directory, entry)).catch(() => undefined);
+
+    total += (stats?.blocks ?? 0) * 512;
+  }
+
+  return total;
+}
+
+// Why the step must stop if an empty area of its access is full, seen through its sandbox's root,
+// or undefined. The sandbox is bwrap's child, in its own mount namespace.
+function filled(sandbox: number, access: Access, name: string): string | undefined {
+  let root;
+
+  try {
+    const [inner] = readFileSync(`/proc/${sandbox}/task/${sandbox}/children`, "utf8").split(" ");
+
+    root = `/proc/${inner}/root`;
+  } catch {
+    // Not started yet, or ended: there is nothing to look at.
+    return undefined;
+  }
+
+  for (const area of access.paths) {
+    if (area.mode === "empty") {
+      const free = (() => {
+        try {
+          return statfsSync(join(root, area.path)).bavail;
+        } catch {
+          return undefined;
+        }
+      })();
+
+      if (free === 0) {
+        return `Step ${name} filled ${area.path}, its area of ${area.size} bytes.`;
+      }
+    }
+  }
+
+  return undefined;
+}
+
 // How often, in milliseconds, the engine running an attempt looks for the owner's cancel.
 const cancelLook = 1000;
 
@@ -1015,6 +1068,35 @@ async function run(
   const escalate = (reason: string): Ending =>
     recorded<Extract<Ending, { type: "escalated" }>>({ type: "escalated", reason, attempt });
 
+  const disk = step.limits.disk ?? defaultDisk;
+  const overDisk = `Step ${name} used more than its disk limit of ${disk} bytes.`;
+
+  // Measured while the attempt's programs run, so a runaway is stopped within a look; and after
+  // each, so one that wrote and exited at once is caught.
+  let over = false;
+  let measuring = false;
+
+  const measure = async () => {
+    if (!measuring) {
+      measuring = true;
+      over ||= (await bytesUnder(directory)) > disk;
+      measuring = false;
+    }
+  };
+
+  const watching = setInterval(() => void measure(), cancelLook);
+
+  // Why the attempt must stop now, if it must.
+  const halt = () => (cancelled() ? cancelledReason(name) : over ? overDisk : undefined);
+  const halted = () => halt() !== undefined;
+
+  // Why the attempt must stop once a program has ended, measured afresh.
+  const after = async () => {
+    over ||= (await bytesUnder(directory)) > disk;
+
+    return halt();
+  };
+
   try {
     await mkdir(workspace);
 
@@ -1026,12 +1108,14 @@ async function run(
         given.subject,
         given.kinds,
         store,
-        cancelled,
+        halted,
       );
 
-      // A materialiser stopped by a cancel fails; the cancel is the reason.
-      if (cancelled()) {
-        return escalate(cancelledReason(name));
+      // A materialiser stopped by a cancel or the disk limit fails; that is the reason.
+      const halting = await after();
+
+      if (halting !== undefined) {
+        return escalate(halting);
       }
 
       if (failed !== undefined) {
@@ -1086,8 +1170,10 @@ async function run(
     );
 
     const cancel = setInterval(() => {
-      if (cancelled()) {
-        stopFor(cancelledReason(name));
+      const why = halt() ?? filled(child.pid!, step.access, name);
+
+      if (why !== undefined) {
+        stopFor(why);
       }
     }, cancelLook);
 
@@ -1184,6 +1270,12 @@ async function run(
       return escalate(stopped);
     }
 
+    const halting = await after();
+
+    if (halting !== undefined) {
+      return escalate(halting);
+    }
+
     if (code !== 0) {
       // systemd stops the whole scope; only it knows why.
       if (overMemory(unit)) {
@@ -1216,11 +1308,13 @@ async function run(
           verifier,
           given.subject,
           store,
-          cancelled,
+          halted,
         );
 
-        if (cancelled()) {
-          return escalate(cancelledReason(name));
+        const stopped = await after();
+
+        if (stopped !== undefined) {
+          return escalate(stopped);
         }
 
         if ("reason" in result) {
@@ -1246,6 +1340,7 @@ async function run(
       next: step.on[claim.outcome],
     });
   } finally {
+    clearInterval(watching);
     await rm(directory, { recursive: true, force: true });
   }
 }

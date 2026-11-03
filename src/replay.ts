@@ -57,7 +57,9 @@ export type Access = {
 // seconds without stdout or stderr output, `attempt` seconds in all, or `transcript` bytes of it,
 // or once its processes use more than `memory` bytes; it never starts if the bodies of its inputs
 // total more than `input` bytes, and cannot run more than `processes` processes and threads at
-// once. Without `memory` or `processes`, the engine's defaults bound them: 4 GiB and 1024.
+// once. Its attempt's directory, workspace, input, output and kinds' areas, may hold `disk`
+// bytes. Without `memory`, `processes` or `disk`, the engine's defaults bound them: 4 GiB, 1024
+// and 4 GiB.
 type Program<N extends string> = {
   inputs: Readonly<Record<string, Query<N>>>;
   claims: readonly string[];
@@ -72,6 +74,7 @@ type Program<N extends string> = {
     input: number;
     memory?: number;
     processes?: number;
+    disk?: number;
   };
 };
 

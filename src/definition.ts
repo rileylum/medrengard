@@ -285,7 +285,10 @@ function parseWorkflow(name: string, text: string, defined: Kinds): Workflow {
     const bytes = { transcript: limits?.transcript, input: limits?.input };
 
     // Bounded by the engine's defaults when left out.
-    const optional = ["memory", "processes"].filter((limit) => Object.hasOwn(limits ?? {}, limit));
+    const optional = ["memory", "processes", "disk"].filter((limit) =>
+      Object.hasOwn(limits ?? {}, limit),
+    );
+
     const counts = Object.fromEntries(optional.map((limit) => [limit, limits[limit]]));
 
     const fields = [
@@ -383,7 +386,7 @@ function parseWorkflow(name: string, text: string, defined: Kinds): Workflow {
 
     if (!hasExactly(limits, ["idle", "attempt", "transcript", "input", ...optional])) {
       throw invalid(
-        `step ${name}'s limits must be idle, attempt, transcript and input, and may be memory and processes`,
+        `step ${name}'s limits must be idle, attempt, transcript and input, and may be memory, processes and disk`,
       );
     }
 

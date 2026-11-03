@@ -155,7 +155,12 @@ The fields of a command or agent step:
   - `memory`, optional: bytes its processes may use together, 4 GiB if left out. Over it, systemd
     stops them, without swap, and the commission escalates naming the limit;
   - `processes`, optional: processes and threads it may run at once, 1024 if left out. Past it, the
-    step cannot start another, as its own failure.
+    step cannot start another, as its own failure;
+  - `disk`, optional: bytes its attempt's directory may hold, 4 GiB if left out: the workspace,
+    input, output and the areas of its kind's programs. The engine measures it once a second while
+    any of them runs and after each ends; over it, the program is stopped and the commission
+    escalates. It can overshoot by a second of writes, so keep `TMPDIR`, where attempts live, on a
+    disk rather than a RAM-backed `/tmp`.
 
 A kind's verifier and materialiser get 4 GiB and 1024 processes.
 
@@ -251,6 +256,8 @@ The workspace, the input (read-only) and the output are always there, and `MEDRE
 `MEDRENGARD_OUT` are always set. `PATH` is passed like any other variable, only when `environment`
 names it; without it a step finds commands only in the system's default search path. A step has
 its own `/proc` and a minimal `/dev`, read-only but for `/dev/shm`, a fresh area of at most 64 MiB.
+A step that fills an `empty` path of its access escalates, if it is still running when the engine
+next looks, once a second; a step that ends first only sees its writes fail.
 
 `medrengard/defaults/access.ts` holds four values to use as they are or to change one dial of.
 "The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they

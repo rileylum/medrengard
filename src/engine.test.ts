@@ -75,6 +75,7 @@ function engineRunning(
     input: number;
     memory?: number;
     processes?: number;
+    disk?: number;
   } = { idle: 1, attempt: 5, transcript: 65536, input: 65536 },
 ) {
   return engineWith(t, (directory) =>
@@ -484,7 +485,10 @@ test("a path declared empty hides what is there and holds at most its size", asy
   await mkdir(join(directory, "hidden"));
   await writeFile(join(directory, "hidden", "secret"), "secret\n");
 
-  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  // A step that fills the area and ends within the engine's look is not seen to; one that carries
+  // on is, below.
+  await engine.advance("first");
+
   assert.equal(engine.transcript("first", 1).toString(), "full\n");
   assert.deepEqual(await readdir(join(directory, "hidden")), ["secret"]);
 });
@@ -554,6 +558,55 @@ print(started)'
   const started = Number(engine.transcript("first", 1).toString());
 
   assert.ok(started > 0 && started < 16, `started ${started}`);
+});
+
+test(
+  "a step that keeps running past its disk limit is stopped and escalates",
+  { timeout: 10_000 },
+  async (t) => {
+    const { engine } = await engineRunning(t, "head -c 5000000 /dev/zero > big; sleep 30", {
+      idle: 60,
+      attempt: 60,
+      transcript: 65536,
+      input: 65536,
+      disk: 1024 * 1024,
+    });
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      reason: "Step build used more than its disk limit of 1048576 bytes.",
+    });
+  },
+);
+
+test("a step that exits at once past its disk limit escalates", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `head -c 5000000 /dev/zero > big; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    { idle: 5, attempt: 5, transcript: 65536, input: 65536, disk: 1024 * 1024 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build used more than its disk limit of 1048576 bytes.",
+  });
+});
+
+test("a step that fills an empty area of its access escalates", async (t) => {
+  // The write fails once the area is full; the step carries on, long enough to be seen.
+  const { engine } = await engineConfined(
+    t,
+    () => ({
+      ...access,
+      paths: [...access.paths, { path: "/scratch", mode: "empty", size: 1024 * 1024 }],
+    }),
+    "head -c 2000000 /dev/zero > /scratch/big 2> /dev/null; sleep 1.5",
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build filled /scratch, its area of 1048576 bytes.",
+  });
 });
 
 test("a step gets only the environment its access names, PATH included", async (t) => {
