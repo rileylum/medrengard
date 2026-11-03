@@ -385,8 +385,11 @@ const design = {
   files, no memory, no `CLAUDE.md` or `AGENTS.md`, and no `Co-Authored-By` in the agent's
   commits. Some of the settings that do this are undocumented, as of Claude Code
   2.1.316.
+- Claude Code's managed settings in `/etc/claude-code`, which no flag turns off, are hidden from
+  `claude` when they exist.
 - If `claude` loads tools, skills, plugins or MCP servers the agent did not declare, the adapter
-  records them as the attempt's errors and as a note, and the attempt carries on. Its subagents
+  records them as the attempt's errors and as a note, and the attempt carries on. If it never says
+  what it loaded, the adapter records that instead. Its subagents
   count only when it has the `Task` tool. `CLAUDE.md` is not listed by `claude`, so this check
   cannot see it.
 - The adapter tells the agent where its inputs are, and how to claim each kind its step's `claims`

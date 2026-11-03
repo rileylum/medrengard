@@ -19,7 +19,15 @@
  */
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Writable } from "node:stream";
@@ -179,8 +187,13 @@ const { skills } = given.agent;
 // The tools the agent declares: its harness's, and Skill when it has skills.
 const declared = [...tools, ...(skills.length === 0 ? [] : ["Skill"])];
 
+// Claude Code's managed settings, which --setting-sources cannot turn off: hooks and environment
+// that its init would not list. Hidden, so only what the agent declares loads.
+const managed = "/etc/claude-code";
+
 // claude's own sandbox: a PID namespace and /proc of its own, so what the agent runs sees only
-// claude and itself, and the token file hidden. Every other mount stays as the step's access made it.
+// claude and itself, and the token file and managed settings hidden. Every other mount stays as
+// the step's access made it.
 const nested = [
   "--die-with-parent",
   "--unshare-pid",
@@ -192,6 +205,9 @@ const nested = [
   "--ro-bind",
   "/dev/null",
   tokenFile,
+  // An empty directory needs a place to mount: only one that exists can be hidden, and one that
+  // does not cannot load.
+  ...(existsSync(managed) ? ["--size", "4096", "--tmpfs", managed, "--remount-ro", managed] : []),
   "--",
 ];
 
@@ -331,8 +347,12 @@ function leaksOf(init: StreamEvent): void {
   }
 }
 
+// Whether claude said what it loaded; without that, the leak check saw nothing.
+let initialised = false;
+
 function notesOf(event: StreamEvent): void {
   if (event.type === "system" && event.subtype === "init") {
+    initialised = true;
     leaksOf(event);
   }
 
@@ -379,6 +399,13 @@ claude.stdout!.on("data", (chunk: Buffer) => {
 });
 
 const closed = await once(claude, "close").catch((error: NodeJS.ErrnoException) => error);
+
+if (!initialised) {
+  const unsaid = "Claude Code did not say what it loaded.";
+
+  console.error(unsaid);
+  note(unsaid);
+}
 
 if (closed instanceof Error) {
   console.error(`bwrap could not start claude: ${closed.code}.`);

@@ -370,6 +370,22 @@ test("the Claude Code adapter records what claude loaded that the agent did not 
   assert.equal(engine.errors("first", 1).toString(), `${leak}\n`);
 });
 
+test("the Claude Code adapter records that claude did not say what it loaded", async (t) => {
+  const { engine } = await engineWithClaude(
+    t,
+    `echo '{"type":"result","is_error":false}'
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const unsaid = "Claude Code did not say what it loaded.";
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    { outcome: "done", notes: [unsaid], errors: true },
+  ]);
+  assert.equal(engine.errors("first", 1).toString(), `${unsaid}\n`);
+});
+
 test("the Claude Code adapter records nothing when claude loaded only what the agent declared", async (t) => {
   const init = {
     type: "system",
