@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { builtIn } from "../defaults/kinds.ts";
+import { createEngine } from "./engine.ts";
 
 // Constraint 7: the public surface is listed here, so growing it fails until updated on purpose.
 // Public is these modules, which a factory or a client imports by path; the rest are the engine's
@@ -39,3 +43,29 @@ for (const [module, names] of Object.entries(exports)) {
     assert.deepEqual(exported.sort(), names);
   });
 }
+
+// What a client calls: the engine's methods.
+test("the engine has exactly the pinned methods", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const engine = createEngine({
+    log: join(directory, "log.sqlite"),
+    workflows: {},
+    kinds: builtIn,
+  });
+
+  assert.deepEqual(Object.keys(engine).sort(), [
+    "advance",
+    "artifact",
+    "cancel",
+    "commission",
+    "commissions",
+    "decide",
+    "errors",
+    "record",
+    "state",
+    "transcript",
+  ]);
+});

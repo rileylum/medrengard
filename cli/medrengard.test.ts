@@ -7,6 +7,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { isRecord, isText } from "../src/json.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const cli = join(import.meta.dirname, "medrengard.ts");
@@ -130,6 +131,16 @@ async function factoryIn(t: TestContext) {
              review: { kind: "approval", on: { approve: "end" } },
            },
          }),
+         // Leads back to itself, so its second start finds its budget spent.
+         looping: defineWorkflow({
+           start: "build",
+           steps: {
+             build: {
+               ...step(\`echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`),
+               on: { done: "build" },
+             },
+           },
+         }),
          failing: defineWorkflow({
            start: "build",
            steps: { build: { ...step("echo broke >&2; exit 3"), on: { done: "end" } } },
@@ -205,6 +216,229 @@ test("the CLI takes a commission through the engine's calls, printing their resu
     },
   );
   assert.ok(existsSync(join(directory, "state", "log.sqlite")));
+});
+
+// Each string or number replaced by its type, keeping the values that tell variants apart, so a
+// result is pinned to every depth.
+function typesIn(text: string) {
+  return JSON.parse(text, (key, value) => {
+    if (
+      ["status", "entry", "by", "kind"].includes(key) ||
+      isRecord(value) ||
+      Array.isArray(value)
+    ) {
+      return value;
+    }
+
+    if (isText(value)) {
+      return "string";
+    }
+
+    return Number.isFinite(value) ? "number" : value;
+  });
+}
+
+// Constraint 7: the commands are pinned, from the usage the CLI prints.
+test("the CLI's commands are exactly the pinned ones", () => {
+  const { stderr } = run([], undefined);
+
+  const commands = stderr.split("\n").flatMap((line) => /^ {2}([a-z]+)\b/.exec(line)?.[1] ?? []);
+
+  assert.deepEqual(commands, [
+    "commission",
+    "advance",
+    "state",
+    "show",
+    "watch",
+    "commissions",
+    "run",
+    "decide",
+    "cancel",
+    "transcript",
+    "errors",
+    "artifact",
+  ]);
+});
+
+// Constraint 7: what a client parses is pinned: every --json result, each state and record entry
+// in each of its forms, to every depth.
+test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) => {
+  const { directory, factory } = await factoryIn(t);
+
+  const json = (...args: string[]) => {
+    const { status, stdout } = run([...args, "--json"], factory);
+
+    assert.equal(status, 0);
+
+    return typesIn(stdout);
+  };
+
+  const step = (kind: string) => ({ name: "string", kind });
+  const ready = { status: "ready", step: step("command"), subject: "string" };
+
+  const awaiting = {
+    status: "awaiting",
+    step: step("approval"),
+    subject: "string",
+    since: "number",
+  };
+
+  const escalated = {
+    status: "escalated",
+    step: step("command"),
+    subject: "string",
+    reason: "string",
+    since: "number",
+  };
+
+  const timed = {
+    attempt: "number",
+    step: "string",
+    notes: [],
+    started: "number",
+    ended: "number",
+  };
+
+  // At an approval step, and finished by a decision with feedback.
+  assert.equal(
+    json("commission", "judged", "first", "--title", "Greet", "--body", "Say hello."),
+    null,
+  );
+  assert.deepEqual(json("state", "first"), ready);
+  assert.deepEqual(json("advance", "first"), awaiting);
+
+  const { subject, since } = JSON.parse(run(["state", "first", "--json"], factory).stdout);
+  const { request } = JSON.parse(run(["show", "first", "--json"], factory).stdout);
+
+  assert.deepEqual(json("artifact", request.hash), {
+    kind: "document",
+    fields: { title: "string" },
+    body: "string",
+  });
+  assert.deepEqual(json("show", "first"), {
+    state: awaiting,
+    request: {
+      hash: "string",
+      artifact: { kind: "document", fields: { title: "string" }, body: "string" },
+    },
+    entries: [
+      {
+        entry: "attempt",
+        ...timed,
+        outcome: "string",
+        artifacts: [
+          {
+            hash: "string",
+            artifact: { kind: "memo", fields: { note: "string", subject: "string" } },
+            verifier: ["string", "string", "string"],
+          },
+          {
+            hash: "string",
+            artifact: { kind: "verdict", fields: { verdict: "string", subject: "string" } },
+            verifier: null,
+          },
+        ],
+        errors: false,
+      },
+    ],
+  });
+  assert.deepEqual(
+    json(
+      "decide",
+      "first",
+      "approve",
+      "--subject",
+      subject,
+      "--since",
+      String(since),
+      "--feedback",
+      "Fine.",
+    ),
+    { status: "finished", by: "end" },
+  );
+  assert.deepEqual(json("show", "first").entries[1], {
+    entry: "decision",
+    step: "string",
+    outcome: "string",
+    subject: "string",
+    feedback: "string",
+    at: "number",
+  });
+
+  // An attempt that escalates, and the state a retry leaves, with its decision.
+  json("commission", "failing", "second", "--title", "Greet", "--body", "Say hello.");
+  assert.deepEqual(json("advance", "second"), escalated);
+  assert.deepEqual(json("show", "second").entries, [
+    { entry: "attempt", ...timed, escalated: "string", errors: true },
+  ]);
+
+  const failed = JSON.parse(run(["state", "second", "--json"], factory).stdout);
+
+  assert.deepEqual(
+    json("decide", "second", "retry", "--subject", failed.subject, "--since", String(failed.since)),
+    { ...ready, decision: "string" },
+  );
+
+  // An escalation without an attempt: the step's budget is spent.
+  json("commission", "looping", "third", "--title", "Greet", "--body", "Say hello.");
+  assert.deepEqual(json("advance", "third"), escalated);
+  assert.deepEqual(json("show", "third").entries[1], {
+    entry: "escalation",
+    step: "string",
+    reason: "string",
+    at: "number",
+  });
+
+  // An attempt in flight.
+  json("commission", "slow", "fourth", "--title", "Greet", "--body", "Say hello.");
+
+  const advancing = spawn(process.execPath, [cli, "advance", "fourth"], {
+    cwd: tmpdir(),
+    env: { ...process.env, MEDRENGARD_FACTORY: factory },
+  });
+
+  while (!(await readFile(join(directory, "steps"), "utf8").catch(() => "")).includes("start")) {
+    await sleep(20);
+  }
+
+  assert.deepEqual(json("state", "fourth"), {
+    status: "attempting",
+    step: step("command"),
+    subject: "string",
+  });
+  assert.deepEqual(json("show", "fourth").entries, [
+    {
+      entry: "attempt",
+      attempt: "number",
+      step: "string",
+      notes: [],
+      started: "number",
+      running: true,
+    },
+  ]);
+  await once(advancing, "exit");
+
+  // A commission the engine cannot read, beside one it can.
+  json("commission", "build", "broken", "--title", "Greet", "--body", "Say hello.");
+
+  const database = new DatabaseSync(join(directory, "state", "log.sqlite"));
+
+  database
+    .prepare("INSERT INTO events VALUES (?, 1, ?)")
+    .run("broken", JSON.stringify({ type: "decided", step: "build", outcome: "done" }));
+  database.close();
+
+  const names = JSON.parse(run(["commissions", "--json"], factory).stdout).map(
+    ({ commission }: { commission: string }) => commission,
+  );
+
+  const listed = json("commissions");
+
+  assert.deepEqual(listed[names.indexOf("broken")], { commission: "string", error: "string" });
+  assert.deepEqual(listed[names.indexOf("first")], {
+    commission: "string",
+    state: { status: "finished", by: "end" },
+  });
 });
 
 test("the CLI prints an attempt's transcript unchanged", async (t) => {

@@ -43,7 +43,7 @@
 4. Hermetic steps. A step sees only its declared inputs, workspace, environment and tools. A harness adapter loads only declared skills and configuration, or records the leak on every attempt.
 5. Commissions are independent. Commissions share no state, and each has one writer at a time. Any number of commissions, across repositories and workflows, can advance at once.
 6. Large data by reference. The log holds events and hashes; artifact bodies, kept files, transcripts and definitions live in a content-addressed store.
-7. A pinned surface. The public exports, event types and step-contract fields are listed in tests. Growing any list is a logged decision.
+7. A pinned surface. The public exports and types, the definition's schema, the event types, the step's and kind programs' contracts, the engine's methods and the CLI's commands and JSON results are listed in tests. Growing any list is a logged decision.
 8. The fold is pure. Rebuilding state from the log does no I/O and reads no clock or randomness.
 
 **Technology.** Node 24 and its built-ins, with zero runtime dependencies. Linux, with bubblewrap as the default sandbox, in a systemd user scope that bounds each program's memory and processes. Workflows are TypeScript modules.
