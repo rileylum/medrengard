@@ -1,6 +1,7 @@
 /**
- * The commit kind's verifier: accepts a claimed SHA that is the workspace's HEAD and not already
- * the commission's subject, keeping a Git bundle of it.
+ * The commit kind's verifier: accepts a claimed SHA that is the workspace's HEAD, not already the
+ * commission's subject and changing something from its parent and the subject, keeping a Git
+ * bundle of it.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -9,22 +10,42 @@ import { join } from "node:path";
 // What the engine writes as claim.json for a commit; a subject that is not a commit has no sha.
 type Claim = { fields: { sha: string }; subject: { kind: string; fields: { sha?: string } } };
 
+// Git sees the commits as written: a step's planted grafts or replace refs could otherwise show an
+// empty commit with a changed tree or parent, and a bundle with another history.
+Object.assign(process.env, { GIT_GRAFT_FILE: "/dev/null", GIT_NO_REPLACE_OBJECTS: "1" });
+
 const input = process.env.MEDRENGARD_IN!;
 const output = process.env.MEDRENGARD_OUT!;
 
 // SAFETY: the engine encodes claim.json for a commit claim with these fields.
 const { fields, subject } = JSON.parse(readFileSync(join(input, "claim.json"), "utf8")) as Claim;
 
-let head: string | undefined;
-
-try {
-  head = execFileSync("git", ["rev-parse", "--verify", "HEAD"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  }).trim();
-} catch {
-  head = undefined;
+// The object `name` names in the workspace's repository, or undefined if it has none.
+function resolve(name: string): string | undefined {
+  try {
+    return execFileSync("git", ["rev-parse", "--verify", "--quiet", name], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
 }
+
+const head = resolve("HEAD");
+const tree = resolve("HEAD^{tree}");
+
+// A root commit's parent tree is the empty tree, in the repository's own hash.
+const parent =
+  resolve("HEAD^^{tree}") ??
+  execFileSync("git", ["hash-object", "-t", "tree", "/dev/null"], { encoding: "utf8" }).trim();
+
+// lazy: a subject commit absent from the workspace's repository is not compared; the trigger is a
+// workflow that claims commits from a workspace not built from its subject.
+const subjectTree =
+  subject.kind === "commit" && subject.fields.sha !== undefined
+    ? resolve(`${subject.fields.sha}^{tree}`)
+    : undefined;
 
 const verdict =
   head === undefined
@@ -33,7 +54,14 @@ const verdict =
       ? { accepted: false, reason: `HEAD is ${head}, not ${fields.sha}.` }
       : subject.kind === "commit" && subject.fields.sha === fields.sha
         ? { accepted: false, reason: `${fields.sha} is already the subject.` }
-        : { accepted: true, keep: ["commit.bundle"] };
+        : tree === parent
+          ? { accepted: false, reason: `${fields.sha} changes nothing: its tree is its parent's.` }
+          : tree === subjectTree
+            ? {
+                accepted: false,
+                reason: `${fields.sha} changes nothing: its tree is the subject's.`,
+              }
+            : { accepted: true, keep: ["commit.bundle"] };
 
 if (verdict.accepted) {
   execFileSync("git", ["bundle", "create", "--quiet", join(output, "commit.bundle"), "HEAD"], {

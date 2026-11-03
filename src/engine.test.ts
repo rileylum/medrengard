@@ -1347,6 +1347,107 @@ test("a claimed commit that is already the subject escalates", async (t) => {
   );
 });
 
+test("a claimed commit that changes nothing from its parent escalates", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(
+          `${committing}
+           git -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false \\
+             commit -q --no-verify --allow-empty -m Nothing
+           sha=$(git rev-parse HEAD)
+           echo "{\\"outcome\\":\\"done\\",\\"artifacts\\":[{\\"kind\\":\\"commit\\",\\"fields\\":{\\"sha\\":\\"$sha\\"}}]}" \\
+             > "$MEDRENGARD_OUT/output.json"`,
+          "end",
+        ),
+      },
+    }),
+  );
+
+  const state = await engine.advance("first");
+
+  assert.equal(state.status, "escalated");
+  assert.match(
+    state.reason,
+    /^Step build claimed a commit its verifier rejected: [0-9a-f]{40} changes nothing: its tree is its parent's\.$/,
+  );
+});
+
+test("a claimed commit with the same tree as the subject escalates", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(committing, "fix"),
+        // Rewords the subject: a new SHA for the same files.
+        fix: {
+          ...stepRunning(
+            `git -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false \\
+               commit -q --no-verify --amend -m Reworded
+             sha=$(git rev-parse HEAD)
+             echo "{\\"outcome\\":\\"done\\",\\"artifacts\\":[{\\"kind\\":\\"commit\\",\\"fields\\":{\\"sha\\":\\"$sha\\"}}]}" \\
+               > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+          ),
+          workspace: "subject",
+        },
+      },
+    }),
+  );
+
+  const state = await engine.advance("first");
+
+  assert.partialDeepStrictEqual(state, {
+    status: "escalated",
+    step: { name: "fix" },
+  });
+  assert.match(
+    state.status === "escalated" ? state.reason : "",
+    /^Step fix claimed a commit its verifier rejected: [0-9a-f]{40} changes nothing: its tree is the subject's\.$/,
+  );
+});
+
+for (const [planted, plant] of [
+  ["a graft", 'mkdir -p .git/info; echo "$sha $changed" > .git/info/grafts'],
+  ["a replace ref", 'git replace "$sha" "$changed"'],
+] as const) {
+  test(`a claimed commit that changes nothing escalates when ${planted} disguises it`, async (t) => {
+    const { engine } = await engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        steps: {
+          // An empty commit on Plan, whose planted view has a changed commit as its parent or
+          // stands in for it.
+          build: stepRunning(
+            `${committing}
+             printf 'Do it well.\\n' > plan.txt
+             git -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false \\
+               commit -q --no-verify -am Again
+             changed=$(git rev-parse HEAD)
+             git checkout -q --detach HEAD~1
+             git -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false \\
+               commit -q --no-verify --allow-empty -m Nothing
+             sha=$(git rev-parse HEAD)
+             ${plant}
+             echo "{\\"outcome\\":\\"done\\",\\"artifacts\\":[{\\"kind\\":\\"commit\\",\\"fields\\":{\\"sha\\":\\"$sha\\"}}]}" \\
+               > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+          ),
+        },
+      }),
+    );
+
+    const state = await engine.advance("first");
+
+    assert.equal(state.status, "escalated");
+    assert.match(
+      state.reason,
+      /^Step build claimed a commit its verifier rejected: [0-9a-f]{40} changes nothing: its tree is its parent's\.$/,
+    );
+  });
+}
+
 test("a claimed commit that is not a SHA escalates", async (t) => {
   const { engine } = await engineWith(t, () =>
     defineWorkflow({
