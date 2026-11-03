@@ -14,6 +14,16 @@ const system = ["/usr", "/etc", "/opt", "/bin", "/sbin", "/lib", "/lib64"].flatM
   existsSync(path) ? [{ path, mode: "read" as const }] : [],
 );
 
+// Node and npm, wherever Node is installed, and nothing else installed beside them: its bin
+// directory, whose npm and npx link into npm's package, and that package. A Node without npm
+// beside it, such as a lone binary in ~/bin, is granted alone, never the directory it sits in.
+const installed = dirname(dirname(process.execPath));
+const npm = join(installed, "lib", "node_modules", "npm");
+
+const node = (existsSync(npm) ? [dirname(process.execPath), npm] : [process.execPath]).map(
+  (path) => ({ path, mode: "read" as const }),
+);
+
 // A fresh /tmp. On a RAM-backed tmpfs every byte holds memory, so it is bounded.
 const tmp = { path: "/tmp", mode: "empty" as const, size: 256 * 1024 * 1024 };
 
@@ -42,7 +52,7 @@ export const contract: Access = {
 };
 
 /**
- * What headless Claude Code needs through the adapter in `adapters/`: Node to run the adapter,
+ * What headless Claude Code needs through the adapter in `adapters/`: Node to run the adapter and npm,
  * the `claude` executable, the network, the subscription token in the adapter's default token file
  * and a Git identity to commit with. Its home is empty, so the owner's settings, skills, hooks and
  * MCP servers never load.
@@ -52,8 +62,8 @@ export const claudeCode: Access = {
     ...system,
     tmp,
     { path: ownerHome, mode: "empty", size: 256 * 1024 * 1024 },
-    // Node's installation, which may be under the owner's home.
-    { path: dirname(dirname(process.execPath)), mode: "read" },
+    // Node and npm, which may be under the owner's home.
+    ...node,
     { path: join(import.meta.dirname, "..", "adapters"), mode: "read" },
     // A symlink to the current version; bwrap binds the version it points to when the step starts.
     { path: join(ownerHome, ".local", "bin", "claude"), mode: "read" },

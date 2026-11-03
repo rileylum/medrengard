@@ -274,7 +274,8 @@ exist.
 - `contract`: the system, a fresh `/tmp` of 256 MiB and `PATH`. No home, no network and no `HOME`, so a
   program that needs a home or a cache, such as `npm`, must be pointed at `/tmp`.
 - `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
-  256 MiB, Node's installation, the `adapters` directory, the `claude` executable and the token
+  256 MiB, Node and npm (Node's `bin` directory and npm's package, or the `node` executable
+  alone when npm is not beside it; never other global packages), the `adapters` directory, the `claude` executable and the token
   file `~/.config/medrengard/claude-token` to read, the network, and `PATH`, `HOME`, `LANG` and the
   Git identity. Its home is empty, so the owner's
   settings, skills, hooks and MCP servers never load. A path under the home, such as a repository,
