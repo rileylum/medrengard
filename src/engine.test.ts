@@ -2821,6 +2821,72 @@ test(
   },
 );
 
+/**
+ * Starts an engine whose step `build` builds its workspace from the subject, the request, with a
+ * document materialiser that runs `script` for at most `limit` seconds, its `$1` the test's
+ * directory. The step writes `started` in that directory if it ever runs.
+ */
+function engineMaterialising(t: TestContext, script: string, limit = 5) {
+  return engineWith(
+    t,
+    (directory) =>
+      defineWorkflow({
+        start: "build",
+        steps: {
+          build: {
+            ...stepRunning('echo started >> "$1"', "end", [join(directory, "started")]),
+            workspace: "subject",
+          },
+        },
+      }),
+    (directory) => ({
+      ...builtIn,
+      document: {
+        ...builtIn.document,
+        materialiser: { run: ["sh", "-c", script, "sh", directory], access, limit, ...bounded },
+      },
+    }),
+  );
+}
+
+test("a kind's materialiser that fails escalates with its stderr, and the step never starts", async (t) => {
+  const { engine, directory } = await engineMaterialising(t, "echo 'No room.' >&2; exit 1");
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason:
+      'The document materialiser failed for step build: it exited with code 1. Its stderr: "No room.\\n".',
+  });
+  await assert.rejects(readFile(join(directory, "started")), { code: "ENOENT" });
+});
+
+test("a kind's materialiser past its limit is stopped and escalates", async (t) => {
+  const { engine } = await engineMaterialising(t, "sleep 5", 1);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "The document materialiser failed for step build: it reached its limit of 1 s.",
+  });
+});
+
+test("a kind's materialiser ended by a signal escalates, naming the signal", async (t) => {
+  const { engine, directory } = await engineMaterialising(
+    t,
+    `echo started > "$1/materialising"; sleep 5`,
+  );
+
+  const advancing = engine.advance("first");
+
+  await untilWritten(directory, "materialising");
+  // From outside, as the owner or the system would: every process naming the test's directory.
+  await once(spawn("pkill", ["-KILL", "-f", directory]), "close");
+
+  assert.partialDeepStrictEqual(await advancing, {
+    status: "escalated",
+    reason: "The document materialiser failed for step build: it was ended by SIGKILL.",
+  });
+});
+
 test(
   "cancelling an attempt no engine is running escalates it at once",
   { timeout: 10_000 },

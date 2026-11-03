@@ -365,7 +365,13 @@ the commission escalates with the reason. Anything else, a field more included, 
 A materialiser builds a later step's workspace from a subject, the current one or an input's, in an
 empty workspace. Its
 `MEDRENGARD_IN` holds `artifact.json`, with the artifact's `hash`, `kind`, `fields`, `body` and
-`kept` files as paths, and those files. A subject kind without one cannot be a step's workspace.
+`kept` files as paths, and those files. A workflow whose workspace may be built from a kind without
+one is refused when it is commissioned.
+
+A verifier or materialiser gets less than a step: no fd 3 for notes, its stdout is discarded, and
+its stderr is kept only when it fails, ending the escalation's reason (its last 1024 bytes). A
+failure, a reached limit or a signal escalates the commission, naming the program and its step;
+a step whose workspace could not be built never starts.
 
 ## Agents and the Claude Code adapter
 

@@ -1867,6 +1867,8 @@ async function runProgram(
     { memory: program.memory, processes: program.processes },
   );
 
+  // lazy: no notes, stdout dropped, stderr kept only as a failure's tail. Give kind programs a
+  // transcript of their own once a successful run needs inspecting, such as from the UI.
   const child = spawn(command, args, {
     cwd: workspace,
     env,
