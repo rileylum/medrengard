@@ -43,9 +43,9 @@ export const contract: Access = {
 
 /**
  * What headless Claude Code needs through the adapter in `adapters/`: Node to run the adapter,
- * the `claude` executable, the network, the subscription token in `CLAUDE_CODE_OAUTH_TOKEN` and a
- * Git identity to commit with. Its home is empty, so the owner's settings, skills, hooks and MCP
- * servers never load.
+ * the `claude` executable, the network, the subscription token in the adapter's default token file
+ * and a Git identity to commit with. Its home is empty, so the owner's settings, skills, hooks and
+ * MCP servers never load.
  */
 export const claudeCode: Access = {
   paths: [
@@ -57,13 +57,14 @@ export const claudeCode: Access = {
     { path: join(import.meta.dirname, "..", "adapters"), mode: "read" },
     // A symlink to the current version; bwrap binds the version it points to when the step starts.
     { path: join(ownerHome, ".local", "bin", "claude"), mode: "read" },
+    // Read by the adapter, which hides it from the agent; never in the environment.
+    { path: join(ownerHome, ".config", "medrengard", "claude-token"), mode: "read" },
   ],
   network: true,
   environment: [
     "PATH",
     "HOME",
     "LANG",
-    "CLAUDE_CODE_OAUTH_TOKEN",
     "GIT_AUTHOR_NAME",
     "GIT_AUTHOR_EMAIL",
     "GIT_COMMITTER_NAME",

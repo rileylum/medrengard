@@ -251,8 +251,9 @@ exist.
 - `contract`: the system, a fresh `/tmp` of 256 MiB and `PATH`. No home, no network and no `HOME`, so a
   program that needs a home or a cache, such as `npm`, must be pointed at `/tmp`.
 - `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
-  256 MiB, Node's installation, the `adapters` directory and the `claude` executable to read, the
-  network, and `PATH`, `HOME`, `LANG`, the token and the Git identity. Its home is empty, so the owner's
+  256 MiB, Node's installation, the `adapters` directory, the `claude` executable and the token
+  file `~/.config/medrengard/claude-token` to read, the network, and `PATH`, `HOME`, `LANG` and the
+  Git identity. Its home is empty, so the owner's
   settings, skills, hooks and MCP servers never load. A path under the home, such as a repository,
   stays invisible until you add it: the deeper entry wins.
 
@@ -370,8 +371,13 @@ const design = {
   cannot see it.
 - The adapter tells the agent where its inputs are, and how to claim each kind its step's `claims`
   lists, from the kinds' rules in `input.json`.
-- `claudeCode` passes `CLAUDE_CODE_OAUTH_TOKEN` and the `GIT_AUTHOR_*` and `GIT_COMMITTER_*`
-  variables from the engine's environment. Set them before you run the engine.
+- `--token <file>` is the file holding the subscription token, `~/.config/medrengard/claude-token`
+  if left out; `claudeCode` grants that default. `claude` runs in a nested sandbox of its own and
+  reads the token from a file descriptor, so nothing the agent runs, such as a dependency's install
+  script, can read it from a process's environment or from the file. A
+  `CLAUDE_CODE_OAUTH_TOKEN` the step is given is not passed on.
+- `claudeCode` passes the `GIT_AUTHOR_*` and `GIT_COMMITTER_*` variables from the engine's
+  environment. Set them before you run the engine.
 - `claudeCode` grants the adapter's real directory. If you reach this repository through a
   symlink, pass the adapter's real path (`fs.realpathSync`), or the sandbox cannot see it.
 - A file path in `run`, such as the adapter's, must be absolute: every step's program starts in its

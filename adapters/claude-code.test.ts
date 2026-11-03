@@ -13,8 +13,9 @@ const adapter = join(import.meta.dirname, "claude-code.ts");
  * Starts an engine whose one agent step, `plan`, runs the Claude Code adapter with a fake `claude`
  * on its PATH, and commissions `first`. The fake runs `script`; its arguments are in the returned
  * directory's `arguments` file, its input and output directories in `directories`, each ended by a
- * NUL, and the variable that keeps CLAUDE.md out in `claude-mds`. The agent declares a skill for
- * each of `skills`, its SKILL.md by name.
+ * NUL, and the variable that keeps CLAUDE.md out in `claude-mds`. The adapter reads the token
+ * from the directory's `token` file. The agent declares a skill for each of `skills`, its SKILL.md
+ * by name.
  */
 async function engineWithClaude(
   t: TestContext,
@@ -27,6 +28,8 @@ async function engineWithClaude(
   t.after(() => rm(directory, { recursive: true, force: true }));
 
   const claude = join(directory, "claude");
+
+  await writeFile(join(directory, "token"), "sk-ant-oat01-test-token");
 
   await writeFile(
     claude,
@@ -65,6 +68,8 @@ ${script}
                   `PATH=${directory}:${process.env.PATH}`,
                   process.execPath,
                   adapter,
+                  "--token",
+                  join(directory, "token"),
                   ...args,
                 ],
               },
@@ -170,6 +175,23 @@ test("the Claude Code adapter runs claude headless with the agent, whose claim c
   assert.ok(prompt.startsWith("Plan the change.\n"));
   assert.ok(prompt.includes('["done"]'));
   assert.ok(!prompt.includes("CLAUDE.md"));
+});
+
+test("the Claude Code adapter gives claude the token only on a descriptor, out of reach of what the agent runs", async (t) => {
+  // As anything the agent runs could: the token in any process's environment or command line, or
+  // in the token file. The token to look for is the one claude was given.
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `eval "cat <&$CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" > "${"$"}{0%/claude}/received"
+     for file in /proc/[0-9]*/environ /proc/[0-9]*/cmdline "${"$"}{0%/claude}/token"; do
+       grep -qaF -f "${"$"}{0%/claude}/received" "$file" 2>/dev/null && echo "$file"
+     done > "${"$"}{0%/claude}/exposed"
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.equal(await readFile(join(directory, "received"), "utf8"), "sk-ant-oat01-test-token");
+  assert.equal(await readFile(join(directory, "exposed"), "utf8"), "");
 });
 
 test("the Claude Code adapter tells the agent how to claim only the kinds its step may claim", async (t) => {
@@ -297,6 +319,7 @@ for (const args of [
   ["--tools", "Bash,,Read"],
   ["--colour", "red"],
   ["--effort"],
+  ["--token", "/nonexistent/token"],
 ]) {
   test(`the Claude Code adapter refuses ${JSON.stringify(args)}`, async (t) => {
     const { engine } = await engineWithClaude(t, "true", args);

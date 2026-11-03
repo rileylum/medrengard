@@ -4,18 +4,25 @@
  *
  * Usage: claude-code.ts [--permission-mode acceptEdits|bypassPermissions] [--tools <names>]
  *                       [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]
+ *                       [--token <file>]
  *
  * acceptEdits, the default, lets the agent edit files but not run commands. bypassPermissions
  * lets it do anything its step's access allows, so the sandbox is its only boundary. --tools is a
  * comma-separated list of Claude Code's tools, Bash,Read,Edit,Write unless given; an agent with
  * skills also gets Skill. Nothing else of Claude Code's own loads: no bundled skills or built-in
  * plugins, no settings files, no memory, no CLAUDE.md, and no attribution in commits.
+ *
+ * --token is the file holding the subscription token, ~/.config/medrengard/claude-token unless
+ * given. claude runs in a nested sandbox of its own, with the token on a descriptor: nothing the
+ * agent runs can see this adapter or the outer sandbox, whose environments and files are where the
+ * token would otherwise be found.
  */
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, writeSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import type { Writable } from "node:stream";
 import { parseArgs } from "node:util";
 
 // The part of a kind the adapter explains to the agent.
@@ -37,7 +44,8 @@ const input = process.env.MEDRENGARD_IN!;
 const output = process.env.MEDRENGARD_OUT!;
 
 const usage = `Usage: claude-code.ts [--permission-mode acceptEdits|bypassPermissions] [--tools <names>]
-                      [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]`;
+                      [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]
+                      [--token <file>]`;
 
 // Exits as a usage error, which the engine records as the attempt's errors.
 function refuse(problem: string): never {
@@ -54,6 +62,7 @@ try {
       tools: { type: "string", default: "Bash,Read,Edit,Write" },
       effort: { type: "string" },
       "max-budget-usd": { type: "string" },
+      token: { type: "string", default: join(homedir(), ".config", "medrengard", "claude-token") },
     },
   }));
 } catch (error) {
@@ -82,6 +91,20 @@ if (effort !== undefined && !efforts.includes(effort)) {
 
 if (budget !== undefined && !(Number(budget) > 0)) {
   refuse(`The budget must be a positive number of dollars, not ${budget}.`);
+}
+
+const tokenFile = resolve(options.token);
+
+let token;
+
+try {
+  token = readFileSync(tokenFile, "utf8").trim();
+} catch (error) {
+  refuse(`Cannot read the token file: ${error instanceof Error ? error.message : String(error)}.`);
+}
+
+if (token === "") {
+  refuse(`The token file ${tokenFile} is empty.`);
 }
 
 // SAFETY: the engine encodes input.json for an agent step with these fields.
@@ -156,11 +179,33 @@ const { skills } = given.agent;
 // The tools the agent declares: its harness's, and Skill when it has skills.
 const declared = [...tools, ...(skills.length === 0 ? [] : ["Skill"])];
 
+// claude's own sandbox: a PID namespace and /proc of its own, so what the agent runs sees only
+// claude and itself, and the token file hidden. Every other mount stays as the step's access made it.
+const nested = [
+  "--die-with-parent",
+  "--unshare-pid",
+  "--dev-bind",
+  "/",
+  "/",
+  "--proc",
+  "/proc",
+  "--ro-bind",
+  "/dev/null",
+  tokenFile,
+  "--",
+];
+
+// The token goes only on fd 3, which claude reads once. In claude's environment the agent's
+// commands could read it through /proc, so one the step was given is dropped.
+const { CLAUDE_CODE_OAUTH_TOKEN: _, ...environment } = process.env;
+
 // Streamed, so the engine sees output while the agent works; plain -p prints only at the end, which
 // the idle limit would stop.
 const claude = spawn(
-  "claude",
+  "bwrap",
   [
+    ...nested,
+    "claude",
     "-p",
     "--output-format",
     "stream-json",
@@ -187,11 +232,27 @@ const claude = spawn(
   ],
   {
     // CLAUDE.md loads as Claude Code's own, not through a plugin, so only this variable keeps it out.
-    env: { ...process.env, CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1" },
+    env: {
+      ...environment,
+      CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+      CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: "3",
+    },
     // stdout is read, to note what the agent does, and passed on unchanged as the transcript.
-    stdio: ["ignore", "pipe", "inherit"],
+    stdio: ["ignore", "pipe", "inherit", "pipe"],
   },
 );
+
+// SAFETY: stdio[3] is the "pipe" given above, which Node opens for the parent to write.
+const tokenPipe = claude.stdio[3] as Writable;
+
+// A claude that ends before reading the token says why in its exit; the write has nothing to add.
+tokenPipe.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code !== "EPIPE" && error.code !== "ECONNRESET") {
+    throw error;
+  }
+});
+
+tokenPipe.end(token);
 
 // The longest note the adapter writes; a longer message is cut, and says so with "…".
 const noteLength = 200;
@@ -296,7 +357,7 @@ function notesOf(event: StreamEvent): void {
 
 let partial = "";
 
-claude.stdout.on("data", (chunk: Buffer) => {
+claude.stdout!.on("data", (chunk: Buffer) => {
   process.stdout.write(chunk);
 
   const lines = (partial + chunk.toString()).split("\n");
@@ -320,7 +381,7 @@ claude.stdout.on("data", (chunk: Buffer) => {
 const closed = await once(claude, "close").catch((error: NodeJS.ErrnoException) => error);
 
 if (closed instanceof Error) {
-  console.error(`claude could not start: ${closed.code}.`);
+  console.error(`bwrap could not start claude: ${closed.code}.`);
   process.exitCode = 127;
 } else {
   const [code] = closed;
