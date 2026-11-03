@@ -18,7 +18,8 @@ const longestLimit = 2_147_483;
  * stored for the commission, refusing one the engine could not run as written. Each step's limits
  * come out whole: those it states, and the factory's for the rest.
  */
-export function parseDefinition(name: string, text: string): Definition {
+export function parseDefinition(name: string, stored: string): Definition {
+  const text = grantSandboxes(stored);
   const kinds = parseKinds(text);
   // The engine writes the skills, after the workflow has passed; a definition stored before skills
   // has none.
@@ -261,11 +262,11 @@ function parseKinds(text: string): Kinds {
 
 // What is wrong with `access`, said of whatever it belongs to, or undefined when nothing is.
 function accessProblem(access: Access): string | undefined {
-  if (!hasExactly(access, ["paths", "network", "environment", "workspace"])) {
-    return "access must be its paths, network, environment and workspace";
+  if (!hasExactly(access, ["paths", "network", "environment", "workspace", "sandboxes"])) {
+    return "access must be its paths, network, environment, workspace and sandboxes";
   }
 
-  const { paths, network, environment, workspace } = access;
+  const { paths, network, environment, workspace, sandboxes } = access;
 
   if (
     !Array.isArray(paths) ||
@@ -301,7 +302,44 @@ function accessProblem(access: Access): string | undefined {
     return "workspace access must be read or write";
   }
 
+  if (sandboxes !== true && sandboxes !== false) {
+    return "sandboxes must be true or false";
+  }
+
   return undefined;
+}
+
+// A definition stored before the factory had defaults predates `sandboxes`: its steps' and kinds'
+// programs could make namespaces of their own, so they read as they ran.
+function grantSandboxes(text: string): string {
+  // Only what is read here is typed: the parsers below check the rest.
+  const stored: {
+    defaults?: unknown;
+    workflow?: { steps?: Record<string, { access?: unknown }> };
+    kinds?: Record<
+      string,
+      { verifier?: { access?: unknown }; materialiser?: { access?: unknown } }
+    >;
+  } = JSON.parse(text);
+
+  if (stored.defaults !== undefined) {
+    return text;
+  }
+
+  const programs = [
+    ...Object.values(stored.workflow?.steps ?? {}),
+    ...Object.values(stored.kinds ?? {}).flatMap((kind) => [kind?.verifier, kind?.materialiser]),
+  ];
+
+  for (const program of programs) {
+    const access = program?.access;
+
+    if (isRecord(access) && !Object.hasOwn(access, "sandboxes")) {
+      Object.assign(access, { sandboxes: true });
+    }
+  }
+
+  return JSON.stringify(stored);
 }
 
 function parseWorkflow(

@@ -28,6 +28,7 @@ const access: Access = {
   network: false,
   environment: [],
   workspace: "write",
+  sandboxes: false,
 };
 
 // The subject kinds a step may claim, so a test step is refused only by the claim it tests. A
@@ -677,6 +678,30 @@ test("a step has namespaces of its own, the network's only without network acces
 
   assert.deepEqual(await shared(false), []);
   assert.deepEqual(await shared(true), ["net"]);
+});
+
+test("a step whose access does not grant sandboxes cannot make namespaces of its own", async (t) => {
+  const { engine } = await engineConfined(
+    t,
+    () => access,
+    `unshare -Ur true 2> /dev/null && echo made || echo refused`,
+  );
+
+  await engine.advance("first");
+
+  assert.equal(engine.transcript("first", 1).toString(), "refused\n");
+});
+
+test("a step whose access grants sandboxes can start one of its own", async (t) => {
+  const { engine } = await engineConfined(
+    t,
+    () => ({ ...access, sandboxes: true }),
+    `bwrap --ro-bind / / --unshare-pid -- true && echo started`,
+  );
+
+  await engine.advance("first");
+
+  assert.equal(engine.transcript("first", 1).toString(), "started\n");
 });
 
 test("a step without network access has only a loopback interface", async (t) => {

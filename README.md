@@ -267,6 +267,8 @@ const access: Access = {
   environment: ["LANG"],
   // A reviewer can get "read".
   workspace: "write",
+  // Whether its processes may make namespaces of their own, as a sandbox inside it does.
+  sandboxes: false,
 };
 ```
 
@@ -274,8 +276,10 @@ The workspace, the input (read-only) and the output are always there, and `MEDRE
 `MEDRENGARD_OUT` are always set. `PATH` is passed like any other variable, only when `environment`
 names it; without it a step finds commands only in the system's default search path. A step has
 namespaces of its own (user, cgroup, IPC, hostname, process and, without `network`, network): on a
-machine that cannot make one, the step fails rather than run without it. It has its own `/proc` and a minimal `/dev`, read-only but for `/dev/shm`, a fresh area held in the
-step's memory and bounded by its memory limit. A step that fills an `empty` path of its access
+machine that cannot make one, the step fails rather than run without it. Without `sandboxes` it
+cannot make more: the kernel refuses user namespaces, which keeps more of it out of reach of what
+the step runs. It has its own `/proc` and a minimal `/dev`, read-only but for `/dev/shm`, a fresh
+area held in the step's memory and bounded by its memory limit. A step that fills an `empty` path of its access
 escalates, if it is still running when the engine next looks, once a second; a step that ends first
 only sees its writes fail.
 
@@ -283,17 +287,18 @@ only sees its writes fail.
 "The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they
 exist.
 
-- `full`: everything the engine can reach; in practice no sandbox.
+- `full`: everything the engine can reach; in practice no sandbox. It and `home` grant `sandboxes`.
 - `home`: the system, a fresh `/tmp` of 256 MiB, and the owner's home to read and write, with the
   network and the whole environment.
-- `contract`: the system, a fresh `/tmp` of 256 MiB and `PATH`. No home, no network and no `HOME`, so a
+- `contract`: the system, a fresh `/tmp` of 256 MiB and `PATH`, without `sandboxes`. No home, no network and no `HOME`, so a
   program that needs a home or a cache, such as `npm`, must be pointed at `/tmp`.
 - `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
   256 MiB, Node and npm (Node's `bin` directory and npm's package, or the `node` executable
   alone when npm is not beside it; never other global packages), the `adapters` directory, the `claude` executable and the token
   file `~/.config/medrengard/claude-token` to read, the network, and `PATH`, `HOME`, `LANG` and the
-  Git identity. Its home is empty, so the owner's
-  settings, skills, hooks and MCP servers never load. A path under the home, such as a repository,
+  Git identity, and `sandboxes`: the adapter runs `claude` in a sandbox of its own, in which what
+  the agent runs cannot make namespaces. Its home is empty, so the owner's settings, skills, hooks
+  and MCP servers never load. A path under the home, such as a repository,
   stays invisible until you add it: the deeper entry wins.
 
 ```ts

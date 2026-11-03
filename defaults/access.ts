@@ -33,6 +33,7 @@ export const full: Access = {
   network: true,
   environment: "all",
   workspace: "write",
+  sandboxes: true,
 };
 
 /** The system, and the owner's home to read and write, with the network and environment. */
@@ -41,6 +42,7 @@ export const home: Access = {
   network: true,
   environment: "all",
   workspace: "write",
+  sandboxes: true,
 };
 
 /** Only what the step contract gives a step, and the system's programs to run in it. */
@@ -49,6 +51,7 @@ export const contract: Access = {
   network: false,
   environment: ["PATH"],
   workspace: "write",
+  sandboxes: false,
 };
 
 /**
@@ -81,4 +84,6 @@ export const claudeCode: Access = {
     "GIT_COMMITTER_EMAIL",
   ],
   workspace: "write",
+  // The adapter runs claude in a sandbox of its own, which refuses them to what the agent runs.
+  sandboxes: true,
 };

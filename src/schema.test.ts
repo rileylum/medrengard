@@ -57,7 +57,9 @@ type Pinned = {
   >;
   agent: Expect<Same<keyof Agent, "harness" | "model" | "prompt" | "skills">>;
   harness: Expect<Same<keyof Agent["harness"], "run">>;
-  access: Expect<Same<keyof Access, "paths" | "network" | "environment" | "workspace">>;
+  access: Expect<
+    Same<keyof Access, "paths" | "network" | "environment" | "workspace" | "sandboxes">
+  >;
   path: Expect<
     Same<
       Path,

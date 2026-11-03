@@ -99,6 +99,7 @@ export function confine(
       "--unshare-uts",
       "--unshare-pid",
       ...(access.network ? [] : ["--unshare-net"]),
+      ...(access.sandboxes ? [] : ["--disable-userns"]),
       ...binds,
       "--proc",
       "/proc",

@@ -192,10 +192,13 @@ const declared = [...tools, ...(skills.length === 0 ? [] : ["Skill"])];
 const managed = "/etc/claude-code";
 
 // claude's own sandbox: a PID namespace and /proc of its own, so what the agent runs sees only
-// claude and itself, and the token file and managed settings hidden. Every other mount stays as
-// the step's access made it.
+// claude and itself, and the token file and managed settings hidden; and no namespaces of the
+// agent's own, which the step's access grants only for this one. Every other mount stays as the
+// step's access made it.
 const nested = [
   "--die-with-parent",
+  "--unshare-user",
+  "--disable-userns",
   "--unshare-pid",
   "--dev-bind",
   "/",

@@ -98,6 +98,7 @@ ${script}
               network: false,
               environment: [],
               workspace: "write",
+              sandboxes: true,
             },
             limits: { idle: 5, attempt: 10, transcript: 65536, input: 65536 },
           },
@@ -194,6 +195,17 @@ test("the Claude Code adapter gives claude the token only on a descriptor, out o
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
   assert.equal(await readFile(join(directory, "received"), "utf8"), "sk-ant-oat01-test-token");
   assert.equal(await readFile(join(directory, "exposed"), "utf8"), "");
+});
+
+test("what the agent runs under the Claude Code adapter cannot make namespaces of its own", async (t) => {
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `unshare -Ur true 2> /dev/null && echo made > "${"$"}{0%/claude}/nested" || echo refused > "${"$"}{0%/claude}/nested"
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.equal(await readFile(join(directory, "nested"), "utf8"), "refused\n");
 });
 
 test("the Claude Code adapter tells the agent how to claim only the kinds its step may claim", async (t) => {
