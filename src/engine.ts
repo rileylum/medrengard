@@ -323,6 +323,15 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       });
     },
 
+    /**
+     * The definition the commission was commissioned with and runs on, whatever the factory says
+     * now: its workflow, each step's limits made whole from the factory's defaults it recorded,
+     * its kinds, and its skills by file hash.
+     */
+    definition(commission: string): Definition {
+      return definitionOf(read(commission));
+    },
+
     /** Reads the transcript of the commission's attempt numbered `attempt`. */
     transcript(commission: string, attempt: number): Buffer {
       return store.read(endingOf(commission, attempt).transcript!);

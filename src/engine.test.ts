@@ -2017,6 +2017,35 @@ test("a commission runs on the factory's limits it started with", async (t) => {
   });
 });
 
+test("a commission's definition is the one it was commissioned with, each step's limits whole", async (t) => {
+  const limits = { ...defaultLimits, transcript: 16 };
+
+  const { options } = await engineWith(
+    t,
+    () => defineWorkflow({ start: "build", steps: { build: stepLimited("true", { idle: 2 }) } }),
+    undefined,
+    limits,
+  );
+
+  // Expected from the options themselves, as JSON holds them: the factory changed since.
+  const { start, steps } = options.workflows.build;
+
+  const recorded = JSON.parse(
+    JSON.stringify({
+      workflow: { start, steps: { build: { ...steps.build, limits: { ...limits, idle: 2 } } } },
+      kinds: options.kinds,
+      skills: {},
+    }),
+  );
+
+  const changed = createEngine({ ...options, defaults: { limits: defaultLimits } });
+
+  assert.deepEqual(changed.definition("first"), recorded);
+  assert.throws(() => changed.definition("second"), {
+    message: "There is no commission named second.",
+  });
+});
+
 test("a factory whose default limits leave one out cannot commission", async (t) => {
   const { disk: _left, ...limits } = defaultLimits;
 

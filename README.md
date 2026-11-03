@@ -652,6 +652,7 @@ medrengard <command> [--json] [--factory <path>]
   transcript <commission> <attempt>
   errors     <commission> <attempt>
   artifact   <hash or a prefix of at least 8 characters>
+  definition <commission>
 ```
 
 - The factory is `--factory <path>`, or else `MEDRENGARD_FACTORY`. The CLI never guesses one,
@@ -682,6 +683,10 @@ medrengard <command> [--json] [--factory <path>]
   record keeps the text as claimed, so a program showing it to people must do the same.
 - `artifact` takes a hash, or a unique prefix of at least 8 characters, as `show` prints them, and
   refuses one the log does not name as an artifact. `decide` takes the full hash.
+- `definition` prints the definition a commission was commissioned with and runs on: its
+  workflow, with each step's access, agent and harness command, and its limits made whole from the
+  factory's defaults it recorded; its kinds; and its skills by file hash. It is what a step was
+  allowed, whatever the factory says now. With `--json` it prints `engine.definition`.
 - `run` advances every ready commission, at most `--parallel` steps at once (1 by default), oldest
   commission first. It prints one line per result, and keeps looking for ready commissions until it
   is stopped. A first Ctrl-C starts nothing new and waits for the running steps, leaving each

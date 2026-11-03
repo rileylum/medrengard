@@ -277,6 +277,7 @@ test("the CLI's commands are exactly the pinned ones", () => {
     "transcript",
     "errors",
     "artifact",
+    "definition",
   ]);
 });
 
@@ -330,6 +331,8 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
   const { subject, since } = JSON.parse(run(["state", "first", "--json"], factory).stdout);
   const { request } = JSON.parse(run(["show", "first", "--json"], factory).stdout);
 
+  // The recorded definition is the definition's own schema, pinned apart; here its parts.
+  assert.deepEqual(Object.keys(json("definition", "first")), ["workflow", "kinds", "skills"]);
   assert.deepEqual(json("artifact", request.hash), {
     kind: "document",
     fields: { title: "string" },

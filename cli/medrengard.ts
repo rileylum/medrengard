@@ -13,7 +13,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import type { CommissionRecord, createEngine as Create, Entry } from "../src/engine.ts";
 import { isRecord } from "../src/json.ts";
-import type { CommissionState } from "../src/replay.ts";
+import type { CommissionState, Definition } from "../src/replay.ts";
 import type { Artifact } from "../src/store.ts";
 
 const usage = `Usage: medrengard <command> [--json] [--factory <path>]
@@ -31,6 +31,7 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
   transcript <commission> <attempt>
   errors     <commission> <attempt>
   artifact   <hash or a prefix of at least 8 characters>
+  definition <commission>
 
 The factory is --factory <path>, or else MEDRENGARD_FACTORY: a module whose default export is the
 engine's options, { log, kinds, workflows, defaults }, with log relative to the module.`;
@@ -49,6 +50,7 @@ const commands = new Map([
   ["cancel", { arguments: 1, options: [] }],
   ["transcript", { arguments: 2, options: [] }],
   ["artifact", { arguments: 1, options: [] }],
+  ["definition", { arguments: 1, options: [] }],
 ]);
 
 const text = { type: "string" } as const;
@@ -184,6 +186,9 @@ try {
     case "artifact":
       printArtifact(engine.artifact(first));
       break;
+    case "definition":
+      printDefinition(engine.definition(first));
+      break;
     case "commissions":
       print(
         engine.commissions(),
@@ -242,10 +247,16 @@ type Printed =
   | ({ commission: string; state: CommissionState } | { commission: string; error: string })[]
   | { parallel: number }
   | { stopping: { commission: string; step: string }[] }
-  | { commission: string; state: CommissionState };
+  | { commission: string; state: CommissionState }
+  | Definition;
 
 function print(result: Printed, readable: string): void {
   process.stdout.write(visible(json ? `${JSON.stringify(result)}\n` : readable));
+}
+
+// The definition as JSON for people too: it is data, and its every field matters.
+function printDefinition(definition: Definition): void {
+  print(definition, `${JSON.stringify(definition, null, 2)}\n`);
 }
 
 // `text` with each control character written as \uXXXX: visible to the owner, and in JSON, where
