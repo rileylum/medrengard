@@ -305,7 +305,9 @@ export const kinds = { ...builtIn, "pull-request": pullRequest };
   such as `full`.
 
 The kinds must include `document`, the kind of the owner's request, and cannot include `decision`,
-which only the owner makes. A name holds letters, digits and `-`, starting with a letter. A
+which only the owner makes. Since the engine makes the request a document, with a title and a
+body, `document` must be a subject, define `title`, require no other field and have no verifier, and
+a request whose title or body breaks its rules is refused before it is commissioned. A name holds letters, digits and `-`, starting with a letter. A
 commission records the kinds it started with, beside its workflow: editing a kind affects only new
 commissions.
 

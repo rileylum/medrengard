@@ -125,7 +125,7 @@ A step's budget counts its attempts since the commission's latest decision, so o
 
 A step declares the kinds it may claim; a claim of any other kind is invalid. A kind is data: a name; a role, subject or judgement; a schema for its fields, each with a size limit; whether it has a body, with its media types and size limit; and optionally a verifier, a materialiser and an outcome field. An artifact's hash covers its kind, fields and body hash, the same way for every kind. A judgement's subject is always named by artifact hash.
 
-A kind's verifier and materialiser are programs, each with its own access and time limit, run in a sandbox like a step's. A factory defines its kinds; a commission records them by hash with its workflow, and they must include document and cannot include decision.
+A kind's verifier and materialiser are programs, each with its own access and time limit, run in a sandbox like a step's. A factory defines its kinds; a commission records them by hash with its workflow, and they must include document and cannot include decision. The owner's request is a document with a title and a body, so document must be a subject, define a title, require no other field and have no verifier; a request that breaks its rules is refused before the commission starts.
 
 A verifier is a program run after a claim parses, under the step contract:
 

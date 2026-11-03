@@ -2334,6 +2334,38 @@ test("a commission runs on the kinds it started with after the factory edits one
   assert.partialDeepStrictEqual(await edited.advance("first"), { status: "awaiting" });
 });
 
+test("a request the factory's document kind refuses is not commissioned", async (t) => {
+  // "Greet" and "Say hello." fit, so the helper's own commission passes.
+  const { engine } = await engineWith(
+    t,
+    () => defineWorkflow({ start: "build", steps: { build: stepRunning("true", "end") } }),
+    () => ({
+      ...builtIn,
+      document: {
+        ...builtIn.document,
+        fields: { title: { limit: 5, required: true, values: ["Greet", "Plan", "Planning"] } },
+        body: { required: true, limit: 10 },
+      },
+    }),
+  );
+
+  const refused: [{ title: string; body: string }, string][] = [
+    [{ title: "Planning", body: "Hi." }, "The request's title is over its limit of 5 bytes."],
+    [{ title: "Hello", body: "Hi." }, "The request's title is not one of Greet, Plan, Planning."],
+    [
+      { title: "Plan", body: "Say hello now." },
+      "The request's body is over its limit of 10 bytes.",
+    ],
+  ];
+
+  for (const [request, message] of refused) {
+    assert.throws(() => engine.commission("build", "second", request), { message });
+    assert.throws(() => engine.state("second"), {
+      message: "There is no commission named second.",
+    });
+  }
+});
+
 test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
   const { document } = builtIn;
 
@@ -2403,6 +2435,27 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
         },
       },
       "Kind memo is invalid: its materialiser's network access must be true or false.",
+    ],
+    [
+      { document: { ...document, role: "judgement" } },
+      "Kind document is invalid: the owner's request is a document, so it must be a subject.",
+    ],
+    [
+      { document: { ...document, fields: { name: { limit: 9, required: true } } } },
+      "Kind document is invalid: the owner's request is a document, so it must define a title.",
+    ],
+    [
+      {
+        document: {
+          ...document,
+          fields: { ...document.fields, priority: { limit: 9, required: true } },
+        },
+      },
+      "Kind document is invalid: the owner's request is a document, so only its title can be required.",
+    ],
+    [
+      { document: { ...document, verifier: { run: ["true"], access, limit: 1 } } },
+      "Kind document is invalid: the owner's request is a document, and no attempt claims it, so it cannot have a verifier.",
     ],
   ];
 

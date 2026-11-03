@@ -197,6 +197,8 @@ export function createEngine({ log, workflows, kinds }: Options) {
         JSON.stringify({ workflow: workflows[workflow], kinds }),
       );
 
+      refuseRequest(checked.kinds.document, request);
+
       const skills = pin(workflow, checked.workflow, store);
       const text = JSON.stringify({ workflow: workflows[workflow], kinds, skills });
       const parsed = parseDefinition(workflow, text);
@@ -662,6 +664,24 @@ const running = new Set<string>();
 
 function runningKey(log: string, commission: string, attempt: number): string {
   return JSON.stringify([resolvePath(log), commission, attempt]);
+}
+
+// Throws why the owner's request breaks the rules of the factory's document kind, which the
+// definition has made a subject with a title and no other required field.
+function refuseRequest(document: Kind, { title, body }: { title: string; body: string }): void {
+  const rule = document.fields.title;
+
+  if (rule.values !== undefined && !rule.values.includes(title)) {
+    throw new Error(`The request's title is not one of ${rule.values.join(", ")}.`);
+  }
+
+  if (Buffer.byteLength(title) > rule.limit) {
+    throw new Error(`The request's title is over its limit of ${rule.limit} bytes.`);
+  }
+
+  if (Buffer.byteLength(body) > document.body.limit) {
+    throw new Error(`The request's body is over its limit of ${document.body.limit} bytes.`);
+  }
 }
 
 // A pid is reused once its process ends; with its start time from /proc it names one process.

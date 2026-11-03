@@ -156,7 +156,31 @@ function parseKinds(text: string): Kinds {
   }
 
   // SAFETY: every field the engine reads was checked above.
-  return kinds as Kinds;
+  const parsed = kinds as Kinds;
+
+  // The engine makes the owner's request a document itself, with a title and a body.
+  const { document } = parsed;
+
+  const unfit = (problem: string) =>
+    new Error(`Kind document is invalid: the owner's request is a document, ${problem}.`);
+
+  if (document.role !== "subject") {
+    throw unfit("so it must be a subject");
+  }
+
+  if (!Object.hasOwn(document.fields, "title")) {
+    throw unfit("so it must define a title");
+  }
+
+  if (Object.entries(document.fields).some(([field, rule]) => field !== "title" && rule.required)) {
+    throw unfit("so only its title can be required");
+  }
+
+  if (document.verifier !== undefined) {
+    throw unfit("and no attempt claims it, so it cannot have a verifier");
+  }
+
+  return parsed;
 }
 
 // What is wrong with `access`, said of whatever it belongs to, or undefined when nothing is.
