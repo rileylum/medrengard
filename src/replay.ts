@@ -52,7 +52,8 @@ export type Access = {
 };
 
 // What every step that starts a program declares: its inputs, the artifact kinds it may claim,
-// whether its workspace is built from the subject or starts empty, its outcomes' edges, the
+// whether its workspace is built from the subject, from the one artifact an input names, or starts
+// empty, its outcomes' edges, the
 // attempts it may start between the owner's decisions, its access, and its limits. An attempt is stopped after `idle`
 // seconds without stdout or stderr output, `attempt` seconds in all, or `transcript` bytes of it,
 // or once its processes use more than `memory` bytes; it never starts if the bodies of its inputs
@@ -63,7 +64,7 @@ export type Access = {
 type Program<N extends string> = {
   inputs: Readonly<Record<string, Query<N>>>;
   claims: readonly string[];
-  workspace: "subject" | "empty";
+  workspace: "subject" | "empty" | { input: string };
   on: Record<string, N | "end">;
   budget: number;
   access: Access;

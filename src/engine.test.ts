@@ -1720,6 +1720,69 @@ test("a step whose workspace is a commit subject works in its checkout", async (
   assert.equal(await readFile(join(directory, "seen"), "utf8"), `Do it.\n${commit.fields.sha}\n`);
 });
 
+test("a step whose workspace is an input's commit works in its checkout, whatever the subject", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(committing, "plan"),
+        // The plan replaces the commit as the subject.
+        plan: stepRunning(
+          `printf 'Then this.' > "$MEDRENGARD_OUT/plan.md"
+           echo '${JSON.stringify(planAt("plan.md"))}' > "$MEDRENGARD_OUT/output.json"`,
+          "check",
+        ),
+        check: {
+          ...stepRunning(
+            `{ cat plan.txt; git rev-parse HEAD; } > "$1"
+             echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "review",
+            [join(directory, "seen")],
+          ),
+          inputs: { base: { from: ["build"], kind: "commit", take: "latest" } },
+          workspace: { input: "base" },
+        },
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+  assert.equal(engine.artifact(subjectOf(engine)).kind, "document");
+
+  const [commit] = engine
+    .record("first")
+    .entries.flatMap((entry) => ("artifacts" in entry ? entry.artifacts : []))
+    .filter(({ artifact }) => artifact.kind === "commit");
+
+  assert.ok(commit?.artifact.kind === "commit");
+  assert.equal(
+    await readFile(join(directory, "seen"), "utf8"),
+    `Do it.\n${commit.artifact.fields.sha}\n`,
+  );
+});
+
+test("a step whose workspace input holds no artifact escalates without starting", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "check",
+      steps: {
+        check: {
+          ...stepRunning("true", "end"),
+          inputs: { base: { kind: "commit", take: "latest" } },
+          workspace: { input: "base" },
+        },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step check's workspace input base holds no artifact.",
+  });
+  assert.ok(engine.record("first").entries.every((entry) => entry.entry !== "attempt"));
+});
+
 test("a step whose workspace is a document subject finds its body there", async (t) => {
   const { engine, directory } = await engineWith(t, (directory) =>
     defineWorkflow({
@@ -1806,6 +1869,26 @@ test("a workflow whose input queries a kind there is not cannot be commissioned"
     },
   );
 });
+
+for (const [what, inputs] of [
+  ["it does not declare", {}],
+  ["that may hold more than one artifact", { base: { kind: "commit" } }],
+] as const) {
+  test(`a workflow whose workspace names an input ${what} cannot be commissioned`, async (t) => {
+    await assert.rejects(
+      engineWith(t, () =>
+        defineWorkflow({
+          start: "build",
+          steps: { build: { ...stepRunning("true", "end"), inputs, workspace: { input: "base" } } },
+        }),
+      ),
+      {
+        message:
+          "Workflow build is invalid: step build's workspace must be subject, empty, or one of its inputs that names at most one artifact: subject, request or a query that takes the latest.",
+      },
+    );
+  });
+}
 
 test("a workflow whose input name is not a plain file name cannot be commissioned", async (t) => {
   await assert.rejects(

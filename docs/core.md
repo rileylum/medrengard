@@ -183,7 +183,7 @@ _Execution: the core. The commission is the aggregate root._
 
 _Step contract: the process boundary._
 
-- Workspace: the directory a step's process runs in.
+- Workspace: the directory a step's process runs in: empty, or built from the current subject or from the one artifact an input names.
 - Input: what a step declares by name and query, and receives as the artifacts the query names. Every input's bodies sit in `MEDRENGARD_IN`, beside `input.json`.
 - Output: the directory where a step writes its claim, `output.json`, and the files it refers to.
 - Sandbox: the confinement that enforces a step's access.

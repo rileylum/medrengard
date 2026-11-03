@@ -140,8 +140,11 @@ There are three kinds of step:
 
 The fields of a command or agent step:
 
-- `workspace`: `"empty"`, or `"subject"` to build the working directory from the current subject. A
-  commit is checked out with its history; a document is written to the file `document`.
+- `workspace`: `"empty"`; `"subject"` to build the working directory from the current subject; or
+  `{ input: "base" }` to build it from the one artifact the step's input `base` names, whatever the
+  subject is, such as the commit a change starts from. That input must be `"subject"`, `"request"`
+  or a query that takes the latest; if it names nothing, the commission escalates before an attempt
+  starts. A commit is checked out with its history; a document is written to the file `document`.
 - `inputs`: what the step is given, by name. See [Inputs](#inputs).
 - `claims`: the artifact kinds the step may claim, such as `["commit"]`; `[]` for none. A claim of
   any other kind escalates. A step need not claim what it lists. See
@@ -340,7 +343,8 @@ the file `body` when it has one, and the commission's current `subject`. It writ
 each at most 64 MiB; or `{ "accepted": false, "reason": "..." }`, and the commission escalates with
 the reason.
 
-A materialiser builds a later step's workspace from a subject, in an empty workspace. Its
+A materialiser builds a later step's workspace from a subject, the current one or an input's, in an
+empty workspace. Its
 `MEDRENGARD_IN` holds `artifact.json`, with the artifact's `hash`, `kind`, `fields`, `body` and
 `kept` files as paths, and those files. A subject kind without one cannot be a step's workspace.
 

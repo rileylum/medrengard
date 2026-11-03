@@ -672,6 +672,24 @@ export function createEngine({ log, workflows, kinds }: Options) {
 
         const { inputs, skills } = prepared;
 
+        // The artifact the workspace is built from, when it is an input's: one the record names.
+        const source = step.workspace;
+        const named = source === "subject" || source === "empty" ? undefined : source.input;
+
+        const built =
+          named === undefined
+            ? undefined
+            : inputs.find((input) => input.name === named)?.artifacts[0];
+
+        if (named !== undefined && built === undefined) {
+          write(commission, events, {
+            type: "escalated",
+            reason: `Step ${name}'s workspace input ${named} holds no artifact.`,
+          });
+
+          continue;
+        }
+
         const bytes =
           inputs
             .flatMap(({ artifacts }) => artifacts)
@@ -733,6 +751,12 @@ export function createEngine({ log, workflows, kinds }: Options) {
           write(commission, read(commission), { type: "noted", attempt, note: text });
 
         try {
+          const subject = {
+            hash: state.subject,
+            artifact: store.get(state.subject),
+            kept: keptOf(events, state.subject),
+          };
+
           const ending = await run(
             step,
             {
@@ -740,11 +764,13 @@ export function createEngine({ log, workflows, kinds }: Options) {
               step: name,
               attempt,
               kinds: definition.kinds,
-              subject: {
-                hash: state.subject,
-                artifact: store.get(state.subject),
-                kept: keptOf(events, state.subject),
-              },
+              subject,
+              workspace:
+                built !== undefined
+                  ? { ...built, kept: keptOf(events, built.hash) }
+                  : source === "subject"
+                    ? subject
+                    : undefined,
               inputs,
               skills,
             },
@@ -931,17 +957,19 @@ function sinceDecision(events: Log): Log[number][] {
 
 type Runnable = Extract<Workflow["steps"][string], { kind: "agent" | "command" }>;
 
-// The commission's subject, with the files its verifier kept.
+// An artifact, such as the commission's subject, with the files its verifier kept.
 type Subject = { hash: string; artifact: Artifact; kept: Readonly<Record<string, string>> };
 
 // What an attempt is given: the domain values its input.json encodes, the commission's subject,
-// which verifiers judge a claim against, and the kinds its claims are judged by.
+// which verifiers judge a claim against, the artifact its workspace is built from, if any, and the
+// kinds its claims are judged by.
 type Given = {
   commission: string;
   step: string;
   attempt: number;
   kinds: Kinds;
   subject: Subject;
+  workspace: Subject | undefined;
   inputs: readonly {
     name: string;
     artifacts: readonly { hash: string; artifact: Artifact }[];
@@ -1289,12 +1317,12 @@ async function run(
   try {
     await mkdir(workspace);
 
-    if (step.workspace === "subject") {
+    if (given.workspace !== undefined) {
       const failed = await materialise(
         directory,
         workspace,
         name,
-        given.subject,
+        given.workspace,
         given.kinds,
         store,
         halted,
@@ -1995,18 +2023,18 @@ async function verify(
   return { kept };
 }
 
-// Builds the workspace from the subject with its kind's materialiser. Returns why it failed, or
-// undefined.
+// Builds the workspace from an artifact, the subject or an input's, with its kind's materialiser.
+// Returns why it failed, or undefined.
 async function materialise(
   directory: string,
   workspace: string,
   name: string,
-  subject: Subject,
+  from: Subject,
   kinds: Kinds,
   store: Store,
   cancelled: () => boolean,
 ): Promise<string | undefined> {
-  const { artifact } = subject;
+  const { artifact } = from;
 
   const materialiser = kinds[artifact.kind]?.materialiser;
 
@@ -2018,7 +2046,7 @@ async function materialise(
 
   await mkdir(join(input, "kept"));
 
-  for (const [file, hash] of Object.entries(subject.kept)) {
+  for (const [file, hash] of Object.entries(from.kept)) {
     await writeFile(join(input, "kept", file), store.read(hash));
   }
 
@@ -2029,11 +2057,11 @@ async function materialise(
   await writeFile(
     join(input, "artifact.json"),
     JSON.stringify({
-      hash: subject.hash,
+      hash: from.hash,
       kind: artifact.kind,
       fields: artifact.fields,
       body: artifact.body === undefined ? undefined : "body",
-      kept: Object.fromEntries(Object.keys(subject.kept).map((file) => [file, `kept/${file}`])),
+      kept: Object.fromEntries(Object.keys(from.kept).map((file) => [file, `kept/${file}`])),
     }),
   );
 

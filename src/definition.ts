@@ -307,8 +307,22 @@ function parseWorkflow(name: string, text: string, defined: Kinds): Workflow {
       throw invalid(`step ${name} does not have exactly the fields a ${kind} step defines`);
     }
 
-    if (workspace !== "subject" && workspace !== "empty") {
-      throw invalid(`step ${name}'s workspace must be subject or empty`);
+    // The query of the input the workspace is built from, which must name at most one artifact.
+    const declared = new Map(isRecord(inputs) ? Object.entries(inputs) : []);
+    const named = workspace?.input;
+    const source = hasExactly(workspace, ["input"]) ? declared.get(named) : undefined;
+    const take = source?.take;
+
+    if (
+      workspace !== "subject" &&
+      workspace !== "empty" &&
+      source !== "subject" &&
+      source !== "request" &&
+      !(isRecord(source) && take === "latest")
+    ) {
+      throw invalid(
+        `step ${name}'s workspace must be subject, empty, or one of its inputs that names at most one artifact: subject, request or a query that takes the latest`,
+      );
     }
 
     if (isRecord(inputs) && !Object.keys(inputs).every((input) => inputName.test(input))) {
