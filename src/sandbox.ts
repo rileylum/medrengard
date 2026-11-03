@@ -8,9 +8,6 @@ type Areas = { workspace: string; input: string; output: string };
 
 const order = { write: 0, empty: 1, read: 2 };
 
-// lazy: a constant, in bytes. Make it a limit of the step's once a program needs more.
-const sharedMemory = 64 * 1024 * 1024;
-
 /** What a program may use at once: bytes of memory, and processes and threads. */
 export type Bounds = { memory: number; processes: number };
 
@@ -102,10 +99,8 @@ export function confine(
       "/proc",
       "--dev",
       "/dev",
-      // bwrap's /dev is a writable tmpfs as large as the kernel allows: only shared memory, which
-      // programs expect to write, is left writable, and bounded.
-      "--size",
-      String(sharedMemory),
+      // bwrap's /dev is a writable tmpfs: only shared memory, which programs expect to write, is
+      // left writable. Its pages count against the scope's MemoryMax, which bounds it.
       "--tmpfs",
       "/dev/shm",
       "--remount-ro",

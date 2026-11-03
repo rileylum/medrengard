@@ -263,9 +263,10 @@ const access: Access = {
 The workspace, the input (read-only) and the output are always there, and `MEDRENGARD_IN` and
 `MEDRENGARD_OUT` are always set. `PATH` is passed like any other variable, only when `environment`
 names it; without it a step finds commands only in the system's default search path. A step has
-its own `/proc` and a minimal `/dev`, read-only but for `/dev/shm`, a fresh area of at most 64 MiB.
-A step that fills an `empty` path of its access escalates, if it is still running when the engine
-next looks, once a second; a step that ends first only sees its writes fail.
+its own `/proc` and a minimal `/dev`, read-only but for `/dev/shm`, a fresh area held in the
+step's memory and bounded by its memory limit. A step that fills an `empty` path of its access
+escalates, if it is still running when the engine next looks, once a second; a step that ends first
+only sees its writes fail.
 
 `medrengard/defaults/access.ts` holds four values to use as they are or to change one dial of.
 "The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they

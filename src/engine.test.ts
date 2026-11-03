@@ -504,17 +504,41 @@ test("a step whose access makes its workspace read-only cannot write to it", asy
   assert.equal(engine.transcript("first", 1).toString(), "read-only\n");
 });
 
-test("a step's /dev is read-only but for a shared-memory area of 64 MiB", async (t) => {
+test("a step's /dev is read-only but for its shared memory", async (t) => {
   const { engine } = await engineConfined(
     t,
     () => access,
     `touch /dev/note 2> /dev/null || echo read-only
-     echo small > /dev/shm/small && echo shared
-     head -c $((65 * 1024 * 1024)) /dev/zero > /dev/shm/big 2> /dev/null || echo full`,
+     echo small > /dev/shm/small && echo shared`,
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
-  assert.equal(engine.transcript("first", 1).toString(), "read-only\nshared\nfull\n");
+  assert.equal(engine.transcript("first", 1).toString(), "read-only\nshared\n");
+});
+
+test("a step's shared memory is bounded by its memory limit alone", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `head -c $((96 * 1024 * 1024)) /dev/zero > /dev/shm/big &&
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    { idle: 10, attempt: 10, transcript: 65536, input: 65536, memory: 256 * 1024 * 1024 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+});
+
+test("a step that fills its shared memory past its memory limit escalates, naming the limit", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `head -c $((64 * 1024 * 1024)) /dev/zero > /dev/shm/big
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    { idle: 10, attempt: 10, transcript: 65536, input: 65536, memory: 32 * 1024 * 1024 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build reached its memory limit of 33554432 bytes.",
+  });
 });
 
 test("a step over its memory limit is stopped and escalates, naming the limit", async (t) => {
