@@ -143,6 +143,8 @@ const claiming =
     ? "Claim no artifacts."
     : `Each artifact is {"kind": ..., "fields": {...}, "body": ...}, of one of these kinds:\n${kinds.join("\n")}`;
 
+// lazy: the step contract as prompt text, here only. Share it between adapters once a second one
+// needs it.
 const contract = `You are a step in a workflow. Your inputs are in ${input}: input.json lists each
 input's artifacts, and each body is the file its "body" names, relative to ${input}.
 
@@ -247,7 +249,6 @@ const claude = spawn(
     declared.join(","),
     "--model",
     given.agent.model,
-    `${given.agent.prompt}\n\n${contract}`,
   ],
   {
     // CLAUDE.md loads as Claude Code's own, not through a plugin, so only this variable keeps it out.
@@ -256,10 +257,24 @@ const claude = spawn(
       CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
       CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: "3",
     },
-    // stdout is read, to note what the agent does, and passed on unchanged as the transcript.
-    stdio: ["ignore", "pipe", "inherit", "pipe"],
+    // The prompt goes on stdin, which -p reads when no prompt is given as an argument: Linux
+    // refuses one argument over 128 KiB. stdout is read, to note what the agent does, and passed
+    // on unchanged as the transcript.
+    stdio: ["pipe", "pipe", "inherit", "pipe"],
   },
 );
+
+// SAFETY: stdin is the "pipe" given above.
+const promptPipe = claude.stdin as Writable;
+
+// A claude that ends before reading its prompt says why in its exit; the write has nothing to add.
+promptPipe.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code !== "EPIPE" && error.code !== "ECONNRESET") {
+    throw error;
+  }
+});
+
+promptPipe.end(`${given.agent.prompt}\n\n${contract}`);
 
 // SAFETY: stdio[3] is the "pipe" given above, which Node opens for the parent to write.
 const tokenPipe = claude.stdio[3] as Writable;

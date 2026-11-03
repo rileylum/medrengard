@@ -1232,7 +1232,12 @@ function skillAt(directory: string, name: string, files: Readonly<Record<string,
  * An agent step whose harness copies its whole input to `$1`, the directory `received`, and
  * claims `done`; its agent declares `skills`, and its input limit is `input` bytes.
  */
-function agentWithSkills(directory: string, skills: readonly string[], input = 65536) {
+function agentWithSkills(
+  directory: string,
+  skills: readonly string[],
+  input = 65536,
+  prompt = "Plan the change.",
+) {
   return defineWorkflow({
     start: "plan",
     steps: {
@@ -1251,7 +1256,7 @@ function agentWithSkills(directory: string, skills: readonly string[], input = 6
             ],
           },
           model: "a-model",
-          prompt: "Plan the change.",
+          prompt,
           skills,
         },
         inputs: {},
@@ -1322,8 +1327,20 @@ test("an agent step whose skills are over its input limit escalates without star
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
-    reason: "Step plan's inputs and skills are 100 bytes, over its input limit of 64.",
+    reason: "Step plan's inputs, prompt and skills are 116 bytes, over its input limit of 64.",
   });
+});
+
+test("an agent step whose prompt is over its input limit escalates without starting", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    agentWithSkills(directory, [], 64, "x".repeat(100)),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step plan's inputs and prompt are 100 bytes, over its input limit of 64.",
+  });
+  await assert.rejects(readFile(join(directory, "received", "input.json")), { code: "ENOENT" });
 });
 
 test("a claimed commit at the workspace HEAD becomes the subject", async (t) => {

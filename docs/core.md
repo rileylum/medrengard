@@ -86,7 +86,7 @@ A step declares each input as a name and a query. The name is the input's direct
 
 The commission is refused before it starts if a query names a step the workflow lacks, a kind there is not, or a field or value a query does not define. Passing new data between steps is a new query in the workflow, not a change to the core.
 
-A step's input limit bounds the bytes of all its input bodies together. Over it, the commission escalates before an attempt starts, so no budget is spent.
+A step's input limit bounds the bytes of all its input bodies together, with an agent step's prompt and skills. Over it, the commission escalates before an attempt starts, so no budget is spent.
 
 The JSON files are a wire format. The engine encodes `input.json` from its domain types and parses `output.json` into them, or escalates; the domain model is never shaped by the JSON.
 

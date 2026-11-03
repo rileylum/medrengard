@@ -14,15 +14,16 @@ const adapter = join(import.meta.dirname, "claude-code.ts");
  * Starts an engine whose one agent step, `plan`, runs the Claude Code adapter with a fake `claude`
  * on its PATH, and commissions `first`. The fake runs `script`; its arguments are in the returned
  * directory's `arguments` file, its input and output directories in `directories`, each ended by a
- * NUL, and the variable that keeps CLAUDE.md out in `claude-mds`. The adapter reads the token
- * from the directory's `token` file. The agent declares a skill for each of `skills`, its SKILL.md
- * by name.
+ * NUL, the variable that keeps CLAUDE.md out in `claude-mds`, and what it read on stdin, its
+ * prompt, in `prompt`. The adapter reads the token from the directory's `token` file. The agent's
+ * prompt is `prompt`, and it declares a skill for each of `skills`, its SKILL.md by name.
  */
 async function engineWithClaude(
   t: TestContext,
   script: string,
   args: readonly string[] = [],
   skills: Readonly<Record<string, string>> = {},
+  prompt = "Plan the change.",
 ) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
@@ -38,6 +39,7 @@ async function engineWithClaude(
 printf '%s\\0' "$@" > "${join(directory, "arguments")}"
 printf '%s\\0' "$MEDRENGARD_IN" "$MEDRENGARD_OUT" > "${join(directory, "directories")}"
 printf '%s' "$CLAUDE_CODE_DISABLE_CLAUDE_MDS" > "${join(directory, "claude-mds")}"
+cat > "${join(directory, "prompt")}"
 ${script}
 `,
   );
@@ -76,7 +78,7 @@ ${script}
                 ],
               },
               model: "a-model",
-              prompt: "Plan the change.",
+              prompt,
               skills: paths,
             },
             inputs: {},
@@ -100,7 +102,7 @@ ${script}
               workspace: "write",
               sandboxes: true,
             },
-            limits: { idle: 5, attempt: 10, transcript: 65536, input: 65536 },
+            limits: { idle: 5, attempt: 10, transcript: 65536, input: 1024 * 1024 },
           },
         },
       }),
@@ -150,13 +152,13 @@ test("the Claude Code adapter runs claude headless with the agent, whose claim c
 
   const [input, output] = await fields("directories");
   const [print, ...rest] = await fields("arguments");
-  const prompt = rest.at(-1)!;
+  const prompt = await readFile(join(directory, "prompt"), "utf8");
 
   assert.equal(print, "-p");
 
   // Edits only, in the workspace and the step's input and output: shell commands stay refused.
-  // Only the default tools, and nothing of Claude Code's own loads.
-  assert.deepEqual(rest.slice(0, -1), [
+  // Only the default tools, and nothing of Claude Code's own loads. The prompt is on stdin.
+  assert.deepEqual(rest, [
     "--output-format",
     "stream-json",
     "--verbose",
@@ -208,6 +210,22 @@ test("what the agent runs under the Claude Code adapter cannot make namespaces o
   assert.equal(await readFile(join(directory, "nested"), "utf8"), "refused\n");
 });
 
+test("the Claude Code adapter gives claude a prompt longer than one argument may be", async (t) => {
+  // Linux refuses a single argument over 128 KiB.
+  const long = "x".repeat(200 * 1024);
+
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    [],
+    {},
+    long,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.ok((await readFile(join(directory, "prompt"), "utf8")).startsWith(`${long}\n\n`));
+});
+
 test("the Claude Code adapter tells the agent how to claim only the kinds its step may claim", async (t) => {
   const { engine, directory } = await engineWithClaude(
     t,
@@ -216,7 +234,7 @@ test("the Claude Code adapter tells the agent how to claim only the kinds its st
 
   await engine.advance("first");
 
-  const prompt = (await readFile(join(directory, "arguments"), "utf8")).split("\0").at(-2)!;
+  const prompt = await readFile(join(directory, "prompt"), "utf8");
 
   assert.ok(prompt.includes(builtIn.document.description));
   assert.ok(prompt.includes('"title"'));

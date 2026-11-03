@@ -163,7 +163,7 @@ The fields of a command or agent step:
   - `idle`: seconds without output before the step is stopped;
   - `attempt`: seconds in all;
   - `transcript`: bytes of stdout and stderr;
-  - `input`: bytes of all input bodies, and an agent's skill files, together. Over it, the step
+  - `input`: bytes of all input bodies, and an agent's prompt and skill files, together. Over it, the step
     never starts;
   - `memory`: bytes its processes may use together, shared memory included. Over it, systemd
     stops them, without swap, and the commission escalates naming the limit;
@@ -407,7 +407,8 @@ const design = {
 } as const;
 ```
 
-- `skills` are paths to skill directories, each holding a `SKILL.md`. A skill is named by its
+- `skills` are paths to skill directories, each holding a `SKILL.md`: the Agent Skills format,
+  which harnesses other than Claude Code read too. A skill is named by its
   directory; an agent cannot have two of one name. Leave `skills` out for none.
 - `--permission-mode acceptEdits`, the default, lets the agent edit files but not run commands.
   `bypassPermissions` lets it do anything its access allows, so the sandbox is its only boundary.

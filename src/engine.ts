@@ -699,16 +699,25 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
           continue;
         }
 
+        // An agent's prompt goes to its harness with its inputs, so it counts with them.
+        const prompt = step.kind === "agent" ? Buffer.byteLength(step.agent.prompt) : 0;
+
         const bytes =
           inputs
             .flatMap(({ artifacts }) => artifacts)
             .reduce((sum, { artifact }) => sum + Buffer.byteLength(artifact.body ?? ""), 0) +
           skills
             .flatMap(({ files }) => files)
-            .reduce((sum, { bytes: file }) => sum + file.length, 0);
+            .reduce((sum, { bytes: file }) => sum + file.length, 0) +
+          prompt;
 
         if (bytes > step.limits.input) {
-          const what = skills.length === 0 ? "inputs are" : "inputs and skills are";
+          const what =
+            step.kind !== "agent"
+              ? "inputs are"
+              : skills.length === 0
+                ? "inputs and prompt are"
+                : "inputs, prompt and skills are";
 
           write(commission, events, {
             type: "escalated",
