@@ -123,7 +123,7 @@ A step's budget counts its attempts since the commission's latest decision, so o
 
 **Artifact kinds**
 
-A step declares the kinds it may claim; a claim of any other kind is invalid. A kind is data: a name; a role, subject or judgement; a schema for its fields, each with a size limit; whether it has a body, with its media types and size limit; and optionally a verifier, a materialiser and an outcome field. An artifact's hash covers its kind, fields and body hash, the same way for every kind. A judgement's subject is always named by artifact hash.
+A step declares the kinds it may claim; a claim of any other kind is invalid. A kind is data: a name; a role, subject or judgement; a schema for its fields, each with a size limit; whether it has a body, UTF-8 text, with its size limit; and optionally a verifier, a materialiser and an outcome field. An artifact's hash covers its kind, fields and body hash, the same way for every kind. A judgement's subject is always named by artifact hash.
 
 A kind's verifier and materialiser are programs, each with its own access and limits, run in a sandbox like a step's; a verifier's limits include the bytes it may keep. They get less of the step contract: no descriptor for notes, their stdout discarded, and their stderr only as the end of a failure's reason. The record names the verifier that accepted an artifact; a materialiser's run is recorded only when it fails. A factory defines its kinds; a commission records them by hash with its workflow, and they must include document and cannot include decision. The owner's request is a document with a title and a body, so document must be a subject, define a title, require no other field and have no verifier; a request that breaks its rules is refused before the commission starts.
 
@@ -141,7 +141,7 @@ The latest subject artifact an attempt claims becomes the subject; a judgement l
 
 Built in:
 
-- Document: a subject with a title and a required markdown, HTML or text body. No verifier; its materialiser writes the body.
+- Document: a subject with a title and a required text body, such as markdown. No verifier; its materialiser writes the body.
 - Commit: a subject with a SHA and an optional report. Its verifier accepts a SHA that is the workspace HEAD, not already the current subject, and whose tree differs from its parent's and the subject's, and keeps a Git bundle that holds its whole history, or refuses it; its materialiser clones the bundle at that SHA.
 - Verdict: a judgement with pass or fail, an optional one-line summary and its findings as an optional text body. Its outcome field is the verdict. The step never names the subject; the engine records the one the attempt was given.
 - Decision: a judgement with the owner's outcome and optional feedback.
@@ -161,7 +161,7 @@ _Definition: what the owner writes; data, verified before anything runs._
 - Harness: the vendor tool an agent runs in, such as Claude Code, Codex, Pi or OpenCode.
 - Prompt: what the agent is told to do at a step.
 - Skill: packaged instructions or tools given to an agent.
-- Artifact kind: a role, subject or judgement, a schema and a body rule, with an optional verifier, materialiser and outcome field. Built in: document (with a media type), commit, verdict and decision.
+- Artifact kind: a role, subject or judgement, a schema and a body rule, with an optional verifier, materialiser and outcome field. Built in: document, commit, verdict and decision.
 - Outcome: a label a step declares; the engine routes on it.
 - Access: what a step's process may read, write and reach.
 - Query: what a step declares to name the artifacts one of its inputs holds.

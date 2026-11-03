@@ -74,8 +74,8 @@ export function createStore(directory: string) {
       const { kind, fields } = artifact;
       const body = artifact.body === undefined ? null : keep(artifact.body);
 
-      // lazy: fields hash in the order they were written. Sort them once a kind can be
-      // written by something other than the engine.
+      // lazy: fields hash in the order their kind defines them, so reordering a kind's fields
+      // changes the hash of the same content. Sort them once hashes are compared across definitions.
       return keep(JSON.stringify({ kind, fields, body }));
     },
 

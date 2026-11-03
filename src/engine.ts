@@ -1784,6 +1784,8 @@ async function readBody(
 
   let text;
 
+  // lazy: bodies are UTF-8 text only. Give a kind's body a binary form once a kind needs one,
+  // such as a screenshot; until then bytes travel as a verifier's kept files.
   try {
     text = utf8.decode(read);
   } catch {
