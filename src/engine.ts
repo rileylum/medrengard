@@ -714,7 +714,7 @@ export function createEngine({ log, workflows, kinds }: Options) {
           // keeps what was spooled.
           write(commission, read(commission), {
             type: "escalated",
-            reason: `Step ${name} failed in the engine: ${error instanceof Error ? error.message : String(error)}`,
+            reason: failedIn(name, error instanceof Error ? error.message : String(error)),
             attempt,
           });
           unspool(spool);
@@ -939,6 +939,9 @@ const cancelLook = 1000;
 
 const cancelledReason = (step: string) => `Step ${step} was cancelled by the owner.`;
 
+// The engine's own failure during a step's attempt, such as a full disk.
+const failedIn = (step: string, message: string) => `Step ${step} failed in the engine: ${message}`;
+
 // The end of a completed attempt the owner cancelled before it was written: an escalation, with
 // its transcript and errors.
 function cancelledEnding(completed: Extract<Ending, { type: "attempt-completed" }>): Ending {
@@ -1150,8 +1153,25 @@ async function run(
 
   const watching = setInterval(() => void measure(), cancelLook);
 
+  // The engine's own failure while a program ran, such as a note it could not write. It is caught
+  // where it happens, since a throw from an event handler or timer would end the engine's process.
+  let fault: string | undefined;
+
   // Why the attempt must stop now, if it must.
-  const halt = () => (cancelled() ? cancelledReason(name) : over ? overDisk : undefined);
+  const halt = () => {
+    if (fault === undefined) {
+      try {
+        if (cancelled()) {
+          return cancelledReason(name);
+        }
+      } catch (error) {
+        fault = failedIn(name, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    return fault ?? (over ? overDisk : undefined);
+  };
+
   const halted = () => halt() !== undefined;
 
   // Why the attempt must stop once a program has ended, measured afresh.
@@ -1223,6 +1243,18 @@ async function run(
       }
     };
 
+    // Runs a handler of the step's output; the engine's failure in it stops the step.
+    const guarded =
+      (handler: (chunk: Buffer) => void) =>
+      (chunk: Buffer): void => {
+        try {
+          handler(chunk);
+        } catch (error) {
+          fault ??= failedIn(name, error instanceof Error ? error.message : String(error));
+          stopFor(fault);
+        }
+      };
+
     const idle = setTimeout(
       () => stopFor(`Step ${name} was idle for ${step.limits.idle} s.`),
       step.limits.idle * 1000,
@@ -1263,8 +1295,8 @@ async function run(
       }
     };
 
-    child.stdout!.on("data", record(false));
-    child.stderr!.on("data", record(true));
+    child.stdout!.on("data", guarded(record(false)));
+    child.stderr!.on("data", guarded(record(true)));
 
     // The part of a note whose line has not ended yet.
     let pending = Buffer.alloc(0);
@@ -1313,7 +1345,7 @@ async function run(
       }
     };
 
-    child.stdio[3]!.on("data", noteFrom);
+    child.stdio[3]!.on("data", guarded(noteFrom));
 
     const closed = await once(child, "close")
       .catch((error: NodeJS.ErrnoException) => error)

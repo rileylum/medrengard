@@ -2059,6 +2059,27 @@ test("an engine error during an attempt escalates the commission, naming the err
   assert.match(state.reason, /^Step build failed in the engine: EACCES: permission denied/);
 });
 
+test("an engine error while a step runs stops the step and escalates, naming the error", async (t) => {
+  // The step makes the log's directory read-only, so its note cannot be written; stopped, it
+  // makes the directory writable again, so the escalation can be.
+  const { engine, directory } = await engineRunning(
+    t,
+    `log="$(dirname "$1")"
+     trap 'chmod u+w "$log"; exit 0' TERM
+     chmod a-w "$log"
+     echo a note >&3
+     sleep 5 & wait`,
+    { idle: 5, attempt: 10, transcript: 65536, input: 65536 },
+  );
+
+  const state = await engine.advance("first").finally(() => chmod(directory, 0o755));
+
+  assert.partialDeepStrictEqual(state, { status: "escalated", step: { name: "build" } });
+  assert.ok(state.status === "escalated");
+  assert.match(state.reason, /^Step build failed in the engine: /);
+  assert.partialDeepStrictEqual(engine.record("first").entries, [{ entry: "attempt", notes: [] }]);
+});
+
 test("an attempt this engine stopped running without recording its end escalates at the next advance", async (t) => {
   // The step makes the log's directory read-only, so neither the attempt's end nor an escalation
   // can be written.
