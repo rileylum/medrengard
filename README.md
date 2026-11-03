@@ -638,7 +638,14 @@ medrengard <command> [--json] [--factory <path>]
   they arrive, its ending, and each escalation and decision. It stops once the commission awaits
   the owner, escalates or finishes; on one that already has, it prints the whole story. `show`
   leaves the notes out.
-- `transcript` prints everything an attempt wrote; `errors` prints its stderr alone.
+- `transcript` prints everything an attempt wrote; `errors` prints its stderr alone. Both write the
+  bytes unchanged to a file or program, and to a terminal as text with control characters made
+  visible, as below.
+- Every control character a terminal would act on rather than show (C0 but newline and tab, DEL,
+  C1 and the bidi controls) is printed as `\uXXXX`, on stdout and stderr, readable or `--json`. A
+  step's text can hold them, and could otherwise move the cursor, rewrite what the owner reads at a
+  gate, set the clipboard or reorder a line. In JSON the escape is the same value; the engine's
+  record keeps the text as claimed, so a program showing it to people must do the same.
 - `artifact` takes a hash, or a unique prefix of at least 8 characters, as `show` prints them, and
   refuses one the log does not name as an artifact. `decide` takes the full hash.
 - `run` advances every ready commission, at most `--parallel` steps at once (1 by default), oldest

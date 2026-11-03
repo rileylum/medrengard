@@ -113,6 +113,23 @@ async function factoryIn(t: TestContext) {
              review: { kind: "approval", on: { approve: "end" } },
            },
          }),
+         // Writes control sequences everywhere an agent's text reaches the owner: cursor up and
+         // erase line, a clipboard write (OSC 52), a carriage return, an 8-bit CSI and a
+         // right-to-left override.
+         hostile: defineWorkflow({
+           start: "build",
+           steps: {
+             build: {
+               ...step(\`printf '\\\\033[1A\\\\033[2KNote\\\\r\\\\302\\\\2332K\\\\342\\\\200\\\\256\\\\n' >&3
+                 printf '\\\\033]52;c;eA==\\\\007Out\\\\n'
+                 printf '\\\\033[1AErr\\\\n' >&2
+                 printf '\\\\033[1A\\\\033[2KBody\\\\302\\\\233\\\\342\\\\200\\\\256' > "$MEDRENGARD_OUT/body.md"
+                 echo '{"outcome":"done","artifacts":[{"kind":"document","fields":{"title":"Title\\\\u001b[1A\\\\u009b\\\\u202e"},"body":"body.md"}]}' > "$MEDRENGARD_OUT/output.json"\`),
+               on: { done: "review" },
+             },
+             review: { kind: "approval", on: { approve: "end" } },
+           },
+         }),
          failing: defineWorkflow({
            start: "build",
            steps: { build: { ...step("echo broke >&2; exit 3"), on: { done: "end" } } },
@@ -579,6 +596,98 @@ test("the CLI prints an attempt's errors", async (t) => {
     stdout: "broke\n",
     stderr: "",
   });
+});
+
+// Whether `text` holds a control character a terminal acts on: C0 but newline and tab, DEL, C1,
+// and the bidi controls.
+function hasControl(text: string): boolean {
+  return Array.from(text).some((character) => {
+    const code = character.charCodeAt(0);
+
+    return (
+      (code < 0x20 && code !== 0x0a && code !== 0x09) ||
+      (code >= 0x7f && code <= 0x9f) ||
+      [0x061c, 0x200e, 0x200f].includes(code) ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069)
+    );
+  });
+}
+
+test("show, artifact and watch print an agent's control characters as visible escapes", async (t) => {
+  const { factory } = await factoryIn(t);
+
+  run(["commission", "hostile", "first", "--title", "Greet", "--body", "Say hello."], factory);
+
+  const watching = spawn(process.execPath, [cli, "watch", "first"], {
+    cwd: tmpdir(),
+    env: { ...process.env, MEDRENGARD_FACTORY: factory },
+  });
+
+  let watched = "";
+
+  watching.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+    watched += chunk;
+  });
+
+  run(["advance", "first"], factory);
+  await once(watching, "exit");
+
+  const shown = run(["show", "first"], factory).stdout;
+  const document = JSON.parse(run(["show", "first", "--json"], factory).stdout).state.subject;
+  const artifact = run(["artifact", document], factory).stdout;
+
+  for (const printed of [watched, shown, artifact]) {
+    assert.ok(!hasControl(printed), printed);
+  }
+
+  assert.match(watched, /^ {5}\\u001b\[1A\\u001b\[2KNote\\u000d\\u009b2K\\u202e$/m);
+  assert.match(shown, /^title: Title\\u001b\[1A\\u009b\\u202e$/m);
+  assert.match(artifact, /^\\u001b\[1A\\u001b\[2KBody\\u009b\\u202e$/m);
+});
+
+test("--json writes C1 and bidi controls as escapes, which parse to the same text", async (t) => {
+  const { factory } = await factoryIn(t);
+
+  run(["commission", "hostile", "first", "--title", "Greet", "--body", "Say hello."], factory);
+  run(["advance", "first"], factory);
+
+  const document = JSON.parse(run(["show", "first", "--json"], factory).stdout).state.subject;
+  const { stdout } = run(["artifact", document, "--json"], factory);
+
+  assert.ok(!hasControl(stdout.trimEnd()), stdout);
+  assert.equal(JSON.parse(stdout).body, "\x1b[1A\x1b[2KBody\u009b\u202e");
+});
+
+test("transcript and errors print raw bytes to a pipe and visible escapes to a terminal", async (t) => {
+  const { factory } = await factoryIn(t);
+
+  run(["commission", "hostile", "first", "--title", "Greet", "--body", "Say hello."], factory);
+  run(["advance", "first"], factory);
+
+  assert.equal(
+    run(["transcript", "first", "1"], factory).stdout,
+    "\x1b]52;c;eA==\x07Out\n\x1b[1AErr\n",
+  );
+  assert.equal(run(["errors", "first", "1"], factory).stdout, "\x1b[1AErr\n");
+
+  // script gives the CLI a pseudo-terminal as stdout, and copies what it printed.
+  const terminal = (command: string) =>
+    spawnSync(
+      "script",
+      [
+        "--quiet",
+        "--return",
+        "--command",
+        `"${process.execPath}" "${cli}" ${command}`,
+        "/dev/null",
+      ],
+      { cwd: tmpdir(), env: { ...process.env, MEDRENGARD_FACTORY: factory }, encoding: "utf8" },
+    ).stdout;
+
+  // The terminal turns each newline into a carriage return and a newline.
+  assert.equal(terminal("transcript first 1"), "\\u001b]52;c;eA==\\u0007Out\r\n\\u001b[1AErr\r\n");
+  assert.equal(terminal("errors first 1"), "\\u001b[1AErr\r\n");
 });
 
 test("watch prints a commission's attempts and notes, and stops once it awaits the owner", async (t) => {

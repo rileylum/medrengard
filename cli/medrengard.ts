@@ -170,10 +170,10 @@ try {
       await watch(engine, first);
       break;
     case "transcript":
-      process.stdout.write(engine.transcript(first, Number(second)));
+      printBytes(engine.transcript(first, Number(second)));
       break;
     case "errors":
-      process.stdout.write(engine.errors(first, Number(second)));
+      printBytes(engine.errors(first, Number(second)));
       break;
     case "artifact":
       printArtifact(engine.artifact(first));
@@ -198,7 +198,7 @@ try {
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
 
-  process.stderr.write(json ? `${JSON.stringify({ error: message })}\n` : `${message}\n`);
+  process.stderr.write(visible(json ? `${JSON.stringify({ error: message })}\n` : `${message}\n`));
   process.exitCode = 1;
 }
 
@@ -239,7 +239,37 @@ type Printed =
   | { commission: string; state: CommissionState };
 
 function print(result: Printed, readable: string): void {
-  process.stdout.write(json ? `${JSON.stringify(result)}\n` : readable);
+  process.stdout.write(visible(json ? `${JSON.stringify(result)}\n` : readable));
+}
+
+// `text` with each control character written as \uXXXX: visible to the owner, and in JSON, where
+// they can only stand inside a string, the same value.
+function visible(text: string): string {
+  return Array.from(text, (character) => {
+    const code = character.charCodeAt(0);
+
+    return isControl(code) ? `\\u${code.toString(16).padStart(4, "0")}` : character;
+  }).join("");
+}
+
+// What a terminal acts on rather than shows: C0 controls but newline and tab, DEL, C1 controls and
+// the bidi controls. A step's text can hold any of them, and could move the cursor, rewrite what
+// the owner reads at a gate, set the clipboard or reorder a line.
+function isControl(code: number): boolean {
+  return (
+    (code < 0x20 && code !== 0x0a && code !== 0x09) ||
+    (code >= 0x7f && code <= 0x9f) ||
+    code === 0x061c ||
+    code === 0x200e ||
+    code === 0x200f ||
+    (code >= 0x202a && code <= 0x202e) ||
+    (code >= 0x2066 && code <= 0x2069)
+  );
+}
+
+// A step's bytes, as written to a file or program; on a terminal, as text with its controls visible.
+function printBytes(bytes: Buffer): void {
+  process.stdout.write(process.stdout.isTTY ? visible(new TextDecoder().decode(bytes)) : bytes);
 }
 
 // A state for the owner to read: where the commission is and what it is about.
@@ -302,7 +332,7 @@ async function runner(engine: ReturnType<typeof Create>, parallel: number): Prom
 
   const report = (commission: string, error: string) => {
     process.stderr.write(
-      json ? `${JSON.stringify({ commission, error })}\n` : `${commission}: ${error}\n`,
+      visible(json ? `${JSON.stringify({ commission, error })}\n` : `${commission}: ${error}\n`),
     );
   };
 
@@ -476,7 +506,7 @@ async function watch(engine: ReturnType<typeof Create>, commission: string): Pro
           printed.add(key);
 
           if (!json) {
-            process.stdout.write(`${text}\n`);
+            process.stdout.write(visible(`${text}\n`));
           }
         }
       }
