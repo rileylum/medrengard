@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { Access } from "./replay.ts";
 
@@ -9,11 +11,26 @@ const order = { write: 0, empty: 1, read: 2 };
 // lazy: a constant, in bytes. Make it a limit of the step's once a program needs more.
 const sharedMemory = 64 * 1024 * 1024;
 
+/** What a program may use at once: bytes of memory, and processes and threads. */
+export type Bounds = { memory: number; processes: number };
+
+// What systemd-run needs to reach the owner's systemd, and what the scope adds; a step has them
+// only when its access names them.
+const scoped = ["XDG_RUNTIME_DIR", "INVOCATION_ID"];
+
+const runtime = process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid!()}`;
+
 /**
- * The bubblewrap command that runs `argv` in `areas.workspace` under `access`, and the
- * environment to start it with.
+ * The command that runs `argv` in `areas.workspace` under `access`, within `bounds`, the
+ * environment to start it with, and the systemd scope it runs in: bubblewrap, in a scope of the
+ * owner's systemd, which holds its memory and processes.
  */
-export function confine(access: Access, areas: Areas, argv: readonly [string, ...string[]]) {
+export function confine(
+  access: Access,
+  areas: Areas,
+  argv: readonly [string, ...string[]],
+  bounds: Bounds,
+) {
   const mounts = [
     ...access.paths,
     { path: areas.workspace, mode: access.workspace },
@@ -49,9 +66,32 @@ export function confine(access: Access, areas: Areas, argv: readonly [string, ..
       ? { ...process.env }
       : Object.fromEntries(access.environment.map((name) => [name, process.env[name]]));
 
+  const unit = `medrengard-${randomUUID()}`;
+
+  const unset =
+    access.environment === "all" ? [] : scoped.filter((name) => !access.environment.includes(name));
+
   return {
-    command: "bwrap",
+    unit,
+    command: "systemd-run",
     args: [
+      "--user",
+      "--scope",
+      "--quiet",
+      // Otherwise systemd-run replaces $NAME in the step's own arguments, and $$ with $.
+      "--expand-environment=no",
+      "--unit",
+      unit,
+      "-p",
+      `MemoryMax=${bounds.memory}`,
+      // Swap would let a step past its memory limit by slowing the machine instead.
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      `TasksMax=${bounds.processes}`,
+      "--",
+      "bwrap",
+      ...unset.flatMap((name) => ["--unsetenv", name]),
       // --unshare-all includes the PID namespace, so nothing the step starts outlives bwrap, and
       // bwrap dies with the engine.
       "--die-with-parent",
@@ -77,9 +117,31 @@ export function confine(access: Access, areas: Areas, argv: readonly [string, ..
       ...argv,
     ],
     env: {
+      XDG_RUNTIME_DIR: runtime,
       ...passed,
       MEDRENGARD_IN: areas.input,
       MEDRENGARD_OUT: areas.output,
     },
   };
+}
+
+/**
+ * Whether the program that ran in the scope `unit` was stopped for using more than its memory.
+ * systemd keeps a scope that failed until it is reset, so this resets it.
+ */
+export function overMemory(unit: string): boolean {
+  const scope = `${unit}.scope`;
+
+  const env = { ...process.env, XDG_RUNTIME_DIR: runtime };
+
+  const result = execFileSync("systemctl", ["--user", "show", scope, "-p", "Result", "--value"], {
+    encoding: "utf8",
+    env,
+  }).trim();
+
+  if (result !== "success" && result !== "") {
+    execFileSync("systemctl", ["--user", "reset-failed", scope], { env });
+  }
+
+  return result === "oom-kill";
 }

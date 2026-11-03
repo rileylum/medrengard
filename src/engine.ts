@@ -18,7 +18,7 @@ import {
 } from "./replay.ts";
 import { parseDefinition } from "./definition.ts";
 import { hasExactly, isRecord, isText } from "./json.ts";
-import { confine } from "./sandbox.ts";
+import { confine, overMemory, type Bounds } from "./sandbox.ts";
 import type { Kind, Kinds, Program } from "./kinds.ts";
 import { createStore, type Artifact } from "./store.ts";
 
@@ -815,6 +815,10 @@ type Ending = Extract<CommissionEvent, { type: "attempt-completed" | "escalated"
 // The bytes one note may hold: a line for the owner to read, not a log.
 const noteLimit = 4096;
 
+// lazy: constants. A kind's programs always get these; give a kind's program limits of its own
+// once one needs more.
+const defaultBounds: Bounds = { memory: 4 * 1024 * 1024 * 1024, processes: 1024 };
+
 // How often, in milliseconds, the engine running an attempt looks for the owner's cancel.
 const cancelLook = 1000;
 
@@ -1039,10 +1043,16 @@ async function run(
     await mkdir(output);
 
     // An agent step's program is its harness adapter, under the same contract.
-    const { command, args, env } = confine(
+    const bounds = {
+      memory: step.limits.memory ?? defaultBounds.memory,
+      processes: step.limits.processes ?? defaultBounds.processes,
+    };
+
+    const { command, args, env, unit } = confine(
       step.access,
       { workspace, input, output },
       step.kind === "agent" ? step.agent.harness.run : step.run,
+      bounds,
     );
 
     // Its own session and process group: stopping the step also stops what it started, and
@@ -1175,6 +1185,11 @@ async function run(
     }
 
     if (code !== 0) {
+      // systemd stops the whole scope; only it knows why.
+      if (overMemory(unit)) {
+        return escalate(`Step ${name} reached its memory limit of ${bounds.memory} bytes.`);
+      }
+
       return escalate(
         signal ? `Step ${name} was ended by ${signal}.` : `Step ${name} exited with code ${code}.`,
       );
@@ -1520,7 +1535,12 @@ async function runProgram(
   output: string,
   cancelled: () => boolean,
 ): Promise<string | undefined> {
-  const { command, args, env } = confine(program.access, { workspace, input, output }, program.run);
+  const { command, args, env, unit } = confine(
+    program.access,
+    { workspace, input, output },
+    program.run,
+    defaultBounds,
+  );
 
   const child = spawn(command, args, {
     cwd: workspace,
@@ -1571,6 +1591,10 @@ async function runProgram(
 
   if (late) {
     return `it reached its limit of ${program.limit} s.${stderr}`;
+  }
+
+  if (closed[0] !== 0 && overMemory(unit)) {
+    return `it reached its memory limit of ${defaultBounds.memory} bytes.${stderr}`;
   }
 
   return closed[0] === 0 ? undefined : `it exited with code ${closed[0]}.${stderr}`;

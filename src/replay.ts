@@ -55,7 +55,9 @@ export type Access = {
 // whether its workspace is built from the subject or starts empty, its outcomes' edges, the
 // attempts it may start between the owner's decisions, its access, and its limits. An attempt is stopped after `idle`
 // seconds without stdout or stderr output, `attempt` seconds in all, or `transcript` bytes of it,
-// and never starts if the bodies of its inputs total more than `input` bytes.
+// or once its processes use more than `memory` bytes; it never starts if the bodies of its inputs
+// total more than `input` bytes, and cannot run more than `processes` processes and threads at
+// once. Without `memory` or `processes`, the engine's defaults bound them: 4 GiB and 1024.
 type Program<N extends string> = {
   inputs: Readonly<Record<string, Query<N>>>;
   claims: readonly string[];
@@ -63,7 +65,14 @@ type Program<N extends string> = {
   on: Record<string, N | "end">;
   budget: number;
   access: Access;
-  limits: { idle: number; attempt: number; transcript: number; input: number };
+  limits: {
+    idle: number;
+    attempt: number;
+    transcript: number;
+    input: number;
+    memory?: number;
+    processes?: number;
+  };
 };
 
 /**

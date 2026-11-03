@@ -68,7 +68,14 @@ async function engineWith<N extends string>(
 function engineRunning(
   t: TestContext,
   script: string,
-  limits = { idle: 1, attempt: 5, transcript: 65536, input: 65536 },
+  limits: {
+    idle: number;
+    attempt: number;
+    transcript: number;
+    input: number;
+    memory?: number;
+    processes?: number;
+  } = { idle: 1, attempt: 5, transcript: 65536, input: 65536 },
 ) {
   return engineWith(t, (directory) =>
     defineWorkflow({
@@ -504,6 +511,49 @@ test("a step's /dev is read-only but for a shared-memory area of 64 MiB", async 
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
   assert.equal(engine.transcript("first", 1).toString(), "read-only\nshared\nfull\n");
+});
+
+test("a step over its memory limit is stopped and escalates, naming the limit", async (t) => {
+  // tail holds its whole input, which has no newline, in memory.
+  const { engine } = await engineRunning(t, "head -c 200000000 /dev/zero | tail > /dev/null", {
+    idle: 10,
+    attempt: 10,
+    transcript: 65536,
+    input: 65536,
+    memory: 32 * 1024 * 1024,
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build reached its memory limit of 33554432 bytes.",
+  });
+});
+
+test("a step cannot run more processes than its limit", async (t) => {
+  // Forks until refused, each child waiting, and says how many it started.
+  const { engine } = await engineRunning(
+    t,
+    `python3 -c '
+import os, time
+started = 0
+try:
+    for _ in range(100):
+        if os.fork() == 0:
+            time.sleep(2)
+            os._exit(0)
+        started += 1
+except OSError:
+    pass
+print(started)'
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    { idle: 10, attempt: 10, transcript: 65536, input: 65536, processes: 16 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const started = Number(engine.transcript("first", 1).toString());
+
+  assert.ok(started > 0 && started < 16, `started ${started}`);
 });
 
 test("a step gets only the environment its access names, PATH included", async (t) => {

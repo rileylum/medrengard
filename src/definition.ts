@@ -284,6 +284,10 @@ function parseWorkflow(name: string, text: string, defined: Kinds): Workflow {
     const seconds = { idle: limits?.idle, attempt: limits?.attempt };
     const bytes = { transcript: limits?.transcript, input: limits?.input };
 
+    // Bounded by the engine's defaults when left out.
+    const optional = ["memory", "processes"].filter((limit) => Object.hasOwn(limits ?? {}, limit));
+    const counts = Object.fromEntries(optional.map((limit) => [limit, limits[limit]]));
+
     const fields = [
       "kind",
       "workspace",
@@ -377,8 +381,10 @@ function parseWorkflow(name: string, text: string, defined: Kinds): Workflow {
       throw invalid(`step ${name}'s ${problem}`);
     }
 
-    if (!hasExactly(limits, ["idle", "attempt", "transcript", "input"])) {
-      throw invalid(`step ${name}'s limits must be idle, attempt, transcript and input`);
+    if (!hasExactly(limits, ["idle", "attempt", "transcript", "input", ...optional])) {
+      throw invalid(
+        `step ${name}'s limits must be idle, attempt, transcript and input, and may be memory and processes`,
+      );
     }
 
     for (const [limit, value] of Object.entries(seconds)) {
@@ -389,7 +395,7 @@ function parseWorkflow(name: string, text: string, defined: Kinds): Workflow {
       }
     }
 
-    for (const [limit, value] of Object.entries(bytes)) {
+    for (const [limit, value] of Object.entries({ ...bytes, ...counts })) {
       if (!Number.isInteger(value) || value <= 0) {
         throw invalid(`step ${name}'s ${limit} limit must be a positive integer`);
       }

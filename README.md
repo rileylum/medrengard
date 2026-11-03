@@ -24,6 +24,8 @@ CLI and a Claude Code adapter run. Observers and attended steps do not exist yet
 
 - Linux, with [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) on `PATH`: every agent
   and command step runs inside it.
+- systemd, with the owner's user manager running (`systemd-run --user` works): each step and kind
+  program runs in a scope of its own, which bounds its memory and processes.
 - Node 24. It runs the TypeScript files directly; nothing is built.
 - Git, for commits.
 
@@ -149,7 +151,13 @@ The fields of a command or agent step:
   - `attempt`: seconds in all;
   - `transcript`: bytes of stdout and stderr;
   - `input`: bytes of all input bodies, and an agent's skill files, together. Over it, the step
-    never starts.
+    never starts;
+  - `memory`, optional: bytes its processes may use together, 4 GiB if left out. Over it, systemd
+    stops them, without swap, and the commission escalates naming the limit;
+  - `processes`, optional: processes and threads it may run at once, 1024 if left out. Past it, the
+    step cannot start another, as its own failure.
+
+A kind's verifier and materialiser get 4 GiB and 1024 processes.
 
 The engine refuses a workflow it could not run as written when it is commissioned, not halfway
 through. A commission runs on the definition it started with: editing the factory affects only new
