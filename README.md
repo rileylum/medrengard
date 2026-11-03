@@ -333,9 +333,10 @@ export const kinds = { ...builtIn, "pull-request": pullRequest };
 - `outcome`, optional: a required field with `values` that must equal the claimed outcome, as a
   verdict's `verdict` does.
 - `verifier` and `materialiser`, optional: programs, each a `run`, an `access`, a `limit` in
-  seconds, `memory` in bytes and `processes`, bounded like a step's. Each runs in its own sandbox,
-  like a step; leaving the sandbox is an access you write, such as `full`. The built-ins' have
-  60 s, 4 GiB and 1024 processes.
+  seconds, `memory` in bytes and `processes`, bounded like a step's; a verifier also `kept`, the
+  bytes of all the files it keeps for an artifact. Each runs in its own sandbox, like a step;
+  leaving the sandbox is an access you write, such as `full`. The built-ins' have 60 s, 4 GiB and
+  1024 processes, and the commit verifier keeps 1 GiB, its bundle holding the whole history.
 
 The kinds must include `document`, the kind of the owner's request, and cannot include `decision`,
 which only the owner makes. Since the engine makes the request a document, with a title and a
@@ -348,7 +349,7 @@ A verifier runs after a claim of its kind parses, in the attempt's workspace, in
 gives. Its `MEDRENGARD_IN` holds `claim.json`, with the claim's `fields`, its `body` as a path to
 the file `body` when it has one, and the commission's current `subject`. It writes `output.json`:
 exactly `{ "accepted": true, "keep": [...] }`, naming files in its `MEDRENGARD_OUT` for the store to
-keep, each at most 64 MiB, `[]` for none; or exactly `{ "accepted": false, "reason": "..." }`, and
+keep, together at most its `kept` bytes, `[]` for none; or exactly `{ "accepted": false, "reason": "..." }`, and
 the commission escalates with the reason. Anything else, a field more included, fails the verifier.
 
 A materialiser builds a later step's workspace from a subject, the current one or an input's, in an

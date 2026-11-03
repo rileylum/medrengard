@@ -18,7 +18,7 @@ export type Program = {
  * most `limit` bytes, optionally required or one of `values`; whether its UTF-8 body is required,
  * and its size; the field, if any, that must equal the outcome claimed with it; a one-line
  * `description` that tells a step what it is and how to claim it; and the programs that verify a
- * claim of it and build a workspace from it.
+ * claim of it, keeping files of at most `kept` bytes in all, and build a workspace from it.
  */
 export type Kind = {
   role: "subject" | "judgement";
@@ -26,7 +26,7 @@ export type Kind = {
   fields: Readonly<Record<string, { limit: number; required?: true; values?: readonly string[] }>>;
   body: { required: boolean; limit: number };
   outcome?: string;
-  verifier?: Program;
+  verifier?: Program & { kept: number };
   materialiser?: Program;
 };
 

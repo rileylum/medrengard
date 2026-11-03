@@ -1843,9 +1843,6 @@ async function readAtMost(path: string, limit: number): Promise<Buffer | undefin
 
 // The seconds a verifier or materialiser may run before it is stopped.
 
-// lazy: a constant, in bytes. Make it the kind's, with definitions by hash.
-const keptLimit = 64 * 1024 * 1024;
-
 // A kept file is named by a plain file name, so it can be written anywhere without a path.
 const plainName = /^(?!\.\.?$)[A-Za-z0-9._-]+$/;
 
@@ -1952,7 +1949,7 @@ async function verify(
   workspace: string,
   name: string,
   claim: Artifact,
-  verifier: Program,
+  verifier: NonNullable<Kind["verifier"]>,
   subject: Subject,
   store: Store,
   cancelled: () => boolean,
@@ -2008,23 +2005,30 @@ async function verify(
     return failed("it wrote no valid output.json.");
   }
 
-  const kept: Record<string, string> = {};
+  const read = new Map<string, Buffer>();
+  let room = verifier.kept;
 
   for (const file of verdict.keep) {
     if (!isText(file) || !plainName.test(file)) {
       return failed(`it kept a file without a plain name: ${JSON.stringify(file)}.`);
     }
 
-    const read = await readUnder(output, file, keptLimit);
+    const bytes = await readUnder(output, file, room);
 
-    if (read === undefined || read === "outside" || read.length > keptLimit) {
-      return failed(`it kept ${file}, which is missing or over its limit of ${keptLimit} bytes.`);
+    if (bytes === undefined || bytes === "outside") {
+      return failed(`it kept ${file}, which is missing.`);
     }
 
-    kept[file] = store.keep(read);
+    if (bytes.length > room) {
+      return failed(`the files it kept total more than its limit of ${verifier.kept} bytes.`);
+    }
+
+    room -= bytes.length;
+    read.set(file, bytes);
   }
 
-  return { kept };
+  // Into the store only once all of them are within the limit.
+  return { kept: Object.fromEntries([...read].map(([file, bytes]) => [file, store.keep(bytes)])) };
 }
 
 // Builds the workspace from an artifact, the subject or an input's, with its kind's materialiser.

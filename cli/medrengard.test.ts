@@ -64,7 +64,7 @@ async function factoryIn(t: TestContext) {
            body: { required: false, limit: 100 },
            verifier: {
              run: ["sh", "-c", \`echo '{"accepted":true,"keep":[]}' > "$MEDRENGARD_OUT/output.json"\`],
-             access: contract, limit: 5, memory: 4 * 1024 * 1024 * 1024, processes: 1024,
+             access: contract, limit: 5, memory: 4 * 1024 * 1024 * 1024, processes: 1024, kept: 1024,
            },
          },
        },

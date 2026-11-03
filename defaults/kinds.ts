@@ -46,7 +46,8 @@ export const builtIn = {
     // A SHA-256 SHA is 64 hex digits. The verifier refuses anything that is not HEAD.
     fields: { sha: { limit: 64, required: true } },
     body: { required: false, limit: mebibyte },
-    verifier: program("verifiers/commit.ts", "read"),
+    // The bundle holds the commit's whole history.
+    verifier: { ...program("verifiers/commit.ts", "read"), kept: 1024 * mebibyte },
     materialiser: program("materialisers/commit.ts", "write"),
   },
   verdict: {

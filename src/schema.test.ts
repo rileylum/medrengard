@@ -75,6 +75,7 @@ type Pinned = {
   rule: Expect<Same<keyof Rule, "limit" | "required" | "values">>;
   body: Expect<Same<keyof Kind["body"], "required" | "limit">>;
   program: Expect<Same<keyof Program, "run" | "access" | "limit" | "memory" | "processes">>;
+  verifier: Expect<Same<Exclude<keyof NonNullable<Kind["verifier"]>, keyof Program>, "kept">>;
 };
 
 test("the definition's schema is pinned at compile time", () => {

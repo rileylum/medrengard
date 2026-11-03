@@ -79,8 +79,10 @@ function limitProblem(limits: readonly (readonly [string, unknown])[]): string |
 const kindName = /^[A-Za-z][A-Za-z0-9-]*$/;
 
 // What a kind's program of a definition stored before the factory had defaults ran with; it
-// stated only its program, access and time limit.
+// stated only its program, access and time limit. A verifier then kept files of at most 64 MiB
+// each, now read as 64 MiB in all.
 const programBefore = { memory: 4 * 1024 * 1024 * 1024, processes: 1024 };
+const keptBefore = 64 * 1024 * 1024;
 
 function parseKinds(text: string): Kinds {
   const { kinds, defaults } = JSON.parse(text);
@@ -184,12 +186,17 @@ function parseKinds(text: string): Kinds {
         continue;
       }
 
-      const stated = defaults === undefined ? { ...programBefore, ...given } : given;
-      const { run, access, limit, memory, processes } = stated;
+      const verifying = program === "verifier";
+      const before = verifying ? { ...programBefore, kept: keptBefore } : programBefore;
+      const stated = defaults === undefined ? { ...before, ...given } : given;
+      const { run, access, limit, memory, processes, kept } = stated;
+      const bounds = ["limit", "memory", "processes", ...(verifying ? ["kept"] : [])];
 
-      if (!hasExactly(stated, ["run", "access", "limit", "memory", "processes"])) {
+      if (!hasExactly(stated, ["run", "access", ...bounds])) {
         throw refused(
-          `its ${program} must be a program, its access, and its limit, memory and processes`,
+          verifying
+            ? `its verifier must be a program, its access, and its limit, memory, processes and kept`
+            : `its ${program} must be a program, its access, and its limit, memory and processes`,
         );
       }
 
@@ -209,7 +216,9 @@ function parseKinds(text: string): Kinds {
         );
       }
 
-      for (const [bound, value] of Object.entries({ memory, processes })) {
+      for (const [bound, value] of Object.entries(
+        verifying ? { memory, processes, kept } : { memory, processes },
+      )) {
         if (!Number.isInteger(value) || value <= 0) {
           throw refused(`its ${program}'s ${bound} must be a positive integer`);
         }

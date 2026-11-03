@@ -12,7 +12,7 @@ import { builtIn } from "../defaults/kinds.ts";
 import { limits as defaultLimits } from "../defaults/limits.ts";
 import { createEngine } from "./engine.ts";
 import { isRecord, isText } from "./json.ts";
-import type { Kind, Kinds, Program } from "./kinds.ts";
+import type { Kind, Kinds } from "./kinds.ts";
 import { defineWorkflow, type Access, type Limits, type Query, type Workflow } from "./replay.ts";
 
 // The system's programs, read-only.
@@ -3128,25 +3128,41 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
       "Kind memo is invalid: its outcome must name a required field with values.",
     ],
     [
-      { document, memo: { ...memo, verifier: { run: ["true"], access, limit: 0, ...bounded } } },
+      {
+        document,
+        memo: { ...memo, verifier: { run: ["true"], access, limit: 0, ...bounded, kept: 1024 } },
+      },
       "Kind memo is invalid: its verifier's limit must be a positive number of seconds, at most 2147483.",
     ],
     [
       {
         document,
-        memo: { ...memo, verifier: { run: ["true"], access, limit: 1, ...bounded, memory: 0 } },
+        memo: {
+          ...memo,
+          verifier: { run: ["true"], access, limit: 1, ...bounded, memory: 0, kept: 1 },
+        },
       },
       "Kind memo is invalid: its verifier's memory must be a positive integer.",
     ],
     [
       {
         document,
-        memo: { ...memo, verifier: { run: ["true"], access, limit: 1, memory: 1024 } },
+        memo: { ...memo, verifier: { run: ["true"], access, limit: 1, memory: 1024, kept: 1 } },
       },
-      "Kind memo is invalid: its verifier must be a program, its access, and its limit, memory and processes.",
+      "Kind memo is invalid: its verifier must be a program, its access, and its limit, memory, processes and kept.",
     ],
     [
-      { document, memo: { ...memo, verifier: { run: [], access, limit: 1, ...bounded } } },
+      {
+        document,
+        memo: { ...memo, materialiser: { run: ["true"], access, limit: 1, ...bounded, kept: 1 } },
+      },
+      "Kind memo is invalid: its materialiser must be a program, its access, and its limit, memory and processes.",
+    ],
+    [
+      {
+        document,
+        memo: { ...memo, verifier: { run: [], access, limit: 1, ...bounded, kept: 1024 } },
+      },
       "Kind memo is invalid: its verifier's program must be a command and its arguments.",
     ],
     [
@@ -3182,7 +3198,12 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
       "Kind document is invalid: the owner's request is a document, so only its title can be required.",
     ],
     [
-      { document: { ...document, verifier: { run: ["true"], access, limit: 1, ...bounded } } },
+      {
+        document: {
+          ...document,
+          verifier: { run: ["true"], access, limit: 1, ...bounded, kept: 1024 },
+        },
+      },
       "Kind document is invalid: the owner's request is a document, and no attempt claims it, so it cannot have a verifier.",
     ],
   ];
@@ -3203,12 +3224,12 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
 /**
  * Starts an engine whose step `build` claims a memo with the body "Why.", and whose memo kind has
  * a verifier that runs `script`, its `$1` the test's directory, under the test's access for at
- * most 5 s with 4 GiB and 1024 processes, unless `given` changes them.
+ * most 5 s with 4 GiB and 1024 processes, keeping at most 1 MiB, unless `given` changes them.
  */
 function engineVerifying(
   t: TestContext,
   script: string,
-  given: Partial<Omit<Program, "run">> = {},
+  given: Partial<Omit<NonNullable<Kind["verifier"]>, "run">> = {},
 ) {
   return engineWith(
     t,
@@ -3234,6 +3255,7 @@ function engineVerifying(
           access,
           limit: 5,
           ...bounded,
+          kept: 1024 * 1024,
           ...given,
         },
       },
@@ -3272,7 +3294,7 @@ test("the record names the verifier that accepted each artifact, or that its kin
       }),
     () => ({
       ...builtIn,
-      memo: { ...memo, verifier: { run: verifier, access, limit: 5, ...bounded } },
+      memo: { ...memo, verifier: { run: verifier, access, limit: 5, ...bounded, kept: 1024 } },
       note: memo,
     }),
   );
@@ -3326,6 +3348,33 @@ test("a kind's verifier past its limit is stopped and escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     reason: "The memo verifier failed on step build's claim: it reached its limit of 1 s.",
+  });
+});
+
+test("a kind's verifier keeps files up to its kind's kept limit, however large one is", async (t) => {
+  // Past the 64 MiB the engine once kept of any one file.
+  const { engine } = await engineVerifying(
+    t,
+    `head -c $((65 * 1024 * 1024)) /dev/zero > "$MEDRENGARD_OUT/big"
+     echo '{"accepted":true,"keep":["big"]}' > "$MEDRENGARD_OUT/output.json"`,
+    { kept: 66 * 1024 * 1024 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+});
+
+test("a kind's verifier whose kept files total more than its kept limit fails", async (t) => {
+  const { engine } = await engineVerifying(
+    t,
+    `printf 123456 > "$MEDRENGARD_OUT/one"; printf 123456 > "$MEDRENGARD_OUT/two"
+     echo '{"accepted":true,"keep":["one","two"]}' > "$MEDRENGARD_OUT/output.json"`,
+    { kept: 10 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason:
+      "The memo verifier failed on step build's claim: the files it kept total more than its limit of 10 bytes.",
   });
 });
 
@@ -3860,6 +3909,7 @@ test("a kind's verifier and materialiser are started with exactly the pinned env
           access,
           limit: 5,
           ...bounded,
+          kept: 1024,
         },
         materialiser: {
           run: ["sh", "-c", recording("materialiser", "artifact.json"), "sh", directory],
