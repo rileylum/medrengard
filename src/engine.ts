@@ -223,7 +223,10 @@ export function createEngine({ log, workflows, kinds }: Options) {
     throw new Error(`Commission ${commission} has no transcript for attempt ${attempt}.`);
   }
 
-  function write(commission: string, events: Log, event: Log[1]): void {
+  function write(commission: string, events: Log, given: Log[1]): void {
+    // Every reason passes here, so one bound covers those quoting a step's own words.
+    const event = given.type === "escalated" ? { ...given, reason: bounded(given.reason) } : given;
+
     replay(definitionOf(events), [...events, event]);
     insert.run(commission, events.length, JSON.stringify({ ...event, at: Date.now() }));
   }
@@ -485,6 +488,14 @@ export function createEngine({ log, workflows, kinds }: Options) {
 
       if (!Object.hasOwn(on, outcome)) {
         throw new Error(`Step ${name} does not declare outcome "${outcome}".`);
+      }
+
+      const feedbackBytes = Buffer.byteLength(feedback ?? "");
+
+      if (feedbackBytes > feedbackLimit) {
+        throw new Error(
+          `The feedback is ${feedbackBytes} bytes, over its limit of ${feedbackLimit}.`,
+        );
       }
 
       const event = {
@@ -897,6 +908,27 @@ type Ending = Extract<CommissionEvent, { type: "attempt-completed" | "escalated"
 
 // The bytes one note may hold: a line for the owner to read, not a log.
 const noteLimit = 4096;
+
+// lazy: the bounds on an escalation's reason and the owner's feedback are constants. Make them
+// limits once a factory needs others.
+const reasonLimit = 4096;
+const feedbackLimit = 1024 * 1024;
+
+// The reason itself if it is within its limit; else as much of it as fits on a character
+// boundary, saying it was cut, so nothing is cut silently.
+function bounded(reason: string): string {
+  const bytes = Buffer.byteLength(reason);
+
+  if (bytes <= reasonLimit) {
+    return reason;
+  }
+
+  const marker = ` … (cut to ${reasonLimit} of ${bytes} bytes)`;
+  const room = new Uint8Array(reasonLimit - Buffer.byteLength(marker));
+  const { written } = new TextEncoder().encodeInto(reason, room);
+
+  return `${Buffer.from(room.subarray(0, written)).toString()}${marker}`;
+}
 
 // lazy: constants. A kind's programs always get these; give a kind's program limits of its own
 // once one needs more.

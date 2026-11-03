@@ -105,9 +105,9 @@ Six events are the whole log vocabulary. Each carries the time the engine wrote 
 - `commissioned`: the workflow, its definitions by hash and the request artifact.
 - `attempt-started`: the step and attempt, the subject and each input's artifacts by hash; spends one unit of the step's budget.
 - `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, its transcript and, when it wrote to stderr, its errors, and the next step or end.
-- `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, and the next step or end.
+- `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, at most 1 MiB, and the next step or end.
 - `noted`: the attempt and one note it wrote for the owner, recorded as it arrives. It changes no state.
-- `escalated`: the reason, and the attempt if one was involved, with its transcript and errors when its program ran. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it.
+- `escalated`: the reason, and the attempt if one was involved, with its transcript and errors when its program ran. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it. A reason is at most 4096 bytes; a longer one is cut on a character boundary and says so.
 
 Transitions:
 

@@ -224,7 +224,8 @@ A decision on an escalation is decided at the escalated step, so `from` keeps it
 `kind`, `{ from: ["design"], take: "latest" }` gives the owner's retry, not the plan, once design
 has escalated and been retried.
 
-A decision's fields are its `outcome` and the `subject` it names; the owner's feedback is its body.
+A decision's fields are its `outcome` and the `subject` it names; the owner's feedback is its body,
+at most 1 MiB.
 
 An input name is also a directory in the step's input, so it may hold only letters, digits, `-` and
 `_`, starting with a letter.
@@ -572,7 +573,7 @@ console.log(engine.commissions());
 | `advance(commission, { signal? })`                           | the state it stopped at; once `signal` aborts, it starts no further attempt                                                                                                                    |
 | `state(commission)`                                          | the state, replayed from the log                                                                                                                                                               |
 | `commissions()`                                              | `{ commission, state }[]`, oldest first                                                                                                                                                        |
-| `decide(commission, { subject, since, outcome, feedback? })` | the new state; refuses a stale subject or wait, or an undeclared outcome                                                                                                                       |
+| `decide(commission, { subject, since, outcome, feedback? })` | the new state; refuses a stale subject or wait, an undeclared outcome, or feedback over 1 MiB                                                                                                  |
 | `cancel(commission)`                                         | nothing; the engine running the attempt stops it and escalates, or, with none, it escalates at once                                                                                            |
 | `record(commission)`                                         | `{ state, request, entries }`: every attempt, escalation and decision, oldest first; each claimed artifact with its `verifier`, the command that accepted it, or `null` when its kind has none |
 | `errors(commission, attempt)`                                | what the attempt wrote to stderr, as a `Buffer`; empty for none                                                                                                                                |
@@ -583,7 +584,8 @@ A state has a `status`:
 
 - `ready` or `attempting`, at an agent or command `step`, about a `subject`;
 - `awaiting`, at an approval `step`, about a `subject`;
-- `escalated`, at a `step`, about a `subject`, with a `reason`;
+- `escalated`, at a `step`, about a `subject`, with a `reason` of at most 4096 bytes, longer ones
+  cut and marked `… (cut to 4096 of N bytes)`;
 - `finished`, `by` `"end"` or `"abandoned"`.
 
 Every state but `finished` also carries `decision`: the hash of the owner's latest decision about

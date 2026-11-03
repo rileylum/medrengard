@@ -1792,6 +1792,25 @@ test("a step that claims an undeclared outcome escalates its commission", async 
   });
 });
 
+test("an escalation reason over 4096 bytes is cut on a character boundary, saying so", async (t) => {
+  // Each "é" is two bytes, so a cut at an odd byte would split one.
+  const outcome = "é".repeat(5000);
+  const full = `Step build claimed an outcome it does not declare: "${outcome}".`;
+  const marker = ` … (cut to 4096 of ${Buffer.byteLength(full)} bytes)`;
+
+  const { engine } = await engineRunning(
+    t,
+    `echo '{"outcome":"${outcome}"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const state = await engine.advance("first");
+
+  assert.ok(state.status === "escalated");
+  assert.ok(state.reason.endsWith(marker), state.reason.slice(-80));
+  assert.ok(full.startsWith(state.reason.slice(0, -marker.length)));
+  assert.ok(Buffer.byteLength(state.reason) <= 4096 && Buffer.byteLength(state.reason) > 4092);
+});
+
 test("a step whose program cannot start escalates its commission", async (t) => {
   const { directory, options } = await engineRunning(t, "true");
   const { build } = options.workflows;
@@ -2412,6 +2431,22 @@ test("a decision with an undeclared outcome is refused and records nothing", asy
     {
       message: 'Step review does not declare outcome "ship".',
     },
+  );
+  assert.partialDeepStrictEqual(engine.state("first"), { status: "awaiting" });
+});
+
+test("a decision whose feedback is over 1 MiB is refused and records nothing", async (t) => {
+  const { engine } = await engineAwaiting(t);
+
+  assert.throws(
+    () =>
+      engine.decide("first", {
+        subject: subjectOf(engine),
+        since: sinceOf(engine),
+        outcome: "approve",
+        feedback: "a".repeat(1024 * 1024 + 1),
+      }),
+    { message: "The feedback is 1048577 bytes, over its limit of 1048576." },
   );
   assert.partialDeepStrictEqual(engine.state("first"), { status: "awaiting" });
 });
