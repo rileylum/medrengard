@@ -173,7 +173,7 @@ The fields of a command or agent step:
     ends; over it, the program is stopped and the commission escalates. It can overshoot by a
     second of writes.
 
-A kind's verifier and materialiser get 4 GiB and 1024 processes.
+A kind's verifier and materialiser have bounds of their own; see [Kinds](#kinds).
 
 The engine refuses a workflow it could not run as written when it is commissioned, not halfway
 through. A commission runs on the definition it started with, the factory's defaults included:
@@ -332,9 +332,10 @@ export const kinds = { ...builtIn, "pull-request": pullRequest };
 - `body`: whether a UTF-8 body is required, and its `limit` in bytes.
 - `outcome`, optional: a required field with `values` that must equal the claimed outcome, as a
   verdict's `verdict` does.
-- `verifier` and `materialiser`, optional: programs, each a `run`, an `access` and a `limit` in
-  seconds. Each runs in its own sandbox, like a step; leaving the sandbox is an access you write,
-  such as `full`.
+- `verifier` and `materialiser`, optional: programs, each a `run`, an `access`, a `limit` in
+  seconds, `memory` in bytes and `processes`, bounded like a step's. Each runs in its own sandbox,
+  like a step; leaving the sandbox is an access you write, such as `full`. The built-ins' have
+  60 s, 4 GiB and 1024 processes.
 
 The kinds must include `document`, the kind of the owner's request, and cannot include `decision`,
 which only the owner makes. Since the engine makes the request a document, with a title and a

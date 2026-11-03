@@ -24,6 +24,8 @@ const program = (path: string, workspace: Access["workspace"]) => ({
   run: [process.execPath, join(repository, path)] as const,
   access: { ...programs, workspace },
   limit: 60,
+  memory: 4 * 1024 * 1024 * 1024,
+  processes: 1024,
 });
 
 const mebibyte = 1024 * 1024;

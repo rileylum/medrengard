@@ -78,8 +78,12 @@ function limitProblem(limits: readonly (readonly [string, unknown])[]): string |
 // A kind's name, which a query, a claim and a message name it by.
 const kindName = /^[A-Za-z][A-Za-z0-9-]*$/;
 
+// What a kind's program of a definition stored before the factory had defaults ran with; it
+// stated only its program, access and time limit.
+const programBefore = { memory: 4 * 1024 * 1024 * 1024, processes: 1024 };
+
 function parseKinds(text: string): Kinds {
-  const { kinds } = JSON.parse(text);
+  const { kinds, defaults } = JSON.parse(text);
   const invalid = (problem: string) => new Error(`The kinds are invalid: ${problem}.`);
 
   if (!isRecord(kinds)) {
@@ -180,10 +184,13 @@ function parseKinds(text: string): Kinds {
         continue;
       }
 
-      const { run, access, limit } = given;
+      const stated = defaults === undefined ? { ...programBefore, ...given } : given;
+      const { run, access, limit, memory, processes } = stated;
 
-      if (!hasExactly(given, ["run", "access", "limit"])) {
-        throw refused(`its ${program} must be a program, its access and a limit`);
+      if (!hasExactly(stated, ["run", "access", "limit", "memory", "processes"])) {
+        throw refused(
+          `its ${program} must be a program, its access, and its limit, memory and processes`,
+        );
       }
 
       if (!Array.isArray(run) || run.length === 0 || !run.every(isText)) {
@@ -201,6 +208,14 @@ function parseKinds(text: string): Kinds {
           `its ${program}'s limit must be a positive number of seconds, at most ${longestLimit}`,
         );
       }
+
+      for (const [bound, value] of Object.entries({ memory, processes })) {
+        if (!Number.isInteger(value) || value <= 0) {
+          throw refused(`its ${program}'s ${bound} must be a positive integer`);
+        }
+      }
+
+      Object.assign(given, stated);
     }
   }
 

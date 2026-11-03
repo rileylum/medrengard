@@ -2,9 +2,16 @@ import type { Access } from "./replay.ts";
 
 /**
  * A program a kind runs, such as its verifier: `run` in its own sandbox under `access`, the
- * workspace in the mode `access` gives, stopped after `limit` seconds.
+ * workspace in the mode `access` gives, stopped after `limit` seconds or once its processes use
+ * more than `memory` bytes, and unable to run more than `processes` processes and threads at once.
  */
-export type Program = { run: readonly [string, ...string[]]; access: Access; limit: number };
+export type Program = {
+  run: readonly [string, ...string[]];
+  access: Access;
+  limit: number;
+  memory: number;
+  processes: number;
+};
 
 /**
  * An artifact kind, as data: whether it is a subject or a judgement; its fields, each text of at

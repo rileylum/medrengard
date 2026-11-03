@@ -31,7 +31,7 @@ import {
 } from "./replay.ts";
 import { parseDefinition } from "./definition.ts";
 import { hasExactly, isRecord, isText } from "./json.ts";
-import { confine, overMemory, type Bounds } from "./sandbox.ts";
+import { confine, overMemory } from "./sandbox.ts";
 import type { Kind, Kinds, Program } from "./kinds.ts";
 import { createStore, type Artifact } from "./store.ts";
 
@@ -1011,10 +1011,6 @@ function bounded(reason: string): string {
   return `${Buffer.from(room.subarray(0, written)).toString()}${marker}`;
 }
 
-// lazy: constants. A kind's programs always get these; give a kind's program limits of its own
-// once one needs more.
-const defaultBounds: Bounds = { memory: 4 * 1024 * 1024 * 1024, processes: 1024 };
-
 // The bytes the files under `directory` take on disk. What vanishes as it is walked counts for
 // nothing; what cannot be read, too, so a step could hide bytes under a directory it locks.
 async function bytesUnder(directory: string): Promise<number> {
@@ -1867,7 +1863,7 @@ async function runProgram(
     program.access,
     { workspace, input, output },
     program.run,
-    defaultBounds,
+    { memory: program.memory, processes: program.processes },
   );
 
   const child = spawn(command, args, {
@@ -1922,7 +1918,7 @@ async function runProgram(
   }
 
   if (closed[0] !== 0 && overMemory(unit)) {
-    return `it reached its memory limit of ${defaultBounds.memory} bytes.${stderr}`;
+    return `it reached its memory limit of ${program.memory} bytes.${stderr}`;
   }
 
   const [code, signal] = closed;
