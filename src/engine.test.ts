@@ -273,6 +273,17 @@ function subjectOf(engine: ReturnType<typeof createEngine>): string {
   return state.subject;
 }
 
+/** The event the commission has waited since, at an approval step or an escalation. */
+function sinceOf(engine: ReturnType<typeof createEngine>): number {
+  const state = engine.state("first");
+
+  if (state.status !== "awaiting" && state.status !== "escalated") {
+    throw new Error(`A ${state.status} commission is not waiting.`);
+  }
+
+  return state.since;
+}
+
 /** Waits until the step has written to its `started` file. */
 async function untilStarted(directory: string): Promise<string> {
   for (;;) {
@@ -705,7 +716,12 @@ test("a step that declares the decision receives the owner's feedback", async (t
 
   const subject = subjectOf(engine);
 
-  engine.decide("first", { subject, outcome: "retry", feedback: "Use fewer words." });
+  engine.decide("first", {
+    subject,
+    since: sinceOf(engine),
+    outcome: "retry",
+    feedback: "Use fewer words.",
+  });
   await engine.advance("first");
 
   const received = join(directory, "received");
@@ -790,7 +806,12 @@ test("a decision about an earlier subject is history, not about the current one"
     }),
   );
 
-  engine.decide("first", { subject: subjectOf(engine), outcome: "approve", feedback: "Plan it." });
+  engine.decide("first", {
+    subject: subjectOf(engine),
+    since: sinceOf(engine),
+    outcome: "approve",
+    feedback: "Plan it.",
+  });
   await engine.advance("first");
 
   const input = JSON.parse(await readFile(join(directory, "input.json"), "utf8"));
@@ -908,10 +929,10 @@ test("a step that queries all of a step's artifacts receives each, oldest first"
   await mkdir(join(directory, "received"));
   await engine.advance("first");
   const first = subjectOf(engine);
-  engine.decide("first", { subject: first, outcome: "changes" });
+  engine.decide("first", { subject: first, since: sinceOf(engine), outcome: "changes" });
   await engine.advance("first");
   const second = subjectOf(engine);
-  engine.decide("first", { subject: second, outcome: "approve" });
+  engine.decide("first", { subject: second, since: sinceOf(engine), outcome: "approve" });
   await engine.advance("first");
 
   const received = join(directory, "received");
@@ -1887,7 +1908,10 @@ test("a commission that was never started is refused by name", async (t) => {
 
   assert.throws(() => engine.state("missing"), refused);
   await assert.rejects(engine.advance("missing"), refused);
-  assert.throws(() => engine.decide("missing", { subject: "a", outcome: "retry" }), refused);
+  assert.throws(
+    () => engine.decide("missing", { subject: "a", since: 0, outcome: "retry" }),
+    refused,
+  );
   assert.throws(() => engine.cancel("missing"), refused);
   assert.throws(() => engine.transcript("missing", 1), refused);
 });
@@ -1904,7 +1928,11 @@ test("an approval decision leaves the commission ready at the next step", async 
   const { engine } = await engineAwaiting(t);
 
   assert.partialDeepStrictEqual(
-    engine.decide("first", { subject: subjectOf(engine), outcome: "approve" }),
+    engine.decide("first", {
+      subject: subjectOf(engine),
+      since: sinceOf(engine),
+      outcome: "approve",
+    }),
     { status: "ready", step: { name: "build" } },
   );
 });
@@ -1912,18 +1940,88 @@ test("an approval decision leaves the commission ready at the next step", async 
 test("a decision about a stale subject is refused and records nothing", async (t) => {
   const { engine } = await engineAwaiting(t);
 
-  assert.throws(() => engine.decide("first", { subject: "stale", outcome: "approve" }), {
-    message: `Commission first is about ${subjectOf(engine)}, not stale.`,
-  });
+  assert.throws(
+    () => engine.decide("first", { subject: "stale", since: sinceOf(engine), outcome: "approve" }),
+    {
+      message: `Commission first is about ${subjectOf(engine)}, not stale.`,
+    },
+  );
   assert.partialDeepStrictEqual(engine.state("first"), { status: "awaiting" });
+});
+
+test("a decision made while the commission waited at one gate is refused at a later gate on the same subject", async (t) => {
+  // As the change workflow's deviation and owner gates: both declare changes, and the check
+  // between them claims no subject.
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "deviation",
+      steps: {
+        deviation: { kind: "approval", on: { proceed: "end", changes: "check" } },
+        check: {
+          kind: "command",
+          claims,
+          workspace: "empty",
+          inputs: {},
+          run: ["sh", "-c", `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`],
+          on: { done: "owner" },
+          access,
+          budget: 1,
+          limits: { idle: 1, attempt: 5, transcript: 65536, input: 65536 },
+        },
+        owner: { kind: "approval", on: { accept: "end", changes: "check" } },
+      },
+    }),
+  );
+
+  // Commissioned at event 0, awaiting at deviation since then.
+  const decision = { subject: subjectOf(engine), since: 0, outcome: "changes" };
+
+  engine.decide("first", decision);
+
+  // Decided (1), attempt started (2), attempt completed (3): awaiting at owner since event 3.
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "awaiting",
+    step: { name: "owner" },
+    subject: decision.subject,
+    since: 3,
+  });
+  assert.throws(() => engine.decide("first", decision), {
+    message: "Commission first has waited since event 3, not 0.",
+  });
+  assert.partialDeepStrictEqual(engine.state("first"), { status: "awaiting", since: 3 });
+});
+
+test("a retry made at one escalation is refused at a later escalation of the same step", async (t) => {
+  const { engine } = await engineRunning(t, "exit 1");
+
+  // Commissioned (0), attempt started (1), escalated (2).
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "escalated", since: 2 });
+
+  const retry = { subject: subjectOf(engine), since: 2, outcome: "retry" };
+
+  engine.decide("first", retry);
+
+  // Decided (3), attempt started (4), escalated (5).
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "escalated", since: 5 });
+  assert.throws(() => engine.decide("first", retry), {
+    message: "Commission first has waited since event 5, not 2.",
+  });
 });
 
 test("a decision with an undeclared outcome is refused and records nothing", async (t) => {
   const { engine } = await engineAwaiting(t);
 
-  assert.throws(() => engine.decide("first", { subject: subjectOf(engine), outcome: "ship" }), {
-    message: 'Step review does not declare outcome "ship".',
-  });
+  assert.throws(
+    () =>
+      engine.decide("first", {
+        subject: subjectOf(engine),
+        since: sinceOf(engine),
+        outcome: "ship",
+      }),
+    {
+      message: 'Step review does not declare outcome "ship".',
+    },
+  );
   assert.partialDeepStrictEqual(engine.state("first"), { status: "awaiting" });
 });
 
@@ -1931,7 +2029,7 @@ test("a retry renews the budget of the escalated step", async (t) => {
   const { engine, directory } = await engineRunning(t, claimingAgain);
 
   await engine.advance("first");
-  engine.decide("first", { subject: subjectOf(engine), outcome: "retry" });
+  engine.decide("first", { subject: subjectOf(engine), since: sinceOf(engine), outcome: "retry" });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
@@ -1946,7 +2044,11 @@ test("an abandon decision finishes the escalated commission as abandoned", async
   await engine.advance("first");
 
   assert.partialDeepStrictEqual(
-    engine.decide("first", { subject: subjectOf(engine), outcome: "abandon" }),
+    engine.decide("first", {
+      subject: subjectOf(engine),
+      since: sinceOf(engine),
+      outcome: "abandon",
+    }),
     { status: "finished", by: "abandoned" },
   );
 });
@@ -2235,7 +2337,11 @@ test("an engine waits for another process's write to the log instead of failing"
   await once(holder.stdout, "data");
 
   assert.partialDeepStrictEqual(
-    engine.decide("first", { subject: subjectOf(engine), outcome: "approve" }),
+    engine.decide("first", {
+      subject: subjectOf(engine),
+      since: sinceOf(engine),
+      outcome: "approve",
+    }),
     { status: "ready" },
   );
 
@@ -2299,7 +2405,12 @@ test("a commission's record lists its attempts, claims, escalations and decision
 
   const subject = subjectOf(engine);
 
-  engine.decide("first", { subject, outcome: "abandon", feedback: "Enough." });
+  engine.decide("first", {
+    subject,
+    since: sinceOf(engine),
+    outcome: "abandon",
+    feedback: "Enough.",
+  });
 
   const record = engine.record("first");
 
@@ -2403,7 +2514,11 @@ test("every event carries the time the engine wrote it, and the record each atte
   );
 
   await engine.advance("first");
-  engine.decide("first", { subject: subjectOf(engine), outcome: "approve" });
+  engine.decide("first", {
+    subject: subjectOf(engine),
+    since: sinceOf(engine),
+    outcome: "approve",
+  });
 
   const after = Date.now();
   const log = new DatabaseSync(options.log);
@@ -2486,7 +2601,11 @@ test("the log's events are exactly the six types, each with its pinned fields", 
   );
 
   await engine.advance("first");
-  engine.decide("first", { subject: subjectOf(engine), outcome: "approve" });
+  engine.decide("first", {
+    subject: subjectOf(engine),
+    since: sinceOf(engine),
+    outcome: "approve",
+  });
   await engine.advance("first");
 
   const log = new DatabaseSync(options.log);

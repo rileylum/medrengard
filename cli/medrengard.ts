@@ -25,7 +25,8 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
   watch      <commission>
   commissions
   run        [--parallel <n>]
-  decide     <commission> <outcome> --subject <hash> [--feedback <text> | --feedback-file <path>]
+  decide     <commission> <outcome> --subject <hash> --since <event>
+             [--feedback <text> | --feedback-file <path>]
   cancel     <commission>
   transcript <commission> <attempt>
   errors     <commission> <attempt>
@@ -44,7 +45,7 @@ const commands = new Map([
   ["errors", { arguments: 2, options: [] }],
   ["commissions", { arguments: 0, options: [] }],
   ["run", { arguments: 0, options: ["parallel"] }],
-  ["decide", { arguments: 2, options: ["subject", "feedback", "feedback-file"] }],
+  ["decide", { arguments: 2, options: ["subject", "since", "feedback", "feedback-file"] }],
   ["cancel", { arguments: 1, options: [] }],
   ["transcript", { arguments: 2, options: [] }],
   ["artifact", { arguments: 1, options: [] }],
@@ -64,6 +65,7 @@ try {
       body: text,
       "body-file": text,
       subject: text,
+      since: text,
       feedback: text,
       "feedback-file": text,
       parallel: text,
@@ -98,7 +100,7 @@ if (
   both(values.feedback, values["feedback-file"]) ||
   (command === "commission" &&
     (values.title === undefined || (values.body ?? values["body-file"]) === undefined)) ||
-  (command === "decide" && values.subject === undefined) ||
+  (command === "decide" && (values.subject === undefined || !/^\d+$/.test(values.since ?? ""))) ||
   ((command === "transcript" || command === "errors") && !/^[1-9]\d*$/.test(args[1])) ||
   !/^[1-9]\d*$/.test(values.parallel ?? "1")
 ) {
@@ -148,7 +150,14 @@ try {
       printState(engine.state(first));
       break;
     case "decide":
-      printState(engine.decide(first, { subject: values.subject!, outcome: second, feedback }));
+      printState(
+        engine.decide(first, {
+          subject: values.subject!,
+          since: Number(values.since),
+          outcome: second,
+          feedback,
+        }),
+      );
       break;
     case "cancel":
       engine.cancel(first);
@@ -236,7 +245,7 @@ function describe(state: CommissionState): string {
   }
 
   return [
-    `${state.status} at ${state.step.name}, about ${state.subject}`,
+    `${state.status} at ${state.step.name}${waiting(state)}, about ${state.subject}`,
     ...(state.status === "escalated" ? [`reason: ${state.reason}`] : []),
     ...(state.decision === undefined ? [] : [`decision: ${state.decision}`]),
   ].join("\n");
@@ -414,6 +423,13 @@ function linesOf(index: number, entry: Entry): [string, string][] {
 }
 
 // Where the commission is, in a few words.
+// The event a waiting commission has waited since, which a decision names.
+function waiting(state: CommissionState): string {
+  return state.status === "awaiting" || state.status === "escalated"
+    ? ` since event ${state.since}`
+    : "";
+}
+
 function where(state: CommissionState): string {
   return state.status === "finished"
     ? `finished by ${state.by}`
@@ -472,7 +488,7 @@ function printRecord(commission: string, record: CommissionRecord): void {
   );
 
   const lines = [
-    `${commission}: ${where(state)}`,
+    `${commission}: ${where(state)}${waiting(state)}`,
     ...(state.status === "escalated" ? [`reason: ${state.reason}`] : []),
     line("request", request.hash, request.artifact),
     ...timeline,

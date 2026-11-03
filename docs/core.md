@@ -115,8 +115,8 @@ Transitions:
 - Ready, with budget left, inputs within the input limit and the step not yet attempted on the same subject and inputs, an attempt starts.
 - Ready, with the budget spent, inputs over the input limit or the step already attempted on the same subject and inputs, the commission escalates.
 - Attempting, a valid claim completes the attempt and follows the outcome's edge. An invalid claim, a non-zero exit, a reached limit, the owner cancelling or an interruption found on replay escalates.
-- Awaiting, a decision naming the current subject and a declared outcome follows its edge. A stale or undeclared decision is refused and records nothing.
-- Escalated, a decision to retry makes the step ready again; a decision to abandon finishes the commission.
+- Awaiting, a decision naming the current subject, the event the commission has waited since and a declared outcome follows its edge. A stale or undeclared decision is refused and records nothing: a decision made while the commission waited at an earlier approval step or escalation is stale, even about the same subject.
+- Escalated, a decision to retry makes the step ready again; a decision to abandon finishes the commission. It too names the current subject and the event the commission has waited since.
 - Finished, nothing is accepted.
 
 A step's budget counts its attempts since the commission's latest decision, so only the owner renews a budget. Every agent and command step has a budget above zero, which bounds every unattended loop. A step is never attempted twice on the same subject and inputs without a decision between. An edge leads to a step or to the end; there are no handoffs between workflows.
@@ -177,7 +177,7 @@ _Execution: the core. The commission is the aggregate root._
 - Subject: the artifact the commission is currently about: its latest subject artifact, such as a document or commit.
 - Judgement: an artifact that names a subject, such as a verdict or a decision.
 - Evidence: the judgements about the current subject. Judgements about earlier subjects are history.
-- Decision: the owner's outcome at an approval step or on an escalation, naming the current subject.
+- Decision: the owner's outcome at an approval step or on an escalation, naming the current subject and the event the commission has waited since.
 - Escalation: the commission paused for the owner, with a reason.
 - Cancel: the owner stopping an attempt in flight; the commission escalates, and nothing is decided.
 

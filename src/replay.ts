@@ -163,7 +163,13 @@ export type CommissionState<N extends string = string> =
       subject: string;
       decision?: string;
     }
-  | { status: "awaiting"; step: { name: N; kind: "approval" }; subject: string; decision?: string }
+  | {
+      status: "awaiting";
+      step: { name: N; kind: "approval" };
+      subject: string;
+      decision?: string;
+      since: number;
+    }
   | {
       status: "attempting";
       step: { name: N; kind: "agent" | "command" };
@@ -176,6 +182,7 @@ export type CommissionState<N extends string = string> =
       subject: string;
       decision?: string;
       reason: string;
+      since: number;
     }
   | { status: "finished"; by: "end" | "abandoned" };
 
@@ -203,25 +210,27 @@ export function replay<N extends string>(
   events: readonly [Commissioned, ...Exclude<CommissionEvent<NoInfer<N>>, Commissioned>[]],
 ): CommissionState<N> {
   const [{ request }, ...rest] = events;
-  let state = arrive(workflow, workflow.start, request, undefined);
+  let state = arrive(workflow, workflow.start, request, undefined, 0);
 
-  for (const event of rest) {
-    state = apply(workflow, kinds, state, event);
+  for (const [index, event] of rest.entries()) {
+    state = apply(workflow, kinds, state, event, index + 1);
   }
 
   return state;
 }
 
+// position is the event's in the commission's log: an approval step waits since it.
 function arrive<N extends string>(
   workflow: Workflow<N>,
   name: N,
   subject: string,
   decision: string | undefined,
+  position: number,
 ): CommissionState<N> {
   const { kind } = workflow.steps[name];
 
   if (kind === "approval") {
-    return { status: "awaiting", step: { name, kind }, subject, decision };
+    return { status: "awaiting", step: { name, kind }, subject, decision, since: position };
   }
 
   return { status: "ready", step: { name, kind }, subject, decision };
@@ -232,6 +241,7 @@ function apply<N extends string>(
   kinds: Kinds,
   state: CommissionState<N>,
   event: Exclude<CommissionEvent<N>, Commissioned>,
+  position: number,
 ): CommissionState<N> {
   // The engine replays each event before writing it, so these rules also keep the log valid.
   switch (event.type) {
@@ -255,11 +265,11 @@ function apply<N extends string>(
         const subject = event.artifacts.findLast(({ kind }) => kinds[kind]?.role === "subject");
 
         if (subject !== undefined) {
-          return arrive(workflow, event.next, subject.hash, undefined);
+          return arrive(workflow, event.next, subject.hash, undefined, position);
         }
       }
 
-      return arrive(workflow, event.next, state.subject, state.decision);
+      return arrive(workflow, event.next, state.subject, state.decision, position);
     // A note says what an attempt in flight is doing; it changes nothing.
     case "noted":
       if (state.status !== "attempting") {
@@ -272,7 +282,7 @@ function apply<N extends string>(
         throw new Error(`A commission cannot escalate while it is ${state.status}.`);
       }
 
-      return { ...state, status: "escalated", reason: event.reason };
+      return { ...state, status: "escalated", reason: event.reason, since: position };
     case "decided":
       if (state.status !== "awaiting" && state.status !== "escalated") {
         throw new Error(`A decision cannot arrive while the commission is ${state.status}.`);
@@ -282,7 +292,7 @@ function apply<N extends string>(
         return { status: "finished", by: state.status === "escalated" ? "abandoned" : "end" };
       }
 
-      return arrive(workflow, event.next, state.subject, event.decision);
+      return arrive(workflow, event.next, state.subject, event.decision, position);
     default:
       return assertNever(event);
   }

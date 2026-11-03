@@ -377,13 +377,18 @@ export function createEngine({ log, workflows, kinds }: Options) {
     },
 
     /**
-     * Records the owner's decision about the commission's current subject, with any feedback. At
-     * an approval step the outcome must be one the step declares; on an escalation it is retry or
-     * abandon.
+     * Records the owner's decision about the commission's current subject, made while it waited
+     * since the event at `since`, with any feedback. At an approval step the outcome must be one
+     * the step declares; on an escalation it is retry or abandon.
      */
     decide(
       commission: string,
-      { subject, outcome, feedback }: { subject: string; outcome: string; feedback?: string },
+      {
+        subject,
+        since,
+        outcome,
+        feedback,
+      }: { subject: string; since: number; outcome: string; feedback?: string },
     ) {
       const events = read(commission);
       const definition = definitionOf(events);
@@ -396,6 +401,14 @@ export function createEngine({ log, workflows, kinds }: Options) {
 
       if (subject !== state.subject) {
         throw new Error(`Commission ${commission} is about ${state.subject}, not ${subject}.`);
+      }
+
+      // The same subject can wait again, at a later gate or escalation, with other evidence: a
+      // decision made at an earlier wait is stale.
+      if (since !== state.since) {
+        throw new Error(
+          `Commission ${commission} has waited since event ${state.since}, not ${since}.`,
+        );
       }
 
       const name = state.step.name;

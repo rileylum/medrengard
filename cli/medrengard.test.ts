@@ -157,10 +157,14 @@ test("the CLI takes a commission through the engine's calls, printing their resu
     fields: { title: "Greet" },
     body: "Say hello.",
   });
-  assert.deepEqual(json(["decide", "first", "approve", "--subject", awaiting.subject]), {
-    status: "finished",
-    by: "end",
-  });
+  assert.equal(awaiting.since, 2);
+  assert.deepEqual(
+    json(["decide", "first", "approve", "--subject", awaiting.subject, "--since", "2"]),
+    {
+      status: "finished",
+      by: "end",
+    },
+  );
   assert.ok(existsSync(join(directory, "state", "log.sqlite")));
 });
 
@@ -199,7 +203,7 @@ test("the CLI exits 1 with the engine's message as JSON when the engine refuses 
   run(["advance", "first"], factory);
 
   const { status, stdout, stderr } = run(
-    ["decide", "first", "approve", "--subject", "stale", "--json"],
+    ["decide", "first", "approve", "--subject", "stale", "--since", "1", "--json"],
     factory,
   );
 
@@ -468,7 +472,7 @@ test("the CLI shows a commission's record for people, and as the engine's record
   const { status, stdout } = run(["show", "first"], factory);
 
   assert.equal(status, 0);
-  assert.match(stdout, /^first: awaiting at review\n/);
+  assert.match(stdout, /^first: awaiting at review since event 2\n/);
   assert.match(stdout, /^request +[0-9a-f]{8} +Greet$/m);
   assert.match(stdout, /^1 build +done \(\d+\.\d s\)$/m);
 

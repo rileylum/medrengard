@@ -104,18 +104,20 @@ alias medrengard="node medrengard/cli/medrengard.ts"
 
 medrengard commission greet first --title Greet --body "Say hello."
 medrengard advance first
-# awaiting at approve, about 51da8742…
+# awaiting at approve since event 4, about 51da8742…
 medrengard artifact 51da8742…
 # document
 # title: Reply
 #
 # Reply to: Say hello.
-medrengard decide first accept --subject 51da8742…
+medrengard decide first accept --subject 51da8742… --since 4
 # finished by end
 ```
 
 `advance` runs ready steps until the commission awaits the owner, escalates or finishes. `decide`
-must name the current subject, so a decision can never approve something the owner has not seen.
+must name the current subject and the event the commission has waited since, so a decision can
+never approve something the owner has not seen: not another subject, and not the same subject at a
+later gate or escalation, with evidence the owner has not read.
 
 ## Workflows
 
@@ -516,6 +518,8 @@ if (state.status === "awaiting" || state.status === "escalated") {
   // At an approval step, an outcome it declares; on an escalation, retry or abandon.
   state = engine.decide("first", {
     subject: state.subject,
+    // The event it has waited since: a decision from an earlier wait is refused.
+    since: state.since,
     outcome: "accept",
     feedback: "Shorter.",
   });
@@ -532,18 +536,18 @@ console.log(engine.record("first").entries);
 console.log(engine.commissions());
 ```
 
-| Method                                                | Returns                                                                             |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `commission(workflow, commission, { title, body })`   | nothing; refuses an unknown workflow or an invalid one                              |
-| `advance(commission, { signal? })`                    | the state it stopped at; once `signal` aborts, it starts no further attempt         |
-| `state(commission)`                                   | the state, replayed from the log                                                    |
-| `commissions()`                                       | `{ commission, state }[]`, oldest first                                             |
-| `decide(commission, { subject, outcome, feedback? })` | the new state; refuses a stale subject or undeclared outcome                        |
-| `cancel(commission)`                                  | nothing; the engine running the attempt stops it and escalates                      |
-| `record(commission)`                                  | `{ state, request, entries }`: every attempt, escalation and decision, oldest first |
-| `errors(commission, attempt)`                         | what the attempt wrote to stderr, as a `Buffer`; empty for none                     |
-| `transcript(commission, attempt)`                     | the attempt's stdout and stderr as a `Buffer`                                       |
-| `artifact(hash)`                                      | `{ kind, fields, body? }`; refuses a hash the log does not name as an artifact      |
+| Method                                                       | Returns                                                                             |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `commission(workflow, commission, { title, body })`          | nothing; refuses an unknown workflow or an invalid one                              |
+| `advance(commission, { signal? })`                           | the state it stopped at; once `signal` aborts, it starts no further attempt         |
+| `state(commission)`                                          | the state, replayed from the log                                                    |
+| `commissions()`                                              | `{ commission, state }[]`, oldest first                                             |
+| `decide(commission, { subject, since, outcome, feedback? })` | the new state; refuses a stale subject or wait, or an undeclared outcome            |
+| `cancel(commission)`                                         | nothing; the engine running the attempt stops it and escalates                      |
+| `record(commission)`                                         | `{ state, request, entries }`: every attempt, escalation and decision, oldest first |
+| `errors(commission, attempt)`                                | what the attempt wrote to stderr, as a `Buffer`; empty for none                     |
+| `transcript(commission, attempt)`                            | the attempt's stdout and stderr as a `Buffer`                                       |
+| `artifact(hash)`                                             | `{ kind, fields, body? }`; refuses a hash the log does not name as an artifact      |
 
 A state has a `status`:
 
@@ -567,7 +571,8 @@ medrengard <command> [--json] [--factory <path>]
   watch      <commission>
   commissions
   run        [--parallel <n>]
-  decide     <commission> <outcome> --subject <hash> [--feedback <text> | --feedback-file <path>]
+  decide     <commission> <outcome> --subject <hash> --since <event>
+             [--feedback <text> | --feedback-file <path>]
   cancel     <commission>
   transcript <commission> <attempt>
   errors     <commission> <attempt>
