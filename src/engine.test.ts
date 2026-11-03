@@ -2812,6 +2812,22 @@ test("a kind's verifier past its limit is stopped and escalates", async (t) => {
   });
 });
 
+test("a kind's verifier ended by a signal escalates, naming the signal", async (t) => {
+  const { engine, directory } = await engineVerifying(t, `echo started > "$1/verifying"; sleep 5`);
+  const advancing = engine.advance("first");
+
+  await untilWritten(directory, "verifying");
+
+  // From outside, as the owner or the system would: every process naming the test's directory,
+  // the verifier's sandbox included.
+  await once(spawn("pkill", ["-KILL", "-f", directory]), "close");
+
+  assert.partialDeepStrictEqual(await advancing, {
+    status: "escalated",
+    reason: "The memo verifier failed on step build's claim: it was ended by SIGKILL.",
+  });
+});
+
 test("an engine waits for another process's write to the log instead of failing", async (t) => {
   const { engine, options } = await engineAwaiting(t);
 

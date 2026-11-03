@@ -1812,7 +1812,13 @@ async function runProgram(
     return `it reached its memory limit of ${defaultBounds.memory} bytes.${stderr}`;
   }
 
-  return closed[0] === 0 ? undefined : `it exited with code ${closed[0]}.${stderr}`;
+  const [code, signal] = closed;
+
+  if (code === 0) {
+    return undefined;
+  }
+
+  return signal ? `it was ended by ${signal}.${stderr}` : `it exited with code ${code}.${stderr}`;
 }
 
 // The bytes of a failing kind program's stderr its escalation reason ends with.
