@@ -772,9 +772,17 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
         const cancelled = () => requested.get(commission, attempt) !== undefined;
 
-        // Each note the attempt writes is an event of its own, after attempt-started.
-        const note = (text: string) =>
-          write(commission, read(commission), { type: "noted", attempt, note: text });
+        // Each note the attempt writes is an event of its own, after attempt-started. A note
+        // changes no state and this attempt is the commission's one writer, so it is appended at
+        // the next position without replaying the log; another writer's event there refuses it.
+        let position = events.length + 1;
+
+        const note = (text: string) => {
+          const noted = { type: "noted", attempt, note: text, at: Date.now() };
+
+          insert.run(commission, position, JSON.stringify(noted));
+          position += 1;
+        };
 
         try {
           const subject = {
