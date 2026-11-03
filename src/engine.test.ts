@@ -1448,6 +1448,35 @@ for (const [planted, plant] of [
   });
 }
 
+test("a claimed commit whose history a shallow boundary cuts escalates", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(
+          `${committing}
+           printf 'Do it well.\\n' > plan.txt
+           git -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false \\
+             commit -q --no-verify -am Again
+           git rev-parse HEAD > .git/shallow
+           sha=$(git rev-parse HEAD)
+           echo "{\\"outcome\\":\\"done\\",\\"artifacts\\":[{\\"kind\\":\\"commit\\",\\"fields\\":{\\"sha\\":\\"$sha\\"}}]}" \\
+             > "$MEDRENGARD_OUT/output.json"`,
+          "end",
+        ),
+      },
+    }),
+  );
+
+  const state = await engine.advance("first");
+
+  assert.equal(state.status, "escalated");
+  assert.match(
+    state.reason,
+    /^Step build claimed a commit its verifier rejected: [0-9a-f]{40}'s history is incomplete in the workspace\.$/,
+  );
+});
+
 test("a claimed commit that is not a SHA escalates", async (t) => {
   const { engine } = await engineWith(t, () =>
     defineWorkflow({

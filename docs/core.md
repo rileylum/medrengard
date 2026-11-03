@@ -142,7 +142,7 @@ The latest subject artifact an attempt claims becomes the subject; a judgement l
 Built in:
 
 - Document: a subject with a title and a required markdown, HTML or text body. No verifier; its materialiser writes the body.
-- Commit: a subject with a SHA and an optional report. Its verifier accepts a SHA that is the workspace HEAD, not already the current subject, and whose tree differs from its parent's and the subject's, and keeps a Git bundle; its materialiser clones the bundle at that SHA.
+- Commit: a subject with a SHA and an optional report. Its verifier accepts a SHA that is the workspace HEAD, not already the current subject, and whose tree differs from its parent's and the subject's, and keeps a Git bundle that holds its whole history, or refuses it; its materialiser clones the bundle at that SHA.
 - Verdict: a judgement with pass or fail, an optional one-line summary and its findings as an optional text body. Its outcome field is the verdict. The step never names the subject; the engine records the one the attempt was given.
 - Decision: a judgement with the owner's outcome and optional feedback.
 

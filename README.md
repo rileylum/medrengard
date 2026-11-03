@@ -497,11 +497,11 @@ claim, so a program can tell its agent how to claim them:
 
 The built-in kinds:
 
-| Kind       | Role      | Fields                                   | Body                     | Checked by the engine                                                                                            |
-| ---------- | --------- | ---------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `document` | subject   | `title`, at most 200 bytes               | required, UTF-8, 1 MiB   | nothing more                                                                                                     |
-| `commit`   | subject   | `sha`, at most 64 bytes                  | optional report, 1 MiB   | the SHA is the workspace HEAD, not already the subject, and its tree differs from its parent's and the subject's |
-| `verdict`  | judgement | `verdict` (`pass` or `fail`), `summary`? | optional findings, 1 MiB | `verdict` equals the outcome                                                                                     |
+| Kind       | Role      | Fields                                   | Body                     | Checked by the engine                                                                                                                  |
+| ---------- | --------- | ---------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `document` | subject   | `title`, at most 200 bytes               | required, UTF-8, 1 MiB   | nothing more                                                                                                                           |
+| `commit`   | subject   | `sha`, at most 64 bytes                  | optional report, 1 MiB   | the SHA is the workspace HEAD, not already the subject, its tree differs from its parent's and the subject's, and its history is whole |
+| `verdict`  | judgement | `verdict` (`pass` or `fail`), `summary`? | optional findings, 1 MiB | `verdict` equals the outcome                                                                                                           |
 
 Every body is UTF-8. A field the kind does not define escalates. The latest subject claimed becomes
 the subject. A judgement such as a verdict leaves the subject alone, and the engine adds the

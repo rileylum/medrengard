@@ -1,10 +1,10 @@
 /**
  * The commit kind's verifier: accepts a claimed SHA that is the workspace's HEAD, not already the
  * commission's subject and changing something from its parent and the subject, keeping a Git
- * bundle of it.
+ * bundle of it that holds its whole history.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // What the engine writes as claim.json for a commit; a subject that is not a commit has no sha.
@@ -47,6 +47,27 @@ const subjectTree =
     ? resolve(`${subject.fields.sha}^{tree}`)
     : undefined;
 
+const bundle = join(output, "commit.bundle");
+
+// Writes the bundle and reports whether a clone of it holds HEAD's whole history: with a step's
+// planted .git/shallow, git bundles less and still calls the bundle complete.
+function bundledWhole(): boolean {
+  const clone = join(output, "clone");
+
+  execFileSync("git", ["bundle", "create", "--quiet", bundle, "HEAD"], { stdio: "ignore" });
+  execFileSync("git", ["clone", "--quiet", "--bare", bundle, clone], { stdio: "ignore" });
+
+  try {
+    execFileSync("git", ["-C", clone, "rev-list", "--objects", fields.sha], { stdio: "ignore" });
+
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(clone, { recursive: true });
+  }
+}
+
 const verdict =
   head === undefined
     ? { accepted: false, reason: "The workspace has no Git HEAD." }
@@ -61,12 +82,11 @@ const verdict =
                 accepted: false,
                 reason: `${fields.sha} changes nothing: its tree is the subject's.`,
               }
-            : { accepted: true, keep: ["commit.bundle"] };
-
-if (verdict.accepted) {
-  execFileSync("git", ["bundle", "create", "--quiet", join(output, "commit.bundle"), "HEAD"], {
-    stdio: "ignore",
-  });
-}
+            : !bundledWhole()
+              ? {
+                  accepted: false,
+                  reason: `${fields.sha}'s history is incomplete in the workspace.`,
+                }
+              : { accepted: true, keep: ["commit.bundle"] };
 
 writeFileSync(join(output, "output.json"), JSON.stringify(verdict));
