@@ -1996,11 +1996,19 @@ async function verify(
     verdict = undefined;
   }
 
-  if (verdict?.accepted === false && isText(verdict.reason)) {
+  // Exactly an acceptance with the files to keep, or a rejection with its reason: a field the
+  // contract does not define is nothing the engine can classify.
+  const exactly = (fields: readonly string[]) => hasExactly(verdict, fields);
+
+  if (verdict?.accepted === false && isText(verdict.reason) && exactly(["accepted", "reason"])) {
     return { reason: `Step ${name} claimed a ${kind} its verifier rejected: ${verdict.reason}` };
   }
 
-  if (verdict?.accepted !== true || !Array.isArray(verdict.keep)) {
+  if (
+    verdict?.accepted !== true ||
+    !Array.isArray(verdict.keep) ||
+    !exactly(["accepted", "keep"])
+  ) {
     return failed("it wrote no valid output.json.");
   }
 

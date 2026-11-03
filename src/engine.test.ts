@@ -3600,6 +3600,106 @@ test("an agent step is started with exactly the pinned environment, descriptors 
   );
 });
 
+// Constraint 7: a kind's programs have a contract of their own, pinned like the step's: their
+// environment, descriptors, input files and those files' fields.
+test("a kind's verifier and materialiser are started with exactly the pinned environment, descriptors and files", async (t) => {
+  // Records what the program was started with under `$1/<name>-…`.
+  const recording = (name: string, file: string) =>
+    `tr '\\0' '\\n' < /proc/$$/environ | cut -d= -f1 | sort > "$1/${name}-environment"
+     ls /proc/$$/fd > "$1/${name}-descriptors"; ls -A "$MEDRENGARD_IN" > "$1/${name}-listing"
+     cp "$MEDRENGARD_IN/${file}" "$1/${name}.json"`;
+
+  const { engine, directory } = await engineWith(
+    t,
+    () =>
+      defineWorkflow({
+        start: "build",
+        steps: {
+          build: {
+            ...stepRunning(
+              `printf 'Why.' > "$MEDRENGARD_OUT/draft.md"
+               echo '{"outcome":"done","artifacts":[{"kind":"draft","fields":{"note":"Drafted."},"body":"draft.md"}]}' > "$MEDRENGARD_OUT/output.json"`,
+              "use",
+            ),
+            claims: ["draft"],
+          },
+          use: {
+            ...stepRunning(`echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`, "end"),
+            workspace: "subject",
+          },
+        },
+      }),
+    (directory) => ({
+      ...builtIn,
+      draft: {
+        ...memo,
+        role: "subject",
+        verifier: {
+          run: [
+            "sh",
+            "-c",
+            `${recording("verifier", "claim.json")}
+             echo kept > "$MEDRENGARD_OUT/kept.txt"
+             echo '{"accepted":true,"keep":["kept.txt"]}' > "$MEDRENGARD_OUT/output.json"`,
+            "sh",
+            directory,
+          ],
+          access,
+          limit: 5,
+        },
+        materialiser: {
+          run: ["sh", "-c", recording("materialiser", "artifact.json"), "sh", directory],
+          access,
+          limit: 5,
+        },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const read = (name: string) => readFile(join(directory, name), "utf8");
+
+  for (const program of ["verifier", "materialiser"]) {
+    // No variables but the contract's, PWD being bwrap's --chdir, and no fd 3 for notes.
+    assert.equal(await read(`${program}-environment`), "MEDRENGARD_IN\nMEDRENGARD_OUT\nPWD\n");
+    assert.equal(await read(`${program}-descriptors`), "0\n1\n2\n");
+  }
+
+  assert.equal(await read("verifier-listing"), "body\nclaim.json\n");
+  assert.deepEqual(typesIn(await read("verifier.json"), []), {
+    fields: { note: "string" },
+    body: "string",
+    subject: { hash: "string", kind: "string", fields: { title: "string" } },
+  });
+
+  assert.equal(await read("materialiser-listing"), "artifact.json\nbody\nkept\n");
+  assert.deepEqual(typesIn(await read("materialiser.json"), []), {
+    hash: "string",
+    kind: "string",
+    fields: { note: "string" },
+    body: "string",
+    kept: { "kept.txt": "string" },
+  });
+});
+
+for (const [what, written] of [
+  ["an acceptance", '{"accepted":true,"keep":[],"note":"Fine."}'],
+  ["a rejection", '{"accepted":false,"reason":"No.","note":"Sorry."}'],
+] as const) {
+  test(`a kind's verifier that writes ${what} with a field output.json does not define fails`, async (t) => {
+    const { engine } = await engineVerifying(
+      t,
+      `echo '${written}' > "$MEDRENGARD_OUT/output.json"`,
+    );
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      reason: "The memo verifier failed on step build's claim: it wrote no valid output.json.",
+    });
+  });
+}
+
 test("a command step's input.json has no agent", async (t) => {
   const { engine, directory } = await engineReceiving(
     t,
