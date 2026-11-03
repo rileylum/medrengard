@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { builtIn } from "../defaults/kinds.ts";
@@ -13,6 +13,28 @@ import { createEngine } from "./engine.ts";
 // gate, and review (a command step that claims a passing verdict). Seven commissions, one at each
 // status, the attempting one left by an engine killed mid-attempt.
 const fixture = join(import.meta.dirname, "fixtures", "2026-11-03");
+
+// Constraint 8: the fold does no I/O and reads no clock or randomness, so its module imports
+// types alone and names nothing that could; comments aside, where the words are prose.
+test("replay is pure: its module imports only types and names no clock, randomness or I/O", async () => {
+  const code = (await readFile(join(import.meta.dirname, "replay.ts"), "utf8"))
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+
+  const imports = code.match(/^import .*$/gm) ?? [];
+
+  assert.ok(imports.length > 0);
+  assert.deepEqual(
+    imports.filter((line) => !line.startsWith("import type ")),
+    [],
+  );
+  assert.deepEqual(
+    code.match(
+      /\b(?:Date|Math|performance|crypto|globalThis|fetch|require|setTimeout|setInterval|queueMicrotask)\b|\bprocess\.|\bimport\(/g,
+    ),
+    null,
+  );
+});
 
 test("a log written by the engine of 2026-11-03 still reads", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));

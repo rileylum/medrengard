@@ -472,7 +472,7 @@ function parseWorkflow(
       )
     ) {
       throw invalid(
-        `step ${name}'s inputs must each be subject, request, or a query of its steps, a kind, a subject and latest or all`,
+        `step ${name}'s inputs must each be subject, request, or a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all`,
       );
     }
 

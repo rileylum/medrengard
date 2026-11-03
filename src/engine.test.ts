@@ -2140,7 +2140,7 @@ test("a workflow whose input queries a step it does not have cannot be commissio
     ),
     {
       message:
-        "Workflow build is invalid: step build's inputs must each be subject, request, or a query of its steps, a kind, a subject and latest or all.",
+        "Workflow build is invalid: step build's inputs must each be subject, request, or a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all.",
     },
   );
 });
@@ -2155,10 +2155,37 @@ test("a workflow whose input queries a kind there is not cannot be commissioned"
     ),
     {
       message:
-        "Workflow build is invalid: step build's inputs must each be subject, request, or a query of its steps, a kind, a subject and latest or all.",
+        "Workflow build is invalid: step build's inputs must each be subject, request, or a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all.",
     },
   );
 });
+
+for (const [what, query] of [
+  ["a field a query does not define", { kind: "document", limit: 3 }],
+  ["a take a query does not define", { kind: "document", take: "first" }],
+  ["an about a query does not define", { kind: "verdict", about: "later" }],
+] as const) {
+  test(`a workflow whose input names ${what} cannot be commissioned`, async (t) => {
+    await assert.rejects(
+      engineWith(t, () =>
+        defineWorkflow({
+          start: "build",
+          // Through JSON, as a factory's module reaches the parser, since its type refuses the query.
+          steps: {
+            build: {
+              ...stepRunning("true", "end"),
+              inputs: { plans: JSON.parse(JSON.stringify(query)) },
+            },
+          },
+        }),
+      ),
+      {
+        message:
+          "Workflow build is invalid: step build's inputs must each be subject, request, or a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all.",
+      },
+    );
+  });
+}
 
 for (const [what, inputs] of [
   ["it does not declare", {}],
@@ -2541,6 +2568,36 @@ test("a stopped step has its grace period between SIGTERM and SIGKILL", async (t
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "escalated" });
   assert.equal(await readFile(join(directory, "started"), "utf8"), "stopped gracefully\n");
+});
+
+test("two engines advancing one ready commission at once run its step once", async (t) => {
+  const { engine, directory, options } = await engineRunning(
+    t,
+    `echo started >> "$1"; sleep 0.5; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  // Each in a process of its own, both released at the same moment, so both may read the
+  // commission ready; whichever loses, the log takes one attempt-started.
+  const racing = join(directory, "racing.ts");
+  const at = Date.now() + 1000;
+
+  await writeFile(
+    racing,
+    `import { createEngine } from ${JSON.stringify(join(import.meta.dirname, "engine.ts"))};
+    const engine = createEngine(${JSON.stringify(options)});
+    while (Date.now() < ${at});
+    await engine.advance("first").catch(() => {});`,
+  );
+
+  const racers = [1, 2].map(() => spawn(process.execPath, [racing], { stdio: "ignore" }));
+
+  await Promise.all(racers.map((racer) => once(racer, "exit")));
+
+  assert.equal(await readFile(join(directory, "started"), "utf8"), "started\n");
+  assert.equal(
+    engine.record("first").entries.filter((entry) => entry.entry === "attempt").length,
+    1,
+  );
 });
 
 test("an attempt held by a live engine is left attempting", async (t) => {

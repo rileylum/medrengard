@@ -420,6 +420,7 @@ const design = {
   `medrengard`, named `medrengard:<skill>`.
 - `--effort low|medium|high|xhigh|max` and `--max-budget-usd 2` pass on to `claude`. The budget
   is checked after each turn, so a run can spend a little past it; over it, the attempt fails.
+  Without it, an attempt's spend is bounded only by its time limit.
 - A run `claude` reports as an error, such as running out of turns or budget, or one that ends
   without reporting at all, fails the attempt whatever `claude`'s exit code, saying why in its
   errors: a claim the agent wrote before is not recorded.
