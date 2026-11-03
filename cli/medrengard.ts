@@ -183,7 +183,11 @@ try {
         engine.commissions(),
         engine
           .commissions()
-          .map(({ commission, state }) => `${commission}: ${describe(state)}\n`)
+          .map((entry) =>
+            "error" in entry
+              ? `${entry.commission}: unreadable: ${entry.error}\n`
+              : `${entry.commission}: ${describe(entry.state)}\n`,
+          )
           .join(""),
       );
       break;
@@ -229,7 +233,7 @@ type Printed =
   | CommissionRecord
   | Artifact
   | null
-  | { commission: string; state: CommissionState }[]
+  | ({ commission: string; state: CommissionState } | { commission: string; error: string })[]
   | { parallel: number }
   | { stopping: { commission: string; step: string }[] }
   | { commission: string; state: CommissionState };
@@ -293,6 +297,15 @@ async function runner(engine: ReturnType<typeof Create>, parallel: number): Prom
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
 
+  // Says once why each commission the engine cannot read is left alone.
+  const unreadable = new Set<string>();
+
+  const report = (commission: string, error: string) => {
+    process.stderr.write(
+      json ? `${JSON.stringify({ commission, error })}\n` : `${commission}: ${error}\n`,
+    );
+  };
+
   const advance = (commission: string, step: boolean) => {
     if (step) {
       stepping.add(commission);
@@ -307,13 +320,7 @@ async function runner(engine: ReturnType<typeof Create>, parallel: number): Prom
             print({ commission, state }, `${commission}: ${describe(state)}\n`);
           }
         },
-        (error: Error) => {
-          process.stderr.write(
-            json
-              ? `${JSON.stringify({ commission, error: error.message })}\n`
-              : `${commission}: ${error.message}\n`,
-          );
-        },
+        (error: Error) => report(commission, error.message),
       )
       .finally(() => {
         advancing.delete(commission);
@@ -324,7 +331,20 @@ async function runner(engine: ReturnType<typeof Create>, parallel: number): Prom
   };
 
   while (!stopping.signal.aborted) {
-    for (const { commission, state } of engine.commissions()) {
+    for (const entry of engine.commissions()) {
+      const { commission } = entry;
+
+      if ("error" in entry) {
+        if (!unreadable.has(commission)) {
+          unreadable.add(commission);
+          report(commission, entry.error);
+        }
+
+        continue;
+      }
+
+      const { state } = entry;
+
       if (advancing.has(commission)) {
         continue;
       }

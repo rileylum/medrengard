@@ -2318,6 +2318,34 @@ test(
   },
 );
 
+/** Appends to `commission`'s log an event replay refuses, as a log damaged or from another engine. */
+function damage(log: string, commission: string) {
+  const database = new DatabaseSync(log);
+
+  database
+    .prepare("INSERT INTO events VALUES (?, 1, ?)")
+    .run(commission, JSON.stringify({ type: "decided", step: "build", outcome: "done" }));
+  database.close();
+}
+
+test("a commission that cannot be read is listed with its error, and the others with their states", async (t) => {
+  const { engine, options } = await engineRunning(t, "exit 0");
+
+  engine.commission("build", "broken", { title: "Greet", body: "Say hello." });
+  damage(options.log, "broken");
+
+  assert.deepEqual(
+    engine.commissions().map((entry) => ("error" in entry ? entry : entry.commission)),
+    [
+      "first",
+      {
+        commission: "broken",
+        error: "A decision cannot arrive while the commission is ready.",
+      },
+    ],
+  );
+});
+
 test("a commission that was never started is refused by name", async (t) => {
   const { engine } = await engineRunning(t, "true");
   const refused = { message: "There is no commission named missing." };

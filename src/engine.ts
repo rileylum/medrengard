@@ -280,12 +280,23 @@ export function createEngine({ log, workflows, kinds }: Options) {
       return replay(definitionOf(events), events);
     },
 
-    /** Lists every commission in the log with its state, oldest first. */
-    commissions(): { commission: string; state: CommissionState }[] {
-      return commissioned.all().map(({ commission }) => ({
-        commission: String(commission),
-        state: this.state(String(commission)),
-      }));
+    /** Lists every commission in the log with its state, or why it cannot be read, oldest first. */
+    commissions(): (
+      | { commission: string; state: CommissionState }
+      | { commission: string; error: string }
+    )[] {
+      // One commission the engine cannot read, such as one damaged or written by another engine,
+      // is listed with why, so it does not hide the others.
+      return commissioned.all().map(({ commission }) => {
+        try {
+          return { commission: String(commission), state: this.state(String(commission)) };
+        } catch (error) {
+          return {
+            commission: String(commission),
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      });
     },
 
     /** Reads the transcript of the commission's attempt numbered `attempt`. */

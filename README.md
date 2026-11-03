@@ -571,7 +571,7 @@ console.log(engine.commissions());
 | `commission(workflow, commission, { title, body })`          | nothing; refuses an unknown workflow or an invalid one                                                                                                                                         |
 | `advance(commission, { signal? })`                           | the state it stopped at; once `signal` aborts, it starts no further attempt                                                                                                                    |
 | `state(commission)`                                          | the state, replayed from the log                                                                                                                                                               |
-| `commissions()`                                              | `{ commission, state }[]`, oldest first                                                                                                                                                        |
+| `commissions()`                                              | `{ commission, state }[]`, oldest first; `{ commission, error }` for one the engine cannot read                                                                                                |
 | `decide(commission, { subject, since, outcome, feedback? })` | the new state; refuses a stale subject or wait, an undeclared outcome, or feedback over 1 MiB                                                                                                  |
 | `cancel(commission)`                                         | nothing; the engine running the attempt stops it and escalates, or, with none, it escalates at once                                                                                            |
 | `record(commission)`                                         | `{ state, request, entries }`: every attempt, escalation and decision, oldest first; each claimed artifact with its `verifier`, the command that accepted it, or `null` when its kind has none |
@@ -635,7 +635,8 @@ medrengard <command> [--json] [--factory <path>]
   commission first. It prints one line per result, and keeps looking for ready commissions until it
   is stopped. A first Ctrl-C starts nothing new and waits for the running steps, leaving each
   commission ready at its next step; a second exits at once, and each interrupted attempt
-  escalates when next advanced.
+  escalates when next advanced. A commission the engine cannot read is left alone, its error printed
+  once on stderr; `commissions` lists it as unreadable.
 
 ## Development
 

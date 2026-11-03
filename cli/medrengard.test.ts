@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const cli = join(import.meta.dirname, "medrengard.ts");
@@ -282,13 +283,16 @@ function runner(t: TestContext, factory: string, args: readonly string[] = []) {
   const child = spawn(process.execPath, [cli, "run", "--json", ...args], {
     cwd: tmpdir(),
     env: { ...process.env, MEDRENGARD_FACTORY: factory },
-    stdio: ["ignore", "pipe", "inherit"],
+    stdio: ["ignore", "pipe", "pipe"],
   });
 
   t.after(() => child.kill("SIGKILL"));
 
   const lines: Line[] = [];
   let partial = "";
+  const errors: string[] = [];
+
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => errors.push(chunk));
 
   child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
     const parts = (partial + chunk).split("\n");
@@ -309,7 +313,7 @@ function runner(t: TestContext, factory: string, args: readonly string[] = []) {
     }
   };
 
-  return { child, lines, until, exited };
+  return { child, lines, until, exited, errors };
 }
 
 function isMatch(actual: Line, expected: Line): boolean {
@@ -378,6 +382,50 @@ test(
       lines.filter((line) => "state" in line).map((line) => line.commission),
       ["first", "second"],
     );
+  },
+);
+
+test(
+  "the runner goes on past a commission it cannot read, saying so once",
+  { timeout: 10_000 },
+  async (t) => {
+    const { directory, factory } = await factoryIn(t);
+
+    commissionAll(factory, "build", ["broken", "second"]);
+
+    // An event replay refuses, as in a log damaged or written by another engine.
+    const database = new DatabaseSync(join(directory, "state", "log.sqlite"));
+
+    database
+      .prepare("INSERT INTO events VALUES (?, 1, ?)")
+      .run("broken", JSON.stringify({ type: "decided", step: "build", outcome: "done" }));
+    database.close();
+
+    const { child, until, exited, errors } = runner(t, factory);
+
+    await until({ commission: "second", state: { status: "awaiting" } });
+
+    // Long enough for the runner to look again.
+    await sleep(1500);
+    child.kill("SIGTERM");
+
+    const [code] = await exited;
+
+    const unreadable = JSON.stringify({
+      commission: "broken",
+      error: "A decision cannot arrive while the commission is ready.",
+    });
+
+    assert.equal(code, 0);
+    assert.equal(errors.join(""), `${unreadable}\n`);
+
+    const [first, second] = run(["commissions"], factory).stdout.split("\n");
+
+    assert.equal(
+      first,
+      "broken: unreadable: A decision cannot arrive while the commission is ready.",
+    );
+    assert.match(second, /^second: awaiting at review/);
   },
 );
 
