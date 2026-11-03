@@ -334,7 +334,7 @@ export const kinds = { ...builtIn, "pull-request": pullRequest };
   verdict's `verdict` does.
 - `verifier` and `materialiser`, optional: programs, each a `run`, an `access`, a `limit` in
   seconds, `memory` in bytes and `processes`, bounded like a step's; a verifier also `kept`, the
-  bytes of all the files it keeps for an artifact. Each runs in its own sandbox, like a step;
+  bytes of all the files it keeps for an artifact, 0 for one that keeps none. Each runs in its own sandbox, like a step;
   leaving the sandbox is an access you write, such as `full`. The built-ins' have 60 s, 4 GiB and
   1024 processes, and the commit verifier keeps 1 GiB, its bundle holding the whole history.
 

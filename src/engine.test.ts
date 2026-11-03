@@ -3147,6 +3147,13 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
     [
       {
         document,
+        memo: { ...memo, verifier: { run: ["true"], access, limit: 1, ...bounded, kept: -1 } },
+      },
+      "Kind memo is invalid: its verifier's kept must be an integer, 0 or more.",
+    ],
+    [
+      {
+        document,
         memo: { ...memo, verifier: { run: ["true"], access, limit: 1, memory: 1024, kept: 1 } },
       },
       "Kind memo is invalid: its verifier must be a program, its access, and its limit, memory, processes and kept.",
@@ -3358,6 +3365,16 @@ test("a kind's verifier keeps files up to its kind's kept limit, however large o
     `head -c $((65 * 1024 * 1024)) /dev/zero > "$MEDRENGARD_OUT/big"
      echo '{"accepted":true,"keep":["big"]}' > "$MEDRENGARD_OUT/output.json"`,
     { kept: 66 * 1024 * 1024 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+});
+
+test("a kind's verifier that keeps nothing may have a kept limit of 0", async (t) => {
+  const { engine } = await engineVerifying(
+    t,
+    `echo '{"accepted":true,"keep":[]}' > "$MEDRENGARD_OUT/output.json"`,
+    { kept: 0 },
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });

@@ -216,12 +216,15 @@ function parseKinds(text: string): Kinds {
         );
       }
 
-      for (const [bound, value] of Object.entries(
-        verifying ? { memory, processes, kept } : { memory, processes },
-      )) {
+      for (const [bound, value] of Object.entries({ memory, processes })) {
         if (!Number.isInteger(value) || value <= 0) {
           throw refused(`its ${program}'s ${bound} must be a positive integer`);
         }
+      }
+
+      // A verifier that only judges keeps nothing.
+      if (verifying && (!Number.isInteger(kept) || kept < 0)) {
+        throw refused("its verifier's kept must be an integer, 0 or more");
       }
 
       Object.assign(given, stated);
