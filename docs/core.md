@@ -56,11 +56,11 @@ Every step except an approval step is a program. The engine starts it with:
 - `MEDRENGARD_IN`: a read-only directory holding `input.json` and the bodies of the step's declared inputs;
 - `MEDRENGARD_OUT`: an empty directory where the step writes `output.json` and the files its artifacts refer to;
 - file descriptor 3, where the step may write notes for the owner, one per line, each at most 4096 bytes and all counted with its transcript;
-- only the environment its access declares.
+- only the environment its access declares, with `PWD` naming its workspace.
 
 An attended step has the owner's terminal, recorded through a pseudo-terminal. An unattended step gets empty stdin, and its stdout and stderr are its transcript.
 
-`input.json` names the commission, step, attempt and declared outcomes, and lists each declared input's artifacts, oldest first, as a list even when it holds one artifact or none; the rules of each kind the step may claim; an agent step's also carries its agent. `output.json` holds one outcome and the claimed artifacts, at most 64 KiB. Bodies are files, referenced by path: an input's body is at `<input>/<hash>` under `MEDRENGARD_IN`.
+`input.json` names the commission, step, attempt and declared outcomes, and lists each declared input's artifacts, oldest first, as a list even when it holds one artifact or none; the rules of each kind the step may claim; an agent step's also carries its agent. `output.json` holds one outcome and the claimed artifacts, at most 64 KiB. Bodies are files, referenced by a path relative to their directory: an input's body is at `<input>/<hash>` under `MEDRENGARD_IN`.
 
 The exit code reports the step's health; the outcome reports its result. A test run that finds failures exits 0 with a failing verdict. When the step ends:
 

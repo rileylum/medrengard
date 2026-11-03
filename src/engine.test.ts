@@ -826,6 +826,20 @@ test("a claimed body the step did not write escalates", async (t) => {
   });
 });
 
+test("a claimed body named by an absolute path escalates, though the step wrote that file", async (t) => {
+  const { engine } = await engineClaiming(
+    t,
+    `echo plan > "$MEDRENGARD_OUT/plan.md"`,
+    planAt("/plan.md"),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    step: { name: "build" },
+    reason: 'Step build claimed a body path that is not relative to its output: "/plan.md".',
+  });
+});
+
 test("a claimed body outside the step's output escalates", async (t) => {
   const { engine } = await engineClaiming(
     t,

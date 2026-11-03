@@ -14,7 +14,15 @@ import {
   writeSync,
 } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve as resolvePath, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve as resolvePath,
+  sep,
+} from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -1774,6 +1782,13 @@ async function readBody(
   body: string,
   limit: number,
 ): Promise<{ text: string } | { reason: string }> {
+  // Joined to the output, an absolute path would read as a relative one.
+  if (isAbsolute(body)) {
+    return {
+      reason: `Step ${name} claimed a body path that is not relative to its output: ${JSON.stringify(body)}.`,
+    };
+  }
+
   const read = await readUnder(output, body, limit);
 
   if (read === "outside") {

@@ -449,11 +449,12 @@ Every command and agent step is a program, started:
 - in its workspace;
 - with `MEDRENGARD_IN`: a read-only directory holding `input.json` and its inputs' bodies;
 - with `MEDRENGARD_OUT`: an empty directory for `output.json` and the bodies it claims;
-- with only the environment its access names;
+- with only the environment its access names, and `PWD`, the workspace;
 - with file descriptor 3 open for notes: short lines for the owner about what the step is doing,
   such as `echo "Running the tests" >&3`. Each note is recorded as it arrives, so `watch` shows
   it at once. A note is at most 4096 bytes, and notes count toward the transcript limit. The
-  Claude Code adapter notes what the agent says, each tool it uses and how it finished.
+  Claude Code adapter notes what the agent says, each tool it uses and how it finished, each cut
+  at 200 characters and marked `…`; the transcript keeps the whole.
 
 `input.json` lists each input's artifacts, oldest first, always as a list. A body is a file at
 `<input>/<hash>`, and `body` holds that path. An agent's skills are directories under `.skills`,
