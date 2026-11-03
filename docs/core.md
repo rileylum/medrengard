@@ -114,7 +114,7 @@ Transitions:
 - Commissioned, the commission is ready or awaiting, by its start step's kind.
 - Ready, with budget left, inputs within the input limit and the step not yet attempted on the same subject and inputs, an attempt starts.
 - Ready, with the budget spent, inputs over the input limit or the step already attempted on the same subject and inputs, the commission escalates.
-- Attempting, a valid claim completes the attempt and follows the outcome's edge. An invalid claim, a non-zero exit, a reached limit, the owner cancelling or an interruption found on replay escalates.
+- Attempting, a valid claim completes the attempt and follows the outcome's edge. An invalid claim, a non-zero exit, a reached limit, the owner cancelling, a failure of the engine's own or an interruption found on replay escalates. An attempt is interrupted once no engine is running it, even if the process that started it lives on.
 - Awaiting, a decision naming the current subject, the event the commission has waited since and a declared outcome follows its edge. A stale or undeclared decision is refused and records nothing: a decision made while the commission waited at an earlier approval step or escalation is stale, even about the same subject.
 - Escalated, a decision to retry makes the step ready again; a decision to abandon finishes the commission. It too names the current subject and the event the commission has waited since.
 - Finished, nothing is accepted.

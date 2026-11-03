@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { constants, existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, resolve as resolvePath, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -474,8 +474,16 @@ export function createEngine({ log, workflows, kinds }: Options) {
 
         if (state.status === "attempting") {
           const started = events.findLast((event) => event.type === "attempt-started")!;
+          const { pid, start } = started.process;
 
-          if (startOf(started.process.pid) === started.process.start) {
+          // This process holds the attempt only while it is running it: one whose end it failed
+          // to record is interrupted, though the process lives on.
+          const held =
+            pid === self.pid && start === self.start
+              ? running.has(runningKey(log, commission, started.attempt))
+              : startOf(pid) === start;
+
+          if (held) {
             return state;
           }
 
@@ -581,36 +589,60 @@ export function createEngine({ log, workflows, kinds }: Options) {
 
         write(commission, events, started);
 
+        const key = runningKey(log, commission, attempt);
+
+        running.add(key);
+
         const cancelled = () => requested.get(commission, attempt) !== undefined;
 
         // Each note the attempt writes is an event of its own, after attempt-started.
         const note = (text: string) =>
           write(commission, read(commission), { type: "noted", attempt, note: text });
 
-        const ending = await run(
-          step,
-          {
-            commission,
-            step: name,
-            attempt,
-            kinds: definition.kinds,
-            subject: {
-              hash: state.subject,
-              artifact: store.get(state.subject),
-              kept: keptOf(events, state.subject),
+        try {
+          const ending = await run(
+            step,
+            {
+              commission,
+              step: name,
+              attempt,
+              kinds: definition.kinds,
+              subject: {
+                hash: state.subject,
+                artifact: store.get(state.subject),
+                kept: keptOf(events, state.subject),
+              },
+              inputs,
+              skills,
             },
-            inputs,
-            skills,
-          },
-          cancelled,
-          note,
-          store,
-        );
+            cancelled,
+            note,
+            store,
+          );
 
-        write(commission, read(commission), ending);
+          write(commission, read(commission), ending);
+        } catch (error) {
+          // The engine's own failure, such as a full disk, is nothing it can classify: the owner
+          // decides. If this write fails too, the next advance finds the attempt interrupted.
+          write(commission, read(commission), {
+            type: "escalated",
+            reason: `Step ${name} failed in the engine: ${error instanceof Error ? error.message : String(error)}`,
+            attempt,
+          });
+        } finally {
+          running.delete(key);
+        }
       }
     },
   };
+}
+
+// The attempts this process is running, across its engines: one it holds but is not running was
+// interrupted.
+const running = new Set<string>();
+
+function runningKey(log: string, commission: string, attempt: number): string {
+  return JSON.stringify([resolvePath(log), commission, attempt]);
 }
 
 // A pid is reused once its process ends; with its start time from /proc it names one process.

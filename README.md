@@ -489,7 +489,10 @@ How the attempt ends:
 - a non-zero exit: the commission escalates. A test run that finds failures should exit 0 and claim
   a failing verdict;
 - a limit reached, or the owner cancelling: the engine sends `SIGTERM`, then `SIGKILL` after 5
-  seconds, and the commission escalates.
+  seconds, and the commission escalates;
+- the engine failing on its own side, such as a full disk: the commission escalates, naming the
+  error. If even that cannot be written, the next `advance` finds the attempt interrupted, in this
+  process or any other.
 
 ## The engine in TypeScript
 

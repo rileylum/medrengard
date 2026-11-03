@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -1881,6 +1881,40 @@ test(
     });
   },
 );
+
+test("an engine error during an attempt escalates the commission, naming the error", async (t) => {
+  // The step makes the store read-only, so the engine fails to keep its transcript.
+  const { engine, directory } = await engineRunning(
+    t,
+    `echo "a transcript of its own: $$"
+     chmod a-w "$(dirname "$1")/store"
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const state = await engine.advance("first").finally(() => chmod(join(directory, "store"), 0o755));
+
+  assert.partialDeepStrictEqual(state, { status: "escalated", step: { name: "build" } });
+  assert.ok(state.status === "escalated");
+  assert.match(state.reason, /^Step build failed in the engine: EACCES: permission denied/);
+});
+
+test("an attempt this engine stopped running without recording its end escalates at the next advance", async (t) => {
+  // The step makes the log's directory read-only, so neither the attempt's end nor an escalation
+  // can be written.
+  const { engine, directory } = await engineRunning(
+    t,
+    `chmod a-w "$(dirname "$1")"
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await assert.rejects(engine.advance("first").finally(() => chmod(directory, 0o755)));
+
+  // The attempt is held by this process, which is alive but no longer running it.
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build was interrupted.",
+  });
+});
 
 test("an attempt cancelled from another engine is stopped and escalates", async (t) => {
   const { engine, directory, options } = await engineRunning(t, `echo started >> "$1"; sleep 30`, {
