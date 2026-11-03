@@ -1613,6 +1613,44 @@ function verdictOf(verdict: string, summary: string, body: string) {
   };
 }
 
+test("a claim of a verdict that routes it and of a new subject escalates, and records neither", async (t) => {
+  const claim = {
+    outcome: "pass",
+    artifacts: [
+      { kind: "document", fields: { title: "Plan" }, body: "plan.md" },
+      { kind: "verdict", fields: { verdict: "pass" } },
+    ],
+  };
+
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          ...stepRunning(
+            `echo plan > "$MEDRENGARD_OUT/plan.md"
+             echo '${JSON.stringify(claim)}' > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+          ),
+          claims: ["document", "verdict"],
+          on: { pass: "end", fail: "end" },
+        },
+      },
+    }),
+  );
+
+  const request = subjectOf(engine);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    subject: request,
+    reason:
+      "Step build claimed a verdict, whose verdict routes its outcome, with a new subject: the verdict would be about the subject its claim replaces.",
+  });
+  assert.partialDeepStrictEqual(engine.record("first").entries, [{ entry: "attempt", attempt: 1 }]);
+  assert.ok(engine.record("first").entries.every((entry) => !("artifacts" in entry)));
+});
+
 /**
  * Starts an engine whose `develop` step commits, then whose `check` step writes `findings` and
  * claims `claim`, leading on pass or fail to `read`, which copies its input into the directory

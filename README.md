@@ -343,7 +343,8 @@ export const kinds = { ...builtIn, "pull-request": pullRequest };
   true` makes it required, and `values` limits it to a list.
 - `body`: whether a UTF-8 body is required, and its `limit` in bytes.
 - `outcome`, optional: a required field with `values` that must equal the claimed outcome, as a
-  verdict's `verdict` does.
+  verdict's `verdict` does. A judgement with one routes the step, so a claim of it beside a new
+  subject escalates: it would be about the subject that claim replaces.
 - `verifier` and `materialiser`, optional: programs, each a `run`, an `access`, a `limit` in
   seconds, `memory` in bytes and `processes`, bounded like a step's; a verifier also `kept`, the
   bytes of all the files it keeps for an artifact, 0 for one that keeps none. Each runs in its own sandbox, like a step;

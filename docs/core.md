@@ -137,7 +137,7 @@ Kept files go to the store, attached to the artifact. A rejected claim or a fail
 
 A materialiser is a program that builds a later step's workspace from an artifact and its kept files, in an empty directory; a workflow whose workspace may be built from a kind without one is refused before it starts. A kind's outcome field must equal the outcome of the step that claims it, and a step that may claim it needs an edge for each of its values.
 
-The latest subject artifact an attempt claims becomes the subject; a judgement leaves the subject where it was. A judgement a step claims is about the subject that attempt was given.
+The latest subject artifact an attempt claims becomes the subject; a judgement leaves the subject where it was. A judgement a step claims is about the subject that attempt was given, so an attempt that claims a new subject cannot also claim a judgement whose outcome field routes it: the commission escalates.
 
 Built in:
 

@@ -1796,6 +1796,20 @@ async function parse(
     artifacts.push({ kind, fields: parsed, body: read.text });
   }
 
+  // A judgement that routes is about the subject the attempt was given, which a new subject in
+  // the same claim would make history at once: the edge would follow a judgement of nothing current.
+  const routing = artifacts.find(
+    ({ kind }) => kinds[kind].role === "judgement" && kinds[kind].outcome !== undefined,
+  );
+
+  if (routing !== undefined && artifacts.some(({ kind }) => kinds[kind].role === "subject")) {
+    const { kind } = routing;
+
+    return {
+      reason: `Step ${name} claimed a ${kind}, whose ${kinds[kind].outcome} routes its outcome, with a new subject: the ${kind} would be about the subject its claim replaces.`,
+    };
+  }
+
   return { outcome, artifacts };
 }
 
