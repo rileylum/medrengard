@@ -1998,6 +1998,51 @@ test(
   },
 );
 
+test(
+  "an interrupted attempt keeps what its step wrote before its engine died",
+  { timeout: 10_000 },
+  async (t) => {
+    const { engine, directory, options } = await engineRunning(
+      t,
+      `echo "before the crash"; echo "on stderr" >&2; echo started >> "$1"; exec sleep 30`,
+      { idle: 60, attempt: 60, transcript: 65536, input: 65536 },
+    );
+
+    const crashing = join(directory, "crashing.ts");
+
+    await writeFile(
+      crashing,
+      `import { createEngine } from ${JSON.stringify(join(import.meta.dirname, "engine.ts"))};
+    await createEngine(${JSON.stringify(options)}).advance("first");`,
+    );
+
+    const child = spawn(process.execPath, [crashing], { stdio: "ignore" });
+
+    await untilStarted(directory);
+    child.kill("SIGKILL");
+    await once(child, "exit");
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      reason: "Step build was interrupted.",
+    });
+    assert.equal(engine.transcript("first", 1).toString(), "before the crash\non stderr\n");
+    assert.equal(engine.errors("first", 1).toString(), "on stderr\n");
+    assert.deepEqual(await readdir(join(directory, "attempts")), []);
+  },
+);
+
+test("an attempt that ends leaves nothing spooled", async (t) => {
+  const { engine, directory } = await engineRunning(
+    t,
+    `echo hello; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.equal(engine.transcript("first", 1).toString(), "hello\n");
+  assert.deepEqual(await readdir(join(directory, "attempts")), []);
+});
+
 test("an engine error during an attempt escalates the commission, naming the error", async (t) => {
   // The step makes the store read-only, so the engine fails to keep its transcript.
   const { engine, directory } = await engineRunning(
@@ -2156,7 +2201,7 @@ test(
   async (t) => {
     const { engine, directory, options } = await engineRunning(
       t,
-      `echo started >> "$1"; exec sleep 30`,
+      `echo "before the crash"; echo started >> "$1"; exec sleep 30`,
       {
         idle: 60,
         attempt: 60,
@@ -2185,6 +2230,7 @@ test(
       status: "escalated",
       reason: "Step build was cancelled by the owner.",
     });
+    assert.equal(engine.transcript("first", 1).toString(), "before the crash\n");
   },
 );
 

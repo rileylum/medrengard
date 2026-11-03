@@ -512,7 +512,10 @@ How the attempt ends:
   nothing the attempt claimed is recorded. What the step already did, such as a push, stays done;
 - the engine failing on its own side, such as a full disk: the commission escalates, naming the
   error. If even that cannot be written, the next `advance` finds the attempt interrupted, in this
-  process or any other.
+  process or any other;
+- the engine dying mid-attempt: the next `advance` finds the attempt interrupted and escalates. A
+  running attempt's transcript and errors are written as they arrive, to the `attempts` directory
+  beside the log, so the escalation keeps what the step wrote before.
 
 ## The engine in TypeScript
 

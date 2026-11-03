@@ -133,7 +133,7 @@ type AttemptCompleted<N extends string> = {
 // lazy: reason is free text for the owner. When an observer needs to group escalations,
 // add a closed set of causes beside it; the text stays, as the why.
 // transcript and errors are there when the attempt's program ran, errors only when it wrote to
-// stderr; an interrupted attempt's are lost.
+// stderr; an interrupted attempt's are what it wrote before its engine died.
 type Escalated = {
   type: "escalated";
   reason: string;

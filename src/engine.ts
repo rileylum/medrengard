@@ -1,6 +1,18 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { constants, existsSync, readdirSync, readFileSync, statfsSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statfsSync,
+  writeSync,
+} from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve as resolvePath, sep } from "node:path";
@@ -102,6 +114,40 @@ export function createEngine({ log, workflows, kinds }: Options) {
     PRIMARY KEY (commission, position)) STRICT`);
 
   const self = { pid: process.pid, start: startOf(process.pid)! };
+
+  // Each running attempt's transcript and errors, written as they arrive, so an engine that dies
+  // mid-attempt leaves them for the one that finds it interrupted.
+  const attempts = join(dirname(log), "attempts");
+
+  mkdirSync(attempts, { recursive: true });
+
+  function spoolOf(commission: string, attempt: number): Spool {
+    const base = join(
+      attempts,
+      `${createHash("sha256").update(commission).digest("hex")}-${attempt}`,
+    );
+
+    return { transcript: `${base}.transcript`, errors: `${base}.errors` };
+  }
+
+  // What an attempt no engine finished had spooled, in the store, for the escalation that ends
+  // it: nothing for one spooled before there were spools.
+  function spooled(spool: Spool) {
+    if (!existsSync(spool.transcript)) {
+      return {};
+    }
+
+    const errors = readFileSync(spool.errors);
+
+    return errors.length === 0
+      ? { transcript: store.keep(readFileSync(spool.transcript)) }
+      : { transcript: store.keep(readFileSync(spool.transcript)), errors: store.keep(errors) };
+  }
+
+  function unspool(spool: Spool): void {
+    rmSync(spool.transcript, { force: true });
+    rmSync(spool.errors, { force: true });
+  }
 
   // A cancel is a request to the engine running the attempt, not commission state: the
   // escalation that engine writes is the record.
@@ -474,11 +520,15 @@ export function createEngine({ log, workflows, kinds }: Options) {
 
       // With no engine to stop it, the attempt is over already: the cancel is its end.
       if (!held(commission, started)) {
+        const spool = spoolOf(commission, started.attempt);
+
         write(commission, events, {
           type: "escalated",
           reason: cancelledReason(started.step),
           attempt: started.attempt,
+          ...spooled(spool),
         });
+        unspool(spool);
 
         return;
       }
@@ -511,11 +561,15 @@ export function createEngine({ log, workflows, kinds }: Options) {
             return state;
           }
 
+          const spool = spoolOf(commission, started.attempt);
+
           write(commission, events, {
             type: "escalated",
             reason: `Step ${state.step.name} was interrupted.`,
             attempt: started.attempt,
+            ...spooled(spool),
           });
+          unspool(spool);
 
           continue;
         }
@@ -614,6 +668,7 @@ export function createEngine({ log, workflows, kinds }: Options) {
         write(commission, events, started);
 
         const key = runningKey(log, commission, attempt);
+        const spool = spoolOf(commission, attempt);
 
         running.add(key);
 
@@ -642,6 +697,7 @@ export function createEngine({ log, workflows, kinds }: Options) {
             cancelled,
             note,
             store,
+            spool,
           );
 
           // A cancel that arrives before the attempt's end is written wins: nothing it claimed is
@@ -651,14 +707,17 @@ export function createEngine({ log, workflows, kinds }: Options) {
             read(commission),
             ending.type === "attempt-completed" && cancelled() ? cancelledEnding(ending) : ending,
           );
+          unspool(spool);
         } catch (error) {
           // The engine's own failure, such as a full disk, is nothing it can classify: the owner
-          // decides. If this write fails too, the next advance finds the attempt interrupted.
+          // decides. If this write fails too, the next advance finds the attempt interrupted, and
+          // keeps what was spooled.
           write(commission, read(commission), {
             type: "escalated",
             reason: `Step ${name} failed in the engine: ${error instanceof Error ? error.message : String(error)}`,
             attempt,
           });
+          unspool(spool);
         } finally {
           running.delete(key);
         }
@@ -666,6 +725,9 @@ export function createEngine({ log, workflows, kinds }: Options) {
     },
   };
 }
+
+// Where a running attempt's transcript and errors are written as they arrive.
+type Spool = { transcript: string; errors: string };
 
 // The attempts this process is running, across its engines: one it holds but is not running was
 // interrupted.
@@ -1040,6 +1102,7 @@ async function run(
   cancelled: () => boolean,
   note: (text: string) => void,
   store: Store,
+  spool: Spool,
 ): Promise<Ending> {
   const { step: name, attempt } = given;
   const directory = await mkdtemp(join(tmpdir(), "medrengard-attempt-"));
@@ -1049,17 +1112,18 @@ async function run(
 
   // stdout and stderr together, in the order they arrive, up to the transcript limit; and the
   // stderr of it alone, as the attempt's errors.
-  const transcript: Buffer[] = [];
-  const errors: Buffer[] = [];
+  const transcript = openSync(spool.transcript, "w");
+  const errors = openSync(spool.errors, "w");
+  let erred = false;
   let written = 0;
 
   // Stores the transcript, and the errors when there are any, on the event that ends the attempt.
   const recorded = <E extends Ending>(event: Omit<E, "transcript">): E => {
     // SAFETY: E is the event given, with the transcript every ending event can carry.
-    const ended = { ...event, transcript: store.keep(Buffer.concat(transcript)) } as E;
+    const ended = { ...event, transcript: store.keep(readFileSync(spool.transcript)) } as E;
 
-    if (errors.length > 0) {
-      ended.errors = store.keep(Buffer.concat(errors));
+    if (erred) {
+      ended.errors = store.keep(readFileSync(spool.errors));
     }
 
     return ended;
@@ -1177,17 +1241,19 @@ async function run(
       }
     }, cancelLook);
 
-    const record = (into: Buffer[] | undefined) => (chunk: Buffer) => {
+    // stdout and stderr go to the transcript, and stderr to the errors too.
+    const record = (stderr: boolean) => (chunk: Buffer) => {
       idle.refresh();
 
       const room = step.limits.transcript - written;
       const kept = chunk.subarray(0, Math.max(room, 0));
 
-      transcript.push(kept);
+      writeSync(transcript, kept);
       written += chunk.length;
 
-      if (into !== undefined && kept.length > 0) {
-        into.push(kept);
+      if (stderr && kept.length > 0) {
+        writeSync(errors, kept);
+        erred = true;
       }
 
       if (written > step.limits.transcript) {
@@ -1197,8 +1263,8 @@ async function run(
       }
     };
 
-    child.stdout!.on("data", record(undefined));
-    child.stderr!.on("data", record(errors));
+    child.stdout!.on("data", record(false));
+    child.stderr!.on("data", record(true));
 
     // The part of a note whose line has not ended yet.
     let pending = Buffer.alloc(0);
@@ -1341,6 +1407,8 @@ async function run(
     });
   } finally {
     clearInterval(watching);
+    closeSync(transcript);
+    closeSync(errors);
     await rm(directory, { recursive: true, force: true });
   }
 }
