@@ -477,7 +477,8 @@ claim, so a program can tell its agent how to claim them:
 ```
 
 `agent` is there only for an agent step. The step writes one outcome and any artifacts to
-`output.json`, with each body as a path relative to `MEDRENGARD_OUT`:
+`output.json`, at most 64 KiB, with each body as a path relative to `MEDRENGARD_OUT`; bodies are
+files, so only the fields count toward it:
 
 ```json
 {

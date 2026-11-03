@@ -1576,7 +1576,8 @@ async function run(
 
 type Claim = { outcome: string; artifacts: Artifact[] };
 
-// The largest output.json the engine reads, in bytes.
+// The largest output.json the engine reads, in bytes. It holds fields only; bodies are files.
+// lazy: a constant. Make it a limit once a kind's fields need more room than this.
 const claimLimit = 64 * 1024;
 
 // Fatal, so invalid bytes are refused rather than replaced; the byte order mark is kept as written.
