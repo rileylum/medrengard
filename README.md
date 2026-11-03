@@ -125,7 +125,8 @@ medrengard decide first accept --subject 51da8742… --since 4
 `advance` runs ready steps until the commission awaits the owner, escalates or finishes. `decide`
 must name the current subject and the event the commission has waited since, so a decision can
 never approve something the owner has not seen: not another subject, and not the same subject at a
-later gate or escalation, with evidence the owner has not read.
+later gate or escalation, with evidence the owner has not read. At any approval step, as on any
+escalation, `abandon` finishes the commission as abandoned, so an approval step cannot declare it.
 
 ## Workflows
 
@@ -568,7 +569,7 @@ if (state.status === "awaiting" || state.status === "escalated") {
   // The artifact the commission is about, by hash.
   console.log(engine.artifact(state.subject));
 
-  // At an approval step, an outcome it declares; on an escalation, retry or abandon.
+  // At an approval step, an outcome it declares or abandon; on an escalation, retry or abandon.
   state = engine.decide("first", {
     subject: state.subject,
     // The event it has waited since: a decision from an earlier wait is refused.
@@ -608,7 +609,8 @@ A state has a `status`:
 - `awaiting`, at an approval `step`, about a `subject`;
 - `escalated`, at a `step`, about a `subject`, with a `reason` of at most 4096 bytes, longer ones
   cut and marked `… (cut to 4096 of N bytes)`;
-- `finished`, `by` `"end"` or `"abandoned"`.
+- `finished`, `by` `"end"` or `"abandoned"`: abandoned only by the owner's `abandon`, at an
+  approval step or an escalation; an approval's own edge to `end` finishes it by `"end"`.
 
 Every state but `finished` also carries `decision`: the hash of the owner's latest decision about
 the subject, if there is one.

@@ -312,7 +312,7 @@ function apply<N extends string>(
       }
 
       if (event.next === "end") {
-        return { status: "finished", by: state.status === "escalated" ? "abandoned" : "end" };
+        return { status: "finished", by: event.outcome === "abandon" ? "abandoned" : "end" };
       }
 
       return arrive(workflow, event.next, state.subject, event.decision, position);

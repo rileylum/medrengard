@@ -479,7 +479,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
     /**
      * Records the owner's decision about the commission's current subject, made while it waited
      * since the event at `since`, with any feedback. At an approval step the outcome must be one
-     * the step declares; on an escalation it is retry or abandon.
+     * the step declares, or abandon; on an escalation it is retry or abandon.
      */
     decide(
       commission: string,
@@ -513,7 +513,10 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
       const name = state.step.name;
       const step = workflow.steps[name];
-      const on = step.kind === "approval" ? step.on : { retry: name, abandon: "end" };
+
+      // Abandon ends the commission at every wait, so no workflow can leave the owner without one.
+      const on: Record<string, string> =
+        step.kind === "approval" ? { ...step.on, abandon: "end" } : { retry: name, abandon: "end" };
 
       if (!Object.hasOwn(on, outcome)) {
         throw new Error(`Step ${name} does not declare outcome "${outcome}".`);

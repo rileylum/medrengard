@@ -3009,6 +3009,57 @@ test("an abandon decision finishes the escalated commission as abandoned", async
   );
 });
 
+test("an abandon decision at an approval step finishes the commission as abandoned", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "gate",
+      steps: {
+        gate: { kind: "approval", on: { approve: "build" } },
+        build: stepRunning("true", "end"),
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(
+    engine.decide("first", {
+      subject: subjectOf(engine),
+      since: sinceOf(engine),
+      outcome: "abandon",
+    }),
+    { status: "finished", by: "abandoned" },
+  );
+});
+
+test("an approval step whose edge leads to the end finishes the commission by the end", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({ start: "gate", steps: { gate: { kind: "approval", on: { reject: "end" } } } }),
+  );
+
+  assert.partialDeepStrictEqual(
+    engine.decide("first", {
+      subject: subjectOf(engine),
+      since: sinceOf(engine),
+      outcome: "reject",
+    }),
+    { status: "finished", by: "end" },
+  );
+});
+
+test("a workflow whose approval step declares abandon cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "gate",
+        steps: { gate: { kind: "approval", on: { abandon: "end" } } },
+      }),
+    ),
+    {
+      message:
+        "Workflow build is invalid: step gate cannot declare abandon, which the owner may decide at every wait.",
+    },
+  );
+});
+
 test("an advance whose signal aborts finishes the running attempt and starts no other", async (t) => {
   const { engine, directory } = await engineRunning(t, `${claimingAgain}; sleep 0.3`);
   const stop = new AbortController();

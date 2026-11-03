@@ -355,6 +355,12 @@ function parseWorkflow(
         throw invalid(`step ${name} has fields an approval step does not define`);
       }
 
+      if (Object.hasOwn(on, "abandon")) {
+        throw invalid(
+          `step ${name} cannot declare abandon, which the owner may decide at every wait`,
+        );
+      }
+
       continue;
     }
 
