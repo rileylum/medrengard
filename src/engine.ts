@@ -604,19 +604,39 @@ export function createEngine({ log, workflows, kinds }: Options) {
           hashes: resolve(query, state, events, definition.kinds),
         }));
 
-        const inputs = given.map(({ name, hashes }) => ({
-          name,
-          artifacts: hashes.map((hash) => ({ hash, artifact: store.get(hash) })),
-        }));
+        // Read from the store before the attempt starts. The engine's failure here, such as a file
+        // it cannot read, is nothing it can classify: the owner decides, and no budget is spent.
+        const prepared = (() => {
+          try {
+            return {
+              inputs: given.map(({ name, hashes }) => ({
+                name,
+                artifacts: hashes.map((hash) => ({ hash, artifact: store.get(hash) })),
+              })),
+              skills: (step.kind === "agent" ? (step.agent.skills ?? []) : []).map((path) => {
+                const { name: skill, files } = definition.skills[path];
 
-        const skills = (step.kind === "agent" ? (step.agent.skills ?? []) : []).map((path) => {
-          const { name: skill, files } = definition.skills[path];
+                return {
+                  name: skill,
+                  files: Object.entries(files).map(([file, hash]) => ({
+                    file,
+                    bytes: store.read(hash),
+                  })),
+                };
+              }),
+            };
+          } catch (error) {
+            return `The engine could not prepare step ${name}: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        })();
 
-          return {
-            name: skill,
-            files: Object.entries(files).map(([file, hash]) => ({ file, bytes: store.read(hash) })),
-          };
-        });
+        if (isText(prepared)) {
+          write(commission, events, { type: "escalated", reason: prepared });
+
+          continue;
+        }
+
+        const { inputs, skills } = prepared;
 
         const bytes =
           inputs

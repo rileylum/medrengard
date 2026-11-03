@@ -2080,6 +2080,31 @@ test("an engine error while a step runs stops the step and escalates, naming the
   assert.partialDeepStrictEqual(engine.record("first").entries, [{ entry: "attempt", notes: [] }]);
 });
 
+/** The store file of the request's body, which a test may make unreadable or change. */
+async function requestBodyIn(directory: string, engine: ReturnType<typeof createEngine>) {
+  const store = join(directory, "store");
+  const { body } = JSON.parse(await readFile(join(store, subjectOf(engine)), "utf8"));
+
+  return join(store, body);
+}
+
+test("an engine error while preparing a step escalates without starting an attempt", async (t) => {
+  const { engine, directory } = await engineReceiving(t, { request: "request" }, "exit 0");
+  const body = await requestBodyIn(directory, engine);
+
+  await chmod(body, 0);
+
+  const state = await engine.advance("first").finally(() => chmod(body, 0o644));
+
+  assert.partialDeepStrictEqual(state, { status: "escalated", step: { name: "build" } });
+  assert.ok(state.status === "escalated");
+  assert.match(state.reason, /^The engine could not prepare step build: EACCES: permission denied/);
+  assert.equal(
+    engine.record("first").entries.filter((entry) => entry.entry === "attempt").length,
+    0,
+  );
+});
+
 test("an attempt this engine stopped running without recording its end escalates at the next advance", async (t) => {
   // The step makes the log's directory read-only, so neither the attempt's end nor an escalation
   // can be written.
