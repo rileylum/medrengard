@@ -106,14 +106,15 @@ export type Commissioned = {
 // subject and inputs name what the attempt was given, by hash: each input's artifacts, oldest
 // first, inputs in the order declared.
 // process names the engine process running the attempt, so another engine can tell a live
-// attempt from an interrupted one.
+// attempt from an interrupted one: its pid and start time, within the boot named by boot (absent
+// in events written before it was recorded). Every engine on one log shares a pid namespace.
 type AttemptStarted<N extends string> = {
   type: "attempt-started";
   step: N;
   attempt: number;
   subject: string;
   inputs: readonly { name: string; hashes: readonly string[] }[];
-  process: { pid: number; start: number };
+  process: { pid: number; start: number; boot?: string };
 };
 
 // artifacts are the artifacts the attempt claimed, in the order claimed, each with its kind, so a

@@ -112,7 +112,7 @@ export function createEngine({ log, workflows, kinds }: Options) {
     commission TEXT NOT NULL, position INTEGER NOT NULL, event TEXT NOT NULL,
     PRIMARY KEY (commission, position)) STRICT`);
 
-  const self = { pid: process.pid, start: startOf(process.pid)! };
+  const self = identity();
 
   // Each running attempt's directory, named by its commission and attempt, so the engine that
   // finds an attempt interrupted can take what it spooled and remove what it left.
@@ -179,8 +179,17 @@ export function createEngine({ log, workflows, kinds }: Options) {
   // it: one whose end it failed to record is interrupted, though the process lives on.
   function held(
     commission: string,
-    { process: { pid, start }, attempt }: Extract<CommissionEvent, { type: "attempt-started" }>,
+    {
+      process: { pid, start, boot },
+      attempt,
+    }: Extract<CommissionEvent, { type: "attempt-started" }>,
   ): boolean {
+    // A pid and start time name a process only within one boot. Events written before the boot
+    // was recorded are judged on pid and start time alone.
+    if (boot !== undefined && boot !== self.boot) {
+      return false;
+    }
+
     return pid === self.pid && start === self.start
       ? running.has(runningKey(log, commission, attempt))
       : startOf(pid) === start;
@@ -803,6 +812,28 @@ function refuseRequest(document: Kind, { title, body }: { title: string; body: s
 }
 
 // A pid is reused once its process ends; with its start time from /proc it names one process.
+// This process as attempt-started records it. Without it, every other engine's attempt would look
+// interrupted, so the engine refuses to start rather than misjudge them.
+function identity() {
+  const start = startOf(process.pid);
+
+  const boot = (() => {
+    try {
+      return readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    } catch {
+      return undefined;
+    }
+  })();
+
+  if (start === undefined || boot === undefined) {
+    throw new Error(
+      `The engine cannot identify its own process: it needs /proc/${process.pid}/stat and /proc/sys/kernel/random/boot_id.`,
+    );
+  }
+
+  return { pid: process.pid, start, boot };
+}
+
 function startOf(pid: number): number | undefined {
   let stat;
 

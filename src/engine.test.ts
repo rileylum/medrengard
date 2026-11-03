@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -1981,6 +1981,72 @@ test("an attempt held by a live engine is left attempting", async (t) => {
   assert.partialDeepStrictEqual(await running, { status: "finished" });
 });
 
+test("an attempt started in an earlier boot escalates as interrupted, even if its pid and start time match a live process", async (t) => {
+  const { engine, options } = await engineRunning(t, "exit 0");
+
+  // A live process stands in for an engine of the earlier boot that had the same pid and start.
+  const stand = spawn("sleep", ["30"], { stdio: "ignore" });
+
+  t.after(() => stand.kill("SIGKILL"));
+
+  const stat = await readFile(`/proc/${stand.pid}/stat`, "utf8");
+  const start = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19]);
+  const database = new DatabaseSync(options.log);
+
+  database.prepare("INSERT INTO events VALUES (?, 1, ?)").run(
+    "first",
+    JSON.stringify({
+      type: "attempt-started",
+      step: "build",
+      attempt: 1,
+      subject: subjectOf(engine),
+      inputs: [],
+      process: { pid: stand.pid, start, boot: "00000000-0000-0000-0000-000000000000" },
+    }),
+  );
+  database.close();
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build was interrupted.",
+  });
+});
+
+test("an engine that cannot read its own process in /proc refuses to start", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const script = join(directory, "start.ts");
+
+  await writeFile(
+    script,
+    `import { createEngine } from ${JSON.stringify(join(import.meta.dirname, "engine.ts"))};
+     createEngine({ log: ${JSON.stringify(join(directory, "log.sqlite"))}, kinds: {}, workflows: {} });`,
+  );
+
+  // An empty /proc, as a hidden or missing one would be.
+  const { status, stderr } = spawnSync(
+    "bwrap",
+    [
+      "--ro-bind",
+      "/",
+      "/",
+      "--dev",
+      "/dev",
+      "--tmpfs",
+      "/proc",
+      "--bind",
+      directory,
+      directory,
+    ].concat(["--unshare-pid", process.execPath, script]),
+    { encoding: "utf8" },
+  );
+
+  assert.notEqual(status, 0);
+  assert.match(stderr, /The engine cannot identify its own process: /);
+});
+
 test(
   "an attempt whose engine process died escalates as interrupted",
   { timeout: 10_000 },
@@ -3200,7 +3266,7 @@ test("the log's events are exactly the six types, each with its pinned fields", 
     attempt: "number",
     subject: "string",
     inputs,
-    process: { pid: "number", start: "number" },
+    process: { pid: "number", start: "number", boot: "string" },
     at: "number",
   });
 

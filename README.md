@@ -28,6 +28,9 @@ CLI and a Claude Code adapter run. Observers and attended steps do not exist yet
   program runs in a scope of its own, which bounds its memory and processes.
 - Node 24. It runs the TypeScript files directly; nothing is built.
 - Git, for commits.
+- A readable `/proc`, in one PID namespace for every engine on a log: an engine records its pid,
+  start time and boot on each attempt it starts, so another can tell a live attempt from an
+  interrupted one. Without its own entry in `/proc` the engine refuses to start.
 
 There is no package yet. The examples import from `medrengard/…`: replace that with the path to your
 checkout of this repository.
