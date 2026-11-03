@@ -2,7 +2,7 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -656,6 +656,27 @@ test("a step gets only the environment its access names, PATH included", async (
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
   assert.equal(engine.transcript("first", 1).toString(), "shown \n0\n");
+});
+
+test("a step has namespaces of its own, the network's only without network access", async (t) => {
+  const kinds = ["user", "cgroup", "ipc", "uts", "pid", "net"];
+
+  const script = `for ns in ${kinds.join(" ")}; do readlink /proc/self/ns/$ns; done`;
+  const engine = (network: boolean) => engineConfined(t, () => ({ ...access, network }), script);
+  const own = kinds.map((kind) => readlinkSync(`/proc/self/ns/${kind}`));
+
+  const shared = async (network: boolean) => {
+    const { engine: confined } = await engine(network);
+
+    await confined.advance("first");
+
+    const seen = confined.transcript("first", 1).toString().trim().split("\n");
+
+    return kinds.filter((_, index) => seen[index] === own[index]);
+  };
+
+  assert.deepEqual(await shared(false), []);
+  assert.deepEqual(await shared(true), ["net"]);
 });
 
 test("a step without network access has only a loopback interface", async (t) => {

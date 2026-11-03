@@ -89,11 +89,16 @@ export function confine(
       "--",
       "bwrap",
       ...unset.flatMap((name) => ["--unsetenv", name]),
-      // --unshare-all includes the PID namespace, so nothing the step starts outlives bwrap, and
-      // bwrap dies with the engine.
+      // Each namespace by name: --unshare-all only tries for the user and cgroup ones, and carries
+      // on without them where the kernel refuses. The PID namespace means nothing the step starts
+      // outlives bwrap, and bwrap dies with the engine.
       "--die-with-parent",
-      "--unshare-all",
-      ...(access.network ? ["--share-net"] : []),
+      "--unshare-user",
+      "--unshare-cgroup",
+      "--unshare-ipc",
+      "--unshare-uts",
+      "--unshare-pid",
+      ...(access.network ? [] : ["--unshare-net"]),
       ...binds,
       "--proc",
       "/proc",

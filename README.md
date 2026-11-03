@@ -273,7 +273,8 @@ const access: Access = {
 The workspace, the input (read-only) and the output are always there, and `MEDRENGARD_IN` and
 `MEDRENGARD_OUT` are always set. `PATH` is passed like any other variable, only when `environment`
 names it; without it a step finds commands only in the system's default search path. A step has
-its own `/proc` and a minimal `/dev`, read-only but for `/dev/shm`, a fresh area held in the
+namespaces of its own (user, cgroup, IPC, hostname, process and, without `network`, network): on a
+machine that cannot make one, the step fails rather than run without it. It has its own `/proc` and a minimal `/dev`, read-only but for `/dev/shm`, a fresh area held in the
 step's memory and bounded by its memory limit. A step that fills an `empty` path of its access
 escalates, if it is still running when the engine next looks, once a second; a step that ends first
 only sees its writes fail.
