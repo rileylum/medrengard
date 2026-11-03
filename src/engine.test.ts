@@ -493,6 +493,19 @@ test("a step whose access makes its workspace read-only cannot write to it", asy
   assert.equal(engine.transcript("first", 1).toString(), "read-only\n");
 });
 
+test("a step's /dev is read-only but for a shared-memory area of 64 MiB", async (t) => {
+  const { engine } = await engineConfined(
+    t,
+    () => access,
+    `touch /dev/note 2> /dev/null || echo read-only
+     echo small > /dev/shm/small && echo shared
+     head -c $((65 * 1024 * 1024)) /dev/zero > /dev/shm/big 2> /dev/null || echo full`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.equal(engine.transcript("first", 1).toString(), "read-only\nshared\nfull\n");
+});
+
 test("a step gets only the environment its access names, PATH included", async (t) => {
   process.env.MEDRENGARD_TEST_SHOWN = "shown";
   process.env.MEDRENGARD_TEST_HIDDEN = "hidden";

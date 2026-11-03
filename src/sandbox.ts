@@ -6,6 +6,9 @@ type Areas = { workspace: string; input: string; output: string };
 
 const order = { write: 0, empty: 1, read: 2 };
 
+// lazy: a constant, in bytes. Make it a limit of the step's once a program needs more.
+const sharedMemory = 64 * 1024 * 1024;
+
 /**
  * The bubblewrap command that runs `argv` in `areas.workspace` under `access`, and the
  * environment to start it with.
@@ -58,6 +61,14 @@ export function confine(access: Access, areas: Areas, argv: readonly [string, ..
       "--proc",
       "/proc",
       "--dev",
+      "/dev",
+      // bwrap's /dev is a writable tmpfs as large as the kernel allows: only shared memory, which
+      // programs expect to write, is left writable, and bounded.
+      "--size",
+      String(sharedMemory),
+      "--tmpfs",
+      "/dev/shm",
+      "--remount-ro",
       "/dev",
       ...root,
       "--chdir",
