@@ -114,6 +114,9 @@ ${script}
   return { engine, directory };
 }
 
+// What a fake claude prints to say its run succeeded, as the real one ends its stream.
+const succeeded = `echo '{"type":"result","is_error":false}'`;
+
 // What every agent runs without: Claude Code's bundled skills, its built-in plugins, memory and
 // attribution, as Claude Code 2.1.316 names them. design and doctor survive disableBundledSkills.
 const hermetic = {
@@ -187,7 +190,8 @@ test("the Claude Code adapter gives claude the token only on a descriptor, out o
   // in the token file. The token to look for is the one claude was given.
   const { engine, directory } = await engineWithClaude(
     t,
-    `eval "cat <&$CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" > "${"$"}{0%/claude}/received"
+    `${succeeded}
+     eval "cat <&$CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" > "${"$"}{0%/claude}/received"
      for file in /proc/[0-9]*/environ /proc/[0-9]*/cmdline "${"$"}{0%/claude}/token"; do
        grep -qaF -f "${"$"}{0%/claude}/received" "$file" 2>/dev/null && echo "$file"
      done > "${"$"}{0%/claude}/exposed"
@@ -202,7 +206,8 @@ test("the Claude Code adapter gives claude the token only on a descriptor, out o
 test("what the agent runs under the Claude Code adapter cannot make namespaces of its own", async (t) => {
   const { engine, directory } = await engineWithClaude(
     t,
-    `unshare -Ur true 2> /dev/null && echo made > "${"$"}{0%/claude}/nested" || echo refused > "${"$"}{0%/claude}/nested"
+    `${succeeded}
+     unshare -Ur true 2> /dev/null && echo made > "${"$"}{0%/claude}/nested" || echo refused > "${"$"}{0%/claude}/nested"
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
   );
 
@@ -216,7 +221,8 @@ test("the Claude Code adapter gives claude a prompt longer than one argument may
 
   const { engine, directory } = await engineWithClaude(
     t,
-    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    `${succeeded}
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
     [],
     {},
     long,
@@ -313,7 +319,8 @@ test("the Claude Code adapter gives claude the tools, effort and budget its harn
 test("the Claude Code adapter turns the agent's skills into a plugin, and gives it the Skill tool", async (t) => {
   const { engine, directory } = await engineWithClaude(
     t,
-    `while [ $# -gt 0 ]; do [ "$1" = --plugin-dir ] && cp -r "$2" "${"$"}{0%/claude}/plugin"; shift; done
+    `${succeeded}
+     while [ $# -gt 0 ]; do [ "$1" = --plugin-dir ] && cp -r "$2" "${"$"}{0%/claude}/plugin"; shift; done
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
     ["--tools", "Bash,Read"],
     { tdd: "Test first.\n" },
@@ -373,6 +380,36 @@ test("a Claude Code run that fails escalates its commission", async (t) => {
   });
 });
 
+test("a Claude Code run that finishes with an error escalates, though the agent claimed", async (t) => {
+  const { engine } = await engineWithClaude(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"
+     echo '{"type":"result","subtype":"error_max_turns","is_error":true}'`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step plan exited with code 1.",
+  });
+  assert.match(
+    engine.errors("first", 1).toString(),
+    /^claude finished with an error: error_max_turns\.$/m,
+  );
+});
+
+test("a Claude Code run that ends without a result escalates, though the agent claimed", async (t) => {
+  const { engine } = await engineWithClaude(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step plan exited with code 1.",
+  });
+  assert.match(engine.errors("first", 1).toString(), /^claude ended without a result\.$/m);
+});
+
 test("the Claude Code adapter records what claude loaded that the agent did not declare", async (t) => {
   const init = {
     type: "system",
@@ -386,7 +423,8 @@ test("the Claude Code adapter records what claude loaded that the agent did not 
 
   const { engine } = await engineWithClaude(
     t,
-    `echo '${JSON.stringify(init)}'
+    `${succeeded}
+     echo '${JSON.stringify(init)}'
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
     ["--tools", "Bash,Read,Task"],
     { tdd: "Test first.\n" },
@@ -431,7 +469,8 @@ test("the Claude Code adapter records nothing when claude loaded only what the a
 
   const { engine } = await engineWithClaude(
     t,
-    `echo '${JSON.stringify(init)}'
+    `${succeeded}
+     echo '${JSON.stringify(init)}'
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
     [],
     { tdd: "Test first.\n" },

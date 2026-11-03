@@ -368,6 +368,9 @@ function leaksOf(init: StreamEvent): void {
 // Whether claude said what it loaded; without that, the leak check saw nothing.
 let initialised = false;
 
+// The last result claude reported, which says whether its run succeeded; none if it never said.
+let result: StreamEvent | undefined;
+
 function notesOf(event: StreamEvent): void {
   if (event.type === "system" && event.subtype === "init") {
     initialised = true;
@@ -385,6 +388,8 @@ function notesOf(event: StreamEvent): void {
   }
 
   if (event.type === "result") {
+    result = event;
+
     const how = event.is_error ? "Failed" : "Finished";
 
     note(
@@ -431,6 +436,21 @@ if (closed instanceof Error) {
 } else {
   const [code] = closed;
 
+  // claude can exit 0 from a run it reports as failed, or say nothing of how it ended: either way
+  // a claim it left is not one to trust, so the attempt fails and the owner decides.
+  const failure =
+    code !== 0
+      ? undefined
+      : result === undefined
+        ? "claude ended without a result."
+        : result.is_error === true
+          ? `claude finished with an error: ${result.subtype ?? "unnamed"}.`
+          : undefined;
+
+  if (failure !== undefined) {
+    console.error(failure);
+  }
+
   // A claude ended by a signal has no exit code; the attempt failed all the same.
-  process.exitCode = code ?? 1;
+  process.exitCode = failure === undefined ? (code ?? 1) : 1;
 }

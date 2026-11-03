@@ -417,6 +417,9 @@ const design = {
   `medrengard`, named `medrengard:<skill>`.
 - `--effort low|medium|high|xhigh|max` and `--max-budget-usd 2` pass on to `claude`. The budget
   is checked after each turn, so a run can spend a little past it; over it, the attempt fails.
+- A run `claude` reports as an error, such as running out of turns or budget, or one that ends
+  without reporting at all, fails the attempt whatever `claude`'s exit code, saying why in its
+  errors: a claim the agent wrote before is not recorded.
 - Nothing else of Claude Code's own loads: no bundled skills or built-in plugins, no settings
   files, no memory, no `CLAUDE.md` or `AGENTS.md`, and no `Co-Authored-By` in the agent's
   commits. Some of the settings that do this are undocumented, as of Claude Code
