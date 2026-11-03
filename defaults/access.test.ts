@@ -107,6 +107,32 @@ test(
   },
 );
 
+test("the built-in kinds' programs see nothing of the owner's home but Node and the programs", async (t) => {
+  const seen = await seenUnder(
+    t,
+    builtIn.commit.verifier.access,
+    `find "$1" \\( -type f -o -type l \\) 2>/dev/null
+     "${process.execPath}" -e 0 && echo "node runs"`,
+  );
+
+  const lines = seen.trimEnd().split("\n");
+  const nodeRuns = lines.pop();
+  const repository = join(import.meta.dirname, "..");
+
+  const granted = [
+    process.execPath,
+    join(repository, "verifiers"),
+    join(repository, "materialisers"),
+  ];
+
+  const outside = lines.filter(
+    (file) => !granted.some((path) => file === path || file.startsWith(`${path}/`)),
+  );
+
+  assert.deepEqual(outside.slice(0, 10), []);
+  assert.equal(nodeRuns, "node runs");
+});
+
 test("claudeCode gives the adapter the token file to read, and no token in the environment", () => {
   // In the environment, the token would be in reach of everything the agent runs.
   assert.ok(claudeCode.environment !== "all");

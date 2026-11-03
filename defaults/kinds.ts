@@ -1,19 +1,19 @@
 // The built-in artifact kinds, as values: pass them as they are, change one, or add your own
 // beside them. The engine knows none of them; a commission records the kinds it started with.
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { Kinds } from "../src/kinds.ts";
 import type { Access } from "../src/replay.ts";
 import { contract } from "./access.ts";
 
 const repository = join(import.meta.dirname, "..");
 
-// The step contract and the system, with Node, which may be under the owner's home, and the
-// programs below to run.
+// The step contract and the system, with the Node executable, which may be under the owner's home,
+// and the programs below to run. Never Node's whole installation, which could be the home itself.
 const programs: Access = {
   ...contract,
   paths: [
     ...contract.paths,
-    { path: dirname(dirname(process.execPath)), mode: "read" },
+    { path: process.execPath, mode: "read" },
     { path: join(repository, "verifiers"), mode: "read" },
     { path: join(repository, "materialisers"), mode: "read" },
   ],
