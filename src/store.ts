@@ -24,9 +24,23 @@ export type Artifact = { kind: string; fields: Readonly<Record<string, string>>;
 export function createStore(directory: string) {
   mkdirSync(directory, { recursive: true });
 
+  const hashOf = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+  // The bytes kept under `hash`, refused if they are not the bytes it names, so a file changed or
+  // damaged on disk never reaches a step.
+  function bytesOf(hash: string): Buffer {
+    const bytes = readFileSync(join(directory, hash));
+
+    if (hashOf(bytes) !== hash) {
+      throw new Error(`The store's file ${hash} does not match its hash.`);
+    }
+
+    return bytes;
+  }
+
   function keep(data: string | Buffer): string {
     const bytes = Buffer.from(data);
-    const hash = createHash("sha256").update(bytes).digest("hex");
+    const hash = hashOf(bytes);
     const path = join(directory, hash);
 
     if (!existsSync(path)) {
@@ -53,9 +67,7 @@ export function createStore(directory: string) {
     keep,
 
     /** Reads back the bytes kept under `hash`. */
-    read(hash: string): Buffer {
-      return readFileSync(join(directory, hash));
-    },
+    read: bytesOf,
 
     /** Keeps an artifact and returns its hash, which covers its kind, fields and body hash. */
     put(artifact: Artifact): string {
@@ -69,13 +81,13 @@ export function createStore(directory: string) {
 
     /** Reads back the artifact kept under `hash`. */
     get(hash: string): Artifact {
-      const { kind, fields, body } = JSON.parse(readFileSync(join(directory, hash), "utf8"));
+      const { kind, fields, body } = JSON.parse(bytesOf(hash).toString());
 
       if (body === null) {
         return { kind, fields };
       }
 
-      return { kind, fields, body: readFileSync(join(directory, body), "utf8") };
+      return { kind, fields, body: bytesOf(body).toString() };
     },
   };
 }

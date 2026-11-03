@@ -2105,6 +2105,19 @@ test("an engine error while preparing a step escalates without starting an attem
   );
 });
 
+test("a store file whose bytes no longer match its hash is refused, and the step is not given it", async (t) => {
+  const { engine, directory } = await engineReceiving(t, { request: "request" }, "exit 0");
+  const body = await requestBodyIn(directory, engine);
+  const hash = body.slice(body.lastIndexOf("/") + 1);
+
+  await writeFile(body, "Say goodbye.");
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: `The engine could not prepare step build: The store's file ${hash} does not match its hash.`,
+  });
+});
+
 test("an attempt this engine stopped running without recording its end escalates at the next advance", async (t) => {
   // The step makes the log's directory read-only, so neither the attempt's end nor an escalation
   // can be written.
