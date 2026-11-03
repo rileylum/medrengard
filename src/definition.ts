@@ -1,7 +1,7 @@
 import { normalize } from "node:path";
 import { hasExactly, isRecord, isText } from "./json.ts";
 import type { Kinds } from "./kinds.ts";
-import type { Access, Definition, Skill, Workflow } from "./replay.ts";
+import type { Access, Definition, Limits, Skill, Workflow } from "./replay.ts";
 
 // An input name, which is also a directory in the step's input, so it cannot leave that directory
 // or collide with input.json.
@@ -14,16 +14,65 @@ const variable = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const longestLimit = 2_147_483;
 
 /**
- * Parses the definition `text`, the workflow named `name` and the factory's kinds as stored for
- * the commission, refusing one the engine could not run as written.
+ * Parses the definition `text`, the workflow named `name`, the factory's kinds and its defaults as
+ * stored for the commission, refusing one the engine could not run as written. Each step's limits
+ * come out whole: those it states, and the factory's for the rest.
  */
 export function parseDefinition(name: string, text: string): Definition {
   const kinds = parseKinds(text);
   // The engine writes the skills, after the workflow has passed; a definition stored before skills
   // has none.
   const skills: Record<string, Skill> = JSON.parse(text).skills ?? {};
+  const limits = JSON.parse(text).defaults === undefined ? before : parseDefaults(text);
 
-  return { workflow: parseWorkflow(name, text, kinds), kinds, skills };
+  return { workflow: parseWorkflow(name, text, kinds, limits), kinds, skills };
+}
+
+const limitNames = ["idle", "attempt", "transcript", "input", "memory", "processes", "disk"];
+
+// What a step of a definition stored before the factory had defaults ran with when it left a
+// limit out; it stated the other four.
+const before: Partial<Limits> = {
+  memory: 4 * 1024 * 1024 * 1024,
+  processes: 1024,
+  disk: 4 * 1024 * 1024 * 1024,
+};
+
+function parseDefaults(text: string): Limits {
+  const invalid = (problem: string) =>
+    new Error(`The factory's default limits are invalid: ${problem}.`);
+
+  const { defaults } = JSON.parse(text);
+  const limits = defaults?.limits;
+
+  if (!hasExactly(defaults, ["limits"]) || !hasExactly(limits, limitNames)) {
+    throw invalid(`they must be idle, attempt, transcript, input, memory, processes and disk`);
+  }
+
+  const problem = limitProblem(Object.entries(limits));
+
+  if (problem !== undefined) {
+    throw invalid(problem);
+  }
+
+  // SAFETY: each of the seven was checked above.
+  return limits as Limits;
+}
+
+// Why one of the limits, by name and value, cannot bound a step, if one cannot: the seconds
+// within what a timer can wait, the rest positive integers.
+function limitProblem(limits: readonly (readonly [string, unknown])[]): string | undefined {
+  for (const [limit, value] of limits) {
+    if (limit === "idle" || limit === "attempt") {
+      if (!Number.isFinite(value) || Number(value) <= 0 || Number(value) > longestLimit) {
+        return `${limit} limit must be a positive number of seconds, at most ${longestLimit}`;
+      }
+    } else if (!Number.isInteger(value) || Number(value) <= 0) {
+      return `${limit} limit must be a positive integer`;
+    }
+  }
+
+  return undefined;
 }
 
 // A kind's name, which a query, a claim and a message name it by.
@@ -228,7 +277,12 @@ function accessProblem(access: Access): string | undefined {
   return undefined;
 }
 
-function parseWorkflow(name: string, text: string, defined: Kinds): Workflow {
+function parseWorkflow(
+  name: string,
+  text: string,
+  defined: Kinds,
+  defaults: Partial<Limits>,
+): Workflow<string, { limits: Limits }> {
   const invalid = (problem: string) => new Error(`Workflow ${name} is invalid: ${problem}.`);
   const definition = JSON.parse(text).workflow;
   const claimable = Object.keys(defined);
@@ -281,15 +335,6 @@ function parseWorkflow(name: string, text: string, defined: Kinds): Workflow {
     const { agent } = step;
     const harness = agent?.harness;
     const argv = kind === "command" ? step.run : harness?.run;
-    const seconds = { idle: limits?.idle, attempt: limits?.attempt };
-    const bytes = { transcript: limits?.transcript, input: limits?.input };
-
-    // Bounded by the engine's defaults when left out.
-    const optional = ["memory", "processes", "disk"].filter((limit) =>
-      Object.hasOwn(limits ?? {}, limit),
-    );
-
-    const counts = Object.fromEntries(optional.map((limit) => [limit, limits[limit]]));
 
     const fields = [
       "kind",
@@ -300,7 +345,7 @@ function parseWorkflow(name: string, text: string, defined: Kinds): Workflow {
       "on",
       "budget",
       "access",
-      "limits",
+      ...(Object.hasOwn(step, "limits") ? ["limits"] : []),
     ];
 
     if (!hasExactly(step, fields)) {
@@ -398,27 +443,23 @@ function parseWorkflow(name: string, text: string, defined: Kinds): Workflow {
       throw invalid(`step ${name}'s ${problem}`);
     }
 
-    if (!hasExactly(limits, ["idle", "attempt", "transcript", "input", ...optional])) {
+    const whole = { ...defaults, ...limits };
+
+    if (!(limits === undefined || isRecord(limits)) || !hasExactly(whole, limitNames)) {
       throw invalid(
-        `step ${name}'s limits must be idle, attempt, transcript and input, and may be memory, processes and disk`,
+        `step ${name}'s limits may be only idle, attempt, transcript, input, memory, processes and disk`,
       );
     }
 
-    for (const [limit, value] of Object.entries(seconds)) {
-      if (!Number.isFinite(value) || value <= 0 || value > longestLimit) {
-        throw invalid(
-          `step ${name}'s ${limit} limit must be a positive number of seconds, at most ${longestLimit}`,
-        );
-      }
+    const unbounded = limitProblem(Object.entries(limits ?? {}));
+
+    if (unbounded !== undefined) {
+      throw invalid(`step ${name}'s ${unbounded}`);
     }
 
-    for (const [limit, value] of Object.entries({ ...bytes, ...counts })) {
-      if (!Number.isInteger(value) || value <= 0) {
-        throw invalid(`step ${name}'s ${limit} limit must be a positive integer`);
-      }
-    }
+    Object.assign(step, { limits: whole });
   }
 
-  // SAFETY: every field the engine reads was checked above.
-  return definition as Workflow;
+  // SAFETY: every field the engine reads was checked above, and each step's limits made whole.
+  return definition as Workflow<string, { limits: Limits }>;
 }

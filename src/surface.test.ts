@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { builtIn } from "../defaults/kinds.ts";
+import { limits } from "../defaults/limits.ts";
 import { createEngine } from "./engine.ts";
 
 // Constraint 7: the public surface is listed here, so growing it fails until updated on purpose.
@@ -17,6 +18,7 @@ const exports = {
     "CommissionState",
     "Commissioned",
     "Definition",
+    "Limits",
     "Query",
     "Skill",
     "Workflow",
@@ -29,6 +31,7 @@ const exports = {
   "src/store.ts": ["Artifact", "createStore"],
   "defaults/access.ts": ["claudeCode", "contract", "full", "home"],
   "defaults/kinds.ts": ["builtIn"],
+  "defaults/limits.ts": ["limits"],
 };
 
 for (const [module, names] of Object.entries(exports)) {
@@ -54,6 +57,7 @@ test("the engine has exactly the pinned methods", async (t) => {
     log: join(directory, "log.sqlite"),
     workflows: {},
     kinds: builtIn,
+    defaults: { limits },
   });
 
   assert.deepEqual(Object.keys(engine).sort(), [

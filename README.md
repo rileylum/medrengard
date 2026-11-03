@@ -38,21 +38,24 @@ checkout of this repository.
 ## A first factory
 
 A factory is a TypeScript module whose default export is the engine's options: where the log lives,
-the kinds of artifact its steps claim, and the workflows by name. This one replies to the request, checks the reply and asks the owner.
+the kinds of artifact its steps claim, the workflows by name, and its defaults: the limits every
+step has unless it names its own. This one replies to the request, checks the reply and asks the
+owner.
 
 ```ts
 // factory.ts
 import { defineWorkflow } from "medrengard/src/replay.ts";
 import { contract } from "medrengard/defaults/access.ts";
 import { builtIn } from "medrengard/defaults/kinds.ts";
-
-const limits = { idle: 60, attempt: 600, transcript: 1024 * 1024, input: 1024 * 1024 };
+import { limits } from "medrengard/defaults/limits.ts";
 
 export default {
   // Relative to this file.
   log: "state/log.sqlite",
   // Document, commit and verdict. See Kinds.
   kinds: builtIn,
+  // Every step's limits, unless it names its own. See Workflows.
+  defaults: { limits: { ...limits, idle: 60, attempt: 600 } },
   workflows: {
     greet: defineWorkflow({
       start: "write",
@@ -74,7 +77,6 @@ export default {
           on: { done: "check" },
           budget: 2,
           access: contract,
-          limits,
         },
         // Judges the reply in its workspace and claims a verdict. The subject stays the reply.
         check: {
@@ -92,7 +94,8 @@ export default {
           on: { pass: "approve", fail: "write" },
           budget: 2,
           access: contract,
-          limits,
+          // A check is quick; the rest are the factory's.
+          limits: { attempt: 60 },
         },
         approve: { kind: "approval", on: { accept: "end", changes: "write" } },
       },
@@ -132,11 +135,11 @@ outcome to the next step or to `end`.
 
 There are three kinds of step:
 
-| Kind       | Runs                                 | Fields besides `kind` and `on`                                         |
-| ---------- | ------------------------------------ | ---------------------------------------------------------------------- |
-| `command`  | the owner's program, `run`           | `run`, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`   |
-| `agent`    | an agent through its harness adapter | `agent`, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits` |
-| `approval` | nothing: it waits for the owner      | none                                                                   |
+| Kind       | Runs                                 | Fields besides `kind` and `on`                                          |
+| ---------- | ------------------------------------ | ----------------------------------------------------------------------- |
+| `command`  | the owner's program, `run`           | `run`, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`?   |
+| `agent`    | an agent through its harness adapter | `agent`, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`? |
+| `approval` | nothing: it waits for the owner      | none                                                                    |
 
 The fields of a command or agent step:
 
@@ -152,26 +155,29 @@ The fields of a command or agent step:
 - `budget`: the attempts the step may start between the owner's decisions, above zero. It bounds
   every loop: a step that has spent its budget escalates.
 - `access`: what the step's process may read, write and reach. See [Access](#access).
-- `limits`, each over zero:
+- `limits`, optional: the ones the step changes from the factory's `defaults.limits`, which must
+  name all seven, so every step has each. `medrengard/defaults/limits.ts` holds a set to spread and
+  change: 600 s idle, 3600 s per attempt, a 32 MiB transcript, 4 MiB of inputs, 4 GiB of memory,
+  1024 processes and 4 GiB of disk. Each is over zero:
   - `idle`: seconds without output before the step is stopped;
   - `attempt`: seconds in all;
   - `transcript`: bytes of stdout and stderr;
   - `input`: bytes of all input bodies, and an agent's skill files, together. Over it, the step
     never starts;
-  - `memory`, optional: bytes its processes may use together, 4 GiB if left out. Over it, systemd
+  - `memory`: bytes its processes may use together, shared memory included. Over it, systemd
     stops them, without swap, and the commission escalates naming the limit;
-  - `processes`, optional: processes and threads it may run at once, 1024 if left out. Past it, the
-    step cannot start another, as its own failure;
-  - `disk`, optional: bytes its attempt's directory may hold, 4 GiB if left out: the workspace,
-    input, output and the areas of its kind's programs. The engine measures it once a second while
-    any of them runs and after each ends; over it, the program is stopped and the commission
-    escalates. It can overshoot by a second of writes.
+  - `processes`: processes and threads it may run at once. Past it, the step cannot start another,
+    as its own failure;
+  - `disk`: bytes its attempt's directory may hold: the workspace, input, output and the areas of
+    its kind's programs. The engine measures it once a second while any of them runs and after each
+    ends; over it, the program is stopped and the commission escalates. It can overshoot by a
+    second of writes.
 
 A kind's verifier and materialiser get 4 GiB and 1024 processes.
 
 The engine refuses a workflow it could not run as written when it is commissioned, not halfway
-through. A commission runs on the definition it started with: editing the factory affects only new
-commissions. The definition holds `run` as argv, not the program it names, so editing a script that
+through. A commission runs on the definition it started with, the factory's defaults included:
+editing the factory affects only new commissions. The definition holds `run` as argv, not the program it names, so editing a script that
 `run` points at changes every commission that runs it next. To pin a prompt, put its text in the
 definition, not a path to it. An agent's skills are read when the commission starts and kept with
 its definition, so editing a skill affects only new commissions. The engine itself is not pinned:

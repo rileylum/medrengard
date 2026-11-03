@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createEngine } from "../src/engine.ts";
 import { builtIn } from "../defaults/kinds.ts";
+import { limits } from "../defaults/limits.ts";
 import { defineWorkflow } from "../src/replay.ts";
 
 const adapter = join(import.meta.dirname, "claude-code.ts");
@@ -52,6 +53,7 @@ ${script}
 
   const engine = createEngine({
     kinds: builtIn,
+    defaults: { limits },
     log: join(directory, "log.sqlite"),
     workflows: {
       build: defineWorkflow({

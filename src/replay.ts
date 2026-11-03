@@ -51,47 +51,56 @@ export type Access = {
   workspace: "read" | "write";
 };
 
+/**
+ * The bounds of a step's attempt. It is stopped after `idle` seconds without stdout or stderr
+ * output, `attempt` seconds in all, or `transcript` bytes of it, or once its processes use more
+ * than `memory` bytes; it never starts if the bodies of its inputs total more than `input` bytes,
+ * and cannot run more than `processes` processes and threads at once. Its attempt's directory,
+ * workspace, input, output and kinds' areas, may hold `disk` bytes.
+ */
+export type Limits = {
+  idle: number;
+  attempt: number;
+  transcript: number;
+  input: number;
+  memory: number;
+  processes: number;
+  disk: number;
+};
+
+// The limits a step states: those it changes from the factory's defaults, or none.
+type Stated = { limits?: Partial<Limits> };
+
 // What every step that starts a program declares: its inputs, the artifact kinds it may claim,
 // whether its workspace is built from the subject, from the one artifact an input names, or starts
-// empty, its outcomes' edges, the
-// attempts it may start between the owner's decisions, its access, and its limits. An attempt is stopped after `idle`
-// seconds without stdout or stderr output, `attempt` seconds in all, or `transcript` bytes of it,
-// or once its processes use more than `memory` bytes; it never starts if the bodies of its inputs
-// total more than `input` bytes, and cannot run more than `processes` processes and threads at
-// once. Its attempt's directory, workspace, input, output and kinds' areas, may hold `disk`
-// bytes. Without `memory`, `processes` or `disk`, the engine's defaults bound them: 4 GiB, 1024
-// and 4 GiB.
-type Program<N extends string> = {
+// empty, its outcomes' edges, the attempts it may start between the owner's decisions, its access,
+// and, as `Bounded` holds them, its limits.
+type Program<N extends string, Bounded> = {
   inputs: Readonly<Record<string, Query<N>>>;
   claims: readonly string[];
   workspace: "subject" | "empty" | { input: string };
   on: Record<string, N | "end">;
   budget: number;
   access: Access;
-  limits: {
-    idle: number;
-    attempt: number;
-    transcript: number;
-    input: number;
-    memory?: number;
-    processes?: number;
-    disk?: number;
-  };
-};
+} & Bounded;
 
 /**
  * A step: an agent step runs its agent's harness adapter, a command step runs `run`, and an
  * approval step waits for the owner's decision, following the edge its outcome names in `on`.
  */
-type Step<N extends string> =
-  | ({ kind: "agent"; agent: Agent } & Program<N>)
-  | ({ kind: "command"; run: readonly [string, ...string[]] } & Program<N>)
+type Step<N extends string, Bounded> =
+  | ({ kind: "agent"; agent: Agent } & Program<N, Bounded>)
+  | ({ kind: "command"; run: readonly [string, ...string[]] } & Program<N, Bounded>)
   | { kind: "approval"; on: Record<string, N | "end"> };
 
-/** A workflow over its step names `N`; `start` must name one of its steps, and `end` is reserved. */
-export type Workflow<N extends string = string> = {
+/**
+ * A workflow over its step names `N`; `start` must name one of its steps, and `end` is reserved.
+ * Each step states the limits it changes from the factory's defaults; a commission's definition
+ * holds every step's limits whole.
+ */
+export type Workflow<N extends string = string, Bounded = Stated> = {
   start: NoInfer<N>;
-  steps: { [K in N]: K extends "end" ? never : Step<NoInfer<N>> };
+  steps: { [K in N]: K extends "end" ? never : Step<NoInfer<N>, Bounded> };
 };
 
 // workflow is the definition's name; definition is the hash of the definition as it was when the
@@ -204,11 +213,11 @@ export type CommissionState<N extends string = string> =
 export type Skill = { name: string; files: Readonly<Record<string, string>> };
 
 /**
- * What a commission runs on: its workflow, the kinds of artifact the factory defined, and the
- * skills its agents declare, by path.
+ * What a commission runs on: its workflow, each step with its limits whole, the kinds of artifact
+ * the factory defined, and the skills its agents declare, by path.
  */
 export type Definition<N extends string = string> = {
-  workflow: Workflow<N>;
+  workflow: Workflow<N, { limits: Limits }>;
   kinds: Kinds;
   skills: Readonly<Record<string, Skill>>;
 };

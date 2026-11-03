@@ -4,6 +4,7 @@ import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { builtIn } from "../defaults/kinds.ts";
+import { limits } from "../defaults/limits.ts";
 import { createEngine } from "./engine.ts";
 
 // A log and store written by the engine of 2026-11-03, never regenerated: a change that makes
@@ -22,6 +23,7 @@ test("a log written by the engine of 2026-11-03 still reads", async (t) => {
   const engine = createEngine({
     log: join(directory, "log.sqlite"),
     kinds: builtIn,
+    defaults: { limits },
     workflows: {},
   });
 

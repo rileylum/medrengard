@@ -9,10 +9,11 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as sleep } from "node:timers/promises";
 import { builtIn } from "../defaults/kinds.ts";
+import { limits as defaultLimits } from "../defaults/limits.ts";
 import { createEngine } from "./engine.ts";
 import { isRecord, isText } from "./json.ts";
 import type { Kind, Kinds } from "./kinds.ts";
-import { defineWorkflow, type Access, type Query, type Workflow } from "./replay.ts";
+import { defineWorkflow, type Access, type Limits, type Query, type Workflow } from "./replay.ts";
 
 // The system's programs, read-only.
 const system = ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
@@ -34,14 +35,15 @@ const claims = ["document", "commit", "verdict"];
 
 /**
  * Starts an engine whose one workflow, `build`, is made by `workflow` from the test's directory,
- * with the kinds `kinds` makes from it, the built-ins unless given, and commissions `first` under
- * it. Returns the options too, so a test can start a second engine
- * on the same log.
+ * with the kinds `kinds` makes from it, the built-ins unless given, and the factory's default
+ * `limits`, and commissions `first` under it. Returns the options too, so a test can start a
+ * second engine on the same log.
  */
 async function engineWith<N extends string>(
   t: TestContext,
   workflow: (directory: string) => Workflow<N>,
   kinds: (directory: string) => Kinds = () => builtIn,
+  limits: Limits = defaultLimits,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
@@ -51,6 +53,7 @@ async function engineWith<N extends string>(
     log: join(directory, "log.sqlite"),
     kinds: kinds(directory),
     workflows: { build: workflow(directory) },
+    defaults: { limits },
   };
 
   const engine = createEngine(options);
@@ -1850,6 +1853,116 @@ test("a commission runs on the workflow definition it started with", async (t) =
   });
 
   assert.partialDeepStrictEqual(await edited.advance("first"), { status: "finished", by: "end" });
+});
+
+// A command step that names only the limits in `limits` and claims done once it has run `script`.
+function stepLimited(script: string, limits?: Partial<Limits>) {
+  const { limits: _named, ...step } = stepRunning(
+    `${script}
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    "end",
+  );
+
+  return limits === undefined ? step : { ...step, limits };
+}
+
+test("a step that names no limits has the factory's", async (t) => {
+  const { engine } = await engineWith(
+    t,
+    () => defineWorkflow({ start: "build", steps: { build: stepLimited("seq 100") } }),
+    undefined,
+    { ...defaultLimits, transcript: 16 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build wrote more than its transcript limit of 16 bytes.",
+  });
+});
+
+test("a step that names some limits has the factory's for the rest", async (t) => {
+  const { engine } = await engineWith(
+    t,
+    () =>
+      defineWorkflow({
+        start: "build",
+        steps: { build: stepLimited("seq 100", { transcript: 65536 }) },
+      }),
+    undefined,
+    { ...defaultLimits, transcript: 16, attempt: 0.2 },
+  );
+
+  // The step's own transcript limit holds; its attempt limit is the factory's.
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "finished",
+    by: "end",
+  });
+
+  const { engine: slow } = await engineWith(
+    t,
+    () =>
+      defineWorkflow({
+        start: "build",
+        steps: { build: stepLimited("sleep 2", { transcript: 65536 }) },
+      }),
+    undefined,
+    { ...defaultLimits, transcript: 16, attempt: 0.2 },
+  );
+
+  assert.partialDeepStrictEqual(await slow.advance("first"), {
+    status: "escalated",
+    reason: "Step build reached its attempt limit of 0.2 s.",
+  });
+});
+
+test("a commission runs on the factory's limits it started with", async (t) => {
+  const { options } = await engineWith(
+    t,
+    () => defineWorkflow({ start: "build", steps: { build: stepLimited("seq 100") } }),
+    undefined,
+    { ...defaultLimits, transcript: 16 },
+  );
+
+  const changed = createEngine({ ...options, defaults: { limits: defaultLimits } });
+
+  assert.partialDeepStrictEqual(await changed.advance("first"), {
+    status: "escalated",
+    reason: "Step build wrote more than its transcript limit of 16 bytes.",
+  });
+});
+
+test("a factory whose default limits leave one out cannot commission", async (t) => {
+  const { disk: _left, ...limits } = defaultLimits;
+
+  await assert.rejects(
+    engineWith(
+      t,
+      () => defineWorkflow({ start: "build", steps: { build: stepLimited("true") } }),
+      undefined,
+      // SAFETY: the factory module is the owner's JavaScript, which the type cannot hold to.
+      limits as Limits,
+    ),
+    {
+      message:
+        "The factory's default limits are invalid: they must be idle, attempt, transcript, input, memory, processes and disk.",
+    },
+  );
+});
+
+test("a step that names a limit there is not cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        // SAFETY: the workflow module is the owner's JavaScript, which the type cannot hold to.
+        steps: { build: stepLimited("true", { cpu: 1 } as Partial<Limits>) },
+      }),
+    ),
+    {
+      message:
+        "Workflow build is invalid: step build's limits may be only idle, attempt, transcript, input, memory, processes and disk.",
+    },
+  );
 });
 
 test("a workflow whose budget is not a positive integer cannot be commissioned", async (t) => {

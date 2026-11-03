@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { builtIn } from "./kinds.ts";
+import { limits } from "./limits.ts";
 import { createEngine } from "../src/engine.ts";
 import { defineWorkflow, type Access } from "../src/replay.ts";
 import { claudeCode, contract } from "./access.ts";
@@ -21,6 +22,7 @@ async function seenUnder(t: TestContext, access: Access, script: string): Promis
   const engine = createEngine({
     log: join(directory, "log.sqlite"),
     kinds: builtIn,
+    defaults: { limits },
     workflows: {
       look: defineWorkflow({
         start: "look",

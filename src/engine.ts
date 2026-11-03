@@ -24,6 +24,7 @@ import {
   type CommissionEvent,
   type CommissionState,
   type Definition,
+  type Limits,
   type Query,
   type Skill,
   type Workflow,
@@ -37,7 +38,12 @@ import { createStore, type Artifact } from "./store.ts";
 // The milliseconds a write waits for another process's write to the log.
 const logWait = 5000;
 
-type Options = { log: string; workflows: Record<string, Workflow>; kinds: Kinds };
+type Options = {
+  log: string;
+  workflows: Record<string, Workflow>;
+  kinds: Kinds;
+  defaults: { limits: Limits };
+};
 
 /**
  * One entry in a commission's record: an attempt, with its notes so far, and once it ends the
@@ -100,7 +106,7 @@ type Log = [Commissioned & { at?: number }, ...Exclude<CommissionEvent, Commissi
  * Runs commissions through the owner's workflows, keeping every event in the SQLite log at `log`
  * and every artifact in the store beside it.
  */
-export function createEngine({ log, workflows, kinds }: Options) {
+export function createEngine({ log, workflows, kinds, defaults }: Options) {
   // Another engine or CLI call may be writing to the same log; waiting for it is bounded, and past
   // the bound the call fails as "database is locked". Writes are single events, so 5 s is ample.
   const database = new DatabaseSync(log, { timeout: logWait });
@@ -258,13 +264,13 @@ export function createEngine({ log, workflows, kinds }: Options) {
       // skills are read once it has passed, so editing one later changes no commission.
       const checked = parseDefinition(
         workflow,
-        JSON.stringify({ workflow: workflows[workflow], kinds }),
+        JSON.stringify({ workflow: workflows[workflow], kinds, defaults }),
       );
 
       refuseRequest(checked.kinds.document, request);
 
       const skills = pin(workflow, checked.workflow, store);
-      const text = JSON.stringify({ workflow: workflows[workflow], kinds, skills });
+      const text = JSON.stringify({ workflow: workflows[workflow], kinds, skills, defaults });
       const parsed = parseDefinition(workflow, text);
 
       const event: Commissioned = {
@@ -955,7 +961,7 @@ function sinceDecision(events: Log): Log[number][] {
   return events.slice(events.findLastIndex((event) => event.type === "decided") + 1);
 }
 
-type Runnable = Extract<Workflow["steps"][string], { kind: "agent" | "command" }>;
+type Runnable = Extract<Definition["workflow"]["steps"][string], { kind: "agent" | "command" }>;
 
 // An artifact, such as the commission's subject, with the files its verifier kept.
 type Subject = { hash: string; artifact: Artifact; kept: Readonly<Record<string, string>> };
@@ -1008,9 +1014,6 @@ function bounded(reason: string): string {
 // lazy: constants. A kind's programs always get these; give a kind's program limits of its own
 // once one needs more.
 const defaultBounds: Bounds = { memory: 4 * 1024 * 1024 * 1024, processes: 1024 };
-
-// lazy: a constant, in bytes. The attempt's directory of a step that declares no disk limit.
-const defaultDisk = 4 * 1024 * 1024 * 1024;
 
 // The bytes the files under `directory` take on disk. What vanishes as it is walked counts for
 // nothing; what cannot be read, too, so a step could hide bytes under a directory it locks.
@@ -1268,7 +1271,7 @@ async function run(
   const escalate = (reason: string): Ending =>
     recorded<Extract<Ending, { type: "escalated" }>>({ type: "escalated", reason, attempt });
 
-  const disk = step.limits.disk ?? defaultDisk;
+  const { disk } = step.limits;
   const overDisk = `Step ${name} used more than its disk limit of ${disk} bytes.`;
 
   // Measured while the attempt's programs run, so a runaway is stopped within a look; and after
@@ -1344,10 +1347,7 @@ async function run(
     await mkdir(output);
 
     // An agent step's program is its harness adapter, under the same contract.
-    const bounds = {
-      memory: step.limits.memory ?? defaultBounds.memory,
-      processes: step.limits.processes ?? defaultBounds.processes,
-    };
+    const bounds = { memory: step.limits.memory, processes: step.limits.processes };
 
     const { command, args, env, unit } = confine(
       step.access,

@@ -33,7 +33,7 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
   artifact   <hash or a prefix of at least 8 characters>
 
 The factory is --factory <path>, or else MEDRENGARD_FACTORY: a module whose default export is the
-engine's options, { log, kinds, workflows }, with log relative to the module.`;
+engine's options, { log, kinds, workflows, defaults }, with log relative to the module.`;
 
 // Each command's positional arguments and the options it takes besides --json and --factory.
 const commands = new Map([
@@ -135,7 +135,13 @@ try {
 
   mkdirSync(dirname(log), { recursive: true });
 
-  const engine = createEngine({ log, workflows: options.workflows, kinds: options.kinds });
+  const engine = createEngine({
+    log,
+    workflows: options.workflows,
+    kinds: options.kinds,
+    defaults: options.defaults,
+  });
+
   const [first, second] = args;
 
   switch (command) {
@@ -205,7 +211,7 @@ try {
 // The factory module is the owner's code, so its shape is checked here, before the engine sees it;
 // a misspelled key would otherwise be dropped and fail later, far from the cause.
 function refuseFactory(path: string, given: readonly string[]): void {
-  const keys = ["log", "kinds", "workflows"];
+  const keys = ["log", "kinds", "workflows", "defaults"];
   const missing = keys.filter((key) => !given.includes(key));
   const extra = given.filter((key) => !keys.includes(key));
 
@@ -216,7 +222,7 @@ function refuseFactory(path: string, given: readonly string[]): void {
     ];
 
     throw new Error(
-      `Factory ${path} must default-export { log, kinds, workflows }: ${problems.join(", ")}.`,
+      `Factory ${path} must default-export { log, kinds, workflows, defaults }: ${problems.join(", ")}.`,
     );
   }
 }

@@ -1,6 +1,7 @@
 import { test } from "node:test";
+import type { createEngine } from "./engine.ts";
 import type { Kind, Program } from "./kinds.ts";
-import type { Access, Agent, Query, Workflow } from "./replay.ts";
+import type { Access, Agent, Limits, Query, Workflow } from "./replay.ts";
 
 // Constraint 7: the definition's schema is pinned here, at compile time: a field added to or
 // removed from any type a factory writes fails the type check until this list changes on purpose.
@@ -23,10 +24,14 @@ type Narrowing = Exclude<Query, string>;
 
 type Rule = Kind["fields"][string];
 
+type Factory = Parameters<typeof createEngine>[0];
+
 // Each entry must be true, or the file does not compile.
 type Expect<T extends true> = T;
 
 type Pinned = {
+  factory: Expect<Same<keyof Factory, "log" | "workflows" | "kinds" | "defaults">>;
+  defaults: Expect<Same<Factory["defaults"], { limits: Limits }>>;
   workflow: Expect<Same<keyof Workflow, "start" | "steps">>;
   stepKinds: Expect<Same<Step["kind"], "agent" | "command" | "approval">>;
   agentStep: Expect<
@@ -43,9 +48,10 @@ type Pinned = {
   >;
   approvalStep: Expect<Same<keyof Approval, "kind" | "on">>;
   workspace: Expect<Same<Command["workspace"], "subject" | "empty" | { input: string }>>;
+  stated: Expect<Same<Command["limits"], Partial<Limits> | undefined>>;
   limits: Expect<
     Same<
-      keyof Command["limits"],
+      keyof Limits,
       "idle" | "attempt" | "transcript" | "input" | "memory" | "processes" | "disk"
     >
   >;

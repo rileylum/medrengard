@@ -39,7 +39,7 @@
 
 1. No extension code in the engine. Commands, harness adapters, verifiers, materialisers and observers are programs. Workflow definitions are TypeScript that evaluates to data.
 2. Everything has a declared limit. Every attempt, wait, output stream, artifact, transcript and disk area has an explicit bound, or is declared unbounded, which only an attended step may be. Exceeding a bound escalates; nothing is silently truncated or allowed to grow without limit.
-3. A commission runs on the definitions it started with. Commissioning records its workflow, agent and kind definitions by hash. Editing a definition affects only new commissions.
+3. A commission runs on the definitions it started with. Commissioning records its workflow, agent and kind definitions and the factory's defaults by hash. Editing a definition affects only new commissions.
 4. Hermetic steps. A step sees only its declared inputs, workspace, environment and tools. A harness adapter loads only declared skills and configuration, or records the leak on every attempt.
 5. Commissions are independent. Commissions share no state, and each has one writer at a time. Any number of commissions, across repositories and workflows, can advance at once.
 6. Large data by reference. The log holds events and hashes; artifact bodies, kept files, transcripts and definitions live in a content-addressed store.

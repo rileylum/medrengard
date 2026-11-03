@@ -32,6 +32,7 @@ async function factoryIn(t: TestContext) {
     `import { defineWorkflow } from ${JSON.stringify(join(repository, "src/replay.ts"))};
      import { contract } from ${JSON.stringify(join(repository, "defaults/access.ts"))};
      import { builtIn } from ${JSON.stringify(join(repository, "defaults/kinds.ts"))};
+     import { limits } from ${JSON.stringify(join(repository, "defaults/limits.ts"))};
 
      const step = (script: string) => ({
        kind: "command", workspace: "empty", inputs: {}, claims: ["document"], access: contract,
@@ -55,6 +56,7 @@ async function factoryIn(t: TestContext) {
 
      export default {
        log: "state/log.sqlite",
+       defaults: { limits },
        kinds: {
          ...builtIn,
          memo: {
@@ -501,7 +503,7 @@ test("the CLI without a factory exits 2 naming both ways to give one", () => {
   assert.match(stderr, /MEDRENGARD_FACTORY/);
 });
 
-test("the CLI refuses a factory whose default export is not exactly { log, kinds, workflows }", async (t) => {
+test("the CLI refuses a factory whose default export is not exactly { log, kinds, workflows, defaults }", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -513,7 +515,7 @@ test("the CLI refuses a factory whose default export is not exactly { log, kinds
   assert.deepEqual(run(["state", "first"], factory), {
     status: 1,
     stdout: "",
-    stderr: `Factory ${factory} must default-export { log, kinds, workflows }: missing workflows, not allowed workflow.\n`,
+    stderr: `Factory ${factory} must default-export { log, kinds, workflows, defaults }: missing workflows, defaults, not allowed workflow.\n`,
   });
   assert.ok(!existsSync(join(directory, "log.sqlite")));
 });
