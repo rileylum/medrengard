@@ -543,18 +543,18 @@ console.log(engine.record("first").entries);
 console.log(engine.commissions());
 ```
 
-| Method                                                       | Returns                                                                                             |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `commission(workflow, commission, { title, body })`          | nothing; refuses an unknown workflow or an invalid one                                              |
-| `advance(commission, { signal? })`                           | the state it stopped at; once `signal` aborts, it starts no further attempt                         |
-| `state(commission)`                                          | the state, replayed from the log                                                                    |
-| `commissions()`                                              | `{ commission, state }[]`, oldest first                                                             |
-| `decide(commission, { subject, since, outcome, feedback? })` | the new state; refuses a stale subject or wait, or an undeclared outcome                            |
-| `cancel(commission)`                                         | nothing; the engine running the attempt stops it and escalates, or, with none, it escalates at once |
-| `record(commission)`                                         | `{ state, request, entries }`: every attempt, escalation and decision, oldest first                 |
-| `errors(commission, attempt)`                                | what the attempt wrote to stderr, as a `Buffer`; empty for none                                     |
-| `transcript(commission, attempt)`                            | the attempt's stdout and stderr as a `Buffer`                                                       |
-| `artifact(hash)`                                             | `{ kind, fields, body? }`; refuses a hash the log does not name as an artifact                      |
+| Method                                                       | Returns                                                                                                                                                                                        |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commission(workflow, commission, { title, body })`          | nothing; refuses an unknown workflow or an invalid one                                                                                                                                         |
+| `advance(commission, { signal? })`                           | the state it stopped at; once `signal` aborts, it starts no further attempt                                                                                                                    |
+| `state(commission)`                                          | the state, replayed from the log                                                                                                                                                               |
+| `commissions()`                                              | `{ commission, state }[]`, oldest first                                                                                                                                                        |
+| `decide(commission, { subject, since, outcome, feedback? })` | the new state; refuses a stale subject or wait, or an undeclared outcome                                                                                                                       |
+| `cancel(commission)`                                         | nothing; the engine running the attempt stops it and escalates, or, with none, it escalates at once                                                                                            |
+| `record(commission)`                                         | `{ state, request, entries }`: every attempt, escalation and decision, oldest first; each claimed artifact with its `verifier`, the command that accepted it, or `null` when its kind has none |
+| `errors(commission, attempt)`                                | what the attempt wrote to stderr, as a `Buffer`; empty for none                                                                                                                                |
+| `transcript(commission, attempt)`                            | the attempt's stdout and stderr as a `Buffer`                                                                                                                                                  |
+| `artifact(hash)`                                             | `{ kind, fields, body? }`; refuses a hash the log does not name as an artifact                                                                                                                 |
 
 A state has a `status`:
 
@@ -595,7 +595,9 @@ medrengard <command> [--json] [--factory <path>]
   failed; 2 for a usage error.
 - `show` prints the commission's record: one line per attempt with what it claimed and how long
   it took, each escalation and each decision with its feedback, then the current subject and every judgement
-  about it in full. It is what the owner reads at a gate. With `--json` it prints
+  about it in full. Each artifact says whether a verifier accepted it, `(verified)`, or its kind has
+  none, `(no verifier)`; in full, it names the verifier's command. It is what the owner reads at a
+  gate. With `--json` it prints
   `engine.record`, whose times are milliseconds since the epoch. A log written before events
   carried times shows no durations.
 - `watch` follows a commission as the log records it: each attempt as it starts, its notes as

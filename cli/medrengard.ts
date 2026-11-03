@@ -359,15 +359,20 @@ function line(label: string, hash: string, artifact: Artifact): string {
   return [label.padEnd(8), hash.slice(0, 8), ...fields].join("  ");
 }
 
-// An artifact in full, as `artifact` prints it, indented under a heading.
-function full(hash: string, artifact: Artifact): string {
+// An artifact in full, as `artifact` prints it, under a heading and the verifier that accepted it.
+function full(hash: string, artifact: Artifact, verifier: readonly string[] | null): string {
   const fields = Object.entries(artifact.fields)
     .filter(([name]) => name !== "subject")
     .map(([name, value]) => `${name}: ${value}`);
 
   const body = artifact.body === undefined ? [] : ["", artifact.body.trimEnd()];
 
-  return [`${artifact.kind} ${hash}`, ...fields, ...body].join("\n");
+  return [
+    `${artifact.kind} ${hash}`,
+    `verifier: ${verifier === null ? "none" : verifier.join(" ")}`,
+    ...fields,
+    ...body,
+  ].join("\n");
 }
 
 // The lines for an entry in the record, each with a key that names it, so `watch` prints each
@@ -405,7 +410,8 @@ function linesOf(index: number, entry: Entry): [string, string][] {
           : [
               `${number}${at} ${entry.outcome}${took}${errors}`,
               ...entry.artifacts.map(
-                ({ hash, artifact }) => `    ${line(artifact.kind, hash, artifact)}`,
+                ({ hash, artifact, verifier }) =>
+                  `    ${line(artifact.kind, hash, artifact)}  ${verifier === null ? "(no verifier)" : "(verified)"}`,
               ),
             ].join("\n");
 
@@ -499,10 +505,15 @@ function printRecord(commission: string, record: CommissionRecord): void {
     const subject = claimed.find(({ hash }) => hash === state.subject);
     const evidence = claimed.filter(({ artifact }) => artifact.fields.subject === state.subject);
 
-    lines.push("", "Subject:", full(state.subject, subject?.artifact ?? request.artifact));
+    // The request is the owner's, and no verifier checks the owner.
+    lines.push(
+      "",
+      "Subject:",
+      full(state.subject, subject?.artifact ?? request.artifact, subject?.verifier ?? null),
+    );
 
-    for (const { hash, artifact } of evidence) {
-      lines.push("", full(hash, artifact));
+    for (const { hash, artifact, verifier } of evidence) {
+      lines.push("", full(hash, artifact, verifier));
     }
   }
 

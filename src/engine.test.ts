@@ -2503,6 +2503,54 @@ function engineVerifying(t: TestContext, script: string, verifying = access, lim
   );
 }
 
+test("the record names the verifier that accepted each artifact, or that its kind has none", async (t) => {
+  // A memo's verifier accepts and keeps nothing, so only the record tells it from a note, which
+  // has no verifier.
+  const verifier = [
+    "sh",
+    "-c",
+    `echo '{"accepted":true,"keep":[]}' > "$MEDRENGARD_OUT/output.json"`,
+  ] as const;
+
+  const claimed = [
+    { kind: "memo", fields: { note: "Checked." } },
+    { kind: "note", fields: { note: "Claimed." } },
+  ];
+
+  const { engine } = await engineWith(
+    t,
+    () =>
+      defineWorkflow({
+        start: "build",
+        steps: {
+          build: {
+            ...stepRunning(
+              `echo '${JSON.stringify({ outcome: "done", artifacts: claimed })}' > "$MEDRENGARD_OUT/output.json"`,
+              "end",
+            ),
+            claims: ["memo", "note"],
+          },
+        },
+      }),
+    () => ({
+      ...builtIn,
+      memo: { ...memo, verifier: { run: verifier, access, limit: 5 } },
+      note: memo,
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    {
+      outcome: "done",
+      artifacts: [
+        { artifact: { kind: "memo" }, verifier },
+        { artifact: { kind: "note" }, verifier: null },
+      ],
+    },
+  ]);
+});
+
 test("a kind's verifier sees the claim's fields and body, and its rejection escalates", async (t) => {
   const { engine, directory } = await engineVerifying(
     t,

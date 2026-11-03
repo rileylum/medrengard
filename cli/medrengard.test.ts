@@ -53,7 +53,17 @@ async function factoryIn(t: TestContext) {
 
      export default {
        log: "state/log.sqlite",
-       kinds: builtIn,
+       kinds: {
+         ...builtIn,
+         memo: {
+           role: "judgement", description: "A memo.", fields: { note: { limit: 20 } },
+           body: { required: false, limit: 100 },
+           verifier: {
+             run: ["sh", "-c", \`echo '{"accepted":true,"keep":[]}' > "$MEDRENGARD_OUT/output.json"\`],
+             access: contract, limit: 5,
+           },
+         },
+       },
        workflows: {
          build: defineWorkflow({
            start: "build",
@@ -87,6 +97,17 @@ async function factoryIn(t: TestContext) {
                ...step(\`echo 'Reading the request.' >&3; echo 'Writing the reply.' >&3
                  echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`),
                on: { done: "review" },
+             },
+             review: { kind: "approval", on: { approve: "end" } },
+           },
+         }),
+         judged: defineWorkflow({
+           start: "build",
+           steps: {
+             build: {
+               ...step(\`echo '{"outcome":"pass","artifacts":[{"kind":"memo","fields":{"note":"Checked."}},{"kind":"verdict","fields":{"verdict":"pass"}}]}' > "$MEDRENGARD_OUT/output.json"\`),
+               claims: ["memo", "verdict"],
+               on: { pass: "review" },
              },
              review: { kind: "approval", on: { approve: "end" } },
            },
@@ -482,6 +503,21 @@ test("the CLI shows a commission's record for people, and as the engine's record
     state: { status: "awaiting" },
     entries: [{ entry: "attempt", attempt: 1, step: "build", outcome: "done" }],
   });
+});
+
+test("show says which artifacts a verifier accepted and which kinds have none", async (t) => {
+  const { factory } = await factoryIn(t);
+
+  run(["commission", "judged", "first", "--title", "Greet", "--body", "Say hello."], factory);
+  run(["advance", "first"], factory);
+
+  const { stdout } = run(["show", "first"], factory);
+
+  assert.match(stdout, /^ {4}memo +[0-9a-f]{8} +Checked\. +\(verified\)$/m);
+  assert.match(stdout, /^ {4}verdict +[0-9a-f]{8} +pass +\(no verifier\)$/m);
+  // At the gate, each judgement in full names its verifier, or that it has none.
+  assert.match(stdout, /^memo [0-9a-f]{64}\nverifier: sh -c echo .*\nnote: Checked\.$/m);
+  assert.match(stdout, /^verdict [0-9a-f]{64}\nverifier: none\nverdict: pass$/m);
 });
 
 test("the CLI prints an attempt's errors", async (t) => {

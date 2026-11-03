@@ -50,7 +50,9 @@ export type Entry =
       started?: number;
       ended?: number;
       outcome: string;
-      artifacts: { hash: string; artifact: Artifact }[];
+      // verifier is the command of the verifier that accepted the artifact, or null when its kind
+      // has none, as the commission's definition holds it.
+      artifacts: { hash: string; artifact: Artifact; verifier: Program["run"] | null }[];
       errors: boolean;
     }
   | {
@@ -303,7 +305,13 @@ export function createEngine({ log, workflows, kinds }: Options) {
               started: startOf(event.attempt),
               ended: event.at,
               outcome: event.outcome,
-              artifacts: event.artifacts.map(({ hash }) => ({ hash, artifact: store.get(hash) })),
+              // The engine records an artifact only once its kind's verifier, if any, accepted it,
+              // and the kind is the commission's own.
+              artifacts: event.artifacts.map(({ hash, kind }) => ({
+                hash,
+                artifact: store.get(hash),
+                verifier: definition.kinds[kind].verifier?.run ?? null,
+              })),
               errors: event.errors !== undefined,
             };
             break;
