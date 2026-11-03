@@ -68,7 +68,7 @@ The exit code reports the step's health; the outcome reports its result. A test 
 - exit 0 with a missing or invalid output (an undeclared outcome or kind, or an artifact its kind rejects): the commission escalates;
 - a non-zero exit: the commission escalates;
 - a limit reached: the engine sends `SIGTERM`, then `SIGKILL` after a grace period, and the commission escalates naming the limit;
-- the owner cancels: the engine stops the step the same way, and the commission escalates naming the cancellation.
+- the owner cancels: the engine stops the step, or the kind's program running for it, the same way, and the commission escalates naming the cancellation. A cancel that arrives before the attempt's end is written wins, and nothing the attempt claimed is recorded; with no engine running the attempt, cancelling escalates it at once.
 
 The owner's request is the commission's first artifact, a document, and a decision with its feedback is a judgement. Steps receive both as declared inputs, like any other artifact.
 

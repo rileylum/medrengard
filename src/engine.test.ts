@@ -1936,6 +1936,142 @@ test("an attempt cancelled from another engine is stopped and escalates", async 
   });
 });
 
+test("a cancel made just before the step exits still escalates", async (t) => {
+  // The step exits well within the second the engine takes to look for a cancel.
+  const { engine, directory, options } = await engineRunning(
+    t,
+    `echo started >> "$1"; sleep 0.3; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    { idle: 5, attempt: 5, transcript: 65536, input: 65536 },
+  );
+
+  const running = engine.advance("first");
+
+  await untilStarted(directory);
+  createEngine(options).cancel("first");
+
+  assert.partialDeepStrictEqual(await running, {
+    status: "escalated",
+    reason: "Step build was cancelled by the owner.",
+  });
+});
+
+/** Waits until the file `name` in `directory` holds a line. */
+async function untilWritten(directory: string, name: string): Promise<void> {
+  while (!(await readFile(join(directory, name), "utf8").catch(() => "")).endsWith("\n")) {
+    await sleep(20);
+  }
+}
+
+// A kind's program that says it started, then would run for half a minute and say it finished.
+const lingering = (file: string) =>
+  `echo started >> "$1/${file}"; sleep 30; echo finished >> "$1/${file}"`;
+
+test(
+  "a cancel while a kind's verifier runs stops it and escalates",
+  { timeout: 10_000 },
+  async (t) => {
+    const { engine, directory, options } = await engineVerifying(
+      t,
+      `${lingering("verifier")}; echo '{"accepted":true,"keep":[]}' > "$MEDRENGARD_OUT/output.json"`,
+      access,
+      60,
+    );
+
+    const running = engine.advance("first");
+
+    await untilWritten(directory, "verifier");
+    createEngine(options).cancel("first");
+
+    assert.partialDeepStrictEqual(await running, {
+      status: "escalated",
+      reason: "Step build was cancelled by the owner.",
+    });
+    assert.equal(await readFile(join(directory, "verifier"), "utf8"), "started\n");
+  },
+);
+
+test(
+  "a cancel while a kind's materialiser runs stops it, and the step never starts",
+  { timeout: 10_000 },
+  async (t) => {
+    // The request is a document; this one's materialiser builds the step's workspace from it.
+    const { engine, directory, options } = await engineWith(
+      t,
+      (directory) =>
+        defineWorkflow({
+          start: "build",
+          steps: {
+            build: {
+              ...stepRunning('echo started >> "$1"', "end", [join(directory, "started")]),
+              workspace: "subject",
+            },
+          },
+        }),
+      (directory) => ({
+        ...builtIn,
+        document: {
+          ...builtIn.document,
+          materialiser: {
+            run: ["sh", "-c", lingering("materialiser"), "sh", directory],
+            access,
+            limit: 60,
+          },
+        },
+      }),
+    );
+
+    const running = engine.advance("first");
+
+    await untilWritten(directory, "materialiser");
+    createEngine(options).cancel("first");
+
+    assert.partialDeepStrictEqual(await running, {
+      status: "escalated",
+      reason: "Step build was cancelled by the owner.",
+    });
+    assert.equal(await readFile(join(directory, "materialiser"), "utf8"), "started\n");
+    await assert.rejects(readFile(join(directory, "started")), { code: "ENOENT" });
+  },
+);
+
+test(
+  "cancelling an attempt no engine is running escalates it at once",
+  { timeout: 10_000 },
+  async (t) => {
+    const { engine, directory, options } = await engineRunning(
+      t,
+      `echo started >> "$1"; exec sleep 30`,
+      {
+        idle: 60,
+        attempt: 60,
+        transcript: 65536,
+        input: 65536,
+      },
+    );
+
+    const crashing = join(directory, "crashing.ts");
+
+    await writeFile(
+      crashing,
+      `import { createEngine } from ${JSON.stringify(join(import.meta.dirname, "engine.ts"))};
+    await createEngine(${JSON.stringify(options)}).advance("first");`,
+    );
+
+    const child = spawn(process.execPath, [crashing], { stdio: "ignore" });
+
+    await untilStarted(directory);
+    child.kill("SIGKILL");
+    await once(child, "exit");
+
+    engine.cancel("first");
+
+    assert.partialDeepStrictEqual(engine.state("first"), {
+      status: "escalated",
+      reason: "Step build was cancelled by the owner.",
+    });
+  },
+);
+
 test("a commission that was never started is refused by name", async (t) => {
   const { engine } = await engineRunning(t, "true");
   const refused = { message: "There is no commission named missing." };

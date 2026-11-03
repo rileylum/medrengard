@@ -489,7 +489,9 @@ How the attempt ends:
 - a non-zero exit: the commission escalates. A test run that finds failures should exit 0 and claim
   a failing verdict;
 - a limit reached, or the owner cancelling: the engine sends `SIGTERM`, then `SIGKILL` after 5
-  seconds, and the commission escalates;
+  seconds, and the commission escalates. A cancel also stops a kind's materialiser or verifier
+  running for the attempt, and one that arrives before the attempt's end is written wins, so
+  nothing the attempt claimed is recorded. What the step already did, such as a push, stays done;
 - the engine failing on its own side, such as a full disk: the commission escalates, naming the
   error. If even that cannot be written, the next `advance` finds the attempt interrupted, in this
   process or any other.
@@ -539,18 +541,18 @@ console.log(engine.record("first").entries);
 console.log(engine.commissions());
 ```
 
-| Method                                                       | Returns                                                                             |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `commission(workflow, commission, { title, body })`          | nothing; refuses an unknown workflow or an invalid one                              |
-| `advance(commission, { signal? })`                           | the state it stopped at; once `signal` aborts, it starts no further attempt         |
-| `state(commission)`                                          | the state, replayed from the log                                                    |
-| `commissions()`                                              | `{ commission, state }[]`, oldest first                                             |
-| `decide(commission, { subject, since, outcome, feedback? })` | the new state; refuses a stale subject or wait, or an undeclared outcome            |
-| `cancel(commission)`                                         | nothing; the engine running the attempt stops it and escalates                      |
-| `record(commission)`                                         | `{ state, request, entries }`: every attempt, escalation and decision, oldest first |
-| `errors(commission, attempt)`                                | what the attempt wrote to stderr, as a `Buffer`; empty for none                     |
-| `transcript(commission, attempt)`                            | the attempt's stdout and stderr as a `Buffer`                                       |
-| `artifact(hash)`                                             | `{ kind, fields, body? }`; refuses a hash the log does not name as an artifact      |
+| Method                                                       | Returns                                                                                             |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `commission(workflow, commission, { title, body })`          | nothing; refuses an unknown workflow or an invalid one                                              |
+| `advance(commission, { signal? })`                           | the state it stopped at; once `signal` aborts, it starts no further attempt                         |
+| `state(commission)`                                          | the state, replayed from the log                                                                    |
+| `commissions()`                                              | `{ commission, state }[]`, oldest first                                                             |
+| `decide(commission, { subject, since, outcome, feedback? })` | the new state; refuses a stale subject or wait, or an undeclared outcome                            |
+| `cancel(commission)`                                         | nothing; the engine running the attempt stops it and escalates, or, with none, it escalates at once |
+| `record(commission)`                                         | `{ state, request, entries }`: every attempt, escalation and decision, oldest first                 |
+| `errors(commission, attempt)`                                | what the attempt wrote to stderr, as a `Buffer`; empty for none                                     |
+| `transcript(commission, attempt)`                            | the attempt's stdout and stderr as a `Buffer`                                                       |
+| `artifact(hash)`                                             | `{ kind, fields, body? }`; refuses a hash the log does not name as an artifact                      |
 
 A state has a `status`:
 

@@ -123,6 +123,17 @@ export function createEngine({ log, workflows, kinds }: Options) {
     "SELECT commission FROM events WHERE position = 0 ORDER BY rowid",
   );
 
+  // Whether a live engine is running the attempt. This process holds it only while it is running
+  // it: one whose end it failed to record is interrupted, though the process lives on.
+  function held(
+    commission: string,
+    { process: { pid, start }, attempt }: Extract<CommissionEvent, { type: "attempt-started" }>,
+  ): boolean {
+    return pid === self.pid && start === self.start
+      ? running.has(runningKey(log, commission, attempt))
+      : startOf(pid) === start;
+  }
+
   function read(commission: string): Log {
     const events = select.all(commission).map(({ event }) => JSON.parse(String(event)));
 
@@ -448,10 +459,20 @@ export function createEngine({ log, workflows, kinds }: Options) {
         );
       }
 
-      request.run(
-        commission,
-        events.findLast((event) => event.type === "attempt-started")!.attempt,
-      );
+      const started = events.findLast((event) => event.type === "attempt-started")!;
+
+      // With no engine to stop it, the attempt is over already: the cancel is its end.
+      if (!held(commission, started)) {
+        write(commission, events, {
+          type: "escalated",
+          reason: cancelledReason(started.step),
+          attempt: started.attempt,
+        });
+
+        return;
+      }
+
+      request.run(commission, started.attempt);
     },
 
     /**
@@ -474,16 +495,8 @@ export function createEngine({ log, workflows, kinds }: Options) {
 
         if (state.status === "attempting") {
           const started = events.findLast((event) => event.type === "attempt-started")!;
-          const { pid, start } = started.process;
 
-          // This process holds the attempt only while it is running it: one whose end it failed
-          // to record is interrupted, though the process lives on.
-          const held =
-            pid === self.pid && start === self.start
-              ? running.has(runningKey(log, commission, started.attempt))
-              : startOf(pid) === start;
-
-          if (held) {
+          if (held(commission, started)) {
             return state;
           }
 
@@ -620,7 +633,13 @@ export function createEngine({ log, workflows, kinds }: Options) {
             store,
           );
 
-          write(commission, read(commission), ending);
+          // A cancel that arrives before the attempt's end is written wins: nothing it claimed is
+          // recorded.
+          write(
+            commission,
+            read(commission),
+            ending.type === "attempt-completed" && cancelled() ? cancelledEnding(ending) : ending,
+          );
         } catch (error) {
           // The engine's own failure, such as a full disk, is nothing it can classify: the owner
           // decides. If this write fails too, the next advance finds the attempt interrupted.
@@ -767,6 +786,28 @@ type Ending = Extract<CommissionEvent, { type: "attempt-completed" | "escalated"
 
 // The bytes one note may hold: a line for the owner to read, not a log.
 const noteLimit = 4096;
+
+// How often, in milliseconds, the engine running an attempt looks for the owner's cancel.
+const cancelLook = 1000;
+
+const cancelledReason = (step: string) => `Step ${step} was cancelled by the owner.`;
+
+// The end of a completed attempt the owner cancelled before it was written: an escalation, with
+// its transcript and errors.
+function cancelledEnding(completed: Extract<Ending, { type: "attempt-completed" }>): Ending {
+  const ending: Ending = {
+    type: "escalated",
+    reason: cancelledReason(completed.step),
+    attempt: completed.attempt,
+    transcript: completed.transcript,
+  };
+
+  if (completed.errors !== undefined) {
+    ending.errors = completed.errors;
+  }
+
+  return ending;
+}
 
 // The time a stopped step has to exit after SIGTERM before it gets SIGKILL.
 const grace = 5000;
@@ -953,7 +994,13 @@ async function run(
         given.subject,
         given.kinds,
         store,
+        cancelled,
       );
+
+      // A materialiser stopped by a cancel fails; the cancel is the reason.
+      if (cancelled()) {
+        return escalate(cancelledReason(name));
+      }
 
       if (failed !== undefined) {
         return escalate(failed);
@@ -1002,9 +1049,9 @@ async function run(
 
     const cancel = setInterval(() => {
       if (cancelled()) {
-        stopFor(`Step ${name} was cancelled by the owner.`);
+        stopFor(cancelledReason(name));
       }
-    }, 1000);
+    }, cancelLook);
 
     const record = (into: Buffer[] | undefined) => (chunk: Buffer) => {
       idle.refresh();
@@ -1126,7 +1173,12 @@ async function run(
           verifier,
           given.subject,
           store,
+          cancelled,
         );
+
+        if (cancelled()) {
+          return escalate(cancelledReason(name));
+        }
 
         if ("reason" in result) {
           return escalate(result.reason);
@@ -1431,12 +1483,14 @@ const keptLimit = 64 * 1024 * 1024;
 const plainName = /^(?!\.\.?$)[A-Za-z0-9._-]+$/;
 
 // Runs a kind's program in `workspace` under its access, with `input` and `output` as its
-// directories, stopped after its limit. Returns why it failed, or undefined when it exited 0.
+// directories, stopped after its limit or once the attempt is cancelled. Returns why it failed, or
+// undefined when it exited 0.
 async function runProgram(
   program: Program,
   workspace: string,
   input: string,
   output: string,
+  cancelled: () => boolean,
 ): Promise<string | undefined> {
   const { command, args, env } = confine(program.access, { workspace, input, output }, program.run);
 
@@ -1463,9 +1517,18 @@ async function runProgram(
     stop(child);
   }, program.limit * 1000);
 
+  const cancel = setInterval(() => {
+    if (cancelled()) {
+      stop(child);
+    }
+  }, cancelLook);
+
   const closed = await once(child, "close")
     .catch((error: NodeJS.ErrnoException) => error)
-    .finally(() => clearTimeout(limit));
+    .finally(() => {
+      clearTimeout(limit);
+      clearInterval(cancel);
+    });
 
   if (closed instanceof Error) {
     return `it could not start: ${closed.code}.`;
@@ -1510,6 +1573,7 @@ async function verify(
   verifier: Program,
   subject: Subject,
   store: Store,
+  cancelled: () => boolean,
 ): Promise<{ kept: Record<string, string> } | { reason: string }> {
   const { input, output } = await areaFor(directory, "verifier");
   const { kind } = claim;
@@ -1531,7 +1595,7 @@ async function verify(
     }),
   );
 
-  const why = await runProgram(verifier, workspace, input, output);
+  const why = await runProgram(verifier, workspace, input, output, cancelled);
 
   if (why !== undefined) {
     return failed(why);
@@ -1582,6 +1646,7 @@ async function materialise(
   subject: Subject,
   kinds: Kinds,
   store: Store,
+  cancelled: () => boolean,
 ): Promise<string | undefined> {
   const { artifact } = subject;
 
@@ -1614,7 +1679,7 @@ async function materialise(
     }),
   );
 
-  const why = await runProgram(materialiser, workspace, input, output);
+  const why = await runProgram(materialiser, workspace, input, output, cancelled);
 
   return why === undefined
     ? undefined
