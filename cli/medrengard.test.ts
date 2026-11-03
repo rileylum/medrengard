@@ -54,6 +54,17 @@ async function factoryIn(t: TestContext) {
        },
      } as const;
 
+     // A step that runs until the test lets it go, so a test can look at it while it runs.
+     const held = {
+       ...slow,
+       run: [
+         "sh", "-c",
+         \`echo start >> "$1"; until [ -e "$1.go" ]; do sleep 0.02; done
+          echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`,
+         "sh", ${JSON.stringify(join(directory, "held"))},
+       ],
+     } as const;
+
      export default {
        log: "state/log.sqlite",
        defaults: { limits },
@@ -83,6 +94,13 @@ async function factoryIn(t: TestContext) {
            start: "build",
            steps: {
              build: { ...slow, on: { done: "review" } },
+             review: { kind: "approval", on: { approve: "end" } },
+           },
+         }),
+         held: defineWorkflow({
+           start: "build",
+           steps: {
+             build: { ...held, on: { done: "review" } },
              review: { kind: "approval", on: { approve: "end" } },
            },
          }),
@@ -392,14 +410,14 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
   });
 
   // An attempt in flight.
-  json("commission", "slow", "fourth", "--title", "Greet", "--body", "Say hello.");
+  json("commission", "held", "fourth", "--title", "Greet", "--body", "Say hello.");
 
   const advancing = spawn(process.execPath, [cli, "advance", "fourth"], {
     cwd: tmpdir(),
     env: { ...process.env, MEDRENGARD_FACTORY: factory },
   });
 
-  while (!(await readFile(join(directory, "steps"), "utf8").catch(() => "")).includes("start")) {
+  while (!(await readFile(join(directory, "held"), "utf8").catch(() => "")).includes("start")) {
     await sleep(20);
   }
 
@@ -418,6 +436,7 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
       running: true,
     },
   ]);
+  await writeFile(join(directory, "held.go"), "");
   await once(advancing, "exit");
 
   // A commission the engine cannot read, beside one it can.

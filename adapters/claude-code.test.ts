@@ -53,10 +53,13 @@ ${script}
     paths.push(join(directory, "skills", name));
   }
 
+  // The log's directory is hidden from every step, so it is not the one the fake claude is in.
+  await mkdir(join(directory, "record"));
+
   const engine = createEngine({
     kinds: builtIn,
     defaults: { limits },
-    log: join(directory, "log.sqlite"),
+    log: join(directory, "record", "log.sqlite"),
     workflows: {
       build: defineWorkflow({
         start: "plan",

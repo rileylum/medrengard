@@ -51,8 +51,13 @@ async function engineWith<N extends string>(
 
   t.after(() => rm(directory, { recursive: true, force: true }));
 
+  // The log's own directory, apart from the test's, which every step is kept out of.
+  const record = join(directory, "record");
+
+  await mkdir(record);
+
   const options = {
-    log: join(directory, "log.sqlite"),
+    log: join(record, "log.sqlite"),
     kinds: kinds(directory),
     workflows: { build: workflow(directory) },
     defaults: { limits },
@@ -62,7 +67,7 @@ async function engineWith<N extends string>(
 
   engine.commission("build", "first", { title: "Greet", body: "Say hello." });
 
-  return { engine, directory, options };
+  return { engine, directory, record, options };
 }
 
 /**
@@ -2594,7 +2599,7 @@ test(
   "an interrupted attempt keeps what its step wrote before its engine died, and leaves no directory",
   { timeout: 10_000 },
   async (t) => {
-    const { engine, directory, options } = await engineRunning(
+    const { engine, directory, record, options } = await engineRunning(
       t,
       `echo "before the crash"; echo "on stderr" >&2; pwd > "$1.workspace"
        echo started >> "$1"; exec sleep 30`,
@@ -2625,32 +2630,70 @@ test(
     // The attempt's directory, its workspace included, was beside the log, and is gone.
     const workspace = (await readFile(join(directory, "started.workspace"), "utf8")).trim();
 
-    assert.ok(workspace.startsWith(join(directory, "attempts")), workspace);
-    assert.deepEqual(await readdir(join(directory, "attempts")), []);
+    assert.ok(workspace.startsWith(join(record, "attempts")), workspace);
+    assert.deepEqual(await readdir(join(record, "attempts")), []);
   },
 );
 
 test("an attempt that ends leaves nothing spooled", async (t) => {
-  const { engine, directory } = await engineRunning(
+  const { engine, record } = await engineRunning(
     t,
     `echo hello; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
   assert.equal(engine.transcript("first", 1).toString(), "hello\n");
-  assert.deepEqual(await readdir(join(directory, "attempts")), []);
+  assert.deepEqual(await readdir(join(record, "attempts")), []);
 });
 
+test("a step whose access covers the log's directory finds it empty and cannot write there", async (t) => {
+  // The test's access writes the whole temp directory, the log's included.
+  const { engine, record } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        // Only the attempt's own directories, under attempts, are there to see.
+        build: stepRunning(
+          `ls -A "$1" | grep -v '^attempts$'; touch "$1/forged" 2> /dev/null && echo forged
+           echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+          "end",
+          [join(directory, "record")],
+        ),
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.equal(engine.transcript("first", 1).toString(), "");
+  assert.ok(!(await readdir(record)).includes("forged"));
+});
+
+// A step's part in a test that changes the log or store while it runs, which the step cannot
+// reach: it says it is ready in \`$1.ready\`, then waits for \`$1.go\`.
+const handshake = `echo ready > "$1.ready"; until [ -e "$1.go" ]; do sleep 0.02; done`;
+
+/** Waits for the step's handshake, does `change`, then lets the step go on. */
+async function meddle(directory: string, change: () => Promise<void>): Promise<void> {
+  await untilWritten(directory, "started.ready");
+  await change();
+  await writeFile(join(directory, "started.go"), "");
+}
+
 test("an engine error during an attempt escalates the commission, naming the error", async (t) => {
-  // The step makes the store read-only, so the engine fails to keep its transcript.
-  const { engine, directory } = await engineRunning(
+  // The store is made read-only while the step runs, so the engine fails to keep its transcript.
+  const { engine, directory, record } = await engineRunning(
     t,
     `echo "a transcript of its own: $$"
-     chmod a-w "$(dirname "$1")/store"
+     ${handshake}
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
   );
 
-  const state = await engine.advance("first").finally(() => chmod(join(directory, "store"), 0o755));
+  const store = join(record, "store");
+  const advancing = engine.advance("first");
+
+  await meddle(directory, () => chmod(store, 0o555));
+
+  const state = await advancing.finally(() => chmod(store, 0o755));
 
   assert.partialDeepStrictEqual(state, { status: "escalated", step: { name: "build" } });
   assert.ok(state.status === "escalated");
@@ -2658,19 +2701,25 @@ test("an engine error during an attempt escalates the commission, naming the err
 });
 
 test("an engine error while a step runs stops the step and escalates, naming the error", async (t) => {
-  // The step makes the log's directory read-only, so its note cannot be written; stopped, it
-  // makes the directory writable again, so the escalation can be.
-  const { engine, directory } = await engineRunning(
+  // The log's directory is made read-only while the step runs, so its note cannot be written;
+  // stopped, the step waits until the directory is writable again, so the escalation can be.
+  const { engine, directory, record } = await engineRunning(
     t,
-    `log="$(dirname "$1")"
-     trap 'chmod u+w "$log"; exit 0' TERM
-     chmod a-w "$log"
+    `trap 'echo stopped > "$1.stopped"; until [ -e "$1.restored" ]; do sleep 0.02; done; exit 0' TERM
+     ${handshake}
      echo a note >&3
      sleep 5 & wait`,
     { idle: 5, attempt: 10, transcript: 65536, input: 65536 },
   );
 
-  const state = await engine.advance("first").finally(() => chmod(directory, 0o755));
+  const advancing = engine.advance("first");
+
+  await meddle(directory, () => chmod(record, 0o555));
+  await untilWritten(directory, "started.stopped");
+  await chmod(record, 0o755);
+  await writeFile(join(directory, "started.restored"), "");
+
+  const state = await advancing.finally(() => chmod(record, 0o755));
 
   assert.partialDeepStrictEqual(state, { status: "escalated", step: { name: "build" } });
   assert.ok(state.status === "escalated");
@@ -2679,16 +2728,16 @@ test("an engine error while a step runs stops the step and escalates, naming the
 });
 
 /** The store file of the request's body, which a test may make unreadable or change. */
-async function requestBodyIn(directory: string, engine: ReturnType<typeof createEngine>) {
-  const store = join(directory, "store");
+async function requestBodyIn(record: string, engine: ReturnType<typeof createEngine>) {
+  const store = join(record, "store");
   const { body } = JSON.parse(await readFile(join(store, subjectOf(engine)), "utf8"));
 
   return join(store, body);
 }
 
 test("an engine error while preparing a step escalates without starting an attempt", async (t) => {
-  const { engine, directory } = await engineReceiving(t, { request: "request" }, "exit 0");
-  const body = await requestBodyIn(directory, engine);
+  const { engine, record } = await engineReceiving(t, { request: "request" }, "exit 0");
+  const body = await requestBodyIn(record, engine);
 
   await chmod(body, 0);
 
@@ -2704,8 +2753,8 @@ test("an engine error while preparing a step escalates without starting an attem
 });
 
 test("a store file whose bytes no longer match its hash is refused, and the step is not given it", async (t) => {
-  const { engine, directory } = await engineReceiving(t, { request: "request" }, "exit 0");
-  const body = await requestBodyIn(directory, engine);
+  const { engine, record } = await engineReceiving(t, { request: "request" }, "exit 0");
+  const body = await requestBodyIn(record, engine);
   const hash = body.slice(body.lastIndexOf("/") + 1);
 
   await writeFile(body, "Say goodbye.");
@@ -2717,15 +2766,18 @@ test("a store file whose bytes no longer match its hash is refused, and the step
 });
 
 test("an attempt this engine stopped running without recording its end escalates at the next advance", async (t) => {
-  // The step makes the log's directory read-only, so neither the attempt's end nor an escalation
-  // can be written.
-  const { engine, directory } = await engineRunning(
+  // The log's directory is made read-only while the step runs, so neither the attempt's end nor
+  // an escalation can be written.
+  const { engine, directory, record } = await engineRunning(
     t,
-    `chmod a-w "$(dirname "$1")"
+    `${handshake}
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
   );
 
-  await assert.rejects(engine.advance("first").finally(() => chmod(directory, 0o755)));
+  const advancing = engine.advance("first");
+
+  await meddle(directory, () => chmod(record, 0o555));
+  await assert.rejects(advancing.finally(() => chmod(record, 0o755)));
 
   // The attempt is held by this process, which is alive but no longer running it.
   assert.partialDeepStrictEqual(await engine.advance("first"), {

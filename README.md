@@ -283,6 +283,11 @@ area held in the step's memory and bounded by its memory limit. A step that fill
 escalates, if it is still running when the engine next looks, once a second; a step that ends first
 only sees its writes fail.
 
+The log's directory, which holds the log, the store and the attempts, is hidden from every step and
+kind program whatever its access: it is empty and read-only, but for the attempt's own workspace,
+input and output and any path the access names under it. So no access can let a step write a
+decision without naming the log's directory itself.
+
 `medrengard/defaults/access.ts` holds two values to use as they are or to change one dial of.
 "The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they
 exist.

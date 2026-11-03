@@ -3,10 +3,11 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { Access } from "./replay.ts";
 
-// The directories the step contract always gives a step, by path.
-type Areas = { workspace: string; input: string; output: string };
+// The directories the step contract always gives a step, by path, and the record's: the log's
+// directory, which every program is kept out of.
+type Areas = { workspace: string; input: string; output: string; record: string };
 
-const order = { write: 0, empty: 1, read: 2 };
+const order = { write: 0, empty: 1, read: 2, hidden: 3 };
 
 /** What a program may use at once: bytes of memory, and processes and threads. */
 export type Bounds = { memory: number; processes: number };
@@ -33,12 +34,15 @@ export function confine(
     { path: areas.workspace, mode: access.workspace },
     { path: areas.input, mode: "read" as const },
     { path: areas.output, mode: "write" as const },
+    // Whatever the access, a program cannot reach the log or store, so it cannot write a
+    // decision; only a path the access names under it, and its own areas, are seen there.
+    { path: areas.record, mode: "hidden" as const },
   ];
 
   const depth = (path: string) => resolve(path).split("/").filter(Boolean).length;
 
   // A later mount hides what is under it, so parents go first and a nested path keeps its own
-  // mode. On the same path read goes last, so it wins.
+  // mode. On the same path read goes last, so it wins, and hidden after it.
   const sorted = mounts.toSorted(
     (one, other) => depth(one.path) - depth(other.path) || order[one.mode] - order[other.mode],
   );
@@ -51,6 +55,8 @@ export function confine(
         return ["--bind", mount.path, mount.path];
       case "empty":
         return ["--size", String(mount.size), "--tmpfs", mount.path];
+      case "hidden":
+        return ["--tmpfs", mount.path];
     }
   });
 
@@ -101,6 +107,9 @@ export function confine(
       ...(access.network ? [] : ["--unshare-net"]),
       ...(access.sandboxes ? [] : ["--disable-userns"]),
       ...binds,
+      // Read-only once the mounts under it are made; they are mounts of their own, so keep theirs.
+      "--remount-ro",
+      areas.record,
       "--proc",
       "/proc",
       "--dev",

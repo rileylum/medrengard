@@ -146,7 +146,7 @@ Built in:
 - Verdict: a judgement with pass or fail, an optional one-line summary and its findings as an optional text body. Its outcome field is the verdict. The step never names the subject; the engine records the one the attempt was given.
 - Decision: a judgement with the owner's outcome and optional feedback.
 
-Decisions are the owner's. A decision renews budgets, approves a subject and resolves escalations, so only the owner makes one, at an approval step or on an escalated commission. A step that claims a decision escalates. Cancelling is not a decision: it stops an attempt and escalates, and the owner then decides on the escalation. A model's choice is an outcome or a judgement, routed like any other.
+Decisions are the owner's. A decision renews budgets, approves a subject and resolves escalations, so only the owner makes one, at an approval step or on an escalated commission; no step or kind's program sees the log or store, whatever its access, unless the access names them. A step that claims a decision escalates. Cancelling is not a decision: it stops an attempt and escalates, and the owner then decides on the escalation. A model's choice is an outcome or a judgement, routed like any other.
 
 **Language**
 

@@ -142,6 +142,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
     return {
       directory,
+      record: dirname(log),
       work: join(directory, "work"),
       transcript: join(directory, "transcript"),
       errors: join(directory, "errors"),
@@ -843,7 +844,14 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 // Where a running attempt's transcript and errors are written as they arrive.
 // An attempt's directory: its transcript and errors, written as they arrive, and the work area
 // holding its workspace, input, output and kinds' programs' areas, which the disk limit bounds.
-type Spool = { directory: string; work: string; transcript: string; errors: string };
+// An attempt's directories, and the record's: the log's directory, which its programs never see.
+type Spool = {
+  directory: string;
+  record: string;
+  work: string;
+  transcript: string;
+  errors: string;
+};
 
 // The attempts this process is running, across its engines: one it holds but is not running was
 // interrupted.
@@ -1352,7 +1360,7 @@ async function run(
 
     if (given.workspace !== undefined) {
       const failed = await materialise(
-        directory,
+        spool,
         workspace,
         name,
         given.workspace,
@@ -1381,7 +1389,7 @@ async function run(
 
     const { command, args, env, unit } = confine(
       step.access,
-      { workspace, input, output },
+      { workspace, input, output, record: spool.record },
       step.kind === "agent" ? step.agent.harness.run : step.run,
       bounds,
     );
@@ -1564,7 +1572,7 @@ async function run(
 
       if (verifier !== undefined) {
         const result = await verify(
-          directory,
+          spool,
           workspace,
           name,
           artifact,
@@ -1892,22 +1900,20 @@ async function readAtMost(path: string, limit: number): Promise<Buffer | undefin
 // A kept file is named by a plain file name, so it can be written anywhere without a path.
 const plainName = /^(?!\.\.?$)[A-Za-z0-9._-]+$/;
 
-// Runs a kind's program in `workspace` under its access, with `input` and `output` as its
-// directories, stopped after its limit or once the attempt is cancelled. Returns why it failed, or
-// undefined when it exited 0.
+// Runs a kind's program in its areas' workspace under its access, with their input and output as
+// its directories and the record hidden, stopped after its limit or once the attempt is cancelled.
+// Returns why it failed, or undefined when it exited 0.
 async function runProgram(
   program: Program,
-  workspace: string,
-  input: string,
-  output: string,
+  areas: Parameters<typeof confine>[1],
   cancelled: () => boolean,
 ): Promise<string | undefined> {
-  const { command, args, env, unit } = confine(
-    program.access,
-    { workspace, input, output },
-    program.run,
-    { memory: program.memory, processes: program.processes },
-  );
+  const { workspace } = areas;
+
+  const { command, args, env, unit } = confine(program.access, areas, program.run, {
+    memory: program.memory,
+    processes: program.processes,
+  });
 
   // lazy: no notes, stdout dropped, stderr kept only as a failure's tail. Give kind programs a
   // transcript of their own once a successful run needs inspecting, such as from the UI.
@@ -1993,7 +1999,7 @@ async function areaFor(directory: string, program: string) {
 // Runs the claim's kind's verifier in the attempt's workspace, and stores the files it keeps.
 // lazy: the workspace is not read-only to the verifier; the sandbox makes it so.
 async function verify(
-  directory: string,
+  spool: Spool,
   workspace: string,
   name: string,
   claim: Artifact,
@@ -2002,7 +2008,7 @@ async function verify(
   store: Store,
   cancelled: () => boolean,
 ): Promise<{ kept: Record<string, string> } | { reason: string }> {
-  const { input, output } = await areaFor(directory, "verifier");
+  const { input, output } = await areaFor(spool.work, "verifier");
   const { kind } = claim;
 
   const failed = (why: string) => ({
@@ -2022,7 +2028,11 @@ async function verify(
     }),
   );
 
-  const why = await runProgram(verifier, workspace, input, output, cancelled);
+  const why = await runProgram(
+    verifier,
+    { workspace, input, output, record: spool.record },
+    cancelled,
+  );
 
   if (why !== undefined) {
     return failed(why);
@@ -2082,7 +2092,7 @@ async function verify(
 // Builds the workspace from an artifact, the subject or an input's, with its kind's materialiser.
 // Returns why it failed, or undefined.
 async function materialise(
-  directory: string,
+  spool: Spool,
   workspace: string,
   name: string,
   from: Subject,
@@ -2098,7 +2108,7 @@ async function materialise(
     return `Step ${name}'s workspace cannot be built from a ${artifact.kind}, whose kind has no materialiser.`;
   }
 
-  const { input, output } = await areaFor(directory, "materialiser");
+  const { input, output } = await areaFor(spool.work, "materialiser");
 
   await mkdir(join(input, "kept"));
 
@@ -2121,7 +2131,11 @@ async function materialise(
     }),
   );
 
-  const why = await runProgram(materialiser, workspace, input, output, cancelled);
+  const why = await runProgram(
+    materialiser,
+    { workspace, input, output, record: spool.record },
+    cancelled,
+  );
 
   return why === undefined
     ? undefined
