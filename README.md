@@ -168,7 +168,9 @@ through. A commission runs on the definition it started with: editing the factor
 commissions. The definition holds `run` as argv, not the program it names, so editing a script that
 `run` points at changes every commission that runs it next. To pin a prompt, put its text in the
 definition, not a path to it. An agent's skills are read when the commission starts and kept with
-its definition, so editing a skill affects only new commissions.
+its definition, so editing a skill affects only new commissions. The engine itself is not pinned:
+upgrading Medrengard can change how an unfinished commission runs from then on, so finish or
+abandon commissions before upgrading. A test keeps a log written on 2026-11-03 readable.
 
 `src/replay.ts` exports the types `Workflow`, `Agent`, `Access` and `Query`. A `run` is a non-empty
 argv, `readonly [string, ...string[]]`: a function that builds steps from a `string[]` must declare
