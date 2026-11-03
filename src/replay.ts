@@ -326,6 +326,6 @@ function apply<N extends string>(
 }
 
 /** Fails at compile time when a switch misses a case, and at run time if one arrives anyway. */
-export function assertNever(value: never): never {
+function assertNever(value: never): never {
   throw new Error(`Unhandled ${JSON.stringify(value)}.`);
 }

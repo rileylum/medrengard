@@ -283,13 +283,10 @@ area held in the step's memory and bounded by its memory limit. A step that fill
 escalates, if it is still running when the engine next looks, once a second; a step that ends first
 only sees its writes fail.
 
-`medrengard/defaults/access.ts` holds four values to use as they are or to change one dial of.
+`medrengard/defaults/access.ts` holds two values to use as they are or to change one dial of.
 "The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they
 exist.
 
-- `full`: everything the engine can reach; in practice no sandbox. It and `home` grant `sandboxes`.
-- `home`: the system, a fresh `/tmp` of 256 MiB, and the owner's home to read and write, with the
-  network and the whole environment.
 - `contract`: the system, a fresh `/tmp` of 256 MiB and `PATH`, without `sandboxes`. No home, no network and no `HOME`, so a
   program that needs a home or a cache, such as `npm`, must be pointed at `/tmp`.
 - `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
@@ -345,7 +342,7 @@ export const kinds = { ...builtIn, "pull-request": pullRequest };
 - `verifier` and `materialiser`, optional: programs, each a `run`, an `access`, a `limit` in
   seconds, `memory` in bytes and `processes`, bounded like a step's; a verifier also `kept`, the
   bytes of all the files it keeps for an artifact, 0 for one that keeps none. Each runs in its own sandbox, like a step;
-  leaving the sandbox is an access you write, such as `full`. The built-ins' have 60 s, 4 GiB and
+  leaving the sandbox is an access you write, such as one that writes `/`. The built-ins' have 60 s, 4 GiB and
   1024 processes, and the commit verifier keeps 1 GiB, its bundle holding the whole history.
 
 The kinds must include `document`, the kind of the owner's request, and cannot include `decision`,

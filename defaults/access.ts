@@ -27,24 +27,6 @@ const node = (existsSync(npm) ? [dirname(process.execPath), npm] : [process.exec
 // A fresh /tmp. On a RAM-backed tmpfs every byte holds memory, so it is bounded.
 const tmp = { path: "/tmp", mode: "empty" as const, size: 256 * 1024 * 1024 };
 
-/** Everything the engine can reach: in practice, no sandbox. */
-export const full: Access = {
-  paths: [{ path: "/", mode: "write" }],
-  network: true,
-  environment: "all",
-  workspace: "write",
-  sandboxes: true,
-};
-
-/** The system, and the owner's home to read and write, with the network and environment. */
-export const home: Access = {
-  paths: [...system, tmp, { path: ownerHome, mode: "write" }],
-  network: true,
-  environment: "all",
-  workspace: "write",
-  sandboxes: true,
-};
-
 /** Only what the step contract gives a step, and the system's programs to run in it. */
 export const contract: Access = {
   paths: [...system, tmp],
