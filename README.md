@@ -10,8 +10,8 @@ where an agent extends its own code as the specification changes.
   keeps its bundle). Medrengard's commit verifier compares `implement`'s commit with it as with a
   commit subject, so an agent cannot claim its start back as work. Then
   `implement` is the configuration under test, run after `.venv` is made again from
-  `requirements.txt`, as SlopCodeBench's resume commands do at each checkpoint after the first; `publish` pushes its commit to
-  `refs/results/<commission>`. The request is the checkpoint's task exactly as SlopCodeBench's
+  `requirements.txt`, as SlopCodeBench's resume commands do at each checkpoint after the first;
+  `publish` pushes its commit to `refs/results/<commission>`. The request is the checkpoint's task exactly as SlopCodeBench's
   `just-solve` prompt renders it; the agent's prompt only says to do it and commit.
 - `factory.ts`: the baseline, Claude Code through Medrengard's adapter. **Running it spends the
   owner's subscription: only with the owner's approval.**
@@ -20,15 +20,22 @@ where an agent extends its own code as the specification changes.
   previous result with the problem's assets put back, as SlopCodeBench's harness does), commissions
   it, and grades the commit with SlopCodeBench's own `eval-snapshot`, outside the factory, so no
   step sees the tests. One line per checkpoint goes to `results/<run>/<problem>.jsonl`: the commit,
-  the attempt's time, its cost from Claude Code's result line, whether it solved the checkpoint (all
-  Core tests pass) and the grader's report. The grader's quality analysis is kept beside it.
+  the attempt's time, its cost, turns and session time from Claude Code's result line, whether it
+  solved the checkpoint (all Core tests pass), SlopCodeBench's verbosity and erosion (its own
+  `scb-check` call) and the grader's report. The grader's quality analysis is kept beside it.
 - `bin/runner.py`: the driver's side of SlopCodeBench, run in its pinned environment by
   `bin/runner.sh`; tests replace it with a fake.
+- `calibration/`: SlopCodeBench's own harness on the same model and the owner's subscription, for
+  comparing the baseline with it: `calibration/run.sh <problem> <effort> [<count>]`. It adds a model
+  config and a provider to the runner checkout under `vendor/`, and runs on a copy of the problem cut
+  to its first `<count>` checkpoints, under `/var/tmp/medrengard/bench-calibration`. Paid.
 - `pins.json`: the runner's and problems' commits, and the Python they run on. `bin/fetch.sh`
   checks them out under `vendor/`.
 
-The start kind relies on Medrengard's commit verifier comparing a claim with any subject that
-names a `sha`: `136cd4e` on Medrengard's `fix/commit-verifier-subject`, not yet merged.
+It relies on three Medrengard commits not yet merged, stacked on `feat/neutral-paths`: the commit
+verifier comparing a claim with any subject that names a `sha` (`136cd4e`, for the start kind), the
+adapter turning off `cc-plugin-privacy` (`fada2ac`), and steps seeing `/workspace`, `/input` and
+`/output` (`9a19c51`). `.medrengard` follows the checkout's working tree, so keep it on that branch.
 
 ## Setup
 
@@ -46,8 +53,8 @@ Grading needs Docker, and the network for the grader's image and each snapshot's
 # Free: the stub, on its own log under /var/tmp/medrengard/bench-dry.
 node driver/bench.ts --factory dry/factory.ts --problem file_backup --run dry2
 
-# Paid, with the owner's approval: the first checkpoint only.
-node driver/bench.ts --factory factory.ts --problem file_backup --run base1 --checkpoints 1
+# Paid, with the owner's approval: the first checkpoint only, or leave out --checkpoints for all.
+node driver/bench.ts --factory factory.ts --problem file_backup --run base5 --checkpoints 1
 ```
 
 A run id is used once: each checkpoint's commission is `<run>-<problem>-<n>`. A checkpoint that
