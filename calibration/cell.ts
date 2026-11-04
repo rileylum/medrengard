@@ -55,7 +55,7 @@ if (existsSync(scratch)) {
 
 mkdirSync(scratch, { recursive: true });
 
-const ran = spawnSync(harness[0]!, [...harness.slice(1), problem!, effort!], {
+const harnessRun = spawnSync(harness[0]!, [...harness.slice(1), problem!, effort!], {
   stdio: ["ignore", "inherit", "inherit"],
   env: { ...process.env, SCRATCH: scratch },
 });
@@ -67,7 +67,7 @@ const found = existsSync(outputs)
   : [];
 
 if (found.length !== 1) {
-  console.error(`${run} ${problem}: expected one run of theirs under ${outputs}, found ${found.length} (exit ${ran.status}).`);
+  console.error(`${run} ${problem}: expected one run of theirs under ${outputs}, found ${found.length} (exit ${harnessRun.status}).`);
   process.exit(1);
 }
 
@@ -81,7 +81,7 @@ const rows = existsSync(join(output, "checkpoint_results.jsonl"))
       .trim()
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as Record<string, number>)
+      .map((line) => JSON.parse(line) as Record<string, number> & { state: string })
   : [];
 
 mkdirSync(out, { recursive: true });
@@ -90,7 +90,12 @@ const record = (line: object) =>
   appendFileSync(lines, `${JSON.stringify({ configuration, repeat: Number(repeat), checkpoints, ...line })}\n`);
 const groups = { Core: "core", Functionality: "functionality", Error: "error", Regression: "regression" };
 
-for (const row of rows) {
+// A checkpoint their harness did not run, such as one where the agent erred, is no result about
+// the configuration: it stops the run there for the owner, as a short run does.
+const ran = rows.findIndex((row) => row.state !== "ran");
+const graded = ran === -1 ? rows : rows.slice(0, ran);
+
+for (const row of graded) {
   const counts = (suffix: string) =>
     Object.fromEntries(Object.entries(groups).map(([group, field]) => [group, row[`${field}_${suffix}`] ?? 0]));
   const passed = counts("passed");
@@ -110,15 +115,14 @@ for (const row of rows) {
   });
 }
 
-if (rows.length < checkpoints) {
-  const n = rows.length + 1;
+if (graded.length < checkpoints) {
+  const n = graded.length + 1;
+  const reason =
+    ran === -1
+      ? `their run stopped (exit ${harnessRun.status}): see ${join(output, "run_agent.log")}`
+      : `their checkpoint ${n} is ${rows[ran]!.state}, not ran`;
 
-  record({
-    checkpoint: n,
-    commission: `${run}-${problem}-${n}`,
-    status: "stopped",
-    reason: `their run stopped (exit ${ran.status}): see ${join(output, "run_agent.log")}`,
-  });
-  console.error(`${run}-${problem}-${n} stopped: their run stopped short; see ${output}.`);
+  record({ checkpoint: n, commission: `${run}-${problem}-${n}`, status: "stopped", reason });
+  console.error(`${run}-${problem}-${n} stopped: ${reason}.`);
   process.exit(3);
 }

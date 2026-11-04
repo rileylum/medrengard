@@ -58,7 +58,8 @@ function study(t: TestContext, prompts: string[], fields: Fields, name = "trial"
      mkdirSync(out, { recursive: true });
      writeFileSync(join(out, "result.json"), JSON.stringify({ expected_checkpoints: 2 }));
      const row = (idx) => ({
-       problem, idx, state: "ran", core_passed: idx === 1 ? 1 : 0, core_total: 1,
+       problem, idx, state: Number(process.env.FAKE_ERROR) === idx ? "error" : "ran",
+       core_passed: idx === 1 ? 1 : 0, core_total: 1,
        functionality_passed: 3, functionality_total: 4, error_passed: 1, error_total: 1,
        regression_passed: 0, regression_total: 0, duration: 30, cost: 0.5, steps: 4,
        verbosity: 0.3, erosion: 0.6,
@@ -295,6 +296,26 @@ test(
     assert.deepEqual(
       lines("trial-slopcodebench-r1").map((line) => line.status),
       ["finished", "stopped"],
+    );
+  },
+);
+
+test(
+  "a calibration checkpoint their harness did not run, as when the agent errs, waits for the owner",
+  { timeout: 120_000 },
+  async (t) => {
+    const { run, lines } = study(t, ["Do one.\n", "Do two.\n"], {
+      configurations: ["stub"],
+      problems: ["toy"],
+      repeats: 1,
+      concurrency: 1,
+      calibrate: { effort: "medium" },
+    });
+
+    assert.equal(run({ FAKE_ERROR: "1" }, "run").status, 3);
+    assert.deepEqual(
+      lines("trial-slopcodebench-r1").map((line) => [line.checkpoint, line.status, line.reason]),
+      [[1, "stopped", "their checkpoint 1 is error, not ran"]],
     );
   },
 );
