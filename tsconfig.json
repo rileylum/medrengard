@@ -9,5 +9,5 @@
     "verbatimModuleSyntax": true,
     "types": ["node"]
   },
-  "include": ["src", "adapters", "verifiers", "materialisers", "defaults", "cli"]
+  "include": ["src", "adapters", "verifiers", "materialisers", "defaults", "cli", "tui"]
 }

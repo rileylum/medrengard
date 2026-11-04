@@ -6,15 +6,14 @@
  * Exits 0 when the call succeeded, an escalation included; 1 when the engine refused or failed;
  * 2 on a usage error.
  */
-import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import type { CommissionRecord, createEngine as Create, Entry } from "../src/engine.ts";
-import { isRecord } from "../src/json.ts";
+import type { CommissionRecord } from "../src/engine.ts";
 import type { CommissionState, Definition } from "../src/replay.ts";
 import type { Artifact } from "../src/store.ts";
+import { openFactory, type Engine } from "./factory.ts";
+import { describe, full, line, linesOf, visible, waiting, where } from "./readable.ts";
 
 const usage = `Usage: medrengard <command> [--json] [--factory <path>]
 
@@ -116,18 +115,6 @@ if (
   refuseUsage();
 }
 
-// node:sqlite warns that it is experimental on every start; stderr is for errors only, so the
-// engine is imported once that warning is dropped.
-process.removeAllListeners("warning");
-
-process.on("warning", (warning) => {
-  if (warning.name !== "ExperimentalWarning") {
-    process.stderr.write(`${warning.stack}\n`);
-  }
-});
-
-const { createEngine } = await import("../src/engine.ts");
-
 // Text given inline, or read from the file named.
 const textOf = (inline?: string, file?: string) =>
   file === undefined ? inline : readFileSync(file, "utf8");
@@ -135,21 +122,7 @@ const textOf = (inline?: string, file?: string) =>
 try {
   const body = textOf(values.body, values["body-file"]);
   const feedback = textOf(values.feedback, values["feedback-file"]);
-  const path = resolve(factory);
-  const options = (await import(pathToFileURL(path).href)).default;
-
-  refuseFactory(path, isRecord(options) ? Object.keys(options) : []);
-
-  const log = resolve(dirname(path), options.log);
-
-  mkdirSync(dirname(log), { recursive: true });
-
-  const engine = createEngine({
-    log,
-    workflows: options.workflows,
-    kinds: options.kinds,
-    defaults: options.defaults,
-  });
+  const { engine } = await openFactory(factory);
 
   const [first, second] = args;
 
@@ -226,25 +199,6 @@ try {
   process.exitCode = 1;
 }
 
-// The factory module is the owner's code, so its shape is checked here, before the engine sees it;
-// a misspelled key would otherwise be dropped and fail later, far from the cause.
-function refuseFactory(path: string, given: readonly string[]): void {
-  const keys = ["log", "kinds", "workflows", "defaults"];
-  const missing = keys.filter((key) => !given.includes(key));
-  const extra = given.filter((key) => !keys.includes(key));
-
-  if (missing.length > 0 || extra.length > 0) {
-    const problems = [
-      ...(missing.length > 0 ? [`missing ${missing.join(", ")}`] : []),
-      ...(extra.length > 0 ? [`not allowed ${extra.join(", ")}`] : []),
-    ];
-
-    throw new Error(
-      `Factory ${path} must default-export { log, kinds, workflows, defaults }: ${problems.join(", ")}.`,
-    );
-  }
-}
-
 function refuseUsage(): never {
   process.stderr.write(`${usage}\n`);
   process.exit(2);
@@ -265,7 +219,7 @@ type Printed =
   | Definition;
 
 // One event as the log holds it, with its commission and its position in the log.
-type Logged = ReturnType<ReturnType<typeof Create>["events"]>[number];
+type Logged = ReturnType<Engine["events"]>[number];
 
 function print(result: Printed, readable: string): void {
   process.stdout.write(visible(json ? `${JSON.stringify(result)}\n` : readable));
@@ -276,47 +230,9 @@ function printDefinition(definition: Definition): void {
   print(definition, `${JSON.stringify(definition, null, 2)}\n`);
 }
 
-// `text` with each control character written as \uXXXX: visible to the owner, and in JSON, where
-// they can only stand inside a string, the same value.
-function visible(text: string): string {
-  return Array.from(text, (character) => {
-    const code = character.charCodeAt(0);
-
-    return isControl(code) ? `\\u${code.toString(16).padStart(4, "0")}` : character;
-  }).join("");
-}
-
-// What a terminal acts on rather than shows: C0 controls but newline and tab, DEL, C1 controls and
-// the bidi controls. A step's text can hold any of them, and could move the cursor, rewrite what
-// the owner reads at a gate, set the clipboard or reorder a line.
-function isControl(code: number): boolean {
-  return (
-    (code < 0x20 && code !== 0x0a && code !== 0x09) ||
-    (code >= 0x7f && code <= 0x9f) ||
-    code === 0x061c ||
-    code === 0x200e ||
-    code === 0x200f ||
-    (code >= 0x202a && code <= 0x202e) ||
-    (code >= 0x2066 && code <= 0x2069)
-  );
-}
-
 // A step's bytes, as written to a file or program; on a terminal, as text with its controls visible.
 function printBytes(bytes: Buffer): void {
   process.stdout.write(process.stdout.isTTY ? visible(new TextDecoder().decode(bytes)) : bytes);
-}
-
-// A state for the owner to read: where the commission is and what it is about.
-function describe(state: CommissionState): string {
-  if (state.status === "finished") {
-    return `finished by ${state.by}`;
-  }
-
-  return [
-    `${state.status} at ${state.step.name}${waiting(state)}, about ${state.subject}`,
-    ...(state.status === "escalated" ? [`reason: ${state.reason}`] : []),
-    ...(state.decision === undefined ? [] : [`decision: ${state.decision}`]),
-  ].join("\n");
 }
 
 function printState(state: CommissionState): void {
@@ -329,7 +245,7 @@ function printState(state: CommissionState): void {
  * SIGTERM starts nothing new and waits for the running steps; a second exits at once, and bwrap
  * takes the steps with it, so each escalates as interrupted when next advanced.
  */
-async function runner(engine: ReturnType<typeof Create>, parallel: number): Promise<void> {
+async function runner(engine: Engine, parallel: number): Promise<void> {
   const advancing = new Map<string, Promise<void>>();
 
   // The commissions whose advance may start a step, which the limit counts.
@@ -460,106 +376,9 @@ function printArtifact(artifact: Artifact): void {
   print(artifact, `${[artifact.kind, ...fields, ...body].join("\n")}\n`);
 }
 
-// An artifact on one line: `label`, the start of its hash, and its fields but the subject.
-function line(label: string, hash: string, artifact: Artifact): string {
-  const fields = Object.entries(artifact.fields)
-    .filter(([name]) => name !== "subject")
-    .map(([, value]) => value);
-
-  return [label.padEnd(8), hash.slice(0, 8), ...fields].join("  ");
-}
-
-// An artifact in full, as `artifact` prints it, under a heading and the verifier that accepted it.
-function full(hash: string, artifact: Artifact, verifier: readonly string[] | null): string {
-  const fields = Object.entries(artifact.fields)
-    .filter(([name]) => name !== "subject")
-    .map(([name, value]) => `${name}: ${value}`);
-
-  const body = artifact.body === undefined ? [] : ["", artifact.body.trimEnd()];
-
-  return [
-    `${artifact.kind} ${hash}`,
-    `verifier: ${verifier === null ? "none" : verifier.join(" ")}`,
-    ...fields,
-    ...body,
-  ].join("\n");
-}
-
-// The lines for an entry in the record, each with a key that names it, so `watch` prints each
-// once: an attempt's start, each of its notes, and its ending; or an escalation or a decision.
-function linesOf(index: number, entry: Entry): [string, string][] {
-  const at = entry.step.padEnd(12);
-
-  switch (entry.entry) {
-    case "attempt": {
-      const number = String(entry.attempt).padEnd(2);
-      const start: [string, string] = [`${index}:start`, `${number}${at} started`];
-
-      const notes = entry.notes.map(({ note, from }, n): [string, string] => [
-        `${index}:${n}`,
-        `     ${from === "engine" ? "engine: " : ""}${note}`,
-      ]);
-
-      if ("running" in entry) {
-        return [start, ...notes];
-      }
-
-      const errors = entry.errors
-        ? `  (errors: medrengard errors <commission> ${entry.attempt})`
-        : "";
-
-      // Left out for an attempt the log has no times for.
-      const took =
-        entry.started === undefined || entry.ended === undefined
-          ? ""
-          : ` (${((entry.ended - entry.started) / 1000).toFixed(1)} s)`;
-
-      const ending =
-        "escalated" in entry
-          ? `${number}${at} escalated${took}: ${entry.escalated}${errors}`
-          : [
-              `${number}${at} ${entry.outcome}${took}${errors}`,
-              ...entry.artifacts.map(
-                ({ hash, artifact, verifier }) =>
-                  `    ${line(artifact.kind, hash, artifact)}  ${verifier === null ? "(no verifier)" : "(verified)"}`,
-              ),
-            ].join("\n");
-
-      return [start, ...notes, [`${index}:end`, ending]];
-    }
-
-    case "escalation":
-      return [[`${index}`, `  ${at} escalated: ${entry.reason}`]];
-    case "decision": {
-      const feedback = entry.feedback === undefined ? "" : `: ${JSON.stringify(entry.feedback)}`;
-
-      return [[`${index}`, `  ${at} ${entry.outcome}${feedback}`]];
-    }
-  }
-}
-
-// Where the commission is, in a few words.
-// The event a waiting commission has waited since, which a decision names; or that the owner is
-// to attend the step it is ready at.
-function waiting(state: CommissionState): string {
-  if (state.status === "ready" && state.step.kind === "agent" && state.step.attended) {
-    return ", to attend";
-  }
-
-  return state.status === "awaiting" || state.status === "escalated"
-    ? ` since event ${state.since}`
-    : "";
-}
-
-function where(state: CommissionState): string {
-  return state.status === "finished"
-    ? `finished by ${state.by}`
-    : `${state.status} at ${state.step.name}`;
-}
-
 // Follows the commission, printing each attempt, note, escalation and decision once, as the log
 // records it, until the commission awaits the owner, escalates or finishes.
-async function watch(engine: ReturnType<typeof Create>, commission: string): Promise<void> {
+async function watch(engine: Engine, commission: string): Promise<void> {
   const printed = new Set<string>();
 
   // lazy: the latest position is found by reading the whole log once. Read it from the log's
@@ -604,11 +423,7 @@ async function watch(engine: ReturnType<typeof Create>, commission: string): Pro
  * Prints every commission's events after `position`, one line each; `follow`ing, then each event
  * as it is written, until stopped.
  */
-async function events(
-  engine: ReturnType<typeof Create>,
-  position: number,
-  follow: boolean,
-): Promise<void> {
+async function events(engine: Engine, position: number, follow: boolean): Promise<void> {
   const stopping = new AbortController();
 
   process.on("SIGINT", () => stopping.abort());

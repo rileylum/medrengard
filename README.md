@@ -20,6 +20,7 @@ the log. A UI does not exist yet.
 - [The step contract](#the-step-contract)
 - [The engine in TypeScript](#the-engine-in-typescript)
 - [The CLI](#the-cli)
+- [The TUI](#the-tui)
 - [Development](#development)
 
 ## Requirements
@@ -762,6 +763,31 @@ medrengard <command> [--json] [--factory <path>]
   once on stderr; `commissions` lists it as unreadable. A commission ready at an attended step is
   left for the owner, said once. `run` is woken by each new event, and looks at least once a
   second, so it finds an attempt whose engine died.
+
+## The TUI
+
+```text
+node medrengard/tui/medrengard-tui.ts [--factory <path>]
+```
+
+The owner's terminal UI, a default a factory can replace: it calls the engine's methods as the CLI
+does, and needs the owner's terminal as stdin and stdout. The factory is found as for the CLI.
+
+- Home lists what needs the owner (awaiting, escalated with its reason, or ready at a step to
+  attend), then what is running, then what waits for `run`, each with how long since it last
+  changed; finished commissions are folded under `f`. Enter opens a commission's record, which
+  grows as the log does.
+- On a commission, Enter opens the request, an attempt's transcript or an artifact in full in
+  `$PAGER` (`less` if unset), and `e` an attempt's errors, with control characters made visible.
+- `d` decides: an outcome, then no feedback, a line, or text from `$VISUAL` or `$EDITOR` (`vi` if
+  unset), then a confirmation. The decision names the subject and wait the owner saw when they
+  pressed `d`, so the engine refuses it if the commission has moved on.
+- `x` cancels a running attempt, `a` attends a step in the same terminal and comes back after,
+  `n` commissions a request (workflow, name, title, then the body in the editor), `?` lists the
+  keys, `q` quits.
+- The TUI never runs steps but the one the owner attends: keep `medrengard run` going beside it.
+  An idle `run` writes nothing, so the TUI cannot show whether one is running; a ready commission
+  says it waits for `run`, and how long it has.
 
 ## Development
 
