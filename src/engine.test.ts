@@ -1759,6 +1759,82 @@ test("a claimed commit with the same tree as the subject escalates", async (t) =
   );
 });
 
+// A subject kind of a factory's own that names a commit by its sha, as a start a workflow is given
+// can: the verifier compares a claimed commit with it as with a commit subject.
+const starting = () =>
+  ({
+    ...builtIn,
+    start: { ...builtIn.commit, description: "The commit a workflow starts from." },
+  }) satisfies Kinds;
+
+const claimingStart = committing.replace('\\"kind\\":\\"commit\\"', '\\"kind\\":\\"start\\"');
+
+test("a claimed commit that is already the subject escalates when the subject is another kind naming a sha", async (t) => {
+  const { engine } = await engineWith(
+    t,
+    () =>
+      defineWorkflow({
+        start: "seed",
+        steps: {
+          seed: { ...stepRunning(claimingStart, "build"), claims: ["start"] },
+          // Claims the start it was given as its own work.
+          build: {
+            ...stepRunning(
+              `sha=$(git rev-parse HEAD)
+               echo "{\\"outcome\\":\\"done\\",\\"artifacts\\":[{\\"kind\\":\\"commit\\",\\"fields\\":{\\"sha\\":\\"$sha\\"}}]}" \\
+                 > "$MEDRENGARD_OUT/output.json"`,
+              "end",
+            ),
+            workspace: "subject",
+          },
+        },
+      }),
+    starting,
+  );
+
+  const state = await engine.advance("first");
+
+  assert.partialDeepStrictEqual(state, { status: "escalated", step: { name: "build" } });
+  assert.match(
+    state.status === "escalated" ? state.reason : "",
+    /^Step build claimed a commit its verifier rejected: [0-9a-f]{40} is already the subject\.$/,
+  );
+});
+
+test("a claimed commit with the same tree as a subject of another kind naming a sha escalates", async (t) => {
+  const { engine } = await engineWith(
+    t,
+    () =>
+      defineWorkflow({
+        start: "seed",
+        steps: {
+          seed: { ...stepRunning(claimingStart, "build"), claims: ["start"] },
+          // Rewords the start: a new SHA for the same files.
+          build: {
+            ...stepRunning(
+              `git -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false \\
+                 commit -q --no-verify --amend -m Reworded
+               sha=$(git rev-parse HEAD)
+               echo "{\\"outcome\\":\\"done\\",\\"artifacts\\":[{\\"kind\\":\\"commit\\",\\"fields\\":{\\"sha\\":\\"$sha\\"}}]}" \\
+                 > "$MEDRENGARD_OUT/output.json"`,
+              "end",
+            ),
+            workspace: "subject",
+          },
+        },
+      }),
+    starting,
+  );
+
+  const state = await engine.advance("first");
+
+  assert.partialDeepStrictEqual(state, { status: "escalated", step: { name: "build" } });
+  assert.match(
+    state.status === "escalated" ? state.reason : "",
+    /^Step build claimed a commit its verifier rejected: [0-9a-f]{40} changes nothing: its tree is the subject's\.$/,
+  );
+});
+
 for (const [planted, plant] of [
   ["a graft", 'mkdir -p .git/info; echo "$sha $changed" > .git/info/grafts'],
   ["a replace ref", 'git replace "$sha" "$changed"'],
