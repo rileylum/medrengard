@@ -1,11 +1,13 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { once } from "node:events";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createEngine } from "../src/engine.ts";
+import { claudeCode } from "../defaults/access.ts";
 import { builtIn } from "../defaults/kinds.ts";
 import { limits } from "../defaults/limits.ts";
 import { defineWorkflow } from "../src/replay.ts";
@@ -123,7 +125,7 @@ ${script}
 const succeeded = `echo '{"type":"result","is_error":false}'`;
 
 // What every agent runs without: Claude Code's bundled skills, its built-in plugins, memory and
-// attribution, as Claude Code 2.1.316 names them. design and doctor survive disableBundledSkills.
+// attribution, as Claude Code 2.1.318 names them. design and doctor survive disableBundledSkills.
 const hermetic = {
   disableBundledSkills: true,
   skillOverrides: { design: "off", doctor: "off" },
@@ -133,6 +135,7 @@ const hermetic = {
     "cc-plugin-agents-md@builtin": false,
     "cc-plugin-telemetry@builtin": false,
     "cc-plugin-plugin-authoring@builtin": false,
+    "cc-plugin-privacy@builtin": false,
   },
 };
 
@@ -460,6 +463,74 @@ test("the Claude Code adapter records that claude did not say what it loaded", a
   ]);
   assert.equal(engine.errors("first", 1).toString(), `${unsaid}\n`);
 });
+
+// The installed claude itself, through the adapter and the default access, refused at its first
+// request by an invalid token, so it costs nothing: it says what it loaded before it asks. A new
+// Claude Code that loads something more, such as a built-in plugin, fails this test, not a paid run.
+const installed = join(homedir(), ".local", "bin", "claude");
+
+test(
+  "the installed Claude Code loads nothing the agent did not declare",
+  { skip: !existsSync(installed) && "Claude Code is not installed", timeout: 60_000 },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+    t.after(() => rm(directory, { recursive: true, force: true }));
+
+    await writeFile(join(directory, "token"), "sk-ant-oat01-invalid-for-a-test");
+    await mkdir(join(directory, "record"));
+
+    const engine = createEngine({
+      kinds: builtIn,
+      defaults: { limits },
+      log: join(directory, "record", "log.sqlite"),
+      workflows: {
+        build: defineWorkflow({
+          start: "plan",
+          steps: {
+            plan: {
+              kind: "agent",
+              claims: ["document"],
+              workspace: "empty",
+              agent: {
+                harness: {
+                  run: [
+                    "node",
+                    adapter,
+                    "--token",
+                    join(directory, "token"),
+                    "--permission-mode",
+                    "bypassPermissions",
+                  ],
+                },
+                model: "sonnet",
+                prompt: "Plan the change.",
+              },
+              inputs: {},
+              on: { done: "end" },
+              budget: 1,
+              access: {
+                ...claudeCode,
+                paths: [...claudeCode.paths, { path: directory, mode: "read" }],
+              },
+              limits: { idle: 30, attempt: 60, transcript: 1024 * 1024, input: 1024 * 1024 },
+            },
+          },
+        }),
+      },
+    });
+
+    engine.commission("build", "first", { title: "Greet", body: "Say hello." });
+
+    // The refused token fails the run; what matters is what claude said it loaded first.
+    assert.equal((await engine.advance("first")).status, "escalated");
+
+    const errors = engine.errors("first", 1).toString();
+
+    assert.doesNotMatch(errors, /did not say what it loaded/);
+    assert.doesNotMatch(errors, /loaded what the agent did not declare: .*/);
+  },
+);
 
 test("the Claude Code adapter records nothing when claude loaded only what the agent declared", async (t) => {
   const init = {

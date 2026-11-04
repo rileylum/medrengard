@@ -172,7 +172,7 @@ Leave out "artifacts" to claim none. ${claiming}${attended ? together : ""}`;
 
 const prompt = `${given.agent.prompt}\n\n${contract}`;
 
-// Everything Claude Code loads of its own that these settings turn off, as 2.1.316 names it; design
+// Everything Claude Code loads of its own that these settings turn off, as 2.1.318 names it; design
 // and doctor are bundled skills that disableBundledSkills leaves.
 const hermetic = {
   disableBundledSkills: true,
@@ -183,6 +183,7 @@ const hermetic = {
     "cc-plugin-agents-md@builtin": false,
     "cc-plugin-telemetry@builtin": false,
     "cc-plugin-plugin-authoring@builtin": false,
+    "cc-plugin-privacy@builtin": false,
   },
 };
 

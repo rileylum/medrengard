@@ -1,13 +1,14 @@
 /**
  * The commit kind's verifier: accepts a claimed SHA that is the workspace's HEAD, not already the
  * commission's subject and changing something from its parent and the subject, keeping a Git
- * bundle of it that holds its whole history.
+ * bundle of it that holds its whole history. A subject of any kind that names a sha, such as a
+ * factory's own start, is compared as a commit is.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-// What the engine writes as claim.json for a commit; a subject that is not a commit has no sha.
+// What the engine writes as claim.json for a commit; a subject that names no commit has no sha.
 type Claim = { fields: { sha: string }; subject: { kind: string; fields: { sha?: string } } };
 
 // Git sees the commits as written: a step's planted grafts or replace refs could otherwise show an
@@ -43,9 +44,7 @@ const parent =
 // lazy: a subject commit absent from the workspace's repository is not compared; the trigger is a
 // workflow that claims commits from a workspace not built from its subject.
 const subjectTree =
-  subject.kind === "commit" && subject.fields.sha !== undefined
-    ? resolve(`${subject.fields.sha}^{tree}`)
-    : undefined;
+  subject.fields.sha === undefined ? undefined : resolve(`${subject.fields.sha}^{tree}`);
 
 const bundle = join(output, "commit.bundle");
 
@@ -73,7 +72,7 @@ const verdict =
     ? { accepted: false, reason: "The workspace has no Git HEAD." }
     : head !== fields.sha
       ? { accepted: false, reason: `HEAD is ${head}, not ${fields.sha}.` }
-      : subject.kind === "commit" && subject.fields.sha === fields.sha
+      : subject.fields.sha === fields.sha
         ? { accepted: false, reason: `${fields.sha} is already the subject.` }
         : tree === parent
           ? { accepted: false, reason: `${fields.sha} changes nothing: its tree is its parent's.` }

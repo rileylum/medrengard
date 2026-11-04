@@ -277,8 +277,11 @@ const access: Access = {
 };
 ```
 
-The workspace, the input (read-only) and the output are always there, and `MEDRENGARD_IN` and
-`MEDRENGARD_OUT` are always set. `PATH` is passed like any other variable, only when `environment`
+The workspace, the input (read-only) and the output are always there, at `/workspace`, `/input`
+and `/output`, paths that name nothing of the machine, the same for every step; `MEDRENGARD_IN` and
+`MEDRENGARD_OUT` are always set to the last two. A path in `paths` cannot be one of them or under one.
+A step whose access grants `/` itself sees the machine as it is, its directories where the engine
+keeps them. `PATH` is passed like any other variable, only when `environment`
 names it; without it a step finds commands only in the system's default search path. A name in
 `values` cannot also be in `environment`, nor be `MEDRENGARD_IN` or `MEDRENGARD_OUT`; with
 `environment: "all"`, a value is set over the engine's. A step has
@@ -435,7 +438,7 @@ const design = {
 - Nothing else of Claude Code's own loads: no bundled skills or built-in plugins, no settings
   files, no memory, no `CLAUDE.md` or `AGENTS.md`, and no `Co-Authored-By` in the agent's
   commits. Some of the settings that do this are undocumented, as of Claude Code
-  2.1.316.
+  2.1.318.
 - Claude Code's managed settings in `/etc/claude-code`, which no flag turns off, are hidden from
   `claude` when they exist.
 - If `claude` loads tools, skills, plugins or MCP servers the agent did not declare, the adapter
@@ -497,9 +500,9 @@ attended step, and stdin or stdout that is not a terminal.
 
 Every command and agent step is a program, started:
 
-- in its workspace;
-- with `MEDRENGARD_IN`: a read-only directory holding `input.json` and its inputs' bodies;
-- with `MEDRENGARD_OUT`: an empty directory for `output.json` and the bodies it claims;
+- in its workspace, which it sees at `/workspace`;
+- with `MEDRENGARD_IN`, `/input`: a read-only directory holding `input.json` and its inputs' bodies;
+- with `MEDRENGARD_OUT`, `/output`: an empty directory for `output.json` and the bodies it claims;
 - with only the environment its access names, and `PWD`, the workspace;
 - with file descriptor 3 open for notes: short lines for the owner about what the step is doing,
   such as `echo "Running the tests" >&3`. Each note is recorded as it arrives, so `watch` shows
@@ -583,11 +586,11 @@ files, so only the fields count toward it:
 
 The built-in kinds:
 
-| Kind       | Role      | Fields                                   | Body                     | Checked by the engine                                                                                                                  |
-| ---------- | --------- | ---------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `document` | subject   | `title`, at most 200 bytes               | required, UTF-8, 1 MiB   | nothing more                                                                                                                           |
-| `commit`   | subject   | `sha`, at most 64 bytes                  | optional report, 1 MiB   | the SHA is the workspace HEAD, not already the subject, its tree differs from its parent's and the subject's, and its history is whole |
-| `verdict`  | judgement | `verdict` (`pass` or `fail`), `summary`? | optional findings, 1 MiB | `verdict` equals the outcome                                                                                                           |
+| Kind       | Role      | Fields                                   | Body                     | Checked by the engine                                                                                                                                                       |
+| ---------- | --------- | ---------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `document` | subject   | `title`, at most 200 bytes               | required, UTF-8, 1 MiB   | nothing more                                                                                                                                                                |
+| `commit`   | subject   | `sha`, at most 64 bytes                  | optional report, 1 MiB   | the SHA is the workspace HEAD, not already the subject, its tree differs from its parent's and the subject's (a subject of any kind with a `sha`), and its history is whole |
+| `verdict`  | judgement | `verdict` (`pass` or `fail`), `summary`? | optional findings, 1 MiB | `verdict` equals the outcome                                                                                                                                                |
 
 Every body is UTF-8. A field the kind does not define escalates. The latest subject claimed becomes
 the subject. A judgement such as a verdict leaves the subject alone, and the engine adds the
