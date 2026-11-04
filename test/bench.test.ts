@@ -13,11 +13,13 @@ const repository = join(import.meta.dirname, "..");
 type Result = {
   checkpoint: number;
   commission: string;
+  configuration: string;
+  definition?: string;
   status: string;
   commit?: string;
   reason?: string;
   seconds?: number;
-  cost: { usd: number; turns: number } | null;
+  cost: { usd: number; turns: number; seconds?: number; attempts?: number } | null;
   solved?: boolean;
   verbosity?: number;
   erosion?: number;
@@ -87,13 +89,15 @@ function toy(t: TestContext, prompts: string[], assets = true) {
 
   const results = join(directory, "results");
 
-  const bench = (run: string) =>
+  const bench = (run: string, configuration = "stub") =>
     spawnSync(
       process.execPath,
       [
         join(repository, "driver/bench.ts"),
         "--factory",
         factory,
+        "--configuration",
+        configuration,
         "--runner",
         process.execPath,
         "--runner",
@@ -115,7 +119,13 @@ function toy(t: TestContext, prompts: string[], assets = true) {
       // SAFETY: the driver writes one result per line.
       .map((line) => JSON.parse(line) as Result);
 
-  return { directory, factory, bench, read, trajectories: join(directory, "state", "trajectories.git") };
+  const engine = async () => {
+    const { default: options } = await import(factory);
+
+    return createEngine(options);
+  };
+
+  return { directory, factory, bench, read, engine, trajectories: join(directory, "state", "trajectories.git") };
 }
 
 test(
@@ -160,7 +170,9 @@ test(
     assert.match(ran.stdout, /r1-toy-2: solved, Core 1\/1, verbosity 0\.25, erosion 0\.5/);
 
     // The stub's result line, as Claude Code's stream-json ends.
-    assert.deepEqual(second?.cost, { usd: 0, turns: 1, seconds: 0.001 });
+    assert.deepEqual(second?.cost, { usd: 0, turns: 1, seconds: 0.001, attempts: 1 });
+    assert.equal(second?.configuration, "stub");
+    assert.match(second?.definition ?? "", /^[0-9a-f]{64}$/);
     assert.ok(typeof second?.seconds === "number");
 
     // The request is the rendered task, byte for byte.
@@ -185,7 +197,7 @@ test(
 
     const ran = bench("r1");
 
-    assert.equal(ran.status, 1);
+    assert.equal(ran.status, 3);
     assert.match(ran.stderr, /escalated at implement/);
 
     const results = read("r1");
@@ -224,11 +236,79 @@ test(
 
     const ran = bench("r1");
 
-    assert.equal(ran.status, 1);
+    assert.equal(ran.status, 3);
     assert.match(ran.stderr, /r1-toy-2 escalated at implement: .* is already the subject\./);
     assert.deepEqual(
       read("r1").map((result) => result.status),
       ["finished", "escalated"],
+    );
+  },
+);
+
+test(
+  "a configuration of several agent steps is graded on its last commit, its cost summed over them",
+  { timeout: 120_000 },
+  async (t) => {
+    const { bench, read } = toy(t, ["Do one.\n"]);
+
+    const ran = bench("r1", "polished");
+
+    assert.equal(ran.status, 0, ran.stderr);
+
+    const [first] = read("r1");
+
+    assert.equal(first?.configuration, "polished");
+    assert.equal(first?.grade?.contents["a.py"], "one\n");
+    assert.equal(first?.grade?.contents["POLISHED"], "toy checkpoint 1\n");
+    assert.deepEqual(first?.cost, { usd: 0, turns: 2, seconds: 0.002, attempts: 2 });
+  },
+);
+
+test(
+  "a re-run waits on an escalation until the owner decides it, and an abandon ends the problem",
+  { timeout: 120_000 },
+  async (t) => {
+    const { bench, read, engine } = toy(t, ["Do one.\n", "Do two.\ndry: exit1\n"]);
+
+    assert.equal(bench("r1").status, 3);
+
+    // Undecided: nothing is attempted again, and the finished checkpoint is not run again.
+    const waiting = bench("r1");
+
+    assert.equal(waiting.status, 3);
+    assert.match(waiting.stderr, /r1-toy-2 escalated at implement/);
+
+    const log = await engine();
+
+    assert.equal(log.record("r1-toy-2").entries.filter((entry) => entry.entry === "attempt").length, 2);
+
+    // A retry attempts the step again; the stub fails again.
+    const decide = (outcome: string) => {
+      const state = log.state("r1-toy-2");
+
+      assert.equal(state.status, "escalated");
+      log.decide("r1-toy-2", { subject: state.subject, since: state.since, outcome });
+    };
+
+    decide("retry");
+    assert.equal(bench("r1").status, 3);
+    assert.equal(log.record("r1-toy-2").entries.filter((entry) => entry.entry === "attempt").length, 3);
+
+    // Abandoned: the problem ends there, as the configuration's failure. The first escalation and
+    // the retry's each left a line; the re-run that only waited left none.
+    decide("abandon");
+
+    const ended = bench("r1");
+
+    assert.equal(ended.status, 0, ended.stderr);
+    assert.deepEqual(
+      read("r1").map((result) => [result.checkpoint, result.status]),
+      [
+        [1, "finished"],
+        [2, "escalated"],
+        [2, "escalated"],
+        [2, "abandoned"],
+      ],
     );
   },
 );
