@@ -19,6 +19,8 @@ type Result = {
   seconds?: number;
   cost: { usd: number; turns: number } | null;
   solved?: boolean;
+  verbosity?: number;
+  erosion?: number;
   grade?: { files: string[]; contents: Record<string, string> };
 };
 
@@ -61,7 +63,8 @@ function toy(t: TestContext, prompts: string[]) {
          statSync(join(dir, name)).isDirectory() ? walk(join(dir, name)) : [join(dir, name)]);
        const files = walk(snapshot).map((file) => relative(snapshot, file)).sort();
        const contents = Object.fromEntries(files.map((file) => [file, readFileSync(join(snapshot, file), "utf8")]));
-       console.log(JSON.stringify({ pass_counts: { Core: 1 }, total_counts: { Core: 1 }, files, contents }));
+       const quality = { verbosity: 0.25, erosion: 0.5 };
+       console.log(JSON.stringify({ pass_counts: { Core: 1 }, total_counts: { Core: 1 }, quality, files, contents }));
      } else {
        process.exit(2);
      }
@@ -147,6 +150,11 @@ test(
     assert.equal(second?.grade?.contents["a.py"], "two\n");
     assert.equal(second?.grade?.contents["files/data.txt"], "asset\n");
     assert.equal(second?.solved, true);
+
+    // SlopCodeBench's two quality scores, as its scb-check reports them.
+    assert.equal(second?.verbosity, 0.25);
+    assert.equal(second?.erosion, 0.5);
+    assert.match(ran.stdout, /r1-toy-2: solved, Core 1\/1, verbosity 0\.25, erosion 0\.5/);
 
     // The stub's result line, as Claude Code's stream-json ends.
     assert.deepEqual(second?.cost, { usd: 0, turns: 1 });

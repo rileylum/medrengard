@@ -44,7 +44,12 @@ mkdirSync(dirname(loaded.default.log), { recursive: true });
 const engine = createEngine(loaded.default);
 
 type Problem = { checkpoints: number; assets: { source: string; path: string }[]; prompts: string[] };
-type Grade = { pass_counts: Record<string, number>; total_counts: Record<string, number> };
+// SlopCodeBench's eval-snapshot report, and its scb-check scores under quality.
+type Grade = {
+  pass_counts: Record<string, number>;
+  total_counts: Record<string, number>;
+  quality: { verbosity?: number; erosion?: number };
+};
 
 const runnerJson = (...args: string[]) =>
   JSON.parse(execFileSync(runner[0]!, [...runner.slice(1), ...args], { encoding: "utf8" }));
@@ -169,9 +174,12 @@ for (let n = 1; n <= count; n += 1) {
   const graded = grade(commit, n);
   const solved = (graded.total_counts.Core ?? 0) > 0 && graded.pass_counts.Core === graded.total_counts.Core;
 
-  record({ checkpoint: n, commission, status: "finished", commit, ...timing, cost: spent, solved, grade: graded });
+  const { verbosity, erosion } = graded.quality;
+
+  record({ checkpoint: n, commission, status: "finished", commit, ...timing, cost: spent, solved, verbosity, erosion, grade: graded });
   console.log(
     `${commission}: ${solved ? "solved" : "not solved"}, Core ${graded.pass_counts.Core ?? 0}/${graded.total_counts.Core ?? 0}` +
+      `, verbosity ${verbosity}, erosion ${erosion}` +
       `${timing.seconds === undefined ? "" : `, ${timing.seconds} s`}${spent?.usd === undefined ? "" : `, $${spent.usd}`}`,
   );
 
