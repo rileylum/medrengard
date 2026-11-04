@@ -30,9 +30,10 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
 - `study.ts`: what a study is, and the problem sets: `iteration`, which configurations are compared
   on, and `heldOut`, which only a study marked `final` runs. Drawn by seed before any study ran.
 - `studies/`: the studies. `baseline.ts` is the first: the baseline five times on the iteration
-  set, with calibration. `dry-easy.ts` is free.
-- `driver/study.ts`: runs a study, a few problem runs at a time, every configuration's and
-  problem's first repeat before any second. Before anything runs it writes
+  set, with calibration once. `dry-easy.ts` is free.
+- `driver/study.ts`: runs a study, `--concurrency` problem runs at a time (2 by default), every
+  configuration's and problem's first repeat before any second. Concurrency is how a study is run,
+  not part of it: each run appends what it was asked for to `results/<study>/invocations.jsonl`. Before anything runs it writes
   `results/<study>/manifest.json`: the study, its repository's and Medrengard's commits, the
   runner's pins, Node's and Claude Code's versions, each configuration's hash. It refuses
   uncommitted changes, pins that do not match, held-out problems outside a final study, and a study
@@ -81,7 +82,7 @@ Grading needs Docker, and the network for the grader's image and each snapshot's
 node driver/study.ts run studies/dry-easy.ts
 
 # Paid, with the owner's approval: one stage of a study at a time.
-node driver/study.ts run studies/baseline.ts --problems datagate,textdrop
+node driver/study.ts run studies/baseline.ts --problems datagate,textdrop --concurrency 6
 
 node driver/study.ts status studies/baseline.ts   # where each problem run stands
 node driver/study.ts report studies/baseline.ts   # the summary, also results/baseline/report.md

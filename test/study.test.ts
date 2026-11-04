@@ -12,9 +12,8 @@ type Fields = {
   configurations: string[];
   problems: string[];
   repeats: number;
-  concurrency: number;
   final?: boolean;
-  calibrate?: { effort: string };
+  calibrate?: { effort: string; repeats?: number };
 };
 
 // The toy problem with a study `name` over it, committed in a repository of its own.
@@ -117,10 +116,9 @@ test(
       configurations: ["stub", "polished"],
       problems: ["toy"],
       repeats: 2,
-      concurrency: 2,
     });
 
-    const ran = driver("run");
+    const ran = driver("run", "--concurrency", "2");
 
     assert.equal(ran.status, 0, ran.stderr);
 
@@ -145,7 +143,7 @@ test(
 
     // SAFETY: the driver writes the manifest as JSON.
     const recorded = JSON.parse(readFileSync(manifest, "utf8")) as {
-      study: { hash: string; repeats: number; concurrency: number };
+      study: { hash: string; repeats: number; concurrency?: number };
       repositories: { path: string; commit: string }[];
       pins: { runner: string; python: string };
       versions: { node: string };
@@ -153,7 +151,19 @@ test(
     };
 
     assert.match(recorded.study.hash, /^[0-9a-f]{64}$/);
-    assert.equal(recorded.study.concurrency, 2);
+    assert.equal(recorded.study.concurrency, undefined);
+
+    // How it ran is recorded per invocation, as it may change between them.
+    const invocations = readFileSync(join(manifest, "..", "invocations.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      // SAFETY: the driver writes one invocation per line.
+      .map((line) => JSON.parse(line) as { at: string; problems: string[]; concurrency: number });
+
+    assert.deepEqual(
+      invocations.map(({ problems, concurrency }) => ({ problems, concurrency })),
+      [{ problems: ["toy"], concurrency: 2 }],
+    );
     assert.equal(recorded.repositories.length, 2);
     assert.deepEqual(recorded.pins, { runner: "fake", problems: "fake", python: "3.12.0", matches: true });
     assert.equal(recorded.versions.node, process.version);
@@ -173,13 +183,13 @@ test(
   "a study run again goes on where it stopped, and refuses a study changed since it started",
   { timeout: 120_000 },
   async (t) => {
-    const fields = { configurations: ["stub"], problems: ["toy"], repeats: 1, concurrency: 1 };
+    const fields = { configurations: ["stub"], problems: ["toy"], repeats: 1 };
     const { driver, commissions, write, git } = study(t, ["Do one.\n"], fields);
 
     assert.equal(driver("run").status, 0);
 
     const before = await commissions();
-    const again = driver("run");
+    const again = driver("run", "--concurrency", "3");
 
     assert.equal(again.status, 0, again.stderr);
     assert.deepEqual(await commissions(), before);
@@ -203,10 +213,9 @@ test(
       configurations: ["stub"],
       problems: ["toy"],
       repeats: 2,
-      concurrency: 1,
     });
 
-    const ran = driver("run");
+    const ran = driver("run", "--concurrency", "1");
 
     assert.equal(ran.status, 3, ran.stderr);
     assert.deepEqual(await commissions(), ["trial-stub-r1-toy-1"]);
@@ -223,7 +232,7 @@ test(
   "a study refuses held-out problems unless final, a configuration the factory lacks, and a changed tree",
   { timeout: 120_000 },
   async (t) => {
-    const fields = { configurations: ["stub"], problems: ["toy"], repeats: 1, concurrency: 1 };
+    const fields = { configurations: ["stub"], problems: ["toy"], repeats: 1 };
     const { driver, write, git, results } = study(t, ["Do one.\n"], fields);
 
     write({ ...fields, problems: ["xjq"] });
@@ -246,20 +255,23 @@ test(
 );
 
 test(
-  "a calibrating study runs SlopCodeBench's own harness as one more configuration, its results read as ours",
+  "a calibrating study runs SlopCodeBench's own harness as one more configuration, for its own repeats, its results read as ours",
   { timeout: 120_000 },
   async (t) => {
-    const { driver, lines } = study(t, ["Do one.\n", "Do two.\n"], {
+    const { driver, lines, results } = study(t, ["Do one.\n", "Do two.\n"], {
       configurations: ["stub"],
       problems: ["toy"],
-      repeats: 1,
-      concurrency: 2,
-      calibrate: { effort: "medium" },
+      repeats: 2,
+      calibrate: { effort: "medium", repeats: 1 },
     });
 
     const ran = driver("run");
 
     assert.equal(ran.status, 0, ran.stderr);
+    assert.equal(lines("trial-stub-r2").length, 2);
+    // Their harness runs only the repeats calibration asks for.
+    assert.ok(!existsSync(join(results, "trial", "runs", "trial-slopcodebench-r2")));
+    assert.doesNotMatch(driver("status").stdout, /slopcodebench-r2/);
 
     const [first, second] = lines("trial-slopcodebench-r1");
 
@@ -284,7 +296,6 @@ test(
       configurations: ["stub"],
       problems: ["toy"],
       repeats: 1,
-      concurrency: 1,
       calibrate: { effort: "medium" },
     });
 
@@ -308,7 +319,6 @@ test(
       configurations: ["stub"],
       problems: ["toy"],
       repeats: 1,
-      concurrency: 1,
       calibrate: { effort: "medium" },
     });
 

@@ -7,5 +7,4 @@ export default defineStudy({
   configurations: ["stub", "polished"],
   problems: ["datagate", "textdrop"],
   repeats: 1,
-  concurrency: 2,
 });

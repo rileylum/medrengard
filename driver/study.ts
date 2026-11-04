@@ -1,17 +1,20 @@
 // The study driver: runs a study file's problem runs, each a configuration on a problem for one
 // repeat, through driver/bench.ts, repeats first, a few at a time.
 //
-//   study.ts run <study.ts> [--problems a,b]   runs them, or the named problems' only
+//   study.ts run <study.ts> [--problems a,b] [--concurrency n]
+//                                              runs them, or the named problems' only, n at a time (2)
 //   study.ts status <study.ts>                 where each problem run stands
 //   study.ts report <study.ts>                 its summary, also written to results/<study>/report.md
 //
 // Before anything runs it writes results/<study>/manifest.json: the study, the commits of its
 // repository and Medrengard's, the runner's pins, the versions, and each configuration's hash. It
 // refuses uncommitted changes, pins that do not match, and, once a study has started, any change
-// to what its manifest names. An escalation stops it starting problem runs; the running ones finish.
+// to what its manifest names. Each run appends to results/<study>/invocations.jsonl what it was
+// asked for, as that may differ between runs of one study. An escalation stops it starting problem
+// runs; the running ones finish.
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
@@ -25,12 +28,13 @@ const { values, positionals } = parseArgs({
     runner: { type: "string", multiple: true },
     results: { type: "string", default: "results" },
     problems: { type: "string" },
+    concurrency: { type: "string", default: "2" },
     calibration: { type: "string", multiple: true },
   },
 });
 
 const usage =
-  "Usage: study.ts run|status|report <study.ts> [--problems a,b] [--runner <argv>…] [--calibration <argv>…] [--results <dir>]";
+  "Usage: study.ts run|status|report <study.ts> [--problems a,b] [--concurrency n] [--runner <argv>…] [--calibration <argv>…] [--results <dir>]";
 const [command, file] = positionals;
 
 if (!["run", "status", "report"].includes(command ?? "") || file === undefined) {
@@ -69,19 +73,28 @@ const strays = chosen.filter((problem) => !study.problems.includes(problem));
 
 if (strays.length > 0) refuse(`The study has no problem named ${strays.join(", ")}.`);
 
+const concurrency = Number(values.concurrency);
+
+if (!Number.isInteger(concurrency) || concurrency < 1) refuse(`--concurrency must be a whole number from 1.`);
+
 type Cell = { configuration: string; problem: string; repeat: number; run: string };
 
 // SlopCodeBench's own harness, in a calibrating study: after the study's own in each repeat.
 const calibration = "slopcodebench";
 const configurations = [...study.configurations, ...(study.calibrate === undefined ? [] : [calibration])];
 
+const repeats = (configuration: string) =>
+  configuration === calibration ? (study.calibrate?.repeats ?? study.repeats) : study.repeats;
+
 // Repeat first: every configuration's and problem's first repeat before any second, so a study
 // stopped early has as many repeats of each.
 const cells = (problems: readonly string[]): Cell[] =>
   Array.from({ length: study.repeats }, (_, index) => index + 1).flatMap((repeat) =>
-    configurations.flatMap((configuration) =>
-      problems.map((problem) => ({ configuration, problem, repeat, run: `${name}-${configuration}-r${repeat}` })),
-    ),
+    configurations
+      .filter((configuration) => repeat <= repeats(configuration))
+      .flatMap((configuration) =>
+        problems.map((problem) => ({ configuration, problem, repeat, run: `${name}-${configuration}-r${repeat}` })),
+      ),
   );
 
 type Line = { checkpoint: number; checkpoints: number; commission: string; status: string; step?: string; reason?: string };
@@ -245,6 +258,11 @@ async function runStudy() {
     execFileSync("git", ["init", "--quiet", "--bare", loaded.trajectories]);
   }
 
+  appendFileSync(
+    join(results, "invocations.jsonl"),
+    `${JSON.stringify({ at: new Date().toISOString(), problems: chosen, concurrency })}\n`,
+  );
+
   const queue = cells(chosen);
   const ended = { failed: false, waiting: false };
 
@@ -258,7 +276,7 @@ async function runStudy() {
     }
   };
 
-  await Promise.all(Array.from({ length: study.concurrency }, worker));
+  await Promise.all(Array.from({ length: concurrency }, worker));
 
   if (ended.failed || ended.waiting) {
     console.error(`The study ${name} stopped for the owner: see study.ts status ${file}.`);
