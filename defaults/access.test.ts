@@ -8,7 +8,7 @@ import { builtIn } from "./kinds.ts";
 import { limits } from "./limits.ts";
 import { createEngine } from "../src/engine.ts";
 import { defineWorkflow, type Access } from "../src/replay.ts";
-import { claudeCode, contract } from "./access.ts";
+import { claudeCode, contract, gitIdentity } from "./access.ts";
 
 const tokenFile = join(homedir(), ".config", "medrengard", "claude-token");
 const claude = join(homedir(), ".local", "bin", "claude");
@@ -140,4 +140,27 @@ test("claudeCode gives the adapter the token file to read, and no token in the e
   assert.ok(claudeCode.environment !== "all");
   assert.ok(!claudeCode.environment.includes("CLAUDE_CODE_OAUTH_TOKEN"));
   assert.ok(claudeCode.paths.some(({ path, mode }) => path === tokenFile && mode === "read"));
+});
+
+test("claudeCode commits as Medrengard, whatever the engine's environment holds", async (t) => {
+  process.env.GIT_AUTHOR_NAME = "Someone Else";
+  t.after(() => delete process.env.GIT_AUTHOR_NAME);
+
+  const identity = await seenUnder(
+    t,
+    { ...claudeCode, sandboxes: false },
+    `git var GIT_AUTHOR_IDENT | cut -d'>' -f1; git var GIT_COMMITTER_IDENT | cut -d'>' -f1`,
+  );
+
+  assert.equal(identity, "Medrengard <medrengard@localhost\nMedrengard <medrengard@localhost\n");
+});
+
+test("a factory gives an access another Git identity with gitIdentity", async (t) => {
+  const identity = await seenUnder(
+    t,
+    { ...contract, values: gitIdentity("Riley", "riley@example.com") },
+    `git var GIT_AUTHOR_IDENT | cut -d'>' -f1; git var GIT_COMMITTER_IDENT | cut -d'>' -f1`,
+  );
+
+  assert.equal(identity, "Riley <riley@example.com\nRiley <riley@example.com\n");
 });

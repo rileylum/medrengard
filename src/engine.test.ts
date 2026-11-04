@@ -670,6 +670,66 @@ test("a step gets only the environment its access names, PATH included", async (
   assert.equal(engine.transcript("first", 1).toString(), "shown \n0\n");
 });
 
+test("a step gets the values its access sets, over the engine's own", async (t) => {
+  process.env.MEDRENGARD_TEST_SET = "the engine's";
+  t.after(() => delete process.env.MEDRENGARD_TEST_SET);
+
+  const { engine } = await engineConfined(
+    t,
+    () => ({ ...access, environment: [], values: { MEDRENGARD_TEST_SET: "the definition's" } }),
+    `echo "$MEDRENGARD_TEST_SET"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.equal(engine.transcript("first", 1).toString(), "the definition's\n");
+});
+
+test("with the whole environment passed through, a value still sets its variable", async (t) => {
+  process.env.MEDRENGARD_TEST_SET = "the engine's";
+  t.after(() => delete process.env.MEDRENGARD_TEST_SET);
+
+  const { engine } = await engineConfined(
+    t,
+    () => ({ ...access, environment: "all", values: { MEDRENGARD_TEST_SET: "the definition's" } }),
+    `echo "$MEDRENGARD_TEST_SET"`,
+  );
+
+  await engine.advance("first");
+  assert.equal(engine.transcript("first", 1).toString(), "the definition's\n");
+});
+
+test("values an access cannot set are refused before the commission starts", async (t) => {
+  const refused = [
+    [{ GIT_AUTHOR_NAME: "A" }, ["GIT_AUTHOR_NAME"]],
+    [{ MEDRENGARD_IN: "/elsewhere" }, []],
+    [{ "NOT A NAME": "A" }, []],
+    [{ GIT_AUTHOR_NAME: 1 }, []],
+  ] as const;
+
+  for (const [values, environment] of refused) {
+    await assert.rejects(
+      engineWith(t, () =>
+        defineWorkflow({
+          start: "build",
+          steps: {
+            build: {
+              ...stepRunning("true", "end"),
+              // SAFETY: the workflow module is the owner's JavaScript, which the type cannot hold to.
+              access: { ...access, environment, values: values as Record<string, string> },
+            },
+          },
+        }),
+      ),
+      {
+        message:
+          "Workflow build is invalid: step build's values must each set a variable by name to text, " +
+          "neither MEDRENGARD_IN nor MEDRENGARD_OUT nor one its environment passes through.",
+      },
+      JSON.stringify(values),
+    );
+  }
+});
+
 test("a step has namespaces of its own, the network's only without network access", async (t) => {
   const kinds = ["user", "cgroup", "ipc", "uts", "pid", "net"];
 

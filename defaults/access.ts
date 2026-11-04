@@ -36,10 +36,20 @@ export const contract: Access = {
   sandboxes: false,
 };
 
+/** The variables that make Git author and commit as `name` and `email`, for an access's values. */
+export function gitIdentity(name: string, email: string) {
+  return {
+    GIT_AUTHOR_NAME: name,
+    GIT_AUTHOR_EMAIL: email,
+    GIT_COMMITTER_NAME: name,
+    GIT_COMMITTER_EMAIL: email,
+  };
+}
+
 /**
  * What headless Claude Code needs through the adapter in `adapters/`: Node to run the adapter and npm,
  * the `claude` executable, the network, the subscription token in the adapter's default token file
- * and a Git identity to commit with. Its home is empty, so the owner's settings, skills, hooks and
+ * and a Git identity to commit with, Medrengard's unless a factory sets its own with gitIdentity. Its home is empty, so the owner's settings, skills, hooks and
  * MCP servers never load.
  */
 export const claudeCode: Access = {
@@ -56,15 +66,8 @@ export const claudeCode: Access = {
     { path: join(ownerHome, ".config", "medrengard", "claude-token"), mode: "read" },
   ],
   network: true,
-  environment: [
-    "PATH",
-    "HOME",
-    "LANG",
-    "GIT_AUTHOR_NAME",
-    "GIT_AUTHOR_EMAIL",
-    "GIT_COMMITTER_NAME",
-    "GIT_COMMITTER_EMAIL",
-  ],
+  environment: ["PATH", "HOME", "LANG"],
+  values: gitIdentity("Medrengard", "medrengard@localhost"),
   workspace: "write",
   // The adapter runs claude in a sandbox of its own, which refuses them to what the agent runs.
   sandboxes: true,

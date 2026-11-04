@@ -270,11 +270,13 @@ function parseKinds(text: string): Kinds {
 
 // What is wrong with `access`, said of whatever it belongs to, or undefined when nothing is.
 function accessProblem(access: Access): string | undefined {
-  if (!hasExactly(access, ["paths", "network", "environment", "workspace", "sandboxes"])) {
-    return "access must be its paths, network, environment, workspace and sandboxes";
+  const keys = ["paths", "network", "environment", "workspace", "sandboxes"];
+
+  if (!hasExactly(access, Object.hasOwn(access, "values") ? [...keys, "values"] : keys)) {
+    return "access must be its paths, network, environment, workspace and sandboxes, and any values";
   }
 
-  const { paths, network, environment, workspace, sandboxes } = access;
+  const { paths, network, environment, values = {}, workspace, sandboxes } = access;
 
   if (
     !Array.isArray(paths) ||
@@ -304,6 +306,23 @@ function accessProblem(access: Access): string | undefined {
     !(Array.isArray(environment) && environment.every((each) => variable.test(each)))
   ) {
     return "environment must be all or a list of variable names";
+  }
+
+  if (
+    !isRecord(values) ||
+    !Object.entries(values).every(
+      ([name, value]) =>
+        variable.test(name) &&
+        isText(value) &&
+        name !== "MEDRENGARD_IN" &&
+        name !== "MEDRENGARD_OUT" &&
+        (environment === "all" || !environment.includes(name)),
+    )
+  ) {
+    return (
+      "values must each set a variable by name to text, " +
+      "neither MEDRENGARD_IN nor MEDRENGARD_OUT nor one its environment passes through"
+    );
   }
 
   if (workspace !== "read" && workspace !== "write") {

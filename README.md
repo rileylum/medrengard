@@ -269,6 +269,8 @@ const access: Access = {
   network: false,
   // Variable names passed through from the engine's environment, or "all".
   environment: ["LANG"],
+  // Optional: variables set to text, over the engine's own. Recorded with the definition, so no secrets.
+  values: { TZ: "UTC" },
   // A reviewer can get "read".
   workspace: "write",
   // Whether its processes may make namespaces of their own, as a sandbox inside it does.
@@ -278,7 +280,9 @@ const access: Access = {
 
 The workspace, the input (read-only) and the output are always there, and `MEDRENGARD_IN` and
 `MEDRENGARD_OUT` are always set. `PATH` is passed like any other variable, only when `environment`
-names it; without it a step finds commands only in the system's default search path. A step has
+names it; without it a step finds commands only in the system's default search path. A name in
+`values` cannot also be in `environment`, nor be `MEDRENGARD_IN` or `MEDRENGARD_OUT`; with
+`environment: "all"`, a value is set over the engine's. A step has
 namespaces of its own (user, cgroup, IPC, hostname, process and, without `network`, network): on a
 machine that cannot make one, the step fails rather than run without it. Without `sandboxes` it
 cannot make more: the kernel refuses user namespaces, which keeps more of it out of reach of what
@@ -292,7 +296,8 @@ kind program whatever its access: it is empty and read-only, but for the attempt
 input and output and any path the access names under it. So no access can let a step write a
 decision without naming the log's directory itself.
 
-`medrengard/defaults/access.ts` holds two values to use as they are or to change one dial of.
+`medrengard/defaults/access.ts` holds two values to use as they are or to change one dial of, and
+`gitIdentity(name, email)`, the `values` that make Git author and commit as that identity.
 "The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they
 exist.
 
@@ -301,8 +306,8 @@ exist.
 - `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
   256 MiB, Node and npm (Node's `bin` directory and npm's package, or the `node` executable
   alone when npm is not beside it; never other global packages), the `adapters` directory, the `claude` executable and the token
-  file `~/.config/medrengard/claude-token` to read, the network, and `PATH`, `HOME`, `LANG` and the
-  Git identity, and `sandboxes`: the adapter runs `claude` in a sandbox of its own, in which what
+  file `~/.config/medrengard/claude-token` to read, the network, `PATH`, `HOME` and `LANG`, the
+  Git identity `Medrengard <medrengard@localhost>` as `values`, and `sandboxes`: the adapter runs `claude` in a sandbox of its own, in which what
   the agent runs cannot make namespaces. Its home is empty, so the owner's settings, skills, hooks
   and MCP servers never load. A path under the home, such as a repository,
   stays invisible until you add it: the deeper entry wins.
@@ -446,8 +451,8 @@ const design = {
   reads the token from a file descriptor, so nothing the agent runs, such as a dependency's install
   script, can read it from a process's environment or from the file. A
   `CLAUDE_CODE_OAUTH_TOKEN` the step is given is not passed on.
-- `claudeCode` passes the `GIT_AUTHOR_*` and `GIT_COMMITTER_*` variables from the engine's
-  environment. Set them before you run the engine.
+- `claudeCode` commits as `Medrengard <medrengard@localhost>`, whatever the engine's environment
+  holds. For another identity, `{ ...claudeCode, values: gitIdentity("Name", "email") }`.
 - `claudeCode` grants the adapter's real directory. If you reach this repository through a
   symlink, pass the adapter's real path (`fs.realpathSync`), or the sandbox cannot see it.
 - A file path in `run`, such as the adapter's, must be absolute: every step's program starts in its

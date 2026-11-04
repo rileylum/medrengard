@@ -28,7 +28,7 @@ const exports = {
   "src/kinds.ts": ["Kind", "Kinds", "Program"],
   "src/engine.ts": ["CommissionRecord", "Entry", "createEngine"],
   "src/store.ts": ["Artifact", "createStore"],
-  "defaults/access.ts": ["claudeCode", "contract"],
+  "defaults/access.ts": ["claudeCode", "contract", "gitIdentity"],
   "defaults/kinds.ts": ["builtIn"],
   "defaults/limits.ts": ["limits"],
 };

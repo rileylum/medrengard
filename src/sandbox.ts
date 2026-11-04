@@ -64,15 +64,19 @@ export function confine(
   // or memory. A step given / itself has that mount instead, in its declared mode.
   const root = access.paths.some(({ path }) => path === "/") ? [] : ["--remount-ro", "/"];
 
-  const passed =
-    access.environment === "all"
-      ? { ...process.env }
-      : Object.fromEntries(access.environment.map((name) => [name, process.env[name]]));
+  const passed = {
+    ...(access.environment === "all"
+      ? process.env
+      : Object.fromEntries(access.environment.map((name) => [name, process.env[name]]))),
+    ...access.values,
+  };
 
   const unit = `medrengard-${randomUUID()}`;
 
   const unset =
-    access.environment === "all" ? [] : scoped.filter((name) => !access.environment.includes(name));
+    access.environment === "all"
+      ? []
+      : scoped.filter((name) => !access.environment.includes(name) && !Object.hasOwn(passed, name));
 
   return {
     unit,

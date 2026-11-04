@@ -39,7 +39,9 @@ export type Agent = {
  *
  * `environment` names the variables passed through from the engine's own environment, or "all";
  * PATH among them, or a step finds commands only by the system's default search path.
- * `MEDRENGARD_IN` and `MEDRENGARD_OUT` are always set, over any passed through.
+ * `values` sets variables to text the definition holds, over the engine's own: they are recorded
+ * with the commission and shown by its definition, so never a secret. A name cannot be both
+ * passed through and set. `MEDRENGARD_IN` and `MEDRENGARD_OUT` are always set, over any other.
  *
  * `sandboxes` lets the step's processes make namespaces of their own, as a sandbox inside the
  * step's does; without it the kernel refuses them, which keeps more of it out of reach.
@@ -51,6 +53,7 @@ export type Access = {
   )[];
   network: boolean;
   environment: readonly string[] | "all";
+  values?: Readonly<Record<string, string>>;
   workspace: "read" | "write";
   sandboxes: boolean;
 };
