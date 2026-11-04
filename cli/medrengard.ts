@@ -1,80 +1,502 @@
-import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { Controller, type Event, type Options, type State } from '../src/index.ts';
+/**
+ * The control protocol: one command per engine call, under the call's name. With --json, stdout
+ * holds exactly the call's result as one JSON value, and an error is {"error": message} on stderr.
+ * Without it the output is for the owner to read, not for a client to parse.
+ *
+ * Exits 0 when the call succeeded, an escalation included; 1 when the engine refused or failed;
+ * 2 on a usage error.
+ */
+import { readFileSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
+import { parseArgs } from "node:util";
+import type { CommissionRecord } from "../src/engine.ts";
+import type { CommissionState, Definition } from "../src/replay.ts";
+import type { Artifact } from "../src/store.ts";
+import { openFactory, type Engine } from "./factory.ts";
+import { describe, full, line, linesOf, visible, waiting, where } from "./readable.ts";
 
-const USAGE = `usage: medrengard start "<idea>"
-       medrengard show <work>
-       medrengard decide <work> <outcome> <hash or sha, or a unique prefix of 7+ characters> ["feedback"]
-       medrengard recover <work>`;
+const usage = `Usage: medrengard <command> [--json] [--factory <path>]
 
-const clock = (event: Event | undefined) => event ? new Date(event.time).toTimeString().slice(0, 8) : '';
+  commission <workflow> <commission> --title <title> (--body <text> | --body-file <path>)
+  advance    <commission>
+  attend     <commission>
+  state      <commission>
+  show       <commission>
+  watch      <commission>
+  events     [--after <position>] [--follow]
+  commissions
+  run        [--parallel <n>]
+  decide     <commission> <outcome> --subject <hash> --since <event>
+             [--feedback <text> | --feedback-file <path>]
+  cancel     <commission>
+  transcript <commission> <attempt>
+  errors     <commission> <attempt>
+  artifact   <hash or a prefix of at least 8 characters>
+  definition <commission>
 
-/** What the owner decides on: the plan before there is code, then the commit and the verdicts on it. */
-function show(controller: Controller, state: State): string {
-  const events = controller.events().filter(e => e.id === state.id);
-  const recorded = (hash: string) => events.find(e => e.type === 'completed' && (e.artifact as { hash?: string })?.hash === hash);
-  const commit = state.artifacts.findLast(a => a.kind === 'commit' && a.sha === state.subject);
-  const plan = state.artifacts.findLast(a => a.kind === 'document' && !a.subject);
-  const feedback = events.filter(e => e.type === 'decision' && typeof e.feedback === 'string');
-  const evidence = state.evidence.map(a => a.kind === 'verdict'
-    ? [`${a.stage} ${a.verdict} ${clock(recorded(a.hash))}`, ...a.findings!.map(f => `  - ${f}`)].join('\n')
-    : `${a.stage} ${a.content}`);
-  return [
-    `work ${state.id}`,
-    `stage ${state.stage}${state.reason ? ` (${state.reason})` : ''}`,
-    ...(state.subject ? [`${commit ? 'sha' : 'hash'} ${state.subject}`] : []),
-    ...(state.pending ? [`a run is in progress; if no medrengard command is running it, it was interrupted: medrengard recover ${state.id}`] : []),
-    ...(commit ? ['', `commit ${clock(recorded(commit.hash))}`, commit.content ?? ''] : plan ? ['', plan.content!] : []),
-    ...(commit && evidence.length ? ['', ...evidence] : []),
-    ...(feedback.length ? ['', 'feedback', ...feedback.map(e => `- ${e.subject}: ${e.feedback}`)] : []),
-  ].join('\n') + '\n';
+The factory is --factory <path>, or else MEDRENGARD_FACTORY: a module whose default export is the
+engine's options, { log, kinds, workflows, defaults }, with log relative to the module.`;
+
+// Each command's positional arguments and the options it takes besides --json and --factory.
+const commands = new Map([
+  ["commission", { arguments: 2, options: ["title", "body", "body-file"] }],
+  ["advance", { arguments: 1, options: [] }],
+  ["attend", { arguments: 1, options: [] }],
+  ["state", { arguments: 1, options: [] }],
+  ["show", { arguments: 1, options: [] }],
+  ["watch", { arguments: 1, options: [] }],
+  ["events", { arguments: 0, options: ["after", "follow"] }],
+  ["errors", { arguments: 2, options: [] }],
+  ["commissions", { arguments: 0, options: [] }],
+  ["run", { arguments: 0, options: ["parallel"] }],
+  ["decide", { arguments: 2, options: ["subject", "since", "feedback", "feedback-file"] }],
+  ["cancel", { arguments: 1, options: [] }],
+  ["transcript", { arguments: 2, options: [] }],
+  ["artifact", { arguments: 1, options: [] }],
+  ["definition", { arguments: 1, options: [] }],
+]);
+
+const text = { type: "string" } as const;
+
+let parsed;
+
+try {
+  parsed = parseArgs({
+    allowPositionals: true,
+    options: {
+      json: { type: "boolean" },
+      factory: text,
+      title: text,
+      body: text,
+      "body-file": text,
+      subject: text,
+      since: text,
+      feedback: text,
+      "feedback-file": text,
+      parallel: text,
+      after: text,
+      follow: { type: "boolean" },
+    },
+  });
+} catch {
+  refuseUsage();
 }
 
-/** One line per stage start and result, as the controller records them. */
-function progress(event: Event): void {
-  const artifact = event.artifact as { stage?: string; kind?: string; verdict?: string } | undefined;
-  const line = event.type === 'started' ? `started ${event.stage}`
-    : event.type === 'completed' ? `${artifact?.stage} ${artifact?.kind === 'verdict' ? artifact.verdict : 'done'}`
-    : event.type === 'escalated' ? `escalated: ${event.reason}` : undefined;
-  if (line) process.stderr.write(`${clock(event)} ${line}\n`);
+const { values, positionals } = parsed;
+const [command = "", ...args] = positionals;
+const json = values.json === true;
+const factory = values.factory ?? process.env.MEDRENGARD_FACTORY;
+const spec = commands.get(command);
+
+const given = Object.keys(values).filter((name) => name !== "json" && name !== "factory");
+
+if (
+  spec === undefined ||
+  args.length !== spec.arguments ||
+  !given.every((name) => spec.options.includes(name)) ||
+  factory === undefined
+) {
+  refuseUsage();
 }
 
-const [command, ...args] = process.argv.slice(2);
-const arity: Record<string, number[]> = { start: [1], show: [1], decide: [3, 4], recover: [1] };
-if (!Object.hasOwn(arity, command ?? '') || !arity[command].includes(args.length)) {
-  process.stderr.write(`${USAGE}\n`);
+// Text is given inline or as a file, never both.
+const both = (inline?: string, file?: string) => inline !== undefined && file !== undefined;
+
+if (
+  both(values.body, values["body-file"]) ||
+  both(values.feedback, values["feedback-file"]) ||
+  (command === "commission" &&
+    (values.title === undefined || (values.body ?? values["body-file"]) === undefined)) ||
+  (command === "decide" && (values.subject === undefined || !/^\d+$/.test(values.since ?? ""))) ||
+  ((command === "transcript" || command === "errors") && !/^[1-9]\d*$/.test(args[1])) ||
+  !/^[1-9]\d*$/.test(values.parallel ?? "1") ||
+  !/^\d+$/.test(values.after ?? "0")
+) {
+  refuseUsage();
+}
+
+// Text given inline, or read from the file named.
+const textOf = (inline?: string, file?: string) =>
+  file === undefined ? inline : readFileSync(file, "utf8");
+
+try {
+  const body = textOf(values.body, values["body-file"]);
+  const feedback = textOf(values.feedback, values["feedback-file"]);
+  const { engine } = await openFactory(factory);
+
+  const [first, second] = args;
+
+  switch (command) {
+    case "commission":
+      engine.commission(first, second, { title: values.title!, body: body! });
+      print(null, "");
+      break;
+    case "advance":
+      printState(await engine.advance(first));
+      break;
+    case "attend":
+      printState(await engine.attend(first));
+      break;
+    case "state":
+      printState(engine.state(first));
+      break;
+    case "decide":
+      printState(
+        engine.decide(first, {
+          subject: values.subject!,
+          since: Number(values.since),
+          outcome: second,
+          feedback,
+        }),
+      );
+      break;
+    case "cancel":
+      engine.cancel(first);
+      print(null, "");
+      break;
+    case "show":
+      printRecord(first, engine.record(first));
+      break;
+    case "watch":
+      await watch(engine, first);
+      break;
+    case "events":
+      await events(engine, Number(values.after ?? "0"), values.follow === true);
+      break;
+    case "transcript":
+      printBytes(engine.transcript(first, Number(second)));
+      break;
+    case "errors":
+      printBytes(engine.errors(first, Number(second)));
+      break;
+    case "artifact":
+      printArtifact(engine.artifact(first));
+      break;
+    case "definition":
+      printDefinition(engine.definition(first));
+      break;
+    case "commissions":
+      print(
+        engine.commissions(),
+        engine
+          .commissions()
+          .map((entry) =>
+            "error" in entry
+              ? `${entry.commission}: unreadable: ${entry.error}\n`
+              : `${entry.commission}: ${describe(entry.state)}\n`,
+          )
+          .join(""),
+      );
+      break;
+    case "run":
+      await runner(engine, Number(values.parallel ?? "1"));
+      break;
+  }
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  process.stderr.write(visible(json ? `${JSON.stringify({ error: message })}\n` : `${message}\n`));
+  process.exitCode = 1;
+}
+
+function refuseUsage(): never {
+  process.stderr.write(`${usage}\n`);
   process.exit(2);
 }
-let controller: Controller | undefined;
-try {
-  const factory: { options: Options; workflow: string } = (await import(pathToFileURL(join(process.cwd(), 'factory.ts')).href)).default;
-  mkdirSync(dirname(factory.options.path), { recursive: true });
-  controller = new Controller(factory.options);
-  controller.observe(progress);
-  let id = args[0];
-  if (command === 'start') {
-    id = randomUUID().slice(0, 8);
-    controller.open(id, factory.workflow, args[0]);
-    process.stderr.write(`work ${id}\n`);
+
+// Prints `result` as JSON, or `readable` for the owner.
+// Every result the CLI prints, as JSON with --json.
+type Printed =
+  | CommissionState
+  | CommissionRecord
+  | Artifact
+  | null
+  | ({ commission: string; state: CommissionState } | { commission: string; error: string })[]
+  | { parallel: number }
+  | { stopping: { commission: string; step: string }[] }
+  | { commission: string; state: CommissionState }
+  | Logged
+  | Definition;
+
+// One event as the log holds it, with its commission and its position in the log.
+type Logged = ReturnType<Engine["events"]>[number];
+
+function print(result: Printed, readable: string): void {
+  process.stdout.write(visible(json ? `${JSON.stringify(result)}\n` : readable));
+}
+
+// The definition as JSON for people too: it is data, and its every field matters.
+function printDefinition(definition: Definition): void {
+  print(definition, `${JSON.stringify(definition, null, 2)}\n`);
+}
+
+// A step's bytes, as written to a file or program; on a terminal, as text with its controls visible.
+function printBytes(bytes: Buffer): void {
+  process.stdout.write(process.stdout.isTTY ? visible(new TextDecoder().decode(bytes)) : bytes);
+}
+
+function printState(state: CommissionState): void {
+  print(state, `${describe(state)}\n`);
+}
+
+/**
+ * Advances ready commissions, at most `parallel` steps at once and the oldest commission first,
+ * and lets the engine escalate attempts no live engine holds, until stopped. A first SIGINT or
+ * SIGTERM starts nothing new and waits for the running steps; a second exits at once, and bwrap
+ * takes the steps with it, so each escalates as interrupted when next advanced.
+ */
+async function runner(engine: Engine, parallel: number): Promise<void> {
+  const advancing = new Map<string, Promise<void>>();
+
+  // The commissions whose advance may start a step, which the limit counts.
+  const stepping = new Set<string>();
+
+  // Aborted by the first stop, so each advance returns once its running step ends.
+  const stopping = new AbortController();
+
+  print({ parallel }, `running at most ${parallel} steps in parallel\n`);
+
+  const stop = () => {
+    if (stopping.signal.aborted) {
+      process.exit(130);
+    }
+
+    stopping.abort();
+
+    const waiting = [...stepping].flatMap((commission) => {
+      const state = engine.state(commission);
+
+      return state.status === "finished" ? [] : [{ commission, step: state.step.name }];
+    });
+
+    const names = waiting.map(({ commission, step }) => `${commission} at ${step}`);
+
+    print({ stopping: waiting }, `stopping, waiting for: ${names.join(", ") || "nothing"}\n`);
+  };
+
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+
+  // Says once why each commission the engine cannot read is left alone.
+  const unreadable = new Set<string>();
+
+  // Says once that a commission is ready at an attended step, which only the owner starts.
+  const toAttend = new Set<string>();
+
+  const report = (commission: string, error: string) => {
+    process.stderr.write(
+      visible(json ? `${JSON.stringify({ commission, error })}\n` : `${commission}: ${error}\n`),
+    );
+  };
+
+  const advance = (commission: string, step: boolean) => {
+    if (step) {
+      stepping.add(commission);
+    }
+
+    const done = engine
+      .advance(commission, { signal: stopping.signal })
+      .then(
+        (state) => {
+          // Still attempting: another live engine holds the attempt.
+          if (state.status !== "attempting") {
+            print({ commission, state }, `${commission}: ${describe(state)}\n`);
+          }
+        },
+        (error: Error) => report(commission, error.message),
+      )
+      .finally(() => {
+        advancing.delete(commission);
+        stepping.delete(commission);
+      });
+
+    advancing.set(commission, done);
+  };
+
+  // The log position the runner has looked up to.
+  let position = 0;
+
+  while (!stopping.signal.aborted) {
+    for (const entry of engine.commissions()) {
+      const { commission } = entry;
+
+      if ("error" in entry) {
+        if (!unreadable.has(commission)) {
+          unreadable.add(commission);
+          report(commission, entry.error);
+        }
+
+        continue;
+      }
+
+      const { state } = entry;
+
+      if (advancing.has(commission)) {
+        continue;
+      }
+
+      if (state.status === "ready" && state.step.kind === "agent" && state.step.attended) {
+        if (!toAttend.has(commission)) {
+          toAttend.add(commission);
+          print({ commission, state }, `${commission}: ${describe(state)}\n`);
+        }
+
+        continue;
+      }
+
+      toAttend.delete(commission);
+
+      if (state.status === "attempting") {
+        advance(commission, false);
+      } else if (state.status === "ready" && stepping.size < parallel) {
+        advance(commission, true);
+      }
+    }
+
+    // Woken by the next event in the log, or after a second at most: an attempt whose engine
+    // died writes nothing, and the runner escalates it only when it looks.
+    const look = new AbortController();
+
+    await Promise.race([
+      engine.next(position, { signal: look.signal }).then((found) => {
+        position = found.at(-1)?.position ?? position;
+      }),
+      sleep(1000),
+    ]);
+    look.abort();
   }
-  if (command === 'decide') {
-    // The core binds a decision to the exact subject; a prefix only ever resolves to the current one.
-    const current = controller.state(id).subject;
-    const subject = args[2].length >= 7 && current?.startsWith(args[2]) ? current : args[2];
-    try { controller.decide(id, args[1], subject, args[3]); }
-    catch (error) {
-      if (error instanceof Error && error.message === 'stale owner decision' && current) throw new Error(`stale owner decision; the current one is ${current}`);
-      throw error;
+
+  await Promise.all(advancing.values());
+}
+
+function printArtifact(artifact: Artifact): void {
+  const fields = Object.entries(artifact.fields).map(([name, value]) => `${name}: ${value}`);
+  const body = artifact.body === undefined ? [] : ["", artifact.body];
+
+  print(artifact, `${[artifact.kind, ...fields, ...body].join("\n")}\n`);
+}
+
+// Follows the commission, printing each attempt, note, escalation and decision once, as the log
+// records it, until the commission awaits the owner, escalates or finishes.
+async function watch(engine: Engine, commission: string): Promise<void> {
+  const printed = new Set<string>();
+
+  // lazy: the latest position is found by reading the whole log once. Read it from the log's
+  // end instead once a log grows large enough to make watch slow to start.
+  let position = engine.events(0).at(-1)?.position ?? 0;
+
+  for (;;) {
+    const record = engine.record(commission);
+
+    for (const [index, entry] of record.entries.entries()) {
+      for (const [key, text] of linesOf(index, entry)) {
+        if (!printed.has(key)) {
+          printed.add(key);
+
+          if (!json) {
+            process.stdout.write(visible(`${text}\n`));
+          }
+        }
+      }
+    }
+
+    const { state } = record;
+
+    if (
+      state.status === "awaiting" ||
+      state.status === "escalated" ||
+      state.status === "finished"
+    ) {
+      const reason = state.status === "escalated" ? `\nreason: ${state.reason}` : "";
+
+      print(record, `${commission}: ${where(state)}${reason}\n`);
+
+      return;
+    }
+
+    // Woken by the next event in the log, any commission's, and looks again.
+    position = (await engine.next(position)).at(-1)!.position;
+  }
+}
+
+/**
+ * Prints every commission's events after `position`, one line each; `follow`ing, then each event
+ * as it is written, until stopped.
+ */
+async function events(engine: Engine, position: number, follow: boolean): Promise<void> {
+  const stopping = new AbortController();
+
+  process.on("SIGINT", () => stopping.abort());
+  process.on("SIGTERM", () => stopping.abort());
+
+  let found = engine.events(position);
+
+  for (;;) {
+    for (const logged of found) {
+      print(logged, `${logged.position} ${logged.commission} ${eventLine(logged.event)}\n`);
+      position = logged.position;
+    }
+
+    if (!follow || stopping.signal.aborted) {
+      return;
+    }
+
+    found = await engine.next(position, { signal: stopping.signal });
+  }
+}
+
+// An event in a few words: its type, and the step, outcome, note or reason it carries.
+function eventLine(event: Logged["event"]): string {
+  switch (event.type) {
+    case "commissioned":
+      return event.type;
+    case "attempt-started":
+      return `${event.type} ${event.step}`;
+    case "attempt-completed":
+    case "decided":
+      return `${event.type} ${event.step}: ${event.outcome}`;
+    case "noted":
+      return `${event.type}: ${event.from === "engine" ? "engine: " : ""}${event.note}`;
+    case "escalated":
+      return `${event.type}: ${event.reason}`;
+  }
+}
+
+// The record for the owner: where the commission is, every entry in order, and then what it is
+// about now with every judgement about that, in full, as an owner reads at a gate.
+function printRecord(commission: string, record: CommissionRecord): void {
+  const { state, request, entries } = record;
+
+  // An attempt shows as its ending, or as started while it runs; its notes are watch's.
+  const timeline = entries.flatMap((entry, index) =>
+    linesOf(index, entry)
+      .filter(([key]) => (key.endsWith(":start") ? "running" in entry : !/:\d+$/.test(key)))
+      .map(([, text]) => text),
+  );
+
+  const lines = [
+    `${commission}: ${where(state)}${waiting(state)}`,
+    ...(state.status === "escalated" ? [`reason: ${state.reason}`] : []),
+    line("request", request.hash, request.artifact),
+    ...timeline,
+  ];
+
+  if (state.status !== "finished") {
+    const claimed = entries.flatMap((entry) => ("artifacts" in entry ? entry.artifacts : []));
+    const subject = claimed.find(({ hash }) => hash === state.subject);
+    const evidence = claimed.filter(({ artifact }) => artifact.fields.subject === state.subject);
+
+    // The request is the owner's, and no verifier checks the owner.
+    lines.push(
+      "",
+      "Subject:",
+      full(state.subject, subject?.artifact ?? request.artifact, subject?.verifier ?? null),
+    );
+
+    for (const { hash, artifact, verifier } of evidence) {
+      lines.push("", full(hash, artifact, verifier));
     }
   }
-  if (command === 'recover') controller.recover(id);
-  const state = command === 'show' || command === 'recover' ? controller.state(id) : await controller.advance(id);
-  process.stdout.write(show(controller, state));
-} catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-} finally {
-  controller?.close();
+
+  print(record, `${lines.join("\n")}\n`);
 }

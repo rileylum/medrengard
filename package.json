@@ -1,10 +1,16 @@
 {
   "name": "medrengard",
-  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24" },
   "scripts": {
-    "test": "node --test 'tests/**/*.test.ts'"
+    "test": "tsc && oxlint --deny-warnings && oxfmt --check && node --test",
+    "fmt": "oxfmt"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.89.0",
+    "@types/node": "^24.19.2",
+    "oxfmt": "0.74.0",
+    "oxlint": "1.89.0",
+    "typescript": "^7.0.2"
   }
 }

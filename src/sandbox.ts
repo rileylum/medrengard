@@ -1,166 +1,161 @@
-import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, readlinkSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
+import type { Access } from "./replay.ts";
 
-/** Owner-supplied sandbox configuration for an agent. */
-export interface Sandbox {
-  /** Only `bwrap` confines candidate execution. */
-  backend: string;
-  /** Absolute paths bound read-only for everything this job spawns, e.g. a toolchain outside /usr. */
-  read?: string[];
-  /** Share the host network; off by default. */
-  network?: boolean;
-  /** Names of variables copied from the controller's environment; each must be set at setup. */
-  env?: string[];
-}
+// The directories the step contract always gives a step, by path, and the record's: the log's
+// directory, which every program is kept out of.
+type Areas = { workspace: string; input: string; output: string; record: string };
 
-/** Built by the stage that spawns. Paths are absolute. */
-export interface Policy {
-  cwd: string;
-  /** Bound read-write. */
-  write: string[];
-  /** Bound read-only, on top of the system directories and Sandbox.read. */
-  read: string[];
-  /** Values the controller sets itself, such as the scratch folder's path. */
-  env?: Record<string, string>;
-}
+const order = { write: 0, empty: 1, read: 2, hidden: 3 };
 
-// The system directories every command needs: binaries, libraries, the dynamic loader and /etc.
-// Not $HOME, /var, /run or /srv: those hold the owner's files and sockets. On merged-/usr distros
-// /bin, /sbin, /lib and /lib64 are symlinks and are recreated as symlinks.
-const SYSTEM = ['/usr', '/etc', '/opt', '/bin', '/sbin', '/lib', '/lib64'];
+/** What a program may use at once: bytes of memory, and processes and threads. */
+export type Bounds = { memory: number; processes: number };
 
-// The sandbox sets these itself; the owner cannot override them.
-const RESERVED = ['PATH', 'HOME', 'LANG', 'MEDRENGARD_SCRATCH'];
+// What systemd-run needs to reach the owner's systemd, and what the scope adds; a step has them
+// only when its access names them.
+const scoped = ["XDG_RUNTIME_DIR", "INVOCATION_ID"];
 
-/** Build bubblewrap arguments with declared mounts, and no network unless declared. */
-function wrap(sandbox: Sandbox, policy: Policy, command: string, args: string[]): [string, string[]] {
-  return ['bwrap', [
-    // Parent death ends bwrap; --unshare-all includes the PID namespace, so its
-    // descendants die with the namespace init even after starting a new session.
-    '--die-with-parent', '--unshare-all', ...(sandbox.network ? ['--share-net'] : []),
-    // A new session: the command cannot push input into the controller's terminal (TIOCSTI).
-    '--new-session',
-    '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp',
-    ...SYSTEM.flatMap(systemBind),
-    ...binds([...(sandbox.read ?? []), ...policy.read], policy.write),
-    // bwrap's own root is a tmpfs; read-only, so nothing outside the binds takes writes (or RAM).
-    '--remount-ro', '/',
-    '--chdir', policy.cwd, '--', command, ...args,
-  ]];
-}
+const runtime = process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid!()}`;
 
-// A later mount over a path hides the earlier one, so roots go parent first and each nested root
-// keeps its own mode either way round: a read root inside a write root stays read-only, a write
-// root inside a read root stays writable (standard review 1). For the same path, read-only wins.
-function binds(read: string[], write: string[]): string[] {
-  const depth = (p: string) => resolve(p).split('/').filter(Boolean).length;
-  return [...write.map((p) => ({ p, flag: '--bind', ro: 0 })), ...read.map((p) => ({ p, flag: '--ro-bind', ro: 1 }))]
-    .sort((a, b) => depth(a.p) - depth(b.p) || a.ro - b.ro)
-    .flatMap(({ p, flag }) => [flag, p, p]);
-}
+/**
+ * The command that runs `argv` in `areas.workspace` under `access`, within `bounds`, the
+ * environment to start it with, and the systemd scope it runs in: bubblewrap, in a scope of the
+ * owner's systemd, which holds its memory and processes.
+ */
+export function confine(
+  access: Access,
+  areas: Areas,
+  argv: readonly [string, ...string[]],
+  bounds: Bounds,
+) {
+  const mounts = [
+    ...access.paths,
+    { path: areas.workspace, mode: access.workspace },
+    { path: areas.input, mode: "read" as const },
+    { path: areas.output, mode: "write" as const },
+    // Whatever the access, a program cannot reach the log or store, so it cannot write a
+    // decision; only a path the access names under it, and its own areas, are seen there.
+    { path: areas.record, mode: "hidden" as const },
+  ];
 
-// The controller's environment may hold tokens: bwrap and the command get a path, a home, a locale and
-// the declared names. Values go through the environment, not argv, which any local user can read.
-function environment(sandbox: Sandbox, policy: Policy): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? '/usr/bin', HOME: '/tmp' };
-  if (process.env.LANG) env.LANG = process.env.LANG;
-  for (const name of sandbox.env ?? []) env[name] = process.env[name];
-  return { ...env, ...policy.env };
-}
+  const depth = (path: string) => resolve(path).split("/").filter(Boolean).length;
 
-function systemBind(path: string): string[] {
-  let st;
-  try { st = lstatSync(path); } catch { return []; }
-  if (st.isSymbolicLink()) return ['--symlink', readlinkSync(path), path];
-  return ['--ro-bind', path, path];
-}
+  // A later mount hides what is under it, so parents go first and a nested path keeps its own
+  // mode. On the same path read goes last, so it wins, and hidden after it.
+  const sorted = mounts.toSorted(
+    (one, other) => depth(one.path) - depth(other.path) || order[one.mode] - order[other.mode],
+  );
 
-/** Validate agent definitions and probe the platform once, before work can spend budget. */
-export function checkSandbox(...sandboxes: Sandbox[]): void {
-  for (const sandbox of sandboxes) {
-    if (sandbox?.backend !== 'bwrap') throw new Error('sandbox backend must be bwrap');
-    for (const p of sandbox.read ?? []) {
-      if (typeof p !== 'string' || !isAbsolute(p)) throw new Error(`sandbox read path ${JSON.stringify(p)} is not absolute`);
-      if (!existsSync(p)) throw new Error(`sandbox read path ${p} does not exist`);
+  const binds = sorted.flatMap((mount) => {
+    switch (mount.mode) {
+      case "read":
+        return ["--ro-bind", mount.path, mount.path];
+      case "write":
+        return ["--bind", mount.path, mount.path];
+      case "empty":
+        return ["--size", String(mount.size), "--tmpfs", mount.path];
+      case "hidden":
+        return ["--tmpfs", mount.path];
     }
-    for (const name of sandbox.env ?? []) {
-      if (typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`sandbox env ${JSON.stringify(name)} is not a variable name`);
-      if (RESERVED.includes(name)) throw new Error(`sandbox env ${name} is set by the sandbox`);
-      if (process.env[name] === undefined) throw new Error(`sandbox env ${name} is not set in the controller environment`);
-    }
-  }
-  const probe = spawnSync('bwrap', ['--die-with-parent', '--unshare-all', ...SYSTEM.flatMap(systemBind), '--', 'true'], { timeout: 5000 });
-  const why = probe.signal ? `probe timed out after 5 s (${probe.signal})` : probe.error?.message
-    ?? (probe.status !== 0 ? probe.stderr.toString().trim() || `exit ${probe.status}` : undefined);
-  if (why !== undefined) {
-    throw new Error(`sandbox bwrap cannot start (${why}); install bubblewrap and allow unprivileged user namespaces`);
-  }
-}
-
-/** The bounded output and termination of a command executed in a sandbox. */
-export interface RunResult {
-  status: 'exited' | 'cancelled' | 'failed' | 'overflow';
-  exitCode: number | null;
-  signal: NodeJS.Signals | null;
-  stdout: string;
-  stderr: string;
-  wallMs: number;
-}
-
-/** How a caller feeds and reads one execution. */
-export interface ExecuteOptions {
-  input?: string;
-  /** Sees stdout as it arrives. */
-  onStdout?: (chunk: string) => void;
-  /** `false` leaves stdout out of the result and its cap, for a caller that consumes it through `onStdout`. */
-  buffer?: boolean;
-}
-
-/** Execute a confined command, ending its namespace on cancellation or output overflow. */
-export function execute(sandbox: Sandbox, policy: Policy, argv: string[], signal: AbortSignal, { input = '', onStdout, buffer = true }: ExecuteOptions = {}): Promise<RunResult> {
-  const [command, args] = wrap(sandbox, policy, argv[0], argv.slice(1));
-  const child = spawn(command, args, { cwd: policy.cwd, env: environment(sandbox, policy), stdio: ['pipe', 'pipe', 'pipe'] });
-  const started = Date.now();
-  let status: RunResult['status'] = 'exited';
-  const output = { stdout: '', stderr: '' };
-  // lazy: each stream is capped at 8 MiB; stream artifacts when a workflow needs larger output.
-  const maxOutputBytes = 8 * 1024 * 1024;
-  const cancel = () => {
-    if (status !== 'exited' || child.exitCode !== null || child.signalCode !== null) return;
-    status = 'cancelled';
-    // Killing bwrap ends its PID namespace, including descendants that called setsid.
-    child.kill('SIGKILL');
-  };
-  for (const stream of ['stdout', 'stderr'] as const) {
-    let bytes = 0;
-    child[stream].setEncoding('utf8').on('data', (chunk: string) => {
-      if (status === 'overflow') return;
-      if (stream === 'stdout' && !buffer) { onStdout?.(chunk); return; }
-      bytes += Buffer.byteLength(chunk);
-      if (bytes > maxOutputBytes) {
-        status = 'overflow';
-        output.stdout = '';
-        output.stderr = `${stream} exceeded ${maxOutputBytes} bytes`;
-        child.kill('SIGKILL');
-      } else {
-        output[stream] += chunk;
-        if (stream === 'stdout') onStdout?.(chunk);
-      }
-    });
-  }
-  // Early exit may close stdin before the request has been consumed.
-  child.stdin.on('error', () => {});
-  child.stdin.end(input);
-  return new Promise(resolve => {
-    const finish = (exitCode: number | null, exitSignal: NodeJS.Signals | null) => {
-      signal.removeEventListener('abort', cancel);
-      resolve({ status, exitCode, signal: exitSignal, ...output, wallMs: Date.now() - started });
-    };
-    child.on('error', error => { status = 'failed'; output.stderr += String(error); finish(null, null); });
-    // close drains both streams after bubblewrap and its namespace have ended.
-    child.on('close', finish);
-    signal.addEventListener('abort', cancel, { once: true });
-    if (signal.aborted) cancel();
   });
+
+  // bwrap's own root is a tmpfs: read-only, so nothing outside the declared paths takes writes,
+  // or memory. A step given / itself has that mount instead, in its declared mode.
+  const root = access.paths.some(({ path }) => path === "/") ? [] : ["--remount-ro", "/"];
+
+  const passed = {
+    ...(access.environment === "all"
+      ? process.env
+      : Object.fromEntries(access.environment.map((name) => [name, process.env[name]]))),
+    ...access.values,
+  };
+
+  const unit = `medrengard-${randomUUID()}`;
+
+  const unset =
+    access.environment === "all"
+      ? []
+      : scoped.filter((name) => !access.environment.includes(name) && !Object.hasOwn(passed, name));
+
+  return {
+    unit,
+    command: "systemd-run",
+    args: [
+      "--user",
+      "--scope",
+      "--quiet",
+      // Otherwise systemd-run replaces $NAME in the step's own arguments, and $$ with $.
+      "--expand-environment=no",
+      "--unit",
+      unit,
+      "-p",
+      `MemoryMax=${bounds.memory}`,
+      // Swap would let a step past its memory limit by slowing the machine instead.
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      `TasksMax=${bounds.processes}`,
+      "--",
+      "bwrap",
+      ...unset.flatMap((name) => ["--unsetenv", name]),
+      // Each namespace by name: --unshare-all only tries for the user and cgroup ones, and carries
+      // on without them where the kernel refuses. The PID namespace means nothing the step starts
+      // outlives bwrap, and bwrap dies with the engine.
+      "--die-with-parent",
+      "--unshare-user",
+      "--unshare-cgroup",
+      "--unshare-ipc",
+      "--unshare-uts",
+      "--unshare-pid",
+      ...(access.network ? [] : ["--unshare-net"]),
+      ...(access.sandboxes ? [] : ["--disable-userns"]),
+      ...binds,
+      // Read-only once the mounts under it are made; they are mounts of their own, so keep theirs.
+      "--remount-ro",
+      areas.record,
+      "--proc",
+      "/proc",
+      "--dev",
+      "/dev",
+      // bwrap's /dev is a writable tmpfs: only shared memory, which programs expect to write, is
+      // left writable. Its pages count against the scope's MemoryMax, which bounds it.
+      "--tmpfs",
+      "/dev/shm",
+      "--remount-ro",
+      "/dev",
+      ...root,
+      "--chdir",
+      areas.workspace,
+      "--",
+      ...argv,
+    ],
+    env: {
+      XDG_RUNTIME_DIR: runtime,
+      ...passed,
+      MEDRENGARD_IN: areas.input,
+      MEDRENGARD_OUT: areas.output,
+    },
+  };
+}
+
+/**
+ * Whether the program that ran in the scope `unit` was stopped for using more than its memory.
+ * systemd keeps a scope that failed until it is reset, so this resets it.
+ */
+export function overMemory(unit: string): boolean {
+  const scope = `${unit}.scope`;
+
+  const env = { ...process.env, XDG_RUNTIME_DIR: runtime };
+
+  const result = execFileSync("systemctl", ["--user", "show", scope, "-p", "Result", "--value"], {
+    encoding: "utf8",
+    env,
+  }).trim();
+
+  if (result !== "success" && result !== "") {
+    execFileSync("systemctl", ["--user", "reset-failed", scope], { env });
+  }
+
+  return result === "oom-kill";
 }

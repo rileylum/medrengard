@@ -1,0 +1,93 @@
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeSync,
+} from "node:fs";
+import { join } from "node:path";
+
+/**
+ * An artifact: its kind, its fields, and its body, if it has one. Its kind's definition says
+ * which fields and body it may have; the store keeps whatever it is given.
+ */
+export type Artifact = { kind: string; fields: Readonly<Record<string, string>>; body?: string };
+
+/**
+ * Keeps artifacts, their bodies and transcripts in `directory`, each under the sha256 of its
+ * bytes.
+ */
+export function createStore(directory: string) {
+  mkdirSync(directory, { recursive: true });
+
+  const hashOf = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+  // The bytes kept under `hash`, refused if they are not the bytes it names, so a file changed or
+  // damaged on disk never reaches a step.
+  function bytesOf(hash: string): Buffer {
+    const bytes = readFileSync(join(directory, hash));
+
+    if (hashOf(bytes) !== hash) {
+      throw new Error(`The store's file ${hash} does not match its hash.`);
+    }
+
+    return bytes;
+  }
+
+  function keep(data: string | Buffer): string {
+    const bytes = Buffer.from(data);
+    const hash = hashOf(bytes);
+    const path = join(directory, hash);
+
+    if (!existsSync(path)) {
+      // Synced aside and renamed, so a crash never leaves a partial file under a hash the log names.
+      const partial = `${path}.${process.pid}.partial`;
+      const file = openSync(partial, "w");
+
+      writeSync(file, bytes);
+      fsyncSync(file);
+      closeSync(file);
+      renameSync(partial, path);
+
+      const parent = openSync(directory, "r");
+
+      fsyncSync(parent);
+      closeSync(parent);
+    }
+
+    return hash;
+  }
+
+  return {
+    /** Keeps bytes, such as a transcript, and returns their hash. */
+    keep,
+
+    /** Reads back the bytes kept under `hash`. */
+    read: bytesOf,
+
+    /** Keeps an artifact and returns its hash, which covers its kind, fields and body hash. */
+    put(artifact: Artifact): string {
+      const { kind, fields } = artifact;
+      const body = artifact.body === undefined ? null : keep(artifact.body);
+
+      // lazy: fields hash in the order their kind defines them, so reordering a kind's fields
+      // changes the hash of the same content. Sort them once hashes are compared across definitions.
+      return keep(JSON.stringify({ kind, fields, body }));
+    },
+
+    /** Reads back the artifact kept under `hash`. */
+    get(hash: string): Artifact {
+      const { kind, fields, body } = JSON.parse(bytesOf(hash).toString());
+
+      if (body === null) {
+        return { kind, fields };
+      }
+
+      return { kind, fields, body: bytesOf(body).toString() };
+    },
+  };
+}
