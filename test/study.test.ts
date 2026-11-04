@@ -127,6 +127,14 @@ test(
     assert.deepEqual(recorded.pins, { runner: "fake", problems: "fake", python: "3.12.0", matches: true });
     assert.equal(recorded.versions.node, process.version);
     assert.notEqual(recorded.configurations.stub, recorded.configurations.polished);
+
+    // The summary compares polished with stub, the first configuration, over both repeats.
+    const report = driver("report");
+
+    assert.equal(report.status, 0, report.stderr);
+    assert.match(report.stdout, /\| polished \| toy \| 2 \| 1 \(1–1\) \|/);
+    assert.match(report.stdout, /\| polished \| stub \| 0 \[0, 0\] \|/);
+    assert.equal(readFileSync(join(manifest, "..", "report.md"), "utf8"), report.stdout);
   },
 );
 

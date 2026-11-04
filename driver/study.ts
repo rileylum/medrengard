@@ -3,6 +3,7 @@
 //
 //   study.ts run <study.ts> [--problems a,b]   runs them, or the named problems' only
 //   study.ts status <study.ts>                 where each problem run stands
+//   study.ts report <study.ts>                 its summary, also written to results/<study>/report.md
 //
 // Before anything runs it writes results/<study>/manifest.json: the study, the commits of its
 // repository and Medrengard's, the runner's pins, the versions, and each configuration's hash. It
@@ -15,6 +16,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import type { Study } from "../study.ts";
+import { render, summarise, type Run } from "./report.ts";
 import { heldOut } from "../study.ts";
 
 const { values, positionals } = parseArgs({
@@ -26,10 +28,10 @@ const { values, positionals } = parseArgs({
   },
 });
 
-const usage = "Usage: study.ts run|status <study.ts> [--problems a,b] [--runner <argv>…] [--results <dir>]";
+const usage = "Usage: study.ts run|status|report <study.ts> [--problems a,b] [--runner <argv>…] [--results <dir>]";
 const [command, file] = positionals;
 
-if ((command !== "run" && command !== "status") || file === undefined) {
+if (!["run", "status", "report"].includes(command ?? "") || file === undefined) {
   console.error(usage);
   process.exit(2);
 }
@@ -44,8 +46,9 @@ const name = basename(studyFile, ".ts");
 // SAFETY: a study file's default export is a Study, as defineStudy declares it.
 const study = (await import(studyFile)).default as Study;
 const factory = resolve(dirname(studyFile), study.factory);
-// SAFETY: a benchmark factory exports the engine's options; only its workflows are read here.
-const workflows = ((await import(factory)).default as { workflows: Record<string, unknown> }).workflows;
+// SAFETY: a benchmark factory exports the engine's options and its trajectories repository.
+const loaded = (await import(factory)) as { default: { workflows: Record<string, unknown> }; trajectories: string };
+const { workflows } = loaded.default;
 const results = join(resolve(values.results), name);
 const runs = join(results, "runs");
 
@@ -210,6 +213,11 @@ async function runStudy() {
     writeFileSync(path, `${JSON.stringify(current, null, 2)}\n`);
   }
 
+  // Made once here, as problem runs started together would each try to make it.
+  if (!existsSync(loaded.trajectories)) {
+    execFileSync("git", ["init", "--quiet", "--bare", loaded.trajectories]);
+  }
+
   const queue = cells(chosen);
   const ended = { failed: false, waiting: false };
 
@@ -233,5 +241,27 @@ async function runStudy() {
   process.exit(ended.failed ? 1 : ended.waiting ? 3 : 0);
 }
 
+// Every problem run of the study that has begun, against the first configuration, the control.
+function report() {
+  const begun: Run[] = cells(study.problems).flatMap(({ configuration, problem, repeat, run }) => {
+    const path = join(runs, run, `${problem}.jsonl`);
+
+    if (!existsSync(path)) return [];
+
+    const lines = readFileSync(path, "utf8")
+      .trim()
+      .split("\n")
+      // SAFETY: only driver/bench.ts writes these lines.
+      .map((line) => JSON.parse(line) as Run["lines"][number]);
+
+    return [{ configuration, problem, repeat, lines }];
+  });
+  const text = `# ${name}\n\n${render(summarise(begun, { control: study.configurations[0]! }))}`;
+
+  writeFileSync(join(results, "report.md"), text);
+  process.stdout.write(text);
+}
+
 if (command === "status") status();
+else if (command === "report") report();
 else await runStudy();
