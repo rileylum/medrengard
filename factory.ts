@@ -22,9 +22,9 @@ export default {
             realpathSync(new URL(".medrengard/adapters/claude-code.ts", import.meta.url)),
             "--permission-mode",
             "bypassPermissions",
-            // SlopCodeBench's run presets use thinking high, which is effort high on Claude 5.
+            // The owner's usual effort; SlopCodeBench's thinking=medium sets the same on Claude 5.
             "--effort",
-            "high",
+            "medium",
             // A safety stop while costs are unknown; checked after each turn.
             "--max-budget-usd",
             "5",

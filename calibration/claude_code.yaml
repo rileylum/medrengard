@@ -1,0 +1,10 @@
+# SlopCodeBench's own Claude Code agent, as their configs/agents/claude_code.yaml has it, on the
+# Claude Code installed here, with a $5 cap while costs are unknown.
+type: claude_code
+binary: claude
+permission_mode: bypassPermissions
+version: 2.1.318
+cost_limits:
+  step_limit: 100
+  cost_limit: 5
+  net_cost_limit: 5
