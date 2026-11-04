@@ -1,0 +1,237 @@
+// The study driver: runs a study file's problem runs, each a configuration on a problem for one
+// repeat, through driver/bench.ts, repeats first, a few at a time.
+//
+//   study.ts run <study.ts> [--problems a,b]   runs them, or the named problems' only
+//   study.ts status <study.ts>                 where each problem run stands
+//
+// Before anything runs it writes results/<study>/manifest.json: the study, the commits of its
+// repository and Medrengard's, the runner's pins, the versions, and each configuration's hash. It
+// refuses uncommitted changes, pins that do not match, and, once a study has started, any change
+// to what its manifest names. An escalation stops it starting problem runs; the running ones finish.
+import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual, parseArgs } from "node:util";
+import type { Study } from "../study.ts";
+import { heldOut } from "../study.ts";
+
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    runner: { type: "string", multiple: true },
+    results: { type: "string", default: "results" },
+    problems: { type: "string" },
+  },
+});
+
+const usage = "Usage: study.ts run|status <study.ts> [--problems a,b] [--runner <argv>…] [--results <dir>]";
+const [command, file] = positionals;
+
+if ((command !== "run" && command !== "status") || file === undefined) {
+  console.error(usage);
+  process.exit(2);
+}
+
+function refuse(message: string): never {
+  console.error(message);
+  process.exit(2);
+}
+
+const studyFile = resolve(file);
+const name = basename(studyFile, ".ts");
+// SAFETY: a study file's default export is a Study, as defineStudy declares it.
+const study = (await import(studyFile)).default as Study;
+const factory = resolve(dirname(studyFile), study.factory);
+// SAFETY: a benchmark factory exports the engine's options; only its workflows are read here.
+const workflows = ((await import(factory)).default as { workflows: Record<string, unknown> }).workflows;
+const results = join(resolve(values.results), name);
+const runs = join(results, "runs");
+
+const missing = study.configurations.filter((configuration) => !Object.hasOwn(workflows, configuration));
+
+if (missing.length > 0) refuse(`The factory has no configuration named ${missing.join(", ")}.`);
+
+const held = study.problems.filter((problem) => heldOut.includes(problem));
+
+if (held.length > 0 && study.final !== true) {
+  refuse(`${held.join(", ")} ${held.length === 1 ? "is" : "are"} held out: only a study marked final runs them.`);
+}
+
+const chosen = values.problems?.split(",") ?? study.problems;
+const strays = chosen.filter((problem) => !study.problems.includes(problem));
+
+if (strays.length > 0) refuse(`The study has no problem named ${strays.join(", ")}.`);
+
+type Cell = { configuration: string; problem: string; repeat: number; run: string };
+
+// Repeat first: every configuration's and problem's first repeat before any second, so a study
+// stopped early has as many repeats of each.
+const cells = (problems: readonly string[]): Cell[] =>
+  Array.from({ length: study.repeats }, (_, index) => index + 1).flatMap((repeat) =>
+    study.configurations.flatMap((configuration) =>
+      problems.map((problem) => ({ configuration, problem, repeat, run: `${name}-${configuration}-r${repeat}` })),
+    ),
+  );
+
+type Line = { checkpoint: number; checkpoints: number; commission: string; status: string; step?: string; reason?: string };
+
+function status() {
+  for (const cell of cells(study.problems)) {
+    const path = join(runs, cell.run, `${cell.problem}.jsonl`);
+    const label = `${cell.run} ${cell.problem}`;
+
+    if (!existsSync(path)) {
+      console.log(`${label}: not started`);
+      continue;
+    }
+
+    const last = new Map<number, Line>(
+      readFileSync(path, "utf8")
+        .trim()
+        .split("\n")
+        // SAFETY: only driver/bench.ts writes these lines.
+        .map((line) => JSON.parse(line) as Line)
+        .map((line) => [line.checkpoint, line]),
+    );
+    const lines = [...last.values()];
+    const graded = lines.filter((line) => line.status === "finished").length;
+    const total = lines[0]?.checkpoints ?? 0;
+    const stopped = lines.find((line) => line.status !== "finished");
+
+    if (stopped?.status === "abandoned") {
+      console.log(`${label}: abandoned at checkpoint ${stopped.checkpoint}, ${graded} of ${total} graded`);
+    } else if (stopped !== undefined) {
+      console.log(`${stopped.commission} ${stopped.status} at ${stopped.step}: ${stopped.reason}`);
+    } else {
+      console.log(`${label}: ${graded} of ${total} graded${graded === total ? ", done" : ""}`);
+    }
+  }
+}
+
+const git = (directory: string, ...args: string[]) =>
+  execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" }).trim();
+
+// The repository holding `path`: its commit, refusing uncommitted changes, so a result can be
+// traced to the code that produced it.
+function repository(path: string) {
+  const top = git(path, "rev-parse", "--show-toplevel");
+
+  if (git(top, "status", "--porcelain") !== "") refuse(`${top} has uncommitted changes: commit them first.`);
+
+  return { path: top, commit: git(top, "rev-parse", "HEAD") };
+}
+
+const runner = values.runner ?? [new URL("../bin/runner.sh", import.meta.url).pathname];
+
+// The files under each path, by content hash, so a skill edited in place changes its configuration's hash.
+function files(path: string): Record<string, string> {
+  if (!statSync(path).isDirectory()) {
+    return { [path]: createHash("sha256").update(readFileSync(path)).digest("hex") };
+  }
+
+  return Object.assign({}, ...readdirSync(path).map((entry) => files(join(path, entry))));
+}
+
+function configurationHash(workflow: unknown) {
+  // SAFETY: a workflow's steps, of which only agent steps' skills are read.
+  const steps = Object.values((workflow as { steps: Record<string, { agent?: { skills?: string[] } }> }).steps);
+  const skills = steps.flatMap((step) => step.agent?.skills ?? []).map(files);
+
+  return createHash("sha256").update(JSON.stringify({ workflow, skills })).digest("hex");
+}
+
+function version(program: string) {
+  try {
+    return execFileSync(program, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function manifest() {
+  const medrengard = dirname(realpathSync(fileURLToPath(import.meta.resolve("#medrengard/src/engine.ts"))));
+  const pins = JSON.parse(execFileSync(runner[0]!, [...runner.slice(1), "pins"], { encoding: "utf8" })) as {
+    matches: boolean;
+  };
+
+  if (!pins.matches) refuse(`The runner's checkouts do not match pins.json: ${JSON.stringify(pins)}`);
+
+  return {
+    study: { hash: createHash("sha256").update(readFileSync(studyFile)).digest("hex"), ...study },
+    repositories: [repository(dirname(studyFile)), repository(medrengard)],
+    pins,
+    versions: { node: process.version, claude: version("claude") },
+    configurations: Object.fromEntries(
+      study.configurations.map((configuration) => [configuration, configurationHash(workflows[configuration])]),
+    ),
+  };
+}
+
+// Runs one problem run to its end or its first wait: 0 done, 3 waiting for the owner, else failed.
+function cell({ configuration, problem, repeat, run }: Cell): Promise<number> {
+  const bench = [
+    fileURLToPath(new URL("bench.ts", import.meta.url)),
+    "--factory",
+    factory,
+    "--configuration",
+    configuration,
+    "--problem",
+    problem,
+    "--run",
+    run,
+    "--repeat",
+    String(repeat),
+    "--results",
+    runs,
+    ...runner.flatMap((part) => ["--runner", part]),
+  ];
+
+  return new Promise((done) => {
+    spawn(process.execPath, bench, { stdio: ["ignore", "inherit", "inherit"] }).on("close", (code) => done(code ?? 1));
+  });
+}
+
+async function runStudy() {
+  const current = manifest();
+  const path = join(results, "manifest.json");
+
+  if (existsSync(path)) {
+    // SAFETY: this driver wrote it.
+    const started = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    const changed = Object.keys(current).filter(
+      (key) => !isDeepStrictEqual(started[key], JSON.parse(JSON.stringify(current[key as keyof typeof current]))),
+    );
+
+    if (changed.length > 0) refuse(`The study ${name} changed since it started: ${changed.join(", ")}.`);
+  } else {
+    mkdirSync(results, { recursive: true });
+    writeFileSync(path, `${JSON.stringify(current, null, 2)}\n`);
+  }
+
+  const queue = cells(chosen);
+  const ended = { failed: false, waiting: false };
+
+  // A wait or a failure stops new problem runs; the running ones finish.
+  const worker = async () => {
+    for (let next = queue.shift(); next !== undefined && !ended.failed && !ended.waiting; next = queue.shift()) {
+      const code = await cell(next);
+
+      if (code === 3) ended.waiting = true;
+      else if (code !== 0) ended.failed = true;
+    }
+  };
+
+  await Promise.all(Array.from({ length: study.concurrency }, worker));
+
+  if (ended.failed || ended.waiting) {
+    console.error(`The study ${name} stopped for the owner: see study.ts status ${file}.`);
+  }
+
+  // A failure outranks a wait.
+  process.exit(ended.failed ? 1 : ended.waiting ? 3 : 0);
+}
+
+if (command === "status") status();
+else await runStudy();

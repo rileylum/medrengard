@@ -91,7 +91,7 @@ mkdirSync(out, { recursive: true });
 
 const lines = join(out, `${name}.jsonl`);
 const record = (line: object) =>
-  appendFileSync(lines, `${JSON.stringify({ configuration, ...(repeat === undefined ? {} : { repeat }), ...line })}\n`);
+  appendFileSync(lines, `${JSON.stringify({ configuration, ...(repeat === undefined ? {} : { repeat }), checkpoints: count, ...line })}\n`);
 
 // What this run recorded before, the last line of each checkpoint winning.
 const recorded = new Map<number, { status: string }>(
@@ -255,7 +255,7 @@ for (let n = 1; n <= count; n += 1) {
     const step = "step" in state ? state.step.name : undefined;
 
     // A re-run while it still waits records nothing new.
-    if (!waiting) record({ checkpoint: n, commission, status: state.status, reason, ...spent });
+    if (!waiting) record({ checkpoint: n, commission, status: state.status, step, reason, ...spent });
 
     console.error(`${commission} ${state.status} at ${step}: ${reason}`);
     process.exit(3);

@@ -7,6 +7,6 @@
     "#medrengard/*": "./.medrengard/*"
   },
   "scripts": {
-    "test": "tsc -p . && node --test"
+    "test": "tsc -p . && node --test 'test/*.test.ts'"
   }
 }
