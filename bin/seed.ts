@@ -17,5 +17,5 @@ git("remote", "remove", "origin");
 
 writeFileSync(
   join(process.env.MEDRENGARD_OUT!, "output.json"),
-  JSON.stringify({ outcome: "done", artifacts: [{ kind: "commit", fields: { sha: git("rev-parse", "HEAD") } }] }),
+  JSON.stringify({ outcome: "done", artifacts: [{ kind: "start", fields: { sha: git("rev-parse", "HEAD") } }] }),
 );

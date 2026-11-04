@@ -24,9 +24,9 @@ type Result = {
   grade?: { files: string[]; contents: Record<string, string> };
 };
 
-// A problem whose two reference solutions write a.py, one asset directory, and a fake runner that
-// reports them and grades a snapshot by listing it.
-function toy(t: TestContext, prompts: string[]) {
+// A problem whose two reference solutions write a.py, with one asset directory unless `assets` is
+// false, and a fake runner that reports them and grades a snapshot by listing it.
+function toy(t: TestContext, prompts: string[], assets = true) {
   const directory = mkdtempSync(join(tmpdir(), "medrengard-bench-test-"));
 
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -54,7 +54,7 @@ function toy(t: TestContext, prompts: string[]) {
      if (command === "problem") {
        console.log(JSON.stringify({
          checkpoints: ${prompts.length},
-         assets: [{ source: ${JSON.stringify(join(problems, "toy", "files"))}, path: "files" }],
+         assets: ${JSON.stringify(assets ? [{ source: join(problems, "toy", "files"), path: "files" }] : [])},
          prompts: ${JSON.stringify(prompts)},
        }));
      } else if (command === "grade") {
@@ -112,7 +112,7 @@ function toy(t: TestContext, prompts: string[]) {
       // SAFETY: the driver writes one result per line.
       .map((line) => JSON.parse(line) as Result);
 
-  return { directory, factory, bench, read };
+  return { directory, factory, bench, read, trajectories: join(directory, "state", "trajectories.git") };
 }
 
 test(
@@ -185,5 +185,42 @@ test(
     assert.equal(results.length, 1);
     assert.equal(results[0]?.status, "escalated");
     assert.equal(results[0]?.grade, undefined);
+  },
+);
+
+test(
+  "a problem with no assets starts from an empty repository",
+  { timeout: 120_000 },
+  async (t) => {
+    const { bench, read, trajectories } = toy(t, ["Do one.\n"], false);
+
+    const ran = bench("r1");
+
+    assert.equal(ran.status, 0, ran.stderr);
+
+    const [first] = read("r1");
+
+    assert.equal(first?.status, "finished");
+    assert.deepEqual(first?.grade?.files, ["a.py"]);
+
+    // The start the agent was given holds nothing.
+    assert.equal(execFileSync("git", ["-C", trajectories, "ls-tree", "r1-toy-1"], { encoding: "utf8" }), "");
+  },
+);
+
+test(
+  "an agent that claims its start back as its work escalates",
+  { timeout: 120_000 },
+  async (t) => {
+    const { bench, read } = toy(t, ["Do one.\n", "Do two.\ndry: noop\n"]);
+
+    const ran = bench("r1");
+
+    assert.equal(ran.status, 1);
+    assert.match(ran.stderr, /r1-toy-2 escalated at implement: .* is already the subject\./);
+    assert.deepEqual(
+      read("r1").map((result) => result.status),
+      ["finished", "escalated"],
+    );
   },
 );

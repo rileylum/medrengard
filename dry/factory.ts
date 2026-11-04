@@ -1,9 +1,8 @@
 // The dry factory: the benchmark workflow with the stub as its agent, on its own log under
 // /var/tmp, at no cost. dryFactory builds it anywhere, as the tests do.
 import { join } from "node:path";
-import { builtIn } from "#medrengard/defaults/kinds.ts";
 import { limits } from "#medrengard/defaults/limits.ts";
-import { benchmarkWorkflow, implementAccess, implementPrompt } from "../workflow.ts";
+import { benchmarkKinds, benchmarkWorkflow, implementAccess, implementPrompt } from "../workflow.ts";
 
 const stub = new URL("agent.ts", import.meta.url).pathname;
 
@@ -13,7 +12,7 @@ export function dryFactory(state: string, problems: string) {
   const factory = {
     log: join(state, "log", "log.sqlite"),
     defaults: { limits },
-    kinds: builtIn,
+    kinds: benchmarkKinds,
     workflows: {
       benchmark: benchmarkWorkflow({
         trajectories,

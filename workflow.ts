@@ -8,6 +8,8 @@ import { dirname, join } from "node:path";
 import type { Access, Agent, Limits } from "#medrengard/src/replay.ts";
 import { defineWorkflow } from "#medrengard/src/replay.ts";
 import { claudeCode, contract } from "#medrengard/defaults/access.ts";
+import { builtIn } from "#medrengard/defaults/kinds.ts";
+import type { Kind } from "#medrengard/src/kinds.ts";
 
 const read = (path: string) => ({ path, mode: "read" as const });
 const bin = new URL("bin", import.meta.url).pathname;
@@ -63,6 +65,34 @@ export function implementAccess(paths: Access["paths"] = []): Access {
   };
 }
 
+/**
+ * The built-in kinds and start: the commit a checkpoint is given, which, unlike a commit, need not
+ * change anything, so a first checkpoint can start from an empty repository. Its workspace is built
+ * as a commit's, and the commit verifier compares a claimed commit with it as with a commit.
+ */
+export const benchmarkKinds = {
+  ...builtIn,
+  start: {
+    role: "subject",
+    description: "The commit a checkpoint starts from, named by the full SHA of HEAD.",
+    fields: { sha: { limit: 64, required: true } },
+    body: { required: false, limit: 1024 },
+    verifier: {
+      run: [process.execPath, join(bin, "verify-start.ts")],
+      access: {
+        ...contract,
+        paths: [...contract.paths, read(process.execPath), read(bin)],
+        workspace: "read",
+      },
+      limit: 60,
+      memory: 4 * 1024 * 1024 * 1024,
+      processes: 1024,
+      kept: 1024 * 1024 * 1024,
+    },
+    materialiser: builtIn.commit.materialiser,
+  } satisfies Kind,
+};
+
 export type Options = {
   /** The bare repository the driver puts each checkpoint's start in and publish pushes results to. */
   trajectories: string;
@@ -87,7 +117,7 @@ export function benchmarkWorkflow({ trajectories, agent, access, limits }: Optio
       // result with the problem's assets restored, or the assets alone at the first.
       seed: {
         kind: "command",
-        claims: ["commit"],
+        claims: ["start"],
         run: [process.execPath, join(bin, "seed.ts"), trajectories],
         workspace: "empty",
         inputs: {},

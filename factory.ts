@@ -1,16 +1,15 @@
 // The baseline factory: Claude Code through Medrengard's adapter, told only the benchmark's own
 // task. Running a commission here spends the owner's subscription: only with their approval.
 import { realpathSync } from "node:fs";
-import { builtIn } from "#medrengard/defaults/kinds.ts";
 import { limits } from "#medrengard/defaults/limits.ts";
-import { benchmarkWorkflow, implementAccess, implementPrompt } from "./workflow.ts";
+import { benchmarkKinds, benchmarkWorkflow, implementAccess, implementPrompt } from "./workflow.ts";
 
 const trajectoriesPath = new URL("state/trajectories.git", import.meta.url).pathname;
 
 export default {
   log: new URL("state/log/log.sqlite", import.meta.url).pathname,
   defaults: { limits },
-  kinds: builtIn,
+  kinds: benchmarkKinds,
   workflows: {
     benchmark: benchmarkWorkflow({
       trajectories: trajectoriesPath,

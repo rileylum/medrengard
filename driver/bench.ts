@@ -93,9 +93,9 @@ function start(commission: string, previous: string | undefined) {
       git(work, "add", "--force", "--", asset.path);
     }
 
-    // lazy: a first checkpoint with no assets has nothing to commit; refused until a problem needs it.
+    // A first checkpoint with no assets starts from an empty commit, which the start kind accepts.
     if (previous === undefined || git(work, "status", "--porcelain") !== "") {
-      git(work, "commit", "--quiet", "-m", `start of ${commission}`);
+      git(work, "commit", "--quiet", "--allow-empty", "-m", `start of ${commission}`);
     }
 
     git(work, "push", "--quiet", "--force", trajectories, `HEAD:refs/heads/${commission}`);

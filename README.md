@@ -4,7 +4,11 @@ Benchmarks to compare Medrengard workflows, starting with
 [SlopCodeBench](https://github.com/SprocketLab/slop-code-bench): problems of several checkpoints,
 where an agent extends its own code as the specification changes.
 
-- `workflow.ts`: one commission per checkpoint. `seed` checks out the start the driver made,
+- `workflow.ts`: one commission per checkpoint. `seed` checks out the start the driver made and
+  claims it as a `start`, a kind of this factory's: unlike a commit it need not change anything, so a
+  problem without assets starts from an empty repository (`bin/verify-start.ts` checks it is HEAD and
+  keeps its bundle). Medrengard's commit verifier compares `implement`'s commit with it as with a
+  commit subject, so an agent cannot claim its start back as work. Then
   `implement` is the configuration under test, `publish` pushes its commit to
   `refs/results/<commission>`. The request is the checkpoint's task exactly as SlopCodeBench's
   `just-solve` prompt renders it; the agent's prompt only says to do it and commit.
@@ -21,6 +25,9 @@ where an agent extends its own code as the specification changes.
   `bin/runner.sh`; tests replace it with a fake.
 - `pins.json`: the runner's and problems' commits, and the Python they run on. `bin/fetch.sh`
   checks them out under `vendor/`.
+
+The start kind relies on Medrengard's commit verifier comparing a claim with any subject that
+names a `sha`: `136cd4e` on Medrengard's `fix/commit-verifier-subject`, not yet merged.
 
 ## Setup
 
