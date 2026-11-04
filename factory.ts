@@ -22,9 +22,16 @@ export default {
             realpathSync(new URL(".medrengard/adapters/claude-code.ts", import.meta.url)),
             "--permission-mode",
             "bypassPermissions",
+            // SlopCodeBench's run presets use thinking high, which is effort high on Claude 5.
+            "--effort",
+            "high",
+            // A safety stop while costs are unknown; checked after each turn.
+            "--max-budget-usd",
+            "5",
           ],
         },
-        model: "sonnet",
+        // The full ID, not the alias, so the record names the exact model.
+        model: "claude-opus-5-5",
         prompt: implementPrompt,
       },
       access: implementAccess(),
