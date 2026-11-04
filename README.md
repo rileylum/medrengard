@@ -123,7 +123,7 @@ medrengard decide first accept --subject 51da8742… --since 4
 ```
 
 `advance` runs ready steps until the commission awaits the owner, escalates or finishes. `decide`
-must name the current subject and the event the commission has waited since, so a decision can
+must name the current subject and the wait, by the event that began it, so a decision can
 never approve something the owner has not seen: not another subject, and not the same subject at a
 later gate or escalation, with evidence the owner has not read. At any approval step, as on any
 escalation, `abandon` finishes the commission as abandoned, so an approval step cannot declare it.
@@ -593,7 +593,7 @@ if (state.status === "awaiting" || state.status === "escalated") {
   // At an approval step, an outcome it declares or abandon; on an escalation, retry or abandon.
   state = engine.decide("first", {
     subject: state.subject,
-    // The event it has waited since: a decision from an earlier wait is refused.
+    // The event that began its wait: a decision from an earlier wait is refused.
     since: state.since,
     outcome: "accept",
     feedback: "Shorter.",
