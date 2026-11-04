@@ -2746,7 +2746,10 @@ test(
 
     const child = spawn(process.execPath, [crashing], { stdio: "ignore" });
 
+    // Killed only once the engine has spooled both lines: what the step wrote but the engine had
+    // not yet read from its pipe dies with the engine, and no spool could keep it.
     await untilStarted(directory);
+    await untilSpooled(join(record, "attempts"), "before the crash\non stderr\n");
     child.kill("SIGKILL");
     await once(child, "exit");
 
@@ -2983,6 +2986,24 @@ test("a cancel made just before the step exits still escalates", async (t) => {
     reason: "Step build was cancelled by the owner.",
   });
 });
+
+/** Waits until the one attempt spooled under `attempts` has spooled `transcript`. */
+async function untilSpooled(attempts: string, transcript: string): Promise<void> {
+  for (;;) {
+    const [attempt] = await readdir(attempts);
+
+    const spooled =
+      attempt === undefined
+        ? ""
+        : await readFile(join(attempts, attempt, "transcript"), "utf8").catch(() => "");
+
+    if (spooled === transcript) {
+      return;
+    }
+
+    await sleep(20);
+  }
+}
 
 /** Waits until the file `name` in `directory` holds a line. */
 async function untilWritten(directory: string, name: string): Promise<void> {
