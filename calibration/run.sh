@@ -4,6 +4,8 @@
 #
 #   calibration/run.sh <problem> <effort>
 #
+# TOKEN_FILE names another token file, such as an invalid one to check the wiring at no cost.
+#
 # Their catalogs are read only from their checkout, so this adds Opus 5.5 and a provider whose
 # credential reaches Claude Code as CLAUDE_CODE_OAUTH_TOKEN, the owner's subscription token. Their
 # runner cannot stop after a checkpoint, so it runs on a copy of the problem with only the first.
@@ -35,7 +37,7 @@ yaml.safe_dump(config, open(path, "w"), sort_keys=False)
 PY
 
 cd "$runner"
-CLAUDE_CODE_OAUTH_TOKEN=$(cat "$HOME/.config/medrengard/claude-token") \
+CLAUDE_CODE_OAUTH_TOKEN=$(cat "${TOKEN_FILE:-$HOME/.config/medrengard/claude-token}") \
 SCBENCH_PROBLEMS_PATH="$scratch/problems" \
   uv run slop-code run \
     --agent "$here/claude_code.yaml" \

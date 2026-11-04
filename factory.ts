@@ -27,7 +27,7 @@ export default {
             "medium",
             // A safety stop while costs are unknown; checked after each turn.
             "--max-budget-usd",
-            "5",
+            "10",
           ],
         },
         // The full ID, not the alias, so the record names the exact model.
