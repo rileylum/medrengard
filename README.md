@@ -2,10 +2,9 @@
 
 A framework for building a personal software factory: workflows that take an idea to merged code.
 
-Medrengard is being rewritten from first principles. [`docs/core.md`](docs/core.md) holds what it is
-and the rules it keeps; this file shows how to use what exists so far. The engine, the sandbox, the
-CLI, attended steps and a Claude Code adapter run, and the engine and CLI let an observer follow
-the log. A UI does not exist yet.
+[`docs/core.md`](docs/core.md) holds what Medrengard is and the rules it keeps; this file shows how
+to use what exists so far. The engine, the sandbox, the CLI, the TUI, attended steps and a Claude
+Code adapter run, and the engine and CLI let an observer follow the log.
 
 ## Contents
 
