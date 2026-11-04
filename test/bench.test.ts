@@ -41,6 +41,9 @@ function toy(t: TestContext, prompts: string[], assets = true) {
     writeFileSync(join(problems, "toy", "solutions", `checkpoint_${n}`, "a.py"), text);
   }
 
+  // A solution's dependencies, none, so recreating its virtual environment needs no network.
+  writeFileSync(join(problems, "toy", "solutions", "checkpoint_1", "requirements.txt"), "# none\n");
+
   mkdirSync(join(problems, "toy", "files"), { recursive: true });
   writeFileSync(join(problems, "toy", "files", "data.txt"), "asset\n");
 
@@ -157,7 +160,7 @@ test(
     assert.match(ran.stdout, /r1-toy-2: solved, Core 1\/1, verbosity 0\.25, erosion 0\.5/);
 
     // The stub's result line, as Claude Code's stream-json ends.
-    assert.deepEqual(second?.cost, { usd: 0, turns: 1 });
+    assert.deepEqual(second?.cost, { usd: 0, turns: 1, seconds: 0.001 });
     assert.ok(typeof second?.seconds === "number");
 
     // The request is the rendered task, byte for byte.
@@ -166,6 +169,11 @@ test(
     const { request } = engine.record(second!.commission);
 
     assert.equal(engine.artifact(request.hash).body, prompts[1]);
+
+    // As SlopCodeBench's harness does, a checkpoint after the first starts with its virtual
+    // environment made again from requirements.txt; the first has none to make.
+    assert.match(engine.transcript(first!.commission, 2).toString(), /^stub: \.venv absent$/m);
+    assert.match(engine.transcript(second!.commission, 2).toString(), /^stub: \.venv present$/m);
   },
 );
 
@@ -201,7 +209,7 @@ test(
     const [first] = read("r1");
 
     assert.equal(first?.status, "finished");
-    assert.deepEqual(first?.grade?.files, ["a.py"]);
+    assert.deepEqual(first?.grade?.files, ["a.py", "requirements.txt"]);
 
     // The start the agent was given holds nothing.
     assert.equal(execFileSync("git", ["-C", trajectories, "ls-tree", "r1-toy-1"], { encoding: "utf8" }), "");

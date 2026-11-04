@@ -9,7 +9,8 @@ where an agent extends its own code as the specification changes.
   problem without assets starts from an empty repository (`bin/verify-start.ts` checks it is HEAD and
   keeps its bundle). Medrengard's commit verifier compares `implement`'s commit with it as with a
   commit subject, so an agent cannot claim its start back as work. Then
-  `implement` is the configuration under test, `publish` pushes its commit to
+  `implement` is the configuration under test, run after `.venv` is made again from
+  `requirements.txt`, as SlopCodeBench's resume commands do at each checkpoint after the first; `publish` pushes its commit to
   `refs/results/<commission>`. The request is the checkpoint's task exactly as SlopCodeBench's
   `just-solve` prompt renders it; the agent's prompt only says to do it and commit.
 - `factory.ts`: the baseline, Claude Code through Medrengard's adapter. **Running it spends the

@@ -112,7 +112,13 @@ function cost(transcript: string) {
     .map((line) => {
       try {
         // SAFETY: only the fields read below are used, each checked by its use.
-        return JSON.parse(line) as { type?: string; total_cost_usd?: number; num_turns?: number; usage?: object };
+        return JSON.parse(line) as {
+          type?: string;
+          total_cost_usd?: number;
+          num_turns?: number;
+          duration_ms?: number;
+          usage?: object;
+        };
       } catch {
         return {};
       }
@@ -121,7 +127,14 @@ function cost(transcript: string) {
 
   return result === undefined
     ? null
-    : { usd: result.total_cost_usd, turns: result.num_turns, ...(result.usage === undefined ? {} : { usage: result.usage }) };
+    : {
+        usd: result.total_cost_usd,
+        turns: result.num_turns,
+        // Claude Code's own session time, as SlopCodeBench's summary reports; the attempt's
+        // time also holds what runs before the agent, such as remaking the virtual environment.
+        seconds: result.duration_ms === undefined ? undefined : result.duration_ms / 1000,
+        ...(result.usage === undefined ? {} : { usage: result.usage }),
+      };
 }
 
 function grade(commit: string, n: number) {

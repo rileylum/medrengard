@@ -102,6 +102,15 @@ export type Options = {
   limits?: Partial<Limits>;
 };
 
+// SlopCodeBench's resume commands, which its harness runs before the agent at each checkpoint after
+// the first: its snapshots leave .venv out, as ours do, and its prompt says to keep using it.
+// Failures are ignored, as theirs are; their output goes to the transcript.
+const venv = `if [ -f requirements.txt ]; then
+  python -m venv .venv || true
+  .venv/bin/pip install -r requirements.txt 2>&1 || true
+fi
+exec "$@"`;
+
 export function benchmarkWorkflow({ trajectories, agent, access, limits }: Options) {
   const node = read(process.execPath);
   const git = (mode: "read" | "write") => ({
@@ -126,10 +135,11 @@ export function benchmarkWorkflow({ trajectories, agent, access, limits }: Optio
         access: git("read"),
         limits: quick,
       },
+      // Every configuration's harness runs after the virtual environment is made again.
       implement: {
         kind: "agent",
         claims: ["commit"],
-        agent,
+        agent: { ...agent, harness: { run: ["sh", "-c", venv, "sh", ...agent.harness.run] } },
         workspace: "subject",
         inputs: { request: "request" },
         on: { done: "publish" },

@@ -4,7 +4,7 @@
 // claims the start unchanged.
 // It ends with a line shaped as Claude Code's stream-json result, so the driver reads its cost.
 import { execFileSync } from "node:child_process";
-import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const [problems] = process.argv.slice(2);
@@ -20,6 +20,7 @@ const [problem, , n] = request.fields.title.split(" ");
 const behaviour = /^dry: (\S+)$/m.exec(readFileSync(join(inDir, request.body), "utf8"))?.[1];
 
 console.log(`stub: ${problem} checkpoint ${n}, ${behaviour ?? "solve"}`);
+console.log(`stub: .venv ${existsSync(".venv/bin/python") ? "present" : "absent"}`);
 
 const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8" }).trim();
 const claim = () =>
