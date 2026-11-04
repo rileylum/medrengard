@@ -297,6 +297,16 @@ function accessProblem(access: Access): string | undefined {
     return "paths must each be an absolute path and a mode: read, write, or empty with a size";
   }
 
+  if (
+    paths.some(({ path }) =>
+      ["/workspace", "/input", "/output"].some(
+        (area) => path === area || path.startsWith(`${area}/`),
+      ),
+    )
+  ) {
+    return "paths cannot name /workspace, /input or /output, where the step contract's directories are";
+  }
+
   if (network !== true && network !== false) {
     return "network access must be true or false";
   }

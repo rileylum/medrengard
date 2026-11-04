@@ -19,7 +19,7 @@ const scoped = ["XDG_RUNTIME_DIR", "INVOCATION_ID"];
 const runtime = process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid!()}`;
 
 /**
- * The command that runs `argv` in `areas.workspace` under `access`, within `bounds`, the
+ * The command that runs `argv` in `areas.workspace`, which it sees as /workspace, under `access`, within `bounds`, the
  * environment to start it with, and the systemd scope it runs in: bubblewrap, in a scope of the
  * owner's systemd, which holds its memory and processes.
  */
@@ -29,14 +29,21 @@ export function confine(
   argv: readonly [string, ...string[]],
   bounds: Bounds,
 ) {
+  // The step contract's directories, where the program sees them: fixed paths that name nothing of
+  // the owner's machine, the same for every step. A step given / sees the machine as it is, its
+  // areas where the engine keeps them, since its own root has no place for them.
+  const seen = access.paths.some(({ path }) => path === "/")
+    ? areas
+    : { workspace: "/workspace", input: "/input", output: "/output" };
+
   const mounts = [
-    ...access.paths,
-    { path: areas.workspace, mode: access.workspace },
-    { path: areas.input, mode: "read" as const },
-    { path: areas.output, mode: "write" as const },
+    ...access.paths.map((entry) => ({ ...entry, source: entry.path })),
+    { source: areas.workspace, path: seen.workspace, mode: access.workspace },
+    { source: areas.input, path: seen.input, mode: "read" as const },
+    { source: areas.output, path: seen.output, mode: "write" as const },
     // Whatever the access, a program cannot reach the log or store, so it cannot write a
     // decision; only a path the access names under it, and its own areas, are seen there.
-    { path: areas.record, mode: "hidden" as const },
+    { source: areas.record, path: areas.record, mode: "hidden" as const },
   ];
 
   const depth = (path: string) => resolve(path).split("/").filter(Boolean).length;
@@ -50,9 +57,9 @@ export function confine(
   const binds = sorted.flatMap((mount) => {
     switch (mount.mode) {
       case "read":
-        return ["--ro-bind", mount.path, mount.path];
+        return ["--ro-bind", mount.source, mount.path];
       case "write":
-        return ["--bind", mount.path, mount.path];
+        return ["--bind", mount.source, mount.path];
       case "empty":
         return ["--size", String(mount.size), "--tmpfs", mount.path];
       case "hidden":
@@ -126,15 +133,15 @@ export function confine(
       "/dev",
       ...root,
       "--chdir",
-      areas.workspace,
+      seen.workspace,
       "--",
       ...argv,
     ],
     env: {
       XDG_RUNTIME_DIR: runtime,
       ...passed,
-      MEDRENGARD_IN: areas.input,
-      MEDRENGARD_OUT: areas.output,
+      MEDRENGARD_IN: seen.input,
+      MEDRENGARD_OUT: seen.output,
     },
   };
 }

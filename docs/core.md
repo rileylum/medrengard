@@ -52,9 +52,9 @@
 
 Every step except an approval step is a program. The engine starts it with:
 
-- its workspace as the working directory;
-- `MEDRENGARD_IN`: a read-only directory holding `input.json` and the bodies of the step's declared inputs;
-- `MEDRENGARD_OUT`: an empty directory where the step writes `output.json` and the files its artifacts refer to;
+- its workspace as the working directory, at `/workspace`;
+- `MEDRENGARD_IN`: `/input`, a read-only directory holding `input.json` and the bodies of the step's declared inputs;
+- `MEDRENGARD_OUT`: `/output`, an empty directory where the step writes `output.json` and the files its artifacts refer to;
 - file descriptor 3, where the step may write notes for the owner, one per line, each at most 4096 bytes and all counted with its transcript;
 - only the environment its access declares, with `PWD` naming its workspace.
 

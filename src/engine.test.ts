@@ -467,6 +467,46 @@ function engineConfined(t: TestContext, confined: (directory: string) => Access,
   );
 }
 
+test("a step sees its workspace, input and output at /workspace, /input and /output, not where the engine keeps them", async (t) => {
+  const { engine } = await engineConfined(
+    t,
+    () => access,
+    `pwd; echo "$PWD $MEDRENGARD_IN $MEDRENGARD_OUT"; ls /input
+     # The attempt's own directory beside the log is not where the step is, nor visible.
+     ls -A "$1/record/attempts" 2>/dev/null | wc -l`,
+  );
+
+  assert.equal((await engine.advance("first")).status, "finished");
+  assert.equal(
+    engine.transcript("first", 1).toString(),
+    "/workspace\n/workspace /input /output\ninput.json\n0\n",
+  );
+});
+
+test("an access that names /workspace, /input or /output, or a path under one, is refused", async (t) => {
+  for (const path of ["/workspace", "/input", "/output/notes"]) {
+    await assert.rejects(
+      engineWith(t, () =>
+        defineWorkflow({
+          start: "build",
+          steps: {
+            build: {
+              ...stepRunning("true", "end"),
+              access: { ...access, paths: [...access.paths, { path, mode: "read" }] },
+            },
+          },
+        }),
+      ),
+      {
+        message:
+          "Workflow build is invalid: step build's paths cannot name /workspace, /input or /output, " +
+          "where the step contract's directories are.",
+      },
+      path,
+    );
+  }
+});
+
 test("a step sees only the paths its access declares, in their modes", async (t) => {
   const { engine, directory } = await engineConfined(
     t,
@@ -914,7 +954,8 @@ test("a claimed body named by an absolute path escalates, though the step wrote 
 test("a claimed body outside the step's output escalates", async (t) => {
   const { engine } = await engineClaiming(
     t,
-    `ln -s "$MEDRENGARD_IN/input.json" "$MEDRENGARD_OUT/plan.md"`,
+    // Relative, so it names the input both where the step sees it and where the engine keeps it.
+    `ln -s ../input/input.json "$MEDRENGARD_OUT/plan.md"`,
     planAt("plan.md"),
   );
 
@@ -3070,10 +3111,11 @@ test(
     assert.equal(engine.transcript("first", 1).toString(), "before the crash\non stderr\n");
     assert.equal(engine.errors("first", 1).toString(), "on stderr\n");
 
-    // The attempt's directory, its workspace included, was beside the log, and is gone.
-    const workspace = (await readFile(join(directory, "started.workspace"), "utf8")).trim();
-
-    assert.ok(workspace.startsWith(join(record, "attempts")), workspace);
+    // The step saw its workspace at /workspace; the attempt's directory beside the log is gone.
+    assert.equal(
+      (await readFile(join(directory, "started.workspace"), "utf8")).trim(),
+      "/workspace",
+    );
     assert.deepEqual(await readdir(join(record, "attempts")), []);
   },
 );
