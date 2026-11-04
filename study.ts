@@ -5,7 +5,8 @@
  * A study: every configuration on every problem, `repeats` times each, `concurrency` problem runs
  * at a time. The first configuration is the control the others are compared with. `factory` is
  * the path of the factory holding the configurations, relative to the study file. Held-out
- * problems run only in a study marked `final`.
+ * problems run only in a study marked `final`. A study with `calibrate` also runs SlopCodeBench's
+ * own harness at that effort, as the configuration `slopcodebench`.
  */
 export type Study = {
   factory: string;
@@ -14,6 +15,7 @@ export type Study = {
   repeats: number;
   concurrency: number;
   final?: boolean;
+  calibrate?: { effort: string };
 };
 
 /** Declares a study, so the compiler checks its fields. */

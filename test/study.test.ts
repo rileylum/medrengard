@@ -14,6 +14,7 @@ type Fields = {
   repeats: number;
   concurrency: number;
   final?: boolean;
+  calibrate?: { effort: string };
 };
 
 // The toy problem with a study `name` over it, committed in a repository of its own.
@@ -43,7 +44,32 @@ function study(t: TestContext, prompts: string[], fields: Fields, name = "trial"
   git("add", "-A");
   git("commit", "--quiet", "-m", "study");
 
-  const driver = (...args: string[]) =>
+  // SlopCodeBench's harness, faked: it writes their per-checkpoint results for the checkpoints it
+  // was told to reach, out of the two it expects, under the scratch directory it is given.
+  const harness = join(problem.directory, "harness.ts");
+
+  writeFileSync(
+    harness,
+    `import { mkdirSync, writeFileSync } from "node:fs";
+     import { join } from "node:path";
+     const [problem, effort] = process.argv.slice(2);
+     const reached = Number(process.env.FAKE_REACHED ?? 2);
+     const out = join(process.env.SCRATCH, "outputs", "opus-5.5", "claude_code-2.1.318_just-solve_" + effort + "_0");
+     mkdirSync(out, { recursive: true });
+     writeFileSync(join(out, "result.json"), JSON.stringify({ expected_checkpoints: 2 }));
+     const row = (idx) => ({
+       problem, idx, state: "ran", core_passed: idx === 1 ? 1 : 0, core_total: 1,
+       functionality_passed: 3, functionality_total: 4, error_passed: 1, error_total: 1,
+       regression_passed: 0, regression_total: 0, duration: 30, cost: 0.5, steps: 4,
+       verbosity: 0.3, erosion: 0.6,
+     });
+     writeFileSync(join(out, "checkpoint_results.jsonl"),
+       Array.from({ length: reached }, (_, i) => JSON.stringify(row(i + 1)) + "\\n").join(""));
+    `,
+  );
+
+  const driver = (...args: string[]) => run({}, ...args);
+  const run = (env: Record<string, string>, ...args: string[]) =>
     spawnSync(
       process.execPath,
       [
@@ -56,8 +82,12 @@ function study(t: TestContext, prompts: string[], fields: Fields, name = "trial"
         problem.runner,
         "--results",
         problem.results,
+        "--calibration",
+        process.execPath,
+        "--calibration",
+        harness,
       ],
-      { encoding: "utf8", cwd: problem.directory },
+      { encoding: "utf8", cwd: problem.directory, env: { ...process.env, ...env } },
     );
 
   const lines = (run: string): Result[] =>
@@ -75,7 +105,7 @@ function study(t: TestContext, prompts: string[], fields: Fields, name = "trial"
       .map((listed) => listed.commission);
   };
 
-  return { ...problem, file, git, write, driver, lines, commissions, manifest: join(problem.results, name, "manifest.json") };
+  return { ...problem, file, git, write, driver, run, lines, commissions, manifest: join(problem.results, name, "manifest.json") };
 }
 
 test(
@@ -211,5 +241,60 @@ test(
     assert.equal(dirty.status, 2);
     assert.match(dirty.stderr, /has uncommitted changes/);
     assert.ok(!existsSync(join(results, "trial")));
+  },
+);
+
+test(
+  "a calibrating study runs SlopCodeBench's own harness as one more configuration, its results read as ours",
+  { timeout: 120_000 },
+  async (t) => {
+    const { driver, lines } = study(t, ["Do one.\n", "Do two.\n"], {
+      configurations: ["stub"],
+      problems: ["toy"],
+      repeats: 1,
+      concurrency: 2,
+      calibrate: { effort: "medium" },
+    });
+
+    const ran = driver("run");
+
+    assert.equal(ran.status, 0, ran.stderr);
+
+    const [first, second] = lines("trial-slopcodebench-r1");
+
+    assert.equal(first?.configuration, "slopcodebench");
+    assert.equal(first?.checkpoints, 2);
+    assert.equal(first?.solved, true);
+    assert.equal(second?.solved, false);
+    assert.deepEqual(first?.cost, { usd: 0.5, turns: 4, seconds: 30, attempts: 1 });
+    assert.equal(first?.erosion, 0.6);
+
+    const report = driver("report");
+
+    assert.match(report.stdout, /\| slopcodebench \| stub \| -0\.5 \[-0\.5, -0\.5\] \|/);
+  },
+);
+
+test(
+  "a calibration that stops short waits for the owner, and is not run again by itself",
+  { timeout: 120_000 },
+  async (t) => {
+    const { run, driver, lines } = study(t, ["Do one.\n", "Do two.\n"], {
+      configurations: ["stub"],
+      problems: ["toy"],
+      repeats: 1,
+      concurrency: 1,
+      calibrate: { effort: "medium" },
+    });
+
+    assert.equal(run({ FAKE_REACHED: "1" }, "run").status, 3);
+    assert.match(driver("status").stdout, /trial-slopcodebench-r1-toy-2 stopped: their run stopped/);
+
+    // Run again, it reaches both now, but what stopped stays stopped until the owner decides.
+    assert.equal(driver("run").status, 3);
+    assert.deepEqual(
+      lines("trial-slopcodebench-r1").map((line) => line.status),
+      ["finished", "stopped"],
+    );
   },
 );

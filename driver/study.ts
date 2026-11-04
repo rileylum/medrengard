@@ -25,10 +25,12 @@ const { values, positionals } = parseArgs({
     runner: { type: "string", multiple: true },
     results: { type: "string", default: "results" },
     problems: { type: "string" },
+    calibration: { type: "string", multiple: true },
   },
 });
 
-const usage = "Usage: study.ts run|status|report <study.ts> [--problems a,b] [--runner <argv>…] [--results <dir>]";
+const usage =
+  "Usage: study.ts run|status|report <study.ts> [--problems a,b] [--runner <argv>…] [--calibration <argv>…] [--results <dir>]";
 const [command, file] = positionals;
 
 if (!["run", "status", "report"].includes(command ?? "") || file === undefined) {
@@ -69,11 +71,15 @@ if (strays.length > 0) refuse(`The study has no problem named ${strays.join(", "
 
 type Cell = { configuration: string; problem: string; repeat: number; run: string };
 
+// SlopCodeBench's own harness, in a calibrating study: after the study's own in each repeat.
+const calibration = "slopcodebench";
+const configurations = [...study.configurations, ...(study.calibrate === undefined ? [] : [calibration])];
+
 // Repeat first: every configuration's and problem's first repeat before any second, so a study
 // stopped early has as many repeats of each.
 const cells = (problems: readonly string[]): Cell[] =>
   Array.from({ length: study.repeats }, (_, index) => index + 1).flatMap((repeat) =>
-    study.configurations.flatMap((configuration) =>
+    configurations.flatMap((configuration) =>
       problems.map((problem) => ({ configuration, problem, repeat, run: `${name}-${configuration}-r${repeat}` })),
     ),
   );
@@ -106,7 +112,9 @@ function status() {
     if (stopped?.status === "abandoned") {
       console.log(`${label}: abandoned at checkpoint ${stopped.checkpoint}, ${graded} of ${total} graded`);
     } else if (stopped !== undefined) {
-      console.log(`${stopped.commission} ${stopped.status} at ${stopped.step}: ${stopped.reason}`);
+      const at = stopped.step === undefined ? "" : ` at ${stopped.step}`;
+
+      console.log(`${stopped.commission} ${stopped.status}${at}: ${stopped.reason}`);
     } else {
       console.log(`${label}: ${graded} of ${total} graded${graded === total ? ", done" : ""}`);
     }
@@ -174,7 +182,23 @@ function manifest() {
 
 // Runs one problem run to its end or its first wait: 0 done, 3 waiting for the owner, else failed.
 function cell({ configuration, problem, repeat, run }: Cell): Promise<number> {
-  const bench = [
+  const theirs = [
+    fileURLToPath(new URL("../calibration/cell.ts", import.meta.url)),
+    "--problem",
+    problem,
+    "--run",
+    run,
+    "--repeat",
+    String(repeat),
+    "--effort",
+    study.calibrate?.effort ?? "",
+    "--results",
+    runs,
+    "--scratch",
+    join(results, "calibration"),
+    ...(values.calibration ?? []).flatMap((part) => ["--harness", part]),
+  ];
+  const ours = [
     fileURLToPath(new URL("bench.ts", import.meta.url)),
     "--factory",
     factory,
@@ -192,7 +216,10 @@ function cell({ configuration, problem, repeat, run }: Cell): Promise<number> {
   ];
 
   return new Promise((done) => {
-    spawn(process.execPath, bench, { stdio: ["ignore", "inherit", "inherit"] }).on("close", (code) => done(code ?? 1));
+    spawn(process.execPath, configuration === calibration ? theirs : ours, { stdio: ["ignore", "inherit", "inherit"] }).on(
+      "close",
+      (code) => done(code ?? 1),
+    );
   });
 }
 
