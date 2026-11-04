@@ -3341,7 +3341,7 @@ test(
   "cancelling an attempt no engine is running escalates it at once",
   { timeout: 10_000 },
   async (t) => {
-    const { engine, directory, options } = await engineRunning(
+    const { engine, directory, record, options } = await engineRunning(
       t,
       `echo "before the crash"; echo started >> "$1"; exec sleep 30`,
       {
@@ -3362,7 +3362,9 @@ test(
 
     const child = spawn(process.execPath, [crashing], { stdio: "ignore" });
 
+    // Killed only once the engine has spooled the line, which it could not keep unread.
     await untilStarted(directory);
+    await untilSpooled(join(record, "attempts"), "before the crash\n");
     child.kill("SIGKILL");
     await once(child, "exit");
 
