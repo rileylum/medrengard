@@ -1,10 +1,13 @@
 /**
- * The Claude Code harness adapter: runs the step's agent through `claude -p` and exits as it does.
- * The agent writes the claim itself, so the engine judges it like any step's.
+ * The Claude Code harness adapter: runs the step's agent through `claude -p` and exits as it does;
+ * at an attended step, as an interactive session in the owner's terminal, which ends when they
+ * exit it. The agent writes the claim itself, so the engine judges it like any step's.
  *
  * Usage: claude-code.ts [--permission-mode acceptEdits|bypassPermissions] [--tools <names>]
  *                       [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]
  *                       [--token <file>]
+ *
+ * --max-budget-usd bounds only an unattended agent, so an attended one with it is refused.
  *
  * acceptEdits, the default, lets the agent edit files but not run commands. bypassPermissions
  * lets it do anything its step's access allows, so the sandbox is its only boundary. --tools is a
@@ -44,6 +47,7 @@ type Kind = {
 // What the adapter reads from input.json; the engine writes the rest for the agent to read.
 type Given = {
   outcomes: string[];
+  attended: boolean;
   claims: Record<string, Kind>;
   agent: { model: string; prompt: string; skills: { name: string; path: string }[] };
 };
@@ -118,6 +122,12 @@ if (token === "") {
 // SAFETY: the engine encodes input.json for an agent step with these fields.
 const given = JSON.parse(readFileSync(join(input, "input.json"), "utf8")) as Given;
 
+const { attended } = given;
+
+if (attended && budget !== undefined) {
+  refuse("A budget bounds only an unattended agent: claude keeps --max-budget-usd only with -p.");
+}
+
 // One line per field, saying what the claim's fields must hold.
 const fieldsOf = (kind: Kind) =>
   Object.entries(kind.fields).map(
@@ -143,6 +153,14 @@ const claiming =
     ? "Claim no artifacts."
     : `Each artifact is {"kind": ..., "fields": {...}, "body": ...}, of one of these kinds:\n${kinds.join("\n")}`;
 
+// How an attended agent works with the owner, and when its claim is made.
+const together = `
+
+The owner is with you in this session. Work on the step with them, and write output.json once
+they agree it is done. If they then want changes, make them and write it again; tell them each
+time you write it. They end the session with /exit, and the last output.json you wrote is your
+claim.`;
+
 // lazy: the step contract as prompt text, here only. Share it between adapters once a second one
 // needs it.
 const contract = `You are a step in a workflow. Your inputs are in ${input}: input.json lists each
@@ -150,7 +168,9 @@ input's artifacts, and each body is the file its "body" names, relative to ${inp
 
 When you are done, write ${join(output, "output.json")} as JSON:
 {"outcome": one of ${JSON.stringify(given.outcomes)}, "artifacts": [...]}.
-Leave out "artifacts" to claim none. ${claiming}`;
+Leave out "artifacts" to claim none. ${claiming}${attended ? together : ""}`;
+
+const prompt = `${given.agent.prompt}\n\n${contract}`;
 
 // Everything Claude Code loads of its own that these settings turn off, as 2.1.316 names it; design
 // and doctor are bundled skills that disableBundledSkills leaves.
@@ -220,17 +240,55 @@ const nested = [
 // commands could read it through /proc, so one the step was given is dropped.
 const { CLAUDE_CODE_OAUTH_TOKEN: _, ...environment } = process.env;
 
-// Streamed, so the engine sees output while the agent works; plain -p prints only at the end, which
-// the idle limit would stop.
+// An attended agent's prompt is its system prompt, from a file: compacting a long session keeps
+// it, and Linux refuses one argument over 128 KiB. The agent begins at once, as unattended.
+// Claude Code's first-run questions, in a home that has never run it, are answered, so the
+// session opens on the work.
+function attendedSession(): string[] {
+  const file = join(mkdtempSync(join(tmpdir(), "medrengard-prompt-")), "prompt.md");
+
+  writeFileSync(file, prompt);
+
+  const settings = join(homedir(), ".claude.json");
+
+  if (!existsSync(settings)) {
+    writeFileSync(
+      settings,
+      JSON.stringify({
+        hasCompletedOnboarding: true,
+        projects: { [process.cwd()]: { hasTrustDialogAccepted: true } },
+      }),
+    );
+  }
+
+  return ["Begin your step.", "--append-system-prompt-file", file];
+}
+
+// Unattended, streamed, so the engine sees output while the agent works; plain -p prints only at
+// the end, which the idle limit would stop.
+const session = attended
+  ? attendedSession()
+  : ["-p", "--output-format", "stream-json", "--verbose"];
+
+// CLAUDE.md loads as Claude Code's own, not through a plugin, so only this variable keeps it out.
+const claudeEnvironment: NodeJS.ProcessEnv = {
+  ...environment,
+  CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+  CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: "3",
+};
+
+// An interactive claude would try to update itself, which its sandbox refuses, and say so on the
+// owner's screen.
+if (attended) {
+  claudeEnvironment.DISABLE_AUTOUPDATER = "1";
+}
+
 const claude = spawn(
   "bwrap",
   [
     ...nested,
     "claude",
-    "-p",
-    "--output-format",
-    "stream-json",
-    "--verbose",
+    ...session,
     "--permission-mode",
     mode,
     "--settings",
@@ -251,30 +309,29 @@ const claude = spawn(
     given.agent.model,
   ],
   {
-    // CLAUDE.md loads as Claude Code's own, not through a plugin, so only this variable keeps it out.
-    env: {
-      ...environment,
-      CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
-      CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: "3",
-    },
-    // The prompt goes on stdin, which -p reads when no prompt is given as an argument: Linux
-    // refuses one argument over 128 KiB. stdout is read, to note what the agent does, and passed
-    // on unchanged as the transcript.
-    stdio: ["pipe", "pipe", "inherit", "pipe"],
+    env: claudeEnvironment,
+    // Unattended, the prompt goes on stdin, which -p reads when no prompt is given as an
+    // argument: Linux refuses one argument over 128 KiB. stdout is read, to note what the agent
+    // does, and passed on unchanged as the transcript. Attended, the terminal is claude's.
+    stdio: attended
+      ? ["inherit", "inherit", "inherit", "pipe"]
+      : ["pipe", "pipe", "inherit", "pipe"],
   },
 );
 
-// SAFETY: stdin is the "pipe" given above.
-const promptPipe = claude.stdin as Writable;
+if (!attended) {
+  // SAFETY: stdin is the "pipe" given above.
+  const promptPipe = claude.stdin as Writable;
 
-// A claude that ends before reading its prompt says why in its exit; the write has nothing to add.
-promptPipe.on("error", (error: NodeJS.ErrnoException) => {
-  if (error.code !== "EPIPE" && error.code !== "ECONNRESET") {
-    throw error;
-  }
-});
+  // A claude that ends before reading its prompt says why in its exit; the write has nothing to add.
+  promptPipe.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code !== "EPIPE" && error.code !== "ECONNRESET") {
+      throw error;
+    }
+  });
 
-promptPipe.end(`${given.agent.prompt}\n\n${contract}`);
+  promptPipe.end(prompt);
+}
 
 // SAFETY: stdio[3] is the "pipe" given above, which Node opens for the parent to write.
 const tokenPipe = claude.stdio[3] as Writable;
@@ -400,7 +457,12 @@ function notesOf(event: StreamEvent): void {
 
 let partial = "";
 
-claude.stdout!.on("data", (chunk: Buffer) => {
+// An interactive session draws on the terminal and says nothing of what it loaded.
+if (attended) {
+  note("In an attended session Claude Code does not say what it loaded, so it is not checked.");
+}
+
+claude.stdout?.on("data", (chunk: Buffer) => {
   process.stdout.write(chunk);
 
   const lines = (partial + chunk.toString()).split("\n");
@@ -423,7 +485,7 @@ claude.stdout!.on("data", (chunk: Buffer) => {
 
 const closed = await once(claude, "close").catch((error: NodeJS.ErrnoException) => error);
 
-if (!initialised) {
+if (!initialised && !attended) {
   const unsaid = "Claude Code did not say what it loaded.";
 
   console.error(unsaid);
@@ -437,9 +499,10 @@ if (closed instanceof Error) {
   const [code] = closed;
 
   // claude can exit 0 from a run it reports as failed, or say nothing of how it ended: either way
-  // a claim it left is not one to trust, so the attempt fails and the owner decides.
+  // a claim it left is not one to trust, so the attempt fails and the owner decides. An attended
+  // session reports nothing; the owner was there to see how it ended.
   const failure =
-    code !== 0
+    code !== 0 || attended
       ? undefined
       : result === undefined
         ? "claude ended without a result."

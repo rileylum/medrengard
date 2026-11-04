@@ -20,9 +20,11 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
 
   commission <workflow> <commission> --title <title> (--body <text> | --body-file <path>)
   advance    <commission>
+  attend     <commission>
   state      <commission>
   show       <commission>
   watch      <commission>
+  events     [--after <position>] [--follow]
   commissions
   run        [--parallel <n>]
   decide     <commission> <outcome> --subject <hash> --since <event>
@@ -40,9 +42,11 @@ engine's options, { log, kinds, workflows, defaults }, with log relative to the 
 const commands = new Map([
   ["commission", { arguments: 2, options: ["title", "body", "body-file"] }],
   ["advance", { arguments: 1, options: [] }],
+  ["attend", { arguments: 1, options: [] }],
   ["state", { arguments: 1, options: [] }],
   ["show", { arguments: 1, options: [] }],
   ["watch", { arguments: 1, options: [] }],
+  ["events", { arguments: 0, options: ["after", "follow"] }],
   ["errors", { arguments: 2, options: [] }],
   ["commissions", { arguments: 0, options: [] }],
   ["run", { arguments: 0, options: ["parallel"] }],
@@ -71,6 +75,8 @@ try {
       feedback: text,
       "feedback-file": text,
       parallel: text,
+      after: text,
+      follow: { type: "boolean" },
     },
   });
 } catch {
@@ -104,7 +110,8 @@ if (
     (values.title === undefined || (values.body ?? values["body-file"]) === undefined)) ||
   (command === "decide" && (values.subject === undefined || !/^\d+$/.test(values.since ?? ""))) ||
   ((command === "transcript" || command === "errors") && !/^[1-9]\d*$/.test(args[1])) ||
-  !/^[1-9]\d*$/.test(values.parallel ?? "1")
+  !/^[1-9]\d*$/.test(values.parallel ?? "1") ||
+  !/^\d+$/.test(values.after ?? "0")
 ) {
   refuseUsage();
 }
@@ -154,6 +161,9 @@ try {
     case "advance":
       printState(await engine.advance(first));
       break;
+    case "attend":
+      printState(await engine.attend(first));
+      break;
     case "state":
       printState(engine.state(first));
       break;
@@ -176,6 +186,9 @@ try {
       break;
     case "watch":
       await watch(engine, first);
+      break;
+    case "events":
+      await events(engine, Number(values.after ?? "0"), values.follow === true);
       break;
     case "transcript":
       printBytes(engine.transcript(first, Number(second)));
@@ -248,7 +261,11 @@ type Printed =
   | { parallel: number }
   | { stopping: { commission: string; step: string }[] }
   | { commission: string; state: CommissionState }
+  | Logged
   | Definition;
+
+// One event as the log holds it, with its commission and its position in the log.
+type Logged = ReturnType<ReturnType<typeof Create>["events"]>[number];
 
 function print(result: Printed, readable: string): void {
   process.stdout.write(visible(json ? `${JSON.stringify(result)}\n` : readable));
@@ -347,6 +364,9 @@ async function runner(engine: ReturnType<typeof Create>, parallel: number): Prom
   // Says once why each commission the engine cannot read is left alone.
   const unreadable = new Set<string>();
 
+  // Says once that a commission is ready at an attended step, which only the owner starts.
+  const toAttend = new Set<string>();
+
   const report = (commission: string, error: string) => {
     process.stderr.write(
       visible(json ? `${JSON.stringify({ commission, error })}\n` : `${commission}: ${error}\n`),
@@ -377,6 +397,9 @@ async function runner(engine: ReturnType<typeof Create>, parallel: number): Prom
     advancing.set(commission, done);
   };
 
+  // The log position the runner has looked up to.
+  let position = 0;
+
   while (!stopping.signal.aborted) {
     for (const entry of engine.commissions()) {
       const { commission } = entry;
@@ -396,6 +419,17 @@ async function runner(engine: ReturnType<typeof Create>, parallel: number): Prom
         continue;
       }
 
+      if (state.status === "ready" && state.step.kind === "agent" && state.step.attended) {
+        if (!toAttend.has(commission)) {
+          toAttend.add(commission);
+          print({ commission, state }, `${commission}: ${describe(state)}\n`);
+        }
+
+        continue;
+      }
+
+      toAttend.delete(commission);
+
       if (state.status === "attempting") {
         advance(commission, false);
       } else if (state.status === "ready" && stepping.size < parallel) {
@@ -403,8 +437,17 @@ async function runner(engine: ReturnType<typeof Create>, parallel: number): Prom
       }
     }
 
-    // The log has no notifications, so the runner looks again.
-    await sleep(1000);
+    // Woken by the next event in the log, or after a second at most: an attempt whose engine
+    // died writes nothing, and the runner escalates it only when it looks.
+    const look = new AbortController();
+
+    await Promise.race([
+      engine.next(position, { signal: look.signal }).then((found) => {
+        position = found.at(-1)?.position ?? position;
+      }),
+      sleep(1000),
+    ]);
+    look.abort();
   }
 
   await Promise.all(advancing.values());
@@ -452,9 +495,9 @@ function linesOf(index: number, entry: Entry): [string, string][] {
       const number = String(entry.attempt).padEnd(2);
       const start: [string, string] = [`${index}:start`, `${number}${at} started`];
 
-      const notes = entry.notes.map((note, n): [string, string] => [
+      const notes = entry.notes.map(({ note, from }, n): [string, string] => [
         `${index}:${n}`,
-        `     ${note}`,
+        `     ${from === "engine" ? "engine: " : ""}${note}`,
       ]);
 
       if ("running" in entry) {
@@ -496,8 +539,13 @@ function linesOf(index: number, entry: Entry): [string, string][] {
 }
 
 // Where the commission is, in a few words.
-// The event a waiting commission has waited since, which a decision names.
+// The event a waiting commission has waited since, which a decision names; or that the owner is
+// to attend the step it is ready at.
 function waiting(state: CommissionState): string {
+  if (state.status === "ready" && state.step.kind === "agent" && state.step.attended) {
+    return ", to attend";
+  }
+
   return state.status === "awaiting" || state.status === "escalated"
     ? ` since event ${state.since}`
     : "";
@@ -513,6 +561,10 @@ function where(state: CommissionState): string {
 // records it, until the commission awaits the owner, escalates or finishes.
 async function watch(engine: ReturnType<typeof Create>, commission: string): Promise<void> {
   const printed = new Set<string>();
+
+  // lazy: the latest position is found by reading the whole log once. Read it from the log's
+  // end instead once a log grows large enough to make watch slow to start.
+  let position = engine.events(0).at(-1)?.position ?? 0;
 
   for (;;) {
     const record = engine.record(commission);
@@ -543,8 +595,55 @@ async function watch(engine: ReturnType<typeof Create>, commission: string): Pro
       return;
     }
 
-    // The log has no notifications, so watch looks again.
-    await sleep(500);
+    // Woken by the next event in the log, any commission's, and looks again.
+    position = (await engine.next(position)).at(-1)!.position;
+  }
+}
+
+/**
+ * Prints every commission's events after `position`, one line each; `follow`ing, then each event
+ * as it is written, until stopped.
+ */
+async function events(
+  engine: ReturnType<typeof Create>,
+  position: number,
+  follow: boolean,
+): Promise<void> {
+  const stopping = new AbortController();
+
+  process.on("SIGINT", () => stopping.abort());
+  process.on("SIGTERM", () => stopping.abort());
+
+  let found = engine.events(position);
+
+  for (;;) {
+    for (const logged of found) {
+      print(logged, `${logged.position} ${logged.commission} ${eventLine(logged.event)}\n`);
+      position = logged.position;
+    }
+
+    if (!follow || stopping.signal.aborted) {
+      return;
+    }
+
+    found = await engine.next(position, { signal: stopping.signal });
+  }
+}
+
+// An event in a few words: its type, and the step, outcome, note or reason it carries.
+function eventLine(event: Logged["event"]): string {
+  switch (event.type) {
+    case "commissioned":
+      return event.type;
+    case "attempt-started":
+      return `${event.type} ${event.step}`;
+    case "attempt-completed":
+    case "decided":
+      return `${event.type} ${event.step}: ${event.outcome}`;
+    case "noted":
+      return `${event.type}: ${event.from === "engine" ? "engine: " : ""}${event.note}`;
+    case "escalated":
+      return `${event.type}: ${event.reason}`;
   }
 }
 

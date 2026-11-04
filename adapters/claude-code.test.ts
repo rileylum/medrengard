@@ -1,5 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -283,7 +285,7 @@ test("the Claude Code adapter notes what the agent says, each tool it uses and h
         "Bash: git clone --no-local /repo .",
         "Read: shared/src/net/codec.ts",
         "Finished in 1.5 s, 3 turns, $0.0123.",
-      ],
+      ].map((note) => ({ note, from: "step" })),
     },
   ]);
   assert.match(engine.transcript("first", 1).toString(), /"type":"result"/);
@@ -438,7 +440,7 @@ test("the Claude Code adapter records what claude loaded that the agent did not 
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
   assert.partialDeepStrictEqual(engine.record("first").entries, [
-    { outcome: "done", notes: [leak], errors: true },
+    { outcome: "done", notes: [{ note: leak, from: "step" }], errors: true },
   ]);
   assert.equal(engine.errors("first", 1).toString(), `${leak}\n`);
 });
@@ -454,7 +456,7 @@ test("the Claude Code adapter records that claude did not say what it loaded", a
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
   assert.partialDeepStrictEqual(engine.record("first").entries, [
-    { outcome: "done", notes: [unsaid], errors: true },
+    { outcome: "done", notes: [{ note: unsaid, from: "step" }], errors: true },
   ]);
   assert.equal(engine.errors("first", 1).toString(), `${unsaid}\n`);
 });
@@ -484,4 +486,143 @@ test("the Claude Code adapter records nothing when claude loaded only what the a
   assert.partialDeepStrictEqual(engine.record("first").entries, [
     { outcome: "done", notes: [], errors: false },
   ]);
+});
+
+/**
+ * Runs the adapter as an attended step's harness, in a terminal script makes, with `args`, an
+ * input.json saying so and a fake `claude` on its PATH that records its arguments, whether its
+ * stdin is a terminal, the system prompt file it was given and the `.claude.json` in its home.
+ * Returns the adapter's exit code, its notes and what the fake recorded.
+ */
+async function attendedAdapter(t: TestContext, args: readonly string[] = [], claudeJson?: string) {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const [input, output, home, workspace] = ["input", "output", "home", "workspace"].map((name) =>
+    join(directory, name),
+  );
+
+  for (const made of [input, output, home, workspace]) {
+    await mkdir(made);
+  }
+
+  if (claudeJson !== undefined) {
+    await writeFile(join(home, ".claude.json"), claudeJson);
+  }
+
+  await writeFile(join(directory, "token"), "sk-ant-oat01-test-token");
+  await writeFile(
+    join(input, "input.json"),
+    JSON.stringify({
+      commission: "first",
+      step: "plan",
+      attempt: 1,
+      outcomes: ["done"],
+      inputs: {},
+      claims: {},
+      attended: true,
+      agent: { model: "a-model", prompt: "Plan the change with the owner.", skills: [] },
+    }),
+  );
+
+  const claude = join(directory, "claude");
+
+  await writeFile(
+    claude,
+    `#!/bin/sh
+printf '%s\\0' "$@" > "${join(directory, "arguments")}"
+[ -t 0 ] && echo yes > "${join(directory, "terminal")}"
+printf '%s' "$DISABLE_AUTOUPDATER" > "${join(directory, "updater")}"
+while [ $# -gt 0 ]; do
+  [ "$1" = --append-system-prompt-file ] && cp "$2" "${join(directory, "system")}"
+  shift
+done
+cp "$HOME/.claude.json" "${join(directory, "claude.json")}"
+`,
+  );
+  await chmod(claude, 0o755);
+
+  const command = [
+    "env",
+    `PATH=${directory}:${process.env.PATH}`,
+    `HOME=${home}`,
+    `MEDRENGARD_IN=${input}`,
+    `MEDRENGARD_OUT=${output}`,
+    process.execPath,
+    adapter,
+    "--token",
+    join(directory, "token"),
+    ...args,
+  ].map((arg) => `'${arg}'`);
+
+  // fd 3 is the step's notes, as the engine gives it; script passes it on.
+  const terminal = spawn("script", ["-q", "-e", "-c", command.join(" "), "/dev/null"], {
+    cwd: workspace,
+    stdio: ["pipe", "pipe", "pipe", "pipe"],
+  });
+
+  let notes = "";
+
+  terminal.stdio[3]!.on("data", (chunk: Buffer) => {
+    notes += chunk.toString();
+  });
+
+  const [code] = await once(terminal, "close");
+
+  const recorded = async (name: string) => readFile(join(directory, name), "utf8").catch(() => "");
+
+  return {
+    code,
+    notes,
+    workspace,
+    arguments: (await recorded("arguments")).split("\0").slice(0, -1),
+    terminal: await recorded("terminal"),
+    system: await recorded("system"),
+    claudeJson: await recorded("claude.json"),
+    updater: await recorded("updater"),
+  };
+}
+
+test("the Claude Code adapter runs an attended agent's claude in the owner's terminal, its prompt the system's", async (t) => {
+  const run = await attendedAdapter(t);
+
+  assert.equal(run.code, 0);
+  assert.equal(run.terminal, "yes\n");
+
+  // It cannot update itself in its sandbox, and would say so on the owner's screen.
+  assert.equal(run.updater, "1");
+
+  // An interactive session, which the agent begins: no -p and no stream on stdout.
+  assert.equal(run.arguments[0], "Begin your step.");
+  assert.ok(!run.arguments.includes("-p"));
+  assert.ok(!run.arguments.includes("--output-format"));
+  assert.ok(run.arguments.includes("--append-system-prompt-file"));
+  assert.match(run.system, /^Plan the change with the owner\.\n\n/);
+  assert.match(run.system, /The owner is with you in this session/);
+  assert.match(run.system, /write .*output\.json/);
+
+  // Claude Code's first-run questions are answered, so the session opens on the work.
+  assert.partialDeepStrictEqual(JSON.parse(run.claudeJson), {
+    hasCompletedOnboarding: true,
+    projects: { [run.workspace]: { hasTrustDialogAccepted: true } },
+  });
+  assert.equal(
+    run.notes,
+    "In an attended session Claude Code does not say what it loaded, so it is not checked.\n",
+  );
+});
+
+test("the Claude Code adapter leaves a .claude.json already in an attended agent's home", async (t) => {
+  const run = await attendedAdapter(t, [], '{"theme":"light"}');
+
+  assert.equal(run.code, 0);
+  assert.equal(run.claudeJson, '{"theme":"light"}');
+});
+
+test("the Claude Code adapter refuses a budget for an attended agent, which claude cannot keep", async (t) => {
+  const run = await attendedAdapter(t, ["--max-budget-usd", "2"]);
+
+  assert.equal(run.code, 2);
+  assert.deepEqual(run.arguments, []);
 });

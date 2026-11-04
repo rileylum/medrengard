@@ -73,7 +73,7 @@ test("a log written by the engine of 2026-11-03 still reads", async (t) => {
       {
         entry: "attempt",
         step: "draft",
-        notes: ["Reading the request."],
+        notes: [{ note: "Reading the request.", from: "step" }],
         outcome: "done",
         artifacts: [
           {
@@ -132,6 +132,11 @@ test("a log written by the engine of 2026-11-03 still reads", async (t) => {
     { entry: "decision", outcome: "retry", feedback: "Try once more." },
   ]);
   assert.partialDeepStrictEqual(engine.record("attempting").entries, [
-    { entry: "attempt", step: "draft", running: true, notes: ["Reading the request."] },
+    {
+      entry: "attempt",
+      step: "draft",
+      running: true,
+      notes: [{ note: "Reading the request.", from: "step" }],
+    },
   ]);
 });

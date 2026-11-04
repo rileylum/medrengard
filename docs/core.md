@@ -38,7 +38,7 @@
 **Constraints**
 
 1. No extension code in the engine. Commands, harness adapters, verifiers, materialisers and observers are programs. Workflow definitions are TypeScript that evaluates to data.
-2. Everything has a declared limit. Every attempt, wait, output stream, artifact, transcript and disk area has an explicit bound, or is declared unbounded, which only an attended step may be. Exceeding a bound escalates; nothing is silently truncated or allowed to grow without limit.
+2. Everything has a declared limit. Every attempt, output stream, artifact, transcript and disk area has an explicit bound; only an attended step's time may be declared unbounded. Exceeding a bound escalates; nothing is silently truncated or allowed to grow without limit. A wait has no bound: nothing runs while the commission waits for the owner.
 3. A commission runs on the definitions it started with. Commissioning records its workflow, agent and kind definitions and the factory's defaults by hash. Editing a definition affects only new commissions.
 4. Hermetic steps. A step sees only its declared inputs, workspace, environment and tools. A harness adapter loads only declared skills and configuration, or records the leak on every attempt.
 5. Commissions are independent. Commissions share no state, and each has one writer at a time. Any number of commissions, across repositories and workflows, can advance at once.
@@ -58,9 +58,9 @@ Every step except an approval step is a program. The engine starts it with:
 - file descriptor 3, where the step may write notes for the owner, one per line, each at most 4096 bytes and all counted with its transcript;
 - only the environment its access declares, with `PWD` naming its workspace.
 
-An attended step has the owner's terminal, recorded through a pseudo-terminal. An unattended step gets empty stdin, and its stdout and stderr are its transcript.
+An attended step has the owner's terminal, recorded through a pseudo-terminal: it starts only when the owner attends it, in their terminal, and ends when its program does, so the owner can go back and forth with its agent until they leave. Their typing counts as activity, though what they type is not kept. While it runs, the engine notes for the owner what each `output.json` it writes would amount to: its outcome and artifacts, or why it would escalate. An unattended step gets empty stdin, and its stdout and stderr are its transcript.
 
-`input.json` names the commission, step, attempt and declared outcomes, and lists each declared input's artifacts, oldest first, as a list even when it holds one artifact or none; the rules of each kind the step may claim; an agent step's also carries its agent. `output.json` holds one outcome and the claimed artifacts, at most 64 KiB. Bodies are files, referenced by a path relative to their directory: an input's body is at `<input>/<hash>` under `MEDRENGARD_IN`.
+`input.json` names the commission, step, attempt and declared outcomes, and lists each declared input's artifacts, oldest first, as a list even when it holds one artifact or none; the rules of each kind the step may claim; an agent step's also carries its agent and whether it is attended. `output.json` holds one outcome and the claimed artifacts, at most 64 KiB. Bodies are files, referenced by a path relative to their directory: an input's body is at `<input>/<hash>` under `MEDRENGARD_IN`.
 
 The exit code reports the step's health; the outcome reports its result. A test run that finds failures exits 0 with a failing verdict. When the step ends:
 
@@ -94,7 +94,7 @@ The JSON files are a wire format. The engine encodes `input.json` from its domai
 
 Replay derives a commission's state; none is stored.
 
-- Ready: at an agent or command step, with no attempt in flight.
+- Ready: at an agent or command step, with no attempt in flight. At an attended step, it waits for the owner to attend.
 - Attempting: an attempt has started and not completed.
 - Awaiting: at an approval step, waiting for the owner's decision.
 - Escalated: paused for the owner, with a reason.
@@ -106,13 +106,13 @@ Six events are the whole log vocabulary. Each carries the time the engine wrote 
 - `attempt-started`: the step and attempt, the subject and each input's artifacts by hash; spends one unit of the step's budget.
 - `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, its transcript and, when it wrote to stderr, its errors, and the next step or end.
 - `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, at most 1 MiB, and the next step or end.
-- `noted`: the attempt and one note it wrote for the owner, recorded as it arrives. It changes no state.
+- `noted`: the attempt and one note for the owner, recorded as it arrives: one the attempt wrote, or the engine's, marked as such. It changes no state.
 - `escalated`: the reason, and the attempt if one was involved, with its transcript and errors when its program ran. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it. A reason is at most 4096 bytes; a longer one is cut on a character boundary and says so.
 
 Transitions:
 
 - Commissioned, the commission is ready or awaiting, by its start step's kind.
-- Ready, with budget left, inputs within the input limit and the step not yet attempted on the same subject and inputs, an attempt starts.
+- Ready, with budget left, inputs within the input limit and the step not yet attempted on the same subject and inputs, an attempt starts; at an attended step, once the owner attends it.
 - Ready, with the budget spent, inputs over the input limit, the step already attempted on the same subject and inputs, or a failure of the engine's own while preparing its inputs, the commission escalates.
 - Attempting, a valid claim completes the attempt and follows the outcome's edge. An invalid claim, a non-zero exit, a reached limit, the owner cancelling, a failure of the engine's own or an interruption found on replay escalates. An attempt is interrupted once no engine is running it, even if the process that started it lives on.
 - Awaiting, a decision naming the current subject, the wait and a declared outcome follows its edge; a decision to abandon finishes the commission, so an approval step cannot declare abandon. A stale or undeclared decision is refused and records nothing: a decision made in an earlier wait, at an approval step or escalation, is stale, even about the same subject.
@@ -181,6 +181,7 @@ _Execution: the core. The commission is the aggregate root._
 - Wait: the time a commission is awaiting or escalated, from the event that began it until the owner's decision; a decision names it by that event.
 - Escalation: the commission paused for the owner, with a reason.
 - Cancel: the owner stopping an attempt in flight; the commission escalates, and nothing is decided.
+- Attend: the owner starting an attended step in their terminal and taking part in it until they leave.
 
 _Step contract: the process boundary._
 
@@ -199,7 +200,7 @@ _Record: the log and the store._
 - Log: the ordered events of every commission.
 - Store: content-addressed artifact bodies, kept files, transcripts and definitions.
 - Replay: the pure fold from a commission's events to its state.
-- Observer: a program that reads the log and never writes.
+- Observer: a program that reads the log and never writes: every commission's events after a position, woken by the next one.
 - Extension: a package supplying artifact kinds, harness adapters, commands or observers.
 - Owner: the one person the factory serves.
 

@@ -65,6 +65,28 @@ async function factoryIn(t: TestContext) {
        ],
      } as const;
 
+     // An agent step the owner attends: it says whether it has a terminal and its size, keeps its
+     // input.json, asks the owner a question and greets them by the answer.
+     const attended = {
+       ...slow,
+       kind: "agent",
+       attended: true,
+       run: undefined,
+       agent: {
+         harness: {
+           run: [
+             "sh", "-c",
+             \`[ -t 0 ] && echo "terminal: $(stty size)"; cp "$MEDRENGARD_IN/input.json" "$1"
+              printf 'Your name? '; read name; echo "hello $name"
+              echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`,
+             "sh", ${JSON.stringify(join(directory, "input.json"))},
+           ],
+         },
+         model: "a-model",
+         prompt: "Greet the owner.",
+       },
+     } as const;
+
      export default {
        log: "state/log.sqlite",
        defaults: { limits },
@@ -85,6 +107,103 @@ async function factoryIn(t: TestContext) {
            steps: {
              build: {
                ...step(\`echo hello; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`),
+               on: { done: "review" },
+             },
+             review: { kind: "approval", on: { approve: "end" } },
+           },
+         }),
+         attended: defineWorkflow({
+           start: "greet",
+           steps: {
+             greet: { ...attended, on: { done: "review" } },
+             review: { kind: "approval", on: { approve: "end" } },
+           },
+         }),
+         // Reads five lines the owner types with echo off, so only their typing is activity.
+         typing: defineWorkflow({
+           start: "greet",
+           steps: {
+             greet: {
+               ...attended,
+               agent: {
+                 ...attended.agent,
+                 harness: {
+                   run: [
+                     "sh", "-c",
+                     \`stty -echo; echo ready; for i in 1 2 3 4 5; do read line; done
+                      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`,
+                   ],
+                 },
+               },
+               limits: { ...attended.limits, idle: 1 },
+               on: { done: "review" },
+             },
+             review: { kind: "approval", on: { approve: "end" } },
+           },
+         }),
+         // Waits longer than a second with no output, which only unbounded limits allow at once.
+         unbounded: defineWorkflow({
+           start: "greet",
+           steps: {
+             greet: {
+               ...attended,
+               agent: {
+                 ...attended.agent,
+                 harness: {
+                   run: [
+                     "sh", "-c",
+                     \`sleep 1.2; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`,
+                   ],
+                 },
+               },
+               limits: { ...attended.limits, idle: "unbounded", attempt: "unbounded" },
+               on: { done: "review" },
+             },
+             review: { kind: "approval", on: { approve: "end" } },
+           },
+         }),
+         // Writes its output, then one that would escalate, then one with a document, and lingers.
+         revising: defineWorkflow({
+           start: "greet",
+           steps: {
+             greet: {
+               ...attended,
+               agent: {
+                 ...attended.agent,
+                 harness: {
+                   run: [
+                     "sh", "-c",
+                     \`echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"; sleep 0.6
+                      echo '{"outcome":"nope"}' > "$MEDRENGARD_OUT/output.json"; sleep 0.6
+                      echo 'Revised.' > "$MEDRENGARD_OUT/body.md"
+                      echo '{"outcome":"done","artifacts":[{"kind":"document","fields":{"title":"Plan"},"body":"body.md"}]}' > "$MEDRENGARD_OUT/output.json"
+                      sleep 0.6\`,
+                   ],
+                 },
+               },
+               on: { done: "review" },
+             },
+             review: { kind: "approval", on: { approve: "end" } },
+           },
+         }),
+         // Runs until it is stopped, saying so when it gets SIGTERM.
+         lingering: defineWorkflow({
+           start: "greet",
+           steps: {
+             greet: {
+               ...attended,
+               agent: {
+                 ...attended.agent,
+                 harness: {
+                   run: [
+                     "sh", "-c",
+                     \`trap 'echo terminated >> "$1"; exit 1' TERM; echo started
+                      while :; do sleep 0.1; done
+                      \`,
+                     "sh", ${JSON.stringify(join(directory, "signals"))},
+                   ],
+                 },
+               },
                on: { done: "review" },
              },
              review: { kind: "approval", on: { approve: "end" } },
@@ -192,6 +311,48 @@ function run(args: readonly string[], factory: string | undefined) {
   return { status, stdout, stderr };
 }
 
+/**
+ * Runs the CLI with `args` in a terminal of 30 rows and 90 columns, as the owner would, typing each
+ * of `typed`'s texts once the terminal shows what it waits for and `wait` ms more. Returns what
+ * the terminal showed.
+ */
+async function inTerminal(
+  args: readonly string[],
+  factory: string,
+  typed: readonly { after: string; text: string; wait?: number }[] = [],
+) {
+  const command = [process.execPath, cli, ...args].map(
+    (arg) => `'${arg.replaceAll("'", "'\\''")}'`,
+  );
+
+  const terminal = spawn(
+    "script",
+    ["-q", "-e", "-c", `stty rows 30 cols 90; exec ${command.join(" ")}`, "/dev/null"],
+    { cwd: tmpdir(), env: { ...process.env, MEDRENGARD_FACTORY: factory } },
+  );
+
+  let shown = "";
+
+  terminal.stdout.on("data", (chunk: Buffer) => {
+    shown += chunk.toString();
+  });
+
+  const closed = once(terminal, "close");
+
+  for (const { after, text, wait = 0 } of typed) {
+    while (!shown.includes(after)) {
+      await sleep(20);
+    }
+
+    await sleep(wait);
+    terminal.stdin.write(text);
+  }
+
+  const [status] = await closed;
+
+  return { status, shown };
+}
+
 test("the CLI takes a commission through the engine's calls, printing their results as JSON", async (t) => {
   const { directory, factory } = await factoryIn(t);
 
@@ -238,6 +399,212 @@ test("the CLI takes a commission through the engine's calls, printing their resu
   assert.ok(existsSync(join(directory, "state", "log.sqlite")));
 });
 
+test(
+  "the owner attends an attended step in their terminal, and the commission moves on",
+  { timeout: 20_000 },
+  async (t) => {
+    const { directory, factory } = await factoryIn(t);
+
+    run(["commission", "attended", "first", "--title", "Greet", "--body", "Say hello."], factory);
+
+    // run and advance leave it for the owner.
+    assert.match(
+      run(["advance", "first"], factory).stdout,
+      /^ready at greet, to attend, about \w+\n$/,
+    );
+
+    const { status, shown } = await inTerminal(["attend", "first"], factory, [
+      { after: "Your name? ", text: "Riley\r" },
+    ]);
+
+    assert.equal(status, 0, shown);
+    assert.match(shown, /terminal: 30 90/);
+    assert.match(shown, /hello Riley/);
+    assert.match(shown, /awaiting at review since event \d+, about \w+\r?\n$/);
+
+    const transcript = run(["transcript", "first", "1"], factory).stdout;
+
+    assert.match(transcript, /terminal: 30 90/);
+    assert.match(transcript, /Your name\? Riley/);
+
+    const input = JSON.parse(await readFile(join(directory, "input.json"), "utf8"));
+
+    assert.equal(input.attended, true);
+  },
+);
+
+test(
+  "attending needs a terminal, and a commission ready at an attended step",
+  { timeout: 20_000 },
+  async (t) => {
+    const { factory } = await factoryIn(t);
+
+    run(["commission", "attended", "first", "--title", "Greet", "--body", "Say hello."], factory);
+    run(["commission", "build", "second", "--title", "Greet", "--body", "Say hello."], factory);
+
+    assert.deepEqual(run(["attend", "first"], factory), {
+      status: 1,
+      stdout: "",
+      stderr: "Attending a step needs the owner's terminal as stdin and stdout.\n",
+    });
+
+    const { status, shown } = await inTerminal(["attend", "second"], factory);
+
+    assert.equal(status, 1);
+    assert.match(shown, /Commission second is not ready at an attended step\./);
+  },
+);
+
+test("the owner typing keeps an attended step from idling", { timeout: 20_000 }, async (t) => {
+  const { factory } = await factoryIn(t);
+
+  run(["commission", "typing", "first", "--title", "Greet", "--body", "Say hello."], factory);
+
+  // Five lines, 0.6 s apart: three seconds without output, against an idle limit of one.
+  const lines = Array.from({ length: 5 }, () => ({ after: "ready", text: "a line\r", wait: 600 }));
+  const { status, shown } = await inTerminal(["attend", "first"], factory, lines);
+
+  assert.equal(status, 0, shown);
+  assert.match(shown, /awaiting at review/);
+});
+
+test(
+  "an attended step whose time limits are unbounded is not stopped by them",
+  { timeout: 20_000 },
+  async (t) => {
+    const { factory } = await factoryIn(t);
+
+    run(["commission", "unbounded", "first", "--title", "Greet", "--body", "Say hello."], factory);
+
+    const { status, shown } = await inTerminal(["attend", "first"], factory);
+
+    assert.equal(status, 0, shown);
+    assert.match(shown, /awaiting at review/);
+  },
+);
+
+test(
+  "the engine notes what an attended step's output holds each time the step writes it",
+  { timeout: 20_000 },
+  async (t) => {
+    const { factory } = await factoryIn(t);
+
+    run(["commission", "revising", "first", "--title", "Greet", "--body", "Say hello."], factory);
+
+    const { status, shown } = await inTerminal(["attend", "first"], factory);
+
+    assert.equal(status, 0, shown);
+
+    const record = JSON.parse(run(["show", "first", "--json"], factory).stdout);
+
+    assert.deepEqual(record.entries[0].notes, [
+      {
+        note: "Step greet's output is ready: outcome done, with no artifacts. It is verified once the session ends.",
+        from: "engine",
+      },
+      {
+        note: 'Step greet\'s output would escalate: Step greet claimed an outcome it does not declare: "nope".',
+        from: "engine",
+      },
+      {
+        note: "Step greet's output is ready: outcome done, with 1 artifact: document. It is verified once the session ends.",
+        from: "engine",
+      },
+    ]);
+    assert.match(
+      run(["watch", "first"], factory).stdout,
+      /engine: Step greet's output would escalate/,
+    );
+
+    // Constraint 7: the engine's note is the one event variant only an attended step makes, so
+    // its fields are pinned here.
+    const [line] = run(["events", "--after", "2", "--json"], factory).stdout.split("\n");
+    const { event } = JSON.parse(line);
+
+    assert.deepEqual(Object.keys(event), ["type", "attempt", "note", "at", "from"]);
+  },
+);
+
+test(
+  "events prints every commission's events after a position, and follows the log",
+  { timeout: 10_000 },
+  async (t) => {
+    const { factory } = await factoryIn(t);
+
+    commissionAll(factory, "build", ["first"]);
+    run(["advance", "first"], factory);
+
+    assert.deepEqual(run(["events"], factory), {
+      status: 0,
+      stdout:
+        "1 first commissioned\n2 first attempt-started build\n3 first attempt-completed build: done\n",
+      stderr: "",
+    });
+
+    const lines = run(["events", "--after", "2", "--json"], factory).stdout.trim().split("\n");
+
+    assert.partialDeepStrictEqual(
+      lines.map((line) => JSON.parse(line)),
+      [{ position: 3, commission: "first", event: { type: "attempt-completed", outcome: "done" } }],
+    );
+
+    const follower = spawn(process.execPath, [cli, "events", "--after", "3", "--follow"], {
+      cwd: tmpdir(),
+      env: { ...process.env, MEDRENGARD_FACTORY: factory },
+    });
+
+    t.after(() => follower.kill("SIGKILL"));
+
+    let followed = "";
+
+    follower.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      followed += chunk;
+    });
+
+    await sleep(300);
+    commissionAll(factory, "build", ["second"]);
+
+    while (!followed.includes("\n")) {
+      await sleep(20);
+    }
+
+    follower.kill("SIGTERM");
+
+    const [code] = await once(follower, "exit");
+
+    assert.equal(followed, "4 second commissioned\n");
+    assert.equal(code, 0);
+    assert.equal(run(["events", "--after", "x"], factory).status, 2);
+  },
+);
+
+test(
+  "the owner cancelling an attended step stops it in its sandbox, with its grace period",
+  { timeout: 20_000 },
+  async (t) => {
+    const { directory, factory } = await factoryIn(t);
+
+    run(["commission", "lingering", "first", "--title", "Greet", "--body", "Say hello."], factory);
+
+    const attending = inTerminal(["attend", "first"], factory);
+
+    while (run(["state", "first", "--json"], factory).stdout.includes('"ready"')) {
+      await sleep(50);
+    }
+
+    await sleep(300);
+    assert.equal(run(["cancel", "first"], factory).status, 0);
+
+    const { status, shown } = await attending;
+
+    assert.equal(status, 0, shown);
+    assert.match(shown, /reason: Step greet was cancelled by the owner\./);
+
+    // The step itself got SIGTERM, not only script, which would have killed it outright.
+    assert.equal(await readFile(join(directory, "signals"), "utf8"), "terminated\n");
+  },
+);
+
 // Each string or number replaced by its type, keeping the values that tell variants apart, so a
 // result is pinned to every depth.
 function typesIn(text: string) {
@@ -267,9 +634,11 @@ test("the CLI's commands are exactly the pinned ones", () => {
   assert.deepEqual(commands, [
     "commission",
     "advance",
+    "attend",
     "state",
     "show",
     "watch",
+    "events",
     "commissions",
     "run",
     "decide",
@@ -701,6 +1070,34 @@ test(
       "broken: unreadable: A decision cannot arrive while the commission is ready.",
     );
     assert.match(second, /^second: awaiting at review/);
+  },
+);
+
+test(
+  "the runner leaves an attended step for the owner, saying so once, and runs the rest",
+  { timeout: 10_000 },
+  async (t) => {
+    const { factory } = await factoryIn(t);
+
+    commissionAll(factory, "attended", ["first"]);
+    commissionAll(factory, "build", ["second"]);
+
+    const { child, lines, until } = runner(t, factory);
+
+    await until({ commission: "second", state: { status: "awaiting" } });
+
+    // Long enough for the runner to look again.
+    await sleep(1500);
+    child.kill("SIGTERM");
+
+    assert.deepEqual(
+      lines.filter((line) => line.commission === "first").map((line) => line.state?.status),
+      ["ready"],
+    );
+    assert.partialDeepStrictEqual(JSON.parse(run(["state", "first", "--json"], factory).stdout), {
+      status: "ready",
+      step: { attended: true },
+    });
   },
 );
 

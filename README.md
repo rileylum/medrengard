@@ -4,7 +4,8 @@ A framework for building a personal software factory: workflows that take an ide
 
 Medrengard is being rewritten from first principles. [`docs/core.md`](docs/core.md) holds what it is
 and the rules it keeps; this file shows how to use what exists so far. The engine, the sandbox, the
-CLI and a Claude Code adapter run. Observers and attended steps do not exist yet.
+CLI, attended steps and a Claude Code adapter run, and the engine and CLI let an observer follow
+the log. A UI does not exist yet.
 
 ## Contents
 
@@ -15,6 +16,7 @@ CLI and a Claude Code adapter run. Observers and attended steps do not exist yet
 - [Access](#access)
 - [Kinds](#kinds)
 - [Agents and the Claude Code adapter](#agents-and-the-claude-code-adapter)
+- [Attended steps](#attended-steps)
 - [The step contract](#the-step-contract)
 - [The engine in TypeScript](#the-engine-in-typescript)
 - [The CLI](#the-cli)
@@ -136,11 +138,11 @@ outcome to the next step or to `end`.
 
 There are three kinds of step:
 
-| Kind       | Runs                                 | Fields besides `kind` and `on`                                          |
-| ---------- | ------------------------------------ | ----------------------------------------------------------------------- |
-| `command`  | the owner's program, `run`           | `run`, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`?   |
-| `agent`    | an agent through its harness adapter | `agent`, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`? |
-| `approval` | nothing: it waits for the owner      | none                                                                    |
+| Kind       | Runs                                 | Fields besides `kind` and `on`                                                       |
+| ---------- | ------------------------------------ | ------------------------------------------------------------------------------------ |
+| `command`  | the owner's program, `run`           | `run`, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`?                |
+| `agent`    | an agent through its harness adapter | `agent`, `attended`?, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`? |
+| `approval` | nothing: it waits for the owner      | none                                                                                 |
 
 The fields of a command or agent step:
 
@@ -160,8 +162,9 @@ The fields of a command or agent step:
   name all seven, so every step has each. `medrengard/defaults/limits.ts` holds a set to spread and
   change: 600 s idle, 3600 s per attempt, a 32 MiB transcript, 4 MiB of inputs, 4 GiB of memory,
   1024 processes and 4 GiB of disk. Each is over zero:
-  - `idle`: seconds without output before the step is stopped;
-  - `attempt`: seconds in all;
+  - `idle`: seconds without output before the step is stopped; at an attended step, without
+    output or the owner typing. An attended step may declare it `"unbounded"`;
+  - `attempt`: seconds in all; `"unbounded"` too, only at an attended step;
   - `transcript`: bytes of stdout and stderr;
   - `input`: bytes of all input bodies, and an agent's prompt and skill files, together. Over it, the step
     never starts;
@@ -449,6 +452,42 @@ const design = {
 - A file path in `run`, such as the adapter's, must be absolute: every step's program starts in its
   workspace.
 
+## Attended steps
+
+An agent step with `attended: true` runs with the owner, in their terminal: for designing a change
+together, or reviewing one. `run` and `advance` never start it. The commission stays `ready` at it,
+its state's step marked `attended: true`, and `run` says so once, `ready at design, to attend`.
+
+```sh
+medrengard attend first
+```
+
+`attend` starts the step's agent in the terminal it is run in; a herdr pane or a UI runs the same
+command. It returns once the agent's program ends, printing where the commission is now, and `run`
+carries on from there. With the Claude Code adapter:
+
+- the agent's prompt and how to claim are its system prompt, so compacting a long session keeps
+  them, and the agent begins at once. It writes `output.json` once the owner agrees the work is
+  done, and again if they want changes. The owner ends the session with `/exit`; the last
+  `output.json` written is the claim, judged as any other. Leaving without one escalates;
+- each time it writes `output.json`, the engine notes what that would amount to, `Step design's
+  output is ready: outcome done, with 1 artifact: document.`, or why it would escalate. The note
+  cannot be drawn inside Claude Code's screen, so it is in the record for `watch`, `events` or a
+  pane beside the session;
+- Claude Code's first-run questions are answered in a home that has not run it. Its own report of
+  what it loaded is not made in a session, so an attended attempt notes that it is not checked;
+- `--max-budget-usd`, which `claude` keeps only with `-p`, is refused: the attempt escalates.
+
+The step runs under `script(1)`, in a pseudo-terminal of its own: its window follows the owner's
+terminal, Ctrl-C reaches the agent, and it cannot push input into the owner's terminal. `TERM` is
+passed on. The transcript is what the terminal showed, escapes included; what the owner types
+counts as activity for the idle limit and is not kept. An idle session writes nothing, so a
+default idle limit of 600 s stops a session in which neither the agent nor the owner did anything
+for ten minutes; declare `idle: "unbounded"` for one that may wait for the owner longer. A cancel,
+or a limit, stops the step as any other. If the owner's terminal closes, the attempt is
+interrupted and escalates when next advanced. `attend` refuses a commission not ready at an
+attended step, and stdin or stdout that is not a terminal.
+
 ## The step contract
 
 Every command and agent step is a program, started:
@@ -461,7 +500,8 @@ Every command and agent step is a program, started:
   such as `echo "Running the tests" >&3`. Each note is recorded as it arrives, so `watch` shows
   it at once. A note is at most 4096 bytes, and notes count toward the transcript limit. The
   Claude Code adapter notes what the agent says, each tool it uses and how it finished, each cut
-  at 200 characters and marked `…`; the transcript keeps the whole.
+  at 200 characters and marked `…`; the transcript keeps the whole. The record marks each note
+  `from` the step or the engine, which notes what an attended step's output holds.
 
 `input.json` lists each input's artifacts, oldest first, always as a list. A body is a file at
 `<input>/<hash>`, and `body` holds that path. An agent's skills are directories under `.skills`,
@@ -493,6 +533,7 @@ claim, so a program can tell its agent how to claim them:
       "outcome": "verdict"
     }
   },
+  "attended": false,
   "agent": {
     "model": "sonnet",
     "prompt": "Review the change against the plan.",
@@ -501,7 +542,8 @@ claim, so a program can tell its agent how to claim them:
 }
 ```
 
-`agent` is there only for an agent step. The step writes one outcome and any artifacts to
+`attended` and `agent` are there only for an agent step. An attended step's stdin, stdout and
+stderr are its terminal. The step writes one outcome and any artifacts to
 `output.json`, at most 64 KiB, with each body as a path relative to `MEDRENGARD_OUT`; bodies are
 files, so only the fields count toward it:
 
@@ -610,12 +652,25 @@ console.log(engine.record("first").entries);
 
 // Every commission in the log, oldest first, with its state.
 console.log(engine.commissions());
+
+// An observer: every commission's events after a position, then each new one as it is written.
+let position = 0;
+
+for (;;) {
+  for (const { position: at, commission, event } of await engine.next(position)) {
+    console.log(at, commission, event.type);
+    position = at;
+  }
+}
 ```
 
 | Method                                                       | Returns                                                                                                                                                                                        |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `commission(workflow, commission, { title, body })`          | nothing; refuses an unknown workflow or an invalid one                                                                                                                                         |
-| `advance(commission, { signal? })`                           | the state it stopped at; once `signal` aborts, it starts no further attempt                                                                                                                    |
+| `advance(commission, { signal? })`                           | the state it stopped at, which may be ready at an attended step; once `signal` aborts, it starts no further attempt                                                                            |
+| `attend(commission)`                                         | the state once the attended step it is ready at ends, run in this process's terminal                                                                                                           |
+| `events(position)`                                           | `{ position, commission, event }[]`: every commission's events after the log position, oldest first                                                                                            |
+| `next(position, { signal? })`                                | the same, once there are any, woken by any engine's write; none once `signal` aborts                                                                                                           |
 | `state(commission)`                                          | the state, replayed from the log                                                                                                                                                               |
 | `commissions()`                                              | `{ commission, state }[]`, oldest first; `{ commission, error }` for one the engine cannot read                                                                                                |
 | `decide(commission, { subject, since, outcome, feedback? })` | the new state; refuses a stale subject or wait, an undeclared outcome, or feedback over 1 MiB                                                                                                  |
@@ -627,7 +682,8 @@ console.log(engine.commissions());
 
 A state has a `status`:
 
-- `ready` or `attempting`, at an agent or command `step`, about a `subject`;
+- `ready` or `attempting`, at an agent or command `step`, about a `subject`; an attended step is
+  marked `attended: true`;
 - `awaiting`, at an approval `step`, about a `subject`;
 - `escalated`, at a `step`, about a `subject`, with a `reason` of at most 4096 bytes, longer ones
   cut and marked `… (cut to 4096 of N bytes)`;
@@ -644,9 +700,11 @@ medrengard <command> [--json] [--factory <path>]
 
   commission <workflow> <commission> --title <title> (--body <text> | --body-file <path>)
   advance    <commission>
+  attend     <commission>
   state      <commission>
   show       <commission>
   watch      <commission>
+  events     [--after <position>] [--follow]
   commissions
   run        [--parallel <n>]
   decide     <commission> <outcome> --subject <hash> --since <event>
@@ -675,7 +733,13 @@ medrengard <command> [--json] [--factory <path>]
 - `watch` follows a commission as the log records it: each attempt as it starts, its notes as
   they arrive, its ending, and each escalation and decision. It stops once the commission awaits
   the owner, escalates or finishes; on one that already has, it prints the whole story. `show`
-  leaves the notes out.
+  leaves the notes out. It is woken by each new event, rather than looking every so often.
+- `attend` starts the attended step a commission is ready at in the terminal it is run in. See
+  [Attended steps](#attended-steps).
+- `events` prints every commission's events after `--after`, 0 if left out, one line each with its
+  position; `--follow` then prints each new one as it is written, until stopped. With `--json`,
+  each line is one JSON value, `{ position, commission, event }`, for a UI or another observer to
+  read.
 - `transcript` prints everything an attempt wrote; `errors` prints its stderr alone. Both write the
   bytes unchanged to a file or program, and to a terminal as text with control characters made
   visible, as below.
@@ -695,7 +759,9 @@ medrengard <command> [--json] [--factory <path>]
   is stopped. A first Ctrl-C starts nothing new and waits for the running steps, leaving each
   commission ready at its next step; a second exits at once, and each interrupted attempt
   escalates when next advanced. A commission the engine cannot read is left alone, its error printed
-  once on stderr; `commissions` lists it as unreadable.
+  once on stderr; `commissions` lists it as unreadable. A commission ready at an attended step is
+  left for the owner, said once. `run` is woken by each new event, and looks at least once a
+  second, so it finds an attempt whose engine died.
 
 ## Development
 

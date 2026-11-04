@@ -37,7 +37,16 @@ type Pinned = {
   agentStep: Expect<
     Same<
       keyof Agentic,
-      "kind" | "agent" | "inputs" | "claims" | "workspace" | "on" | "budget" | "access" | "limits"
+      | "kind"
+      | "agent"
+      | "attended"
+      | "inputs"
+      | "claims"
+      | "workspace"
+      | "on"
+      | "budget"
+      | "access"
+      | "limits"
     >
   >;
   commandStep: Expect<
@@ -55,6 +64,8 @@ type Pinned = {
       "idle" | "attempt" | "transcript" | "input" | "memory" | "processes" | "disk"
     >
   >;
+  attended: Expect<Same<Agentic["attended"], boolean | undefined>>;
+  time: Expect<Same<Limits["idle"] | Limits["attempt"], number | "unbounded">>;
   agent: Expect<Same<keyof Agent, "harness" | "model" | "prompt" | "skills">>;
   harness: Expect<Same<keyof Agent["harness"], "run">>;
   access: Expect<

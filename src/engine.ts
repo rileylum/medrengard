@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { isatty } from "node:tty";
+import { inTerminal, keepTerminal, keysAt, underTerminal } from "./terminal.ts";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import {
@@ -11,6 +13,7 @@ import {
   readFileSync,
   rmSync,
   statfsSync,
+  watch,
   writeSync,
 } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rm, writeFile } from "node:fs/promises";
@@ -64,7 +67,7 @@ export type Entry =
       entry: "attempt";
       attempt: number;
       step: string;
-      notes: string[];
+      notes: Note[];
       started?: number;
       running: true;
     }
@@ -72,7 +75,7 @@ export type Entry =
       entry: "attempt";
       attempt: number;
       step: string;
-      notes: string[];
+      notes: Note[];
       started?: number;
       ended?: number;
       outcome: string;
@@ -85,7 +88,7 @@ export type Entry =
       entry: "attempt";
       attempt: number;
       step: string;
-      notes: string[];
+      notes: Note[];
       started?: number;
       ended?: number;
       escalated: string;
@@ -100,6 +103,10 @@ export type Entry =
       feedback?: string;
       at?: number;
     };
+
+// A note for the owner while an attempt runs: one its step wrote, or the engine's, such as what an
+// attended step's output holds.
+type Note = { note: string; from: "step" | "engine" };
 
 /** A commission's state, its request and its record, oldest first. */
 export type CommissionRecord = {
@@ -184,6 +191,22 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
   const select = database.prepare(
     "SELECT event FROM events WHERE commission = ? ORDER BY position",
   );
+
+  // Every commission's events after a position in the log, in the order written: rowid follows
+  // insertion, and no event is ever removed.
+  const after = database.prepare(
+    "SELECT rowid AS position, commission, event FROM events WHERE rowid > ? ORDER BY rowid",
+  );
+
+  // Every commission's events after `position`, each with its own position in the log.
+  function eventsAfter(position: number) {
+    return after.all(position).map((row) => ({
+      position: Number(row.position),
+      commission: String(row.commission),
+      // SAFETY: only the engine writes events, each replayed against its commission first.
+      event: JSON.parse(String(row.event)) as CommissionEvent,
+    }));
+  }
 
   // In the order they were commissioned: rowid follows insertion.
   const commissioned = database.prepare(
@@ -297,6 +320,54 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       insert.run(commission, 0, JSON.stringify({ ...event, at: Date.now() }));
     },
 
+    /**
+     * Every commission's events after the log position `position`, oldest first, each with its
+     * commission and its own position, which an observer passes back to read on from there.
+     */
+    events(position: number) {
+      return eventsAfter(position);
+    },
+
+    /**
+     * Waits for the events after the log position `position`, any engine's, and returns them, at
+     * once if there are some already; or none once `signal` aborts.
+     */
+    async next(position: number, { signal }: { signal?: AbortSignal } = {}) {
+      // Watched before the log is read, so an event written in between still wakes it.
+      const changes = watch(dirname(log), { signal });
+      const name = basename(log);
+
+      try {
+        for (;;) {
+          const found = eventsAfter(position);
+
+          if (found.length > 0 || signal?.aborted) {
+            return found;
+          }
+
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              changes.off("change", wake);
+              signal?.removeEventListener("abort", done);
+              resolve();
+            };
+
+            // The log, or its journal beside it: the store and attempts there are not events.
+            const wake = (_: string, file: string | null) => {
+              if (file === null || file.startsWith(name)) {
+                done();
+              }
+            };
+
+            changes.on("change", wake);
+            signal?.addEventListener("abort", done);
+          });
+        }
+      } finally {
+        changes.close();
+      }
+    },
+
     /** Replays the commission's state from the log. */
     state(commission: string): CommissionState {
       const events = read(commission);
@@ -389,7 +460,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
             });
             break;
           case "noted":
-            notesOf(event.attempt).push(event.note);
+            notesOf(event.attempt).push({ note: event.note, from: event.from ?? "step" });
             break;
           case "attempt-completed":
             entries[entryOf(event.attempt)] = {
@@ -598,262 +669,312 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
     },
 
     /**
-     * Attempts ready steps until the commission is awaiting, escalated or finished. Once `signal`
-     * aborts, the running attempt finishes and no other starts: the commission is left ready.
+     * Attempts ready steps until the commission is awaiting, escalated or finished, or ready at an
+     * attended step, which waits for the owner to attend it. Once `signal` aborts, the running
+     * attempt finishes and no other starts: the commission is left ready.
      */
-    async advance(
+    advance(
       commission: string,
       { signal }: { signal?: AbortSignal } = {},
     ): Promise<CommissionState> {
-      for (;;) {
-        const events = read(commission);
-        const definition = definitionOf(events);
-        const { workflow } = definition;
-        const state = replay(definition, events);
+      return drive(commission, signal, false);
+    },
 
-        if (state.status === "ready" && signal?.aborted) {
-          return state;
-        }
-
-        if (state.status === "attempting") {
-          const started = events.findLast((event) => event.type === "attempt-started")!;
-
-          if (held(commission, started)) {
-            return state;
-          }
-
-          const spool = spoolOf(commission, started.attempt);
-
-          write(commission, events, {
-            type: "escalated",
-            reason: `Step ${state.step.name} was interrupted.`,
-            attempt: started.attempt,
-            ...spooled(spool),
-          });
-          unspool(spool);
-
-          continue;
-        }
-
-        if (state.status !== "ready") {
-          return state;
-        }
-
-        const name = state.step.name;
-        const step = workflow.steps[name];
-
-        // Replay arrives at an approval step as awaiting, never ready.
-        if (step.kind === "approval") {
-          throw new Error(`Step ${name} is an approval step, so it cannot be ready.`);
-        }
-
-        const attempts = sinceDecision(events).filter(
-          (event) => event.type === "attempt-started" && event.step === name,
-        );
-
-        if (attempts.length >= step.budget) {
-          write(commission, events, {
-            type: "escalated",
-            reason: `Step ${name} has spent its budget of ${step.budget} attempts.`,
-          });
-
-          continue;
-        }
-
-        const given = Object.entries(step.inputs).map(([input, query]) => ({
-          name: input,
-          hashes: resolve(query, state, events, definition.kinds),
-        }));
-
-        // Read from the store before the attempt starts. The engine's failure here, such as a file
-        // it cannot read, is nothing it can classify: the owner decides, and no budget is spent.
-        const prepared = (() => {
-          try {
-            return {
-              inputs: given.map(({ name, hashes }) => ({
-                name,
-                artifacts: hashes.map((hash) => ({ hash, artifact: store.get(hash) })),
-              })),
-              skills: (step.kind === "agent" ? (step.agent.skills ?? []) : []).map((path) => {
-                const { name: skill, files } = definition.skills[path];
-
-                return {
-                  name: skill,
-                  files: Object.entries(files).map(([file, hash]) => ({
-                    file,
-                    bytes: store.read(hash),
-                  })),
-                };
-              }),
-            };
-          } catch (error) {
-            return `The engine could not prepare step ${name}: ${error instanceof Error ? error.message : String(error)}`;
-          }
-        })();
-
-        if (isText(prepared)) {
-          write(commission, events, { type: "escalated", reason: prepared });
-
-          continue;
-        }
-
-        const { inputs, skills } = prepared;
-
-        // The artifact the workspace is built from, when it is an input's: one the record names.
-        const source = step.workspace;
-        const named = source === "subject" || source === "empty" ? undefined : source.input;
-
-        const built =
-          named === undefined
-            ? undefined
-            : inputs.find((input) => input.name === named)?.artifacts[0];
-
-        if (named !== undefined && built === undefined) {
-          write(commission, events, {
-            type: "escalated",
-            reason: `Step ${name}'s workspace input ${named} holds no artifact.`,
-          });
-
-          continue;
-        }
-
-        // An agent's prompt goes to its harness with its inputs, so it counts with them.
-        const prompt = step.kind === "agent" ? Buffer.byteLength(step.agent.prompt) : 0;
-
-        const bytes =
-          inputs
-            .flatMap(({ artifacts }) => artifacts)
-            .reduce((sum, { artifact }) => sum + Buffer.byteLength(artifact.body ?? ""), 0) +
-          skills
-            .flatMap(({ files }) => files)
-            .reduce((sum, { bytes: file }) => sum + file.length, 0) +
-          prompt;
-
-        if (bytes > step.limits.input) {
-          const what =
-            step.kind !== "agent"
-              ? "inputs are"
-              : skills.length === 0
-                ? "inputs and prompt are"
-                : "inputs, prompt and skills are";
-
-          write(commission, events, {
-            type: "escalated",
-            reason: `Step ${name}'s ${what} ${bytes} bytes, over its input limit of ${step.limits.input}.`,
-          });
-
-          continue;
-        }
-
-        // A repeat would see what the earlier attempt saw, so only a decision can justify it.
-        const repeated = attempts.some(
-          (event) =>
-            event.type === "attempt-started" &&
-            event.subject === state.subject &&
-            isDeepStrictEqual(event.inputs, given),
-        );
-
-        if (repeated) {
-          write(commission, events, {
-            type: "escalated",
-            reason: `Step ${name} was already attempted on this subject and these inputs.`,
-          });
-
-          continue;
-        }
-
-        const attempt = events.filter((event) => event.type === "attempt-started").length + 1;
-
-        const started = {
-          type: "attempt-started",
-          step: name,
-          attempt,
-          subject: state.subject,
-          inputs: given,
-          process: self,
-        } as const;
-
-        write(commission, events, started);
-
-        const key = runningKey(log, commission, attempt);
-        const spool = spoolOf(commission, attempt);
-
-        running.add(key);
-
-        const cancelled = () => requested.get(commission, attempt) !== undefined;
-
-        // Each note the attempt writes is an event of its own, after attempt-started. A note
-        // changes no state and this attempt is the commission's one writer, so it is appended at
-        // the next position without replaying the log; another writer's event there refuses it.
-        let position = events.length + 1;
-
-        const note = (text: string) => {
-          const noted = { type: "noted", attempt, note: text, at: Date.now() };
-
-          insert.run(commission, position, JSON.stringify(noted));
-          position += 1;
-        };
-
-        try {
-          const subject = {
-            hash: state.subject,
-            artifact: store.get(state.subject),
-            kept: keptOf(events, state.subject),
-          };
-
-          const ending = await run(
-            step,
-            {
-              commission,
-              step: name,
-              attempt,
-              kinds: definition.kinds,
-              subject,
-              workspace:
-                built !== undefined
-                  ? { ...built, kept: keptOf(events, built.hash) }
-                  : source === "subject"
-                    ? subject
-                    : undefined,
-              inputs,
-              skills,
-            },
-            cancelled,
-            note,
-            store,
-            spool,
-          );
-
-          // A cancel that arrives before the attempt's end is written wins: nothing it claimed is
-          // recorded.
-          write(
-            commission,
-            read(commission),
-            ending.type === "attempt-completed" && cancelled() ? cancelledEnding(ending) : ending,
-          );
-          unspool(spool);
-        } catch (error) {
-          // The engine's own failure, such as a full disk, is nothing it can classify: the owner
-          // decides, with what the step's program wrote, if it ran and the store can keep it. If
-          // this write fails too, the next advance finds the attempt interrupted, and keeps what
-          // was spooled.
-          let reason = failedIn(name, error instanceof Error ? error.message : String(error));
-          let kept = {};
-
-          try {
-            kept = spooled(spool);
-          } catch (keeping) {
-            reason += `; its transcript could not be kept: ${keeping instanceof Error ? keeping.message : String(keeping)}`;
-          }
-
-          write(commission, read(commission), { type: "escalated", reason, attempt, ...kept });
-          unspool(spool);
-        } finally {
-          running.delete(key);
-        }
+    /**
+     * Attempts the attended step the commission is ready at, in the owner's terminal, which is
+     * this process's stdin and stdout, and returns once that attempt ends.
+     */
+    attend(commission: string): Promise<CommissionState> {
+      if (!isatty(0) || !isatty(1)) {
+        throw new Error("Attending a step needs the owner's terminal as stdin and stdout.");
       }
+
+      const events = read(commission);
+      const state = replay(definitionOf(events), events);
+
+      if (state.status !== "ready" || state.step.kind !== "agent" || !state.step.attended) {
+        throw new Error(`Commission ${commission} is not ready at an attended step.`);
+      }
+
+      return drive(commission, undefined, true);
     },
   };
+
+  // Attempts ready steps, as advance does; or, `attending`, the one attended step the commission
+  // is ready at, returning once it ends.
+  async function drive(
+    commission: string,
+    signal: AbortSignal | undefined,
+    attending: boolean,
+  ): Promise<CommissionState> {
+    for (;;) {
+      const events = read(commission);
+      const definition = definitionOf(events);
+      const { workflow } = definition;
+      const state = replay(definition, events);
+
+      if (state.status === "ready" && signal?.aborted) {
+        return state;
+      }
+
+      if (state.status === "attempting") {
+        const started = events.findLast((event) => event.type === "attempt-started")!;
+
+        if (held(commission, started)) {
+          return state;
+        }
+
+        const spool = spoolOf(commission, started.attempt);
+
+        write(commission, events, {
+          type: "escalated",
+          reason: `Step ${state.step.name} was interrupted.`,
+          attempt: started.attempt,
+          ...spooled(spool),
+        });
+        unspool(spool);
+
+        continue;
+      }
+
+      if (state.status !== "ready") {
+        return state;
+      }
+
+      if (state.step.kind === "agent" && state.step.attended === true && !attending) {
+        return state;
+      }
+
+      const name = state.step.name;
+      const step = workflow.steps[name];
+
+      // Replay arrives at an approval step as awaiting, never ready.
+      if (step.kind === "approval") {
+        throw new Error(`Step ${name} is an approval step, so it cannot be ready.`);
+      }
+
+      const attempts = sinceDecision(events).filter(
+        (event) => event.type === "attempt-started" && event.step === name,
+      );
+
+      if (attempts.length >= step.budget) {
+        write(commission, events, {
+          type: "escalated",
+          reason: `Step ${name} has spent its budget of ${step.budget} attempts.`,
+        });
+
+        continue;
+      }
+
+      const given = Object.entries(step.inputs).map(([input, query]) => ({
+        name: input,
+        hashes: resolve(query, state, events, definition.kinds),
+      }));
+
+      // Read from the store before the attempt starts. The engine's failure here, such as a file
+      // it cannot read, is nothing it can classify: the owner decides, and no budget is spent.
+      const prepared = (() => {
+        try {
+          return {
+            inputs: given.map(({ name, hashes }) => ({
+              name,
+              artifacts: hashes.map((hash) => ({ hash, artifact: store.get(hash) })),
+            })),
+            skills: (step.kind === "agent" ? (step.agent.skills ?? []) : []).map((path) => {
+              const { name: skill, files } = definition.skills[path];
+
+              return {
+                name: skill,
+                files: Object.entries(files).map(([file, hash]) => ({
+                  file,
+                  bytes: store.read(hash),
+                })),
+              };
+            }),
+          };
+        } catch (error) {
+          return `The engine could not prepare step ${name}: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      })();
+
+      if (isText(prepared)) {
+        write(commission, events, { type: "escalated", reason: prepared });
+
+        continue;
+      }
+
+      const { inputs, skills } = prepared;
+
+      // The artifact the workspace is built from, when it is an input's: one the record names.
+      const source = step.workspace;
+      const named = source === "subject" || source === "empty" ? undefined : source.input;
+
+      const built =
+        named === undefined
+          ? undefined
+          : inputs.find((input) => input.name === named)?.artifacts[0];
+
+      if (named !== undefined && built === undefined) {
+        write(commission, events, {
+          type: "escalated",
+          reason: `Step ${name}'s workspace input ${named} holds no artifact.`,
+        });
+
+        continue;
+      }
+
+      // An agent's prompt goes to its harness with its inputs, so it counts with them.
+      const prompt = step.kind === "agent" ? Buffer.byteLength(step.agent.prompt) : 0;
+
+      const bytes =
+        inputs
+          .flatMap(({ artifacts }) => artifacts)
+          .reduce((sum, { artifact }) => sum + Buffer.byteLength(artifact.body ?? ""), 0) +
+        skills
+          .flatMap(({ files }) => files)
+          .reduce((sum, { bytes: file }) => sum + file.length, 0) +
+        prompt;
+
+      if (bytes > step.limits.input) {
+        const what =
+          step.kind !== "agent"
+            ? "inputs are"
+            : skills.length === 0
+              ? "inputs and prompt are"
+              : "inputs, prompt and skills are";
+
+        write(commission, events, {
+          type: "escalated",
+          reason: `Step ${name}'s ${what} ${bytes} bytes, over its input limit of ${step.limits.input}.`,
+        });
+
+        continue;
+      }
+
+      // A repeat would see what the earlier attempt saw, so only a decision can justify it.
+      const repeated = attempts.some(
+        (event) =>
+          event.type === "attempt-started" &&
+          event.subject === state.subject &&
+          isDeepStrictEqual(event.inputs, given),
+      );
+
+      if (repeated) {
+        write(commission, events, {
+          type: "escalated",
+          reason: `Step ${name} was already attempted on this subject and these inputs.`,
+        });
+
+        continue;
+      }
+
+      const attempt = events.filter((event) => event.type === "attempt-started").length + 1;
+
+      const started = {
+        type: "attempt-started",
+        step: name,
+        attempt,
+        subject: state.subject,
+        inputs: given,
+        process: self,
+      } as const;
+
+      write(commission, events, started);
+
+      const key = runningKey(log, commission, attempt);
+      const spool = spoolOf(commission, attempt);
+
+      running.add(key);
+
+      const cancelled = () => requested.get(commission, attempt) !== undefined;
+
+      // Each note the attempt writes is an event of its own, after attempt-started. A note
+      // changes no state and this attempt is the commission's one writer, so it is appended at
+      // the next position without replaying the log; another writer's event there refuses it.
+      let position = events.length + 1;
+
+      const note = (text: string, from: "step" | "engine") => {
+        // A step's note says nothing of who wrote it, as every note did before the engine's.
+        const noted: Extract<CommissionEvent, { type: "noted" }> = {
+          type: "noted",
+          attempt,
+          note: text,
+          at: Date.now(),
+        };
+
+        if (from === "engine") {
+          noted.from = from;
+        }
+
+        insert.run(commission, position, JSON.stringify(noted));
+        position += 1;
+      };
+
+      try {
+        const subject = {
+          hash: state.subject,
+          artifact: store.get(state.subject),
+          kept: keptOf(events, state.subject),
+        };
+
+        const ending = await run(
+          step,
+          {
+            commission,
+            step: name,
+            attempt,
+            kinds: definition.kinds,
+            subject,
+            workspace:
+              built !== undefined
+                ? { ...built, kept: keptOf(events, built.hash) }
+                : source === "subject"
+                  ? subject
+                  : undefined,
+            inputs,
+            skills,
+          },
+          cancelled,
+          note,
+          store,
+          spool,
+        );
+
+        // A cancel that arrives before the attempt's end is written wins: nothing it claimed is
+        // recorded.
+        write(
+          commission,
+          read(commission),
+          ending.type === "attempt-completed" && cancelled() ? cancelledEnding(ending) : ending,
+        );
+        unspool(spool);
+      } catch (error) {
+        // The engine's own failure, such as a full disk, is nothing it can classify: the owner
+        // decides, with what the step's program wrote, if it ran and the store can keep it. If
+        // this write fails too, the next advance finds the attempt interrupted, and keeps what
+        // was spooled.
+        let reason = failedIn(name, error instanceof Error ? error.message : String(error));
+        let kept = {};
+
+        try {
+          kept = spooled(spool);
+        } catch (keeping) {
+          reason += `; its transcript could not be kept: ${keeping instanceof Error ? keeping.message : String(keeping)}`;
+        }
+
+        write(commission, read(commission), { type: "escalated", reason, attempt, ...kept });
+        unspool(spool);
+      } finally {
+        running.delete(key);
+      }
+
+      if (attending) {
+        const ended = read(commission);
+
+        return replay(definitionOf(ended), ended);
+      }
+    }
+  }
 }
 
 // Where a running attempt's transcript and errors are written as they arrive.
@@ -1142,9 +1263,7 @@ const grace = 5000;
 // Sends SIGTERM to the child's process group, then SIGKILL after the grace period. The group's
 // leader is bwrap, which dies at once on SIGTERM and takes the program with it, so it is spared
 // the SIGTERM and the program has its grace period.
-function stop(child: ChildProcess): void {
-  const group = child.pid!;
-
+function stop(child: ChildProcess, group: number): void {
   for (const pid of membersOf(group)) {
     if (pid !== group) {
       try {
@@ -1261,7 +1380,9 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
         return [kind, { description, fields, body, outcome }];
       }),
     ),
-    // Left out of a command step's input.json, which has no agent.
+    // Whether the owner is in the agent's terminal; left out of a command step's input.json, as is
+    // its agent, which it has not.
+    attended: step.kind === "agent" ? step.attended === true : undefined,
     agent:
       step.kind === "agent"
         ? {
@@ -1280,7 +1401,7 @@ async function run(
   step: Runnable,
   given: Given,
   cancelled: () => boolean,
-  note: (text: string) => void,
+  note: (text: string, from: "step" | "engine") => void,
   store: Store,
   spool: Spool,
 ): Promise<Ending> {
@@ -1398,12 +1519,33 @@ async function run(
     // An agent step's program is its harness adapter, under the same contract.
     const bounds = { memory: step.limits.memory, processes: step.limits.processes };
 
-    const { command, args, env, unit } = confine(
+    const confined = confine(
       step.access,
       { workspace, input, output, record: spool.record },
       step.kind === "agent" ? step.agent.harness.run : step.run,
       bounds,
     );
+
+    const { unit } = confined;
+
+    // An attended step runs in a pseudo-terminal of its own, made from the owner's, which tells
+    // the engine when they type; it is told what kind of terminal it is in.
+    const attended = step.kind === "agent" && step.attended === true;
+    const keys = join(spool.directory, "keys");
+
+    const { command, args } = attended
+      ? inTerminal([confined.command, ...confined.args], keys)
+      : confined;
+
+    const env =
+      attended && process.env.TERM !== undefined
+        ? { ...confined.env, TERM: process.env.TERM }
+        : confined.env;
+
+    // Made before script starts, which would otherwise create keys as a file and keep the
+    // keystrokes; the owner's typing keeps an attended step from idling.
+    const closeKeys = attended ? keysAt(keys, () => idle?.refresh()) : () => {};
+    const restoreTerminal = attended ? keepTerminal() : () => {};
 
     // stdout and stderr together, in the order they arrive, up to the transcript limit; and the
     // stderr of it alone, as the attempt's errors.
@@ -1413,22 +1555,35 @@ async function run(
     spooling = { transcript, errors };
 
     // Its own session and process group: stopping the step also stops what it started, and
-    // without a controlling terminal the step cannot push input into the owner's.
+    // without a controlling terminal, or with only the one script makes for it, the step cannot
+    // push input into the owner's.
     const child = spawn(command, args, {
       cwd: workspace,
       env,
-      // fd 3 is the step's notes for the owner, one per line.
-      stdio: ["ignore", "pipe", "pipe", "pipe"],
+      // fd 3 is the step's notes for the owner, one per line. An attended step's stdin is the
+      // owner's terminal, which only script reads.
+      stdio: [attended ? "inherit" : "ignore", "pipe", "pipe", "pipe"],
       detached: true,
     });
+
+    // The window's size follows the owner's terminal, which signals this process.
+    const resize = () => child.kill("SIGWINCH");
+
+    if (attended) {
+      process.on("SIGWINCH", resize);
+    }
+
+    // The sandbox's process: under script for an attended step, once script has started it.
+    const sandbox = () => (attended ? underTerminal(child.pid!) : child.pid!);
 
     let stopped: string | undefined;
 
     // The first reason to stop is the one recorded; stopping twice would signal a group that may be gone.
+    // script would kill an attended step with no grace period, so the sandbox is stopped itself.
     const stopFor = (reason: string) => {
       if (stopped === undefined) {
         stopped = reason;
-        stop(child);
+        stop(child, sandbox() ?? child.pid!);
       }
     };
 
@@ -1444,18 +1599,20 @@ async function run(
         }
       };
 
-    const idle = setTimeout(
-      () => stopFor(`Step ${name} was idle for ${step.limits.idle} s.`),
-      step.limits.idle * 1000,
-    );
+    // No timer for a limit an attended step declares unbounded.
+    const timer = (seconds: number | "unbounded", reason: string) =>
+      seconds === "unbounded" ? undefined : setTimeout(() => stopFor(reason), seconds * 1000);
 
-    const overall = setTimeout(
-      () => stopFor(`Step ${name} reached its attempt limit of ${step.limits.attempt} s.`),
-      step.limits.attempt * 1000,
+    const idle = timer(step.limits.idle, `Step ${name} was idle for ${step.limits.idle} s.`);
+
+    const overall = timer(
+      step.limits.attempt,
+      `Step ${name} reached its attempt limit of ${step.limits.attempt} s.`,
     );
 
     const cancel = setInterval(() => {
-      const why = halt() ?? filled(child.pid!, step.access, name);
+      const box = sandbox();
+      const why = halt() ?? (box === undefined ? undefined : filled(box, step.access, name));
 
       if (why !== undefined) {
         stopFor(why);
@@ -1464,13 +1621,18 @@ async function run(
 
     // stdout and stderr go to the transcript, and stderr to the errors too.
     const record = (stderr: boolean) => (chunk: Buffer) => {
-      idle.refresh();
+      idle?.refresh();
 
       const room = step.limits.transcript - written;
       const kept = chunk.subarray(0, Math.max(room, 0));
 
       writeSync(transcript, kept);
       written += chunk.length;
+
+      // The owner sees what an attended step shows, as it shows it.
+      if (attended) {
+        (stderr ? process.stderr : process.stdout).write(chunk);
+      }
 
       if (stderr && kept.length > 0) {
         writeSync(errors, kept);
@@ -1493,7 +1655,7 @@ async function run(
     // Records each complete line as a note, unless it is empty. A note's bytes count toward the
     // transcript limit, so notes are bounded with everything else the step writes.
     const noteFrom = (chunk: Buffer) => {
-      idle.refresh();
+      idle?.refresh();
       written += chunk.length;
 
       if (written > step.limits.transcript) {
@@ -1530,11 +1692,16 @@ async function run(
       const text = line.toString().trimEnd();
 
       if (text !== "") {
-        note(text);
+        note(text, "step");
       }
     };
 
     child.stdio[3]!.on("data", guarded(noteFrom));
+
+    // While the owner and an attended step's agent go back and forth, the engine reads each
+    // output.json the agent writes and notes what it holds, so the owner knows when the result
+    // is in and whether it would be accepted; it is judged as any claim once the session ends.
+    const reading = attended ? readEachOutput(step, given, output, note) : undefined;
 
     const closed = await once(child, "close")
       .catch((error: NodeJS.ErrnoException) => error)
@@ -1542,7 +1709,13 @@ async function run(
         clearTimeout(idle);
         clearTimeout(overall);
         clearInterval(cancel);
+        process.off("SIGWINCH", resize);
+        closeKeys();
+        restoreTerminal();
       });
+
+    // A note after the attempt's end would not replay, so the last reading finishes first.
+    await reading?.close();
 
     // A last note need not end its line.
     noteLine(pending);
@@ -1639,6 +1812,64 @@ async function run(
 }
 
 type Claim = { outcome: string; artifacts: Artifact[] };
+
+// How long output.json is left unread after a write, so a file written in parts is read whole.
+const settle = 100;
+
+/**
+ * Watches the attempt's output for each output.json its step writes, and notes what it would
+ * amount to: its outcome and artifacts, or why it would escalate, when that changes. Returns what
+ * stops watching once any reading in progress has noted.
+ */
+function readEachOutput(
+  step: Runnable,
+  given: Given,
+  output: string,
+  note: (text: string, from: "engine") => void,
+) {
+  const name = given.step;
+  let last: string | undefined;
+  let waiting: NodeJS.Timeout | undefined;
+  let reading = Promise.resolve();
+
+  const read = async () => {
+    const claim = await parse(step, name, output, given.subject.hash, given.kinds);
+
+    const kinds = "reason" in claim ? [] : claim.artifacts.map(({ kind }) => kind);
+
+    const holds =
+      kinds.length === 0
+        ? "with no artifacts"
+        : `with ${kinds.length} artifact${kinds.length === 1 ? "" : "s"}: ${kinds.join(", ")}`;
+
+    const text =
+      "reason" in claim
+        ? `Step ${name}'s output would escalate: ${claim.reason}`
+        : `Step ${name}'s output is ready: outcome ${claim.outcome}, ${holds}. It is verified once the session ends.`;
+
+    if (text !== last) {
+      last = text;
+      note(bounded(text), "engine");
+    }
+  };
+
+  const watcher = watch(output, (_, file) => {
+    if (file === "output.json") {
+      clearTimeout(waiting);
+      waiting = setTimeout(() => {
+        reading = reading.then(read);
+      }, settle);
+    }
+  });
+
+  return {
+    close: async () => {
+      watcher.close();
+      clearTimeout(waiting);
+      await reading;
+    },
+  };
+}
 
 // The largest output.json the engine reads, in bytes. It holds fields only; bodies are files.
 // lazy: a constant. Make it a limit once a kind's fields need more room than this.
@@ -1971,12 +2202,12 @@ async function runProgram(
 
   const limit = setTimeout(() => {
     late = true;
-    stop(child);
+    stop(child, child.pid!);
   }, program.limit * 1000);
 
   const cancel = setInterval(() => {
     if (cancelled()) {
-      stop(child);
+      stop(child, child.pid!);
     }
   }, cancelLook);
 

@@ -1241,6 +1241,180 @@ test("an agent step runs its harness adapter, which is given the agent", async (
   });
 });
 
+/**
+ * An agent step, attended unless `attended` says otherwise, whose harness runs `script` and that
+ * ends on `done`, with the given limits.
+ */
+function agentStep(
+  script: string,
+  attended = true,
+  limits: Partial<Record<"idle" | "attempt", number | "unbounded">> = {},
+) {
+  return {
+    kind: "agent",
+    attended,
+    claims,
+    workspace: "empty",
+    agent: { harness: { run: ["sh", "-c", script] }, model: "a-model", prompt: "Plan with me." },
+    inputs: {},
+    on: { done: "end" },
+    access,
+    budget: 1,
+    limits: { idle: 1, attempt: 5, transcript: 65536, input: 65536, ...limits },
+  } as const;
+}
+
+test("an attended step is left ready for the owner to attend: advance starts nothing", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({ start: "plan", steps: { plan: agentStep("exit 3") } }),
+  );
+
+  const ready = await engine.advance("first");
+
+  assert.partialDeepStrictEqual(ready, {
+    status: "ready",
+    step: { name: "plan", kind: "agent", attended: true },
+  });
+  assert.deepEqual(engine.state("first"), ready);
+  assert.deepEqual(
+    engine.record("first").entries.map(({ entry }) => entry),
+    [],
+  );
+});
+
+test("an unattended agent step's state does not say it is attended", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({ start: "plan", steps: { plan: agentStep("exit 3", false) } }),
+  );
+
+  const state = engine.state("first");
+
+  assert.deepEqual(state.status === "ready" ? state.step : undefined, {
+    name: "plan",
+    kind: "agent",
+  });
+});
+
+test("a command step cannot be attended", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        // SAFETY: the workflow module is the owner's JavaScript, which the type cannot hold to.
+        steps: { build: { ...stepRunning("true", "end"), attended: true } as never },
+      }),
+    ),
+    {
+      message:
+        "Workflow build is invalid: step build does not have exactly the fields a command step defines.",
+    },
+  );
+});
+
+for (const limit of ["idle", "attempt"] as const) {
+  test(`only an attended step's ${limit} limit may be unbounded`, async (t) => {
+    await assert.rejects(
+      engineWith(t, () =>
+        defineWorkflow({
+          start: "plan",
+          steps: { plan: agentStep("true", false, { [limit]: "unbounded" }) },
+        }),
+      ),
+      {
+        message: `Workflow build is invalid: step plan's ${limit} limit may be unbounded only for an attended step.`,
+      },
+    );
+
+    const { engine } = await engineWith(t, () =>
+      defineWorkflow({
+        start: "plan",
+        steps: { plan: agentStep("true", true, { [limit]: "unbounded" }) },
+      }),
+    );
+
+    assert.equal(engine.state("first").status, "ready");
+  });
+}
+
+test("the factory's default idle limit cannot be unbounded", async (t) => {
+  await assert.rejects(
+    engineWith(
+      t,
+      () => defineWorkflow({ start: "plan", steps: { plan: agentStep("true") } }),
+      undefined,
+      { ...defaultLimits, idle: "unbounded" },
+    ),
+    {
+      message:
+        "The factory's default limits are invalid: idle limit may be unbounded only for an attended step.",
+    },
+  );
+});
+
+test("an observer reads every commission's events after a position, in the order written", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(`echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`, "end"),
+      },
+    }),
+  );
+
+  engine.commission("build", "second", { title: "Greet", body: "Say hello." });
+  await engine.advance("first");
+
+  const all = engine.events(0);
+
+  assert.deepEqual(
+    all.map(({ commission, event }) => [commission, event.type]),
+    [
+      ["first", "commissioned"],
+      ["second", "commissioned"],
+      ["first", "attempt-started"],
+      ["first", "attempt-completed"],
+    ],
+  );
+  assert.deepEqual(
+    all.map(({ position }) => position),
+    [1, 2, 3, 4],
+  );
+  assert.deepEqual(engine.events(2), all.slice(2));
+  assert.deepEqual(engine.events(4), []);
+});
+
+test("an observer is woken by the next event any engine on the log writes", async (t) => {
+  const { engine, options } = await engineWith(t, () =>
+    defineWorkflow({ start: "build", steps: { build: stepRunning("true", "end") } }),
+  );
+
+  const woken = engine.next(1);
+  let early = false;
+
+  void woken.then(() => {
+    early = true;
+  });
+
+  await sleep(200);
+  assert.equal(early, false);
+
+  createEngine(options).commission("build", "second", { title: "Greet", body: "Say hello." });
+
+  assert.deepEqual(
+    (await woken).map(({ commission, event }) => [commission, event.type]),
+    [["second", "commissioned"]],
+  );
+
+  // An event already after the position wakes it at once; an abort, with none.
+  assert.equal((await engine.next(0)).length, 2);
+
+  const aborting = new AbortController();
+  const waiting = engine.next(2, { signal: aborting.signal });
+
+  aborting.abort();
+  assert.deepEqual(await waiting, []);
+});
+
 /** Writes a skill named `name` in `directory`, each of `files` at its relative path. */
 function skillAt(directory: string, name: string, files: Readonly<Record<string, string>>) {
   const skill = join(directory, "skills", name);
@@ -4141,7 +4315,11 @@ test("a step's notes on fd 3 are recorded as they arrive, in order", async (t) =
     const [entry] = engine.record("first").entries;
 
     if (entry?.entry === "attempt" && entry.notes.length > 0) {
-      assert.partialDeepStrictEqual(entry, { entry: "attempt", running: true, notes: ["first"] });
+      assert.partialDeepStrictEqual(entry, {
+        entry: "attempt",
+        running: true,
+        notes: [{ note: "first", from: "step" }],
+      });
       break;
     }
 
@@ -4151,7 +4329,15 @@ test("a step's notes on fd 3 are recorded as they arrive, in order", async (t) =
   await advancing;
 
   assert.partialDeepStrictEqual(engine.record("first").entries, [
-    { entry: "attempt", outcome: "done", notes: ["first", "second", "third"] },
+    {
+      entry: "attempt",
+      outcome: "done",
+      notes: [
+        { note: "first", from: "step" },
+        { note: "second", from: "step" },
+        { note: "third", from: "step" },
+      ],
+    },
   ]);
 });
 
@@ -4170,7 +4356,7 @@ test("a step that writes many notes is not slowed by the log they make", async (
 
   assert.ok(entry?.entry === "attempt");
   assert.equal(entry.notes.length, 20000);
-  assert.equal(entry.notes.at(-1), "note 19999");
+  assert.deepEqual(entry.notes.at(-1), { note: "note 19999", from: "step" });
 });
 
 test("a note over its limit stops the step, which escalates", async (t) => {
@@ -4426,6 +4612,7 @@ test("an agent step is started with exactly the pinned environment, descriptors 
     inputs: {
       request: [{ hash: "string", kind: "string", fields: { title: "string" }, body: "string" }],
     },
+    attended: false,
     agent: {
       model: "string",
       prompt: "string",

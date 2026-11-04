@@ -56,15 +56,17 @@ export type Access = {
 };
 
 /**
- * The bounds of a step's attempt. It is stopped after `idle` seconds without stdout or stderr
- * output, `attempt` seconds in all, or `transcript` bytes of it, or once its processes use more
+ * The bounds of a step's attempt. It is stopped after `idle` seconds without output, or without
+ * the owner typing at an attended step, `attempt` seconds in all, or `transcript` bytes of output,
+ * or once its processes use more
  * than `memory` bytes; it never starts if the bodies of its inputs total more than `input` bytes,
  * and cannot run more than `processes` processes and threads at once. Its attempt's directory,
- * workspace, input, output and kinds' areas, may hold `disk` bytes.
+ * workspace, input, output and kinds' areas, may hold `disk` bytes. Only an attended step's `idle`
+ * and `attempt` may be unbounded.
  */
 export type Limits = {
-  idle: number;
-  attempt: number;
+  idle: number | "unbounded";
+  attempt: number | "unbounded";
   transcript: number;
   input: number;
   memory: number;
@@ -89,11 +91,12 @@ type Program<N extends string, Bounded> = {
 } & Bounded;
 
 /**
- * A step: an agent step runs its agent's harness adapter, a command step runs `run`, and an
- * approval step waits for the owner's decision, following the edge its outcome names in `on`.
+ * A step: an agent step runs its agent's harness adapter, with the owner in their terminal when
+ * `attended`, a command step runs `run`, and an approval step waits for the owner's decision,
+ * following the edge its outcome names in `on`.
  */
 type Step<N extends string, Bounded> =
-  | ({ kind: "agent"; agent: Agent } & Program<N, Bounded>)
+  | ({ kind: "agent"; agent: Agent; attended?: boolean } & Program<N, Bounded>)
   | ({ kind: "command"; run: readonly [string, ...string[]] } & Program<N, Bounded>)
   | { kind: "approval"; on: Record<string, N | "end"> };
 
@@ -157,8 +160,9 @@ type Escalated = {
   errors?: string;
 };
 
-// note is one line the attempt's program wrote to fd 3 for the owner, recorded as it arrives.
-type Noted = { type: "noted"; attempt: number; note: string };
+// note is one line for the owner, recorded as it arrives: one the attempt's program wrote to fd 3,
+// or, from the engine, what an attended step's output holds.
+type Noted = { type: "noted"; attempt: number; note: string; from?: "engine" };
 
 // decision and subject are artifact hashes; any feedback lives in the decision artifact.
 type Decided<N extends string> = {
@@ -181,12 +185,17 @@ export type CommissionEvent<N extends string = string> = (
   | Decided<N>
 ) & { at?: number };
 
+// The agent or command step a commission is at; an attended one waits for the owner to attend it.
+type At<N extends string> =
+  | { name: N; kind: "command" }
+  | { name: N; kind: "agent"; attended?: true };
+
 // decision is the owner's latest decision about the current subject; one about an earlier
 // subject is history.
 export type CommissionState<N extends string = string> =
   | {
       status: "ready";
-      step: { name: N; kind: "agent" | "command" };
+      step: At<N>;
       subject: string;
       decision?: string;
     }
@@ -199,13 +208,13 @@ export type CommissionState<N extends string = string> =
     }
   | {
       status: "attempting";
-      step: { name: N; kind: "agent" | "command" };
+      step: At<N>;
       subject: string;
       decision?: string;
     }
   | {
       status: "escalated";
-      step: { name: N; kind: "agent" | "command" };
+      step: At<N>;
       subject: string;
       decision?: string;
       reason: string;
@@ -254,13 +263,17 @@ function arrive<N extends string>(
   decision: string | undefined,
   position: number,
 ): CommissionState<N> {
-  const { kind } = workflow.steps[name];
+  const step = workflow.steps[name];
+  const { kind } = step;
 
   if (kind === "approval") {
     return { status: "awaiting", step: { name, kind }, subject, decision, since: position };
   }
 
-  return { status: "ready", step: { name, kind }, subject, decision };
+  const at: At<N> =
+    kind === "agent" && step.attended === true ? { name, kind, attended: true } : { name, kind };
+
+  return { status: "ready", step: at, subject, decision };
 }
 
 function apply<N extends string>(

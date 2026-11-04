@@ -50,7 +50,7 @@ function parseDefaults(text: string): Limits {
     throw invalid(`they must be idle, attempt, transcript, input, memory, processes and disk`);
   }
 
-  const problem = limitProblem(Object.entries(limits));
+  const problem = limitProblem(Object.entries(limits), false);
 
   if (problem !== undefined) {
     throw invalid(problem);
@@ -60,12 +60,20 @@ function parseDefaults(text: string): Limits {
   return limits as Limits;
 }
 
-// Why one of the limits, by name and value, cannot bound a step, if one cannot: the seconds
-// within what a timer can wait, the rest positive integers.
-function limitProblem(limits: readonly (readonly [string, unknown])[]): string | undefined {
+// Why one of the limits, by name and value, cannot bound a step, attended or not, if one cannot:
+// the seconds within what a timer can wait, or unbounded for an attended step, the rest positive
+// integers.
+function limitProblem(
+  limits: readonly (readonly [string, unknown])[],
+  attended: boolean,
+): string | undefined {
   for (const [limit, value] of limits) {
     if (limit === "idle" || limit === "attempt") {
-      if (!Number.isFinite(value) || Number(value) <= 0 || Number(value) > longestLimit) {
+      if (value === "unbounded") {
+        if (!attended) {
+          return `${limit} limit may be unbounded only for an attended step`;
+        }
+      } else if (!Number.isFinite(value) || Number(value) <= 0 || Number(value) > longestLimit) {
         return `${limit} limit must be a positive number of seconds, at most ${longestLimit}`;
       }
     } else if (!Number.isInteger(value) || Number(value) <= 0) {
@@ -407,7 +415,7 @@ function parseWorkflow(
     }
 
     const program = kind === "command" ? "run" : "agent";
-    const { workspace, inputs, claims, budget, access, limits } = step;
+    const { workspace, inputs, claims, budget, access, limits, attended } = step;
     const { agent } = step;
     const harness = agent?.harness;
     const argv = kind === "command" ? step.run : harness?.run;
@@ -418,6 +426,7 @@ function parseWorkflow(
       "inputs",
       "claims",
       program,
+      ...(kind === "agent" && Object.hasOwn(step, "attended") ? ["attended"] : []),
       "on",
       "budget",
       "access",
@@ -485,6 +494,10 @@ function parseWorkflow(
       );
     }
 
+    if (!(attended === undefined || attended === true || attended === false)) {
+      throw invalid(`step ${name}'s attended must be true or false`);
+    }
+
     const skills = agent?.skills;
 
     if (
@@ -527,7 +540,7 @@ function parseWorkflow(
       );
     }
 
-    const unbounded = limitProblem(Object.entries(limits ?? {}));
+    const unbounded = limitProblem(Object.entries(limits ?? {}), attended === true);
 
     if (unbounded !== undefined) {
       throw invalid(`step ${name}'s ${unbounded}`);
