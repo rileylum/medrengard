@@ -1,19 +1,19 @@
 #!/bin/sh
-# Runs SlopCodeBench's own harness on one problem's first checkpoint: the calibration for the
-# baseline. Spends the owner's subscription: only with their approval.
+# Runs SlopCodeBench's own harness on one problem's first <count> checkpoints, all if left out: the
+# calibration for the baseline. Spends the owner's subscription: only with their approval.
 #
-#   calibration/run.sh <problem> <effort>
+#   calibration/run.sh <problem> <effort> [<count>]
 #
 # TOKEN_FILE names another token file, such as an invalid one to check the wiring at no cost.
 #
 # Their catalogs are read only from their checkout, so this adds Opus 5.5 and a provider whose
 # credential reaches Claude Code as CLAUDE_CODE_OAUTH_TOKEN, the owner's subscription token. Their
-# runner cannot stop after a checkpoint, so it runs on a copy of the problem with only the first.
+# runner cannot stop after a checkpoint, so it runs on a copy of the problem with only the first <count>.
 set -eu
 here=$(dirname "$(realpath "$0")")
 runner="$here/../vendor/slop-code-bench"
 scratch=/var/tmp/medrengard/bench-calibration
-problem=$1 effort=$2
+problem=$1 effort=$2 count=${3:-0}
 
 cp "$here/opus-5.5.yaml" "$runner/configs/models/opus-5.5.yaml"
 grep -q '^  anthropic-subscription:' "$runner/configs/providers.yaml" || cat >> "$runner/configs/providers.yaml" <<'YAML'
@@ -28,11 +28,12 @@ YAML
 rm -rf "$scratch/problems/$problem"
 mkdir -p "$scratch/problems" "$scratch/outputs"
 cp -r "$here/../vendor/scb-problems/$problem" "$scratch/problems/$problem"
-uv run --quiet --project "$runner" python -I - "$scratch/problems/$problem/config.yaml" <<'PY'
+uv run --quiet --project "$runner" python -I - "$scratch/problems/$problem/config.yaml" "$count" <<'PY'
 import sys, yaml
-path = sys.argv[1]
+path, count = sys.argv[1], int(sys.argv[2])
 config = yaml.safe_load(open(path))
-config["checkpoints"] = {"checkpoint_1": config["checkpoints"]["checkpoint_1"]}
+if count:
+    config["checkpoints"] = {f"checkpoint_{n}": config["checkpoints"][f"checkpoint_{n}"] for n in range(1, count + 1)}
 yaml.safe_dump(config, open(path, "w"), sort_keys=False)
 PY
 
