@@ -1,0 +1,11 @@
+{
+  "runner": {
+    "repository": "https://github.com/SprocketLab/slop-code-bench.git",
+    "commit": "af5a9cbc311605b5cceb80200ca9832bdff2d7b1"
+  },
+  "problems": {
+    "repository": "https://github.com/gabeorlanski/scb-problems.git",
+    "commit": "9cd9ca3a51c3d3e2a99d2488a25baf73a2204451"
+  },
+  "python": "3.12"
+}
