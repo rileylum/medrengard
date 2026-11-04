@@ -29,9 +29,10 @@ export type Result = {
   grade?: { files: string[]; contents: Record<string, string> };
 };
 
-// A problem whose two reference solutions write a.py, with one asset directory unless `assets` is
-// false, and a fake runner that reports them and grades a snapshot by listing it.
-export function toy(t: TestContext, prompts: string[], assets = true) {
+// A problem whose two reference solutions write a.py, the second the same as the first if `same`,
+// with one asset directory unless `assets` is false, and a fake runner that reports them and
+// grades a snapshot by listing it.
+export function toy(t: TestContext, prompts: string[], assets = true, same = false) {
   const directory = mkdtempSync(join(tmpdir(), "medrengard-bench-test-"));
 
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -40,7 +41,7 @@ export function toy(t: TestContext, prompts: string[], assets = true) {
 
   for (const [n, text] of [
     [1, "one\n"],
-    [2, "two\n"],
+    [2, same ? "one\n" : "two\n"],
   ] as const) {
     mkdirSync(join(problems, "toy", "solutions", `checkpoint_${n}`), { recursive: true });
     writeFileSync(join(problems, "toy", "solutions", `checkpoint_${n}`, "a.py"), text);

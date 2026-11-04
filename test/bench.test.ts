@@ -192,3 +192,20 @@ test(
     );
   },
 );
+
+test(
+  "the stub still commits at a checkpoint whose reference solution is the last one's",
+  { timeout: 120_000 },
+  async (t) => {
+    const { bench, read } = toy(t, ["Do one.\n", "Do it again.\n"], true, true);
+
+    const ran = bench("r1");
+
+    assert.equal(ran.status, 0, ran.stderr);
+
+    const [, second] = read("r1");
+
+    assert.equal(second?.grade?.contents["a.py"], "one\n");
+    assert.equal(second?.grade?.contents[".dry"], "toy checkpoint 2\n");
+  },
+);

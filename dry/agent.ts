@@ -59,6 +59,10 @@ cpSync(join(problems!, problem!, "solutions", `checkpoint_${n}`), ".", { recursi
 
 if (behaviour === "rmassets") rmSync("files", { recursive: true, force: true });
 
+// Some checkpoints' reference solutions are the last one's; the commit verifier refuses a commit
+// that changes nothing, so .dry names the checkpoint reached.
+if (git("status", "--porcelain") === "") writeFileSync(".dry", `${problem} checkpoint ${n}\n`);
+
 git("add", "-A");
 git("commit", "--quiet", "-m", `dry: ${problem} checkpoint ${n}`);
 
