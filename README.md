@@ -32,10 +32,9 @@ where an agent extends its own code as the specification changes.
 - `pins.json`: the runner's and problems' commits, and the Python they run on. `bin/fetch.sh`
   checks them out under `vendor/`.
 
-It relies on three Medrengard commits not yet merged, stacked on `feat/neutral-paths`: the commit
-verifier comparing a claim with any subject that names a `sha` (`136cd4e`, for the start kind), the
-adapter turning off `cc-plugin-privacy` (`fada2ac`), and steps seeing `/workspace`, `/input` and
-`/output` (`9a19c51`). `.medrengard` follows the checkout's working tree, so keep it on that branch.
+It needs Medrengard at `2e1f372` or later: the commit verifier comparing a claim with any subject
+that names a `sha` (for the start kind), the adapter turning off `cc-plugin-privacy`, and steps
+seeing `/workspace`, `/input` and `/output`. `.medrengard` follows the checkout's working tree.
 
 ## Setup
 
