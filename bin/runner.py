@@ -3,6 +3,8 @@
   runner.py problem <name>                         its checkpoints, assets and rendered prompts
   runner.py grade <snapshot> <name> <n> <out>      eval-snapshot's report for checkpoint n, with
                                                    scb-check's scores (verbosity, erosion) as quality
+  runner.py pins                                   the checked-out commits and Python, and whether
+                                                   they match pins.json
 
 Prompts are rendered and snapshots graded by their CLI, and a snapshot keeps only the files their
 own harness's snapshot keeps, so what is graded matches what their runs grade.
@@ -22,7 +24,11 @@ from slop_code.entrypoints.config.loader import resolve_environment
 from slop_code.execution.snapshot import _walk_candidates
 from slop_code.metrics.checkpoint.driver import _get_scb_check_metrics
 
-RUNNER = Path(__file__).resolve().parent.parent / "vendor" / "slop-code-bench"
+BENCH = Path(__file__).resolve().parent.parent
+RUNNER = BENCH / "vendor" / "slop-code-bench"
+PROBLEMS = BENCH / "vendor" / "scb-problems"
+# What calibration/run.sh adds to the runner checkout: its model and provider, which grading never reads.
+CALIBRATION = {"configs/providers.yaml", "configs/models/opus-5.5.yaml"}
 ENVIRONMENT = RUNNER / "configs" / "environments" / "docker-python3.12-uv.yaml"
 PROMPT = "just-solve"
 
@@ -77,6 +83,35 @@ def grade(snapshot, name, n, out):
         return report
 
 
+def git(checkout, *args):
+    return subprocess.run(
+        ["git", "-C", str(checkout), *args], check=True, capture_output=True, text=True
+    ).stdout
+
+
+def changed(checkout, allowed=frozenset()):
+    paths = [line[3:] for line in git(checkout, "status", "--porcelain").splitlines()]
+    return sorted(path for path in paths if path not in allowed)
+
+
+def pins():
+    pinned = json.loads((BENCH / "pins.json").read_text(encoding="utf-8"))
+    runner = git(RUNNER, "rev-parse", "HEAD").strip()
+    problems = git(PROBLEMS, "rev-parse", "HEAD").strip()
+    python = sys.version.split()[0]
+    changes = changed(RUNNER, CALIBRATION) + changed(PROBLEMS)
+    return {
+        "runner": runner,
+        "problems": problems,
+        "python": python,
+        "matches": runner == pinned["runner"]["commit"]
+        and problems == pinned["problems"]["commit"]
+        and python.startswith(pinned["python"] + ".")
+        and not changes,
+        **({"changes": changes} if changes else {}),
+    }
+
+
 if __name__ == "__main__":
     command, *args = sys.argv[1:]
-    print(json.dumps({"problem": problem, "grade": grade}[command](*args)))
+    print(json.dumps({"problem": problem, "grade": grade, "pins": pins}[command](*args)))

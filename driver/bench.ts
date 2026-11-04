@@ -1,9 +1,14 @@
-// The driver: takes one problem through its checkpoints, one commission each, in order. It builds
-// each checkpoint's start, commissions it, collects the commit publish pushed and grades it with
-// the runner, outside the factory, so no step sees the tests. One line per checkpoint goes to
-// <results>/<run>/<problem>.jsonl; an escalated checkpoint stops the problem for the owner.
+// The driver: takes one problem through its checkpoints under one configuration, one commission
+// each, in order. It builds each checkpoint's start, commissions it, collects the commit publish
+// pushed and grades it with the runner, outside the factory, so no step sees the tests. One line
+// per checkpoint goes to <results>/<run>/<problem>.jsonl.
+//
+// It can be run again on the same run: a graded checkpoint is skipped, a finished one graded, and
+// an escalated one waits for the owner's decision (exit 3). A retry continues the problem; an
+// abandon ends it, as the configuration's failure.
 import { execFileSync } from "node:child_process";
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -12,6 +17,8 @@ import { createEngine } from "#medrengard/src/engine.ts";
 const { values } = parseArgs({
   options: {
     factory: { type: "string" },
+    configuration: { type: "string" },
+    repeat: { type: "string" },
     runner: { type: "string", multiple: true },
     problem: { type: "string" },
     run: { type: "string" },
@@ -21,14 +28,20 @@ const { values } = parseArgs({
 });
 
 const usage =
-  "Usage: bench.ts --factory <path> --problem <name> --run <id> [--runner <argv>…] [--results <dir>] [--checkpoints <n>]";
+  "Usage: bench.ts --factory <path> --configuration <name> --problem <name> --run <id> [--repeat <k>] [--runner <argv>…] [--results <dir>] [--checkpoints <n>]";
 
-if (values.factory === undefined || values.problem === undefined || values.run === undefined) {
+if (
+  values.factory === undefined ||
+  values.configuration === undefined ||
+  values.problem === undefined ||
+  values.run === undefined
+) {
   console.error(usage);
   process.exit(2);
 }
 
-const { factory, problem: name, run } = values;
+const { factory, configuration, problem: name, run } = values;
+const repeat = values.repeat === undefined ? undefined : Number(values.repeat);
 const runner = values.runner ?? [new URL("../bin/runner.sh", import.meta.url).pathname];
 const results = resolve(values.results);
 
@@ -42,6 +55,11 @@ const { trajectories } = loaded;
 mkdirSync(dirname(loaded.default.log), { recursive: true });
 
 const engine = createEngine(loaded.default);
+
+if (!Object.hasOwn(loaded.default.workflows, configuration)) {
+  console.error(`The factory has no configuration named ${configuration}.`);
+  process.exit(2);
+}
 
 type Problem = { checkpoints: number; assets: { source: string; path: string }[]; prompts: string[] };
 // SlopCodeBench's eval-snapshot report, and its scb-check scores under quality.
@@ -71,7 +89,17 @@ const out = join(results, run);
 
 mkdirSync(out, { recursive: true });
 
-const record = (line: object) => appendFileSync(join(out, `${name}.jsonl`), `${JSON.stringify(line)}\n`);
+const lines = join(out, `${name}.jsonl`);
+const record = (line: object) =>
+  appendFileSync(lines, `${JSON.stringify({ configuration, ...(repeat === undefined ? {} : { repeat }), checkpoints: count, ...line })}\n`);
+
+// What this run recorded before, the last line of each checkpoint winning.
+const recorded = new Map<number, { status: string }>(
+  (existsSync(lines) ? readFileSync(lines, "utf8").trim().split("\n").filter(Boolean) : [])
+    // SAFETY: only this driver writes these lines.
+    .map((line) => JSON.parse(line) as { checkpoint: number; status: string })
+    .map((line) => [line.checkpoint, line]),
+);
 
 // The checkpoint's start, on the branch named after its commission: the previous result, or
 // nothing at the first, with the problem's assets put back as they are, as SlopCodeBench's
@@ -104,8 +132,8 @@ function start(commission: string, previous: string | undefined) {
   }
 }
 
-// What Claude Code's stream-json result line says the attempt cost, or null without one.
-function cost(transcript: string) {
+// What Claude Code's stream-json result line says an attempt cost, or null without one.
+function costOf(transcript: string) {
   const result = transcript
     .split("\n")
     .filter((line) => line.startsWith("{"))
@@ -117,7 +145,6 @@ function cost(transcript: string) {
           total_cost_usd?: number;
           num_turns?: number;
           duration_ms?: number;
-          usage?: object;
         };
       } catch {
         return {};
@@ -125,17 +152,55 @@ function cost(transcript: string) {
     })
     .findLast((event) => event.type === "result");
 
-  return result === undefined
-    ? null
-    : {
-        usd: result.total_cost_usd,
-        turns: result.num_turns,
-        // Claude Code's own session time, as SlopCodeBench's summary reports; the attempt's
-        // time also holds what runs before the agent, such as remaking the virtual environment.
-        seconds: result.duration_ms === undefined ? undefined : result.duration_ms / 1000,
-        ...(result.usage === undefined ? {} : { usage: result.usage }),
-      };
+  return result ?? null;
 }
+
+// The configuration's cost: each agent attempt's, summed, with how many attempts there were.
+// Seconds are Claude Code's own session time, as SlopCodeBench's summary reports; an attempt's time
+// also holds what runs before the agent, such as remaking the virtual environment. Null when no
+// agent attempt reported one; a sum is left out when any attempt did not report its part.
+function cost(commission: string, agents: Set<string>) {
+  const attempts = engine
+    .record(commission)
+    .entries.filter((entry) => entry.entry === "attempt" && agents.has(entry.step) && !("running" in entry));
+  const results = attempts
+    .map((entry) => (entry.entry === "attempt" ? costOf(engine.transcript(commission, entry.attempt).toString()) : null))
+    .filter((result) => result !== null);
+
+  if (results.length === 0) return null;
+
+  const sum = (values: (number | undefined)[]) =>
+    values.every((value) => value !== undefined) ? values.reduce((a, b) => a + b, 0) : undefined;
+  const ms = sum(results.map((result) => result.duration_ms));
+
+  return {
+    usd: sum(results.map((result) => result.total_cost_usd)),
+    turns: sum(results.map((result) => result.num_turns)),
+    seconds: ms === undefined ? undefined : ms / 1000,
+    attempts: attempts.length,
+  };
+}
+
+// The time the configuration's agent attempts took, summed.
+function timing(commission: string, agents: Set<string>) {
+  const spans = engine
+    .record(commission)
+    .entries.flatMap((entry) =>
+      entry.entry === "attempt" &&
+      agents.has(entry.step) &&
+      "ended" in entry &&
+      entry.started !== undefined &&
+      entry.ended !== undefined
+        ? [entry.ended - entry.started]
+        : [],
+    );
+
+  return spans.length === 0 ? {} : { seconds: spans.reduce((a, b) => a + b, 0) / 1000 };
+}
+
+// The definition the commission runs on, by hash, so lines that ran on different ones can be told apart.
+const definitionOf = (commission: string) =>
+  createHash("sha256").update(JSON.stringify(engine.definition(commission))).digest("hex");
 
 function grade(commit: string, n: number) {
   const snapshot = mkdtempSync(join(tmpdir(), "medrengard-bench-snapshot-"));
@@ -150,38 +215,60 @@ function grade(commit: string, n: number) {
   }
 }
 
+// The configuration's agent steps, whose attempts are its cost.
+const steps = loaded.default.workflows[configuration]!.steps as Record<string, { kind: string }>;
+const agents = new Set(Object.entries(steps).flatMap(([step, { kind }]) => (kind === "agent" ? [step] : [])));
+const exists = (commission: string) => engine.commissions().some((listed) => listed.commission === commission);
+
 let previous: string | undefined;
 
 for (let n = 1; n <= count; n += 1) {
   const commission = `${run}-${name}-${n}`;
+  const before = recorded.get(n);
 
-  start(commission, previous);
-  engine.commission("benchmark", commission, { title: `${name} checkpoint ${n}`, body: problem.prompts[n - 1]! });
+  if (before?.status === "finished") {
+    previous = commission;
+    continue;
+  }
 
-  const state = await engine.advance(commission);
-  const { entries } = engine.record(commission);
-  const implement = entries.findLast((entry) => entry.entry === "attempt" && entry.step === "implement");
-  const timing =
-    implement?.entry === "attempt" && implement.started !== undefined && "ended" in implement && implement.ended !== undefined
-      ? { seconds: (implement.ended - implement.started) / 1000 }
-      : {};
-  const spent =
-    implement?.entry === "attempt" ? cost(engine.transcript(commission, implement.attempt).toString()) : null;
+  if (before?.status === "abandoned") process.exit(0);
 
-  if (state.status !== "finished" || state.by !== "end") {
+  if (!exists(commission)) {
+    start(commission, previous);
+    engine.commission(configuration, commission, { title: `${name} checkpoint ${n}`, body: problem.prompts[n - 1]! });
+  }
+
+  // A commission left escalated waits for the owner; one they decided, or one interrupted, goes on.
+  const current = engine.state(commission);
+  const waiting = current.status === "escalated" || current.status === "awaiting";
+  const state = waiting || current.status === "finished" ? current : await engine.advance(commission);
+  const spent = { ...timing(commission, agents), cost: cost(commission, agents), definition: definitionOf(commission) };
+
+  if (state.status === "finished" && state.by === "abandoned") {
+    record({ checkpoint: n, commission, status: "abandoned", ...spent });
+    console.error(`${commission} abandoned by the owner: the problem ends here.`);
+    process.exit(0);
+  }
+
+  if (state.status !== "finished") {
     const reason = state.status === "escalated" ? state.reason : state.status;
     const step = "step" in state ? state.step.name : undefined;
 
-    record({ checkpoint: n, commission, status: state.status, reason, ...timing, cost: spent });
+    // A re-run while it still waits records nothing new.
+    if (!waiting) record({ checkpoint: n, commission, status: state.status, step, reason, ...spent });
+
     console.error(`${commission} ${state.status} at ${step}: ${reason}`);
-    process.exit(1);
+    process.exit(3);
   }
 
-  const claimed = implement?.entry === "attempt" && "artifacts" in implement ? implement.artifacts[0] : undefined;
+  const claimed = engine
+    .record(commission)
+    .entries.flatMap((entry) => (entry.entry === "attempt" && "artifacts" in entry ? entry.artifacts : []))
+    .findLast((claim) => claim.artifact.kind === "commit");
   const commit = claimed?.artifact.fields.sha;
 
   if (commit === undefined || git(trajectories, "rev-parse", `refs/results/${commission}`) !== commit) {
-    throw new Error(`${commission} finished, but refs/results/${commission} is not the commit implement claimed.`);
+    throw new Error(`${commission} finished, but refs/results/${commission} is not the last commit claimed.`);
   }
 
   const graded = grade(commit, n);
@@ -189,11 +276,11 @@ for (let n = 1; n <= count; n += 1) {
 
   const { verbosity, erosion } = graded.quality;
 
-  record({ checkpoint: n, commission, status: "finished", commit, ...timing, cost: spent, solved, verbosity, erosion, grade: graded });
+  record({ checkpoint: n, commission, status: "finished", commit, ...spent, solved, verbosity, erosion, grade: graded });
   console.log(
     `${commission}: ${solved ? "solved" : "not solved"}, Core ${graded.pass_counts.Core ?? 0}/${graded.total_counts.Core ?? 0}` +
       `, verbosity ${verbosity}, erosion ${erosion}` +
-      `${timing.seconds === undefined ? "" : `, ${timing.seconds} s`}${spent?.usd === undefined ? "" : `, $${spent.usd}`}`,
+      `${spent.seconds === undefined ? "" : `, ${spent.seconds} s`}${spent.cost?.usd === undefined ? "" : `, $${spent.cost.usd}`}`,
   );
 
   previous = commission;

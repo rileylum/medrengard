@@ -5,14 +5,17 @@
 #   calibration/run.sh <problem> <effort> [<count>]
 #
 # TOKEN_FILE names another token file, such as an invalid one to check the wiring at no cost.
+# SCRATCH names the directory for the problem's copy and their outputs; a study gives each of its
+# runs its own, so runs side by side do not share one.
 #
 # Their catalogs are read only from their checkout, so this adds Opus 5.5 and a provider whose
 # credential reaches Claude Code as CLAUDE_CODE_OAUTH_TOKEN, the owner's subscription token. Their
 # runner cannot stop after a checkpoint, so it runs on a copy of the problem with only the first <count>.
+# The pass policy any-case keeps their run going past failing tests, as ours does.
 set -eu
 here=$(dirname "$(realpath "$0")")
 runner="$here/../vendor/slop-code-bench"
-scratch=/var/tmp/medrengard/bench-calibration
+scratch=${SCRATCH:-/var/tmp/medrengard/bench-calibration}
 problem=$1 effort=$2 count=${3:-0}
 
 cp "$here/opus-5.5.yaml" "$runner/configs/models/opus-5.5.yaml"
@@ -47,4 +50,5 @@ SCBENCH_PROBLEMS_PATH="$scratch/problems" \
     --prompt configs/prompts/just-solve.jinja \
     --problem "$problem" \
     thinking="$effort" \
+    pass_policy=any-case \
     save_dir="$scratch/outputs"

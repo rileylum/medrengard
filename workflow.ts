@@ -1,12 +1,11 @@
 // The benchmark workflow: one commission per checkpoint. seed checks out the start the driver made
-// for it, implement is the configuration under test, and publish hands its commit back to the
-// driver. Only the agent varies between configurations; the steps around it stay the same.
+// for it, the configuration under test takes it to a commit, and publish hands that commit back to
+// the driver. Only the configuration varies; the steps around it stay the same.
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { Access, Agent, Limits } from "#medrengard/src/replay.ts";
-import { defineWorkflow } from "#medrengard/src/replay.ts";
+import type { Access, Workflow } from "#medrengard/src/replay.ts";
 import { claudeCode, contract } from "#medrengard/defaults/access.ts";
 import { builtIn } from "#medrengard/defaults/kinds.ts";
 import type { Kind } from "#medrengard/src/kinds.ts";
@@ -93,13 +92,23 @@ export const benchmarkKinds = {
   } satisfies Kind,
 };
 
+/**
+ * What a benchmark gives every configuration: the access its agent steps run with, which holds the
+ * benchmark's environment, and the prompt that tells an agent to do what the request says.
+ */
+export type Environment = { access: Access; prompt: string };
+
+/**
+ * The configuration under test: the steps that take a checkpoint's start, the subject, to a commit,
+ * entered at `start`. A step goes to `publish` once the subject is the commit to grade; the request
+ * is the input query `request`. `seed` and `publish` are the benchmark's.
+ */
+export type Configuration = { start: string; steps: Workflow["steps"] };
+
 export type Options = {
   /** The bare repository the driver puts each checkpoint's start in and publish pushes results to. */
   trajectories: string;
-  /** The configuration under test. */
-  agent: Agent;
-  access: Access;
-  limits?: Partial<Limits>;
+  configuration: Configuration;
 };
 
 // SlopCodeBench's resume commands, which its harness runs before the agent at each checkpoint after
@@ -111,15 +120,32 @@ const venv = `if [ -f requirements.txt ]; then
 fi
 exec "$@"`;
 
-export function benchmarkWorkflow({ trajectories, agent, access, limits }: Options) {
+const reserved = ["seed", "publish"];
+
+export function benchmarkWorkflow({ trajectories, configuration }: Options) {
   const node = read(process.execPath);
   const git = (mode: "read" | "write") => ({
     ...contract,
     paths: [...contract.paths, node, read(bin), { path: trajectories, mode }],
   });
   const quick = { idle: 60, attempt: 300, transcript: 1024 * 1024, input: 1024 * 1024 };
+  const clash = reserved.filter((name) => Object.hasOwn(configuration.steps, name));
 
-  return defineWorkflow({
+  if (clash.length > 0) {
+    throw new Error(`A configuration cannot name a step ${clash.join(" or ")}: the benchmark's.`);
+  }
+
+  // Every agent step working on the subject runs after its virtual environment is made again.
+  const steps = Object.fromEntries(
+    Object.entries(configuration.steps).map(([name, step]) => [
+      name,
+      step.kind === "agent" && step.workspace === "subject"
+        ? { ...step, agent: { ...step.agent, harness: { ...step.agent.harness, run: ["sh", "-c", venv, "sh", ...step.agent.harness.run] } } }
+        : step,
+    ]),
+  );
+
+  return {
     start: "seed",
     steps: {
       // The branch named after the commission, which the driver made: the previous checkpoint's
@@ -130,23 +156,12 @@ export function benchmarkWorkflow({ trajectories, agent, access, limits }: Optio
         run: [process.execPath, join(bin, "seed.ts"), trajectories],
         workspace: "empty",
         inputs: {},
-        on: { done: "implement" },
+        on: { done: configuration.start },
         budget: 1,
         access: git("read"),
         limits: quick,
       },
-      // Every configuration's harness runs after the virtual environment is made again.
-      implement: {
-        kind: "agent",
-        claims: ["commit"],
-        agent: { ...agent, harness: { run: ["sh", "-c", venv, "sh", ...agent.harness.run] } },
-        workspace: "subject",
-        inputs: { request: "request" },
-        on: { done: "publish" },
-        budget: 1,
-        access,
-        ...(limits === undefined ? {} : { limits }),
-      },
+      ...steps,
       // Pushes the commit to refs/results/<commission>, where the driver grades it from.
       publish: {
         kind: "command",
@@ -160,5 +175,5 @@ export function benchmarkWorkflow({ trajectories, agent, access, limits }: Optio
         limits: quick,
       },
     },
-  });
+  } satisfies Workflow;
 }

@@ -1,6 +1,6 @@
 # SlopCodeBench's own Claude Code agent, as their configs/agents/claude_code.yaml has it, on the
-# Claude Code installed here, with a $10 cap per checkpoint while costs are unknown; net_cost_limit
-# sums the checkpoints, so it is $10 for each of a problem's at most 4 here.
+# Claude Code installed here, with a $10 cap per checkpoint, as ours has; net_cost_limit sums the
+# checkpoints, so it is $10 for each of a problem's at most 8.
 type: claude_code
 binary: claude
 permission_mode: bypassPermissions
@@ -8,4 +8,4 @@ version: 2.1.318
 cost_limits:
   step_limit: 100
   cost_limit: 10
-  net_cost_limit: 40
+  net_cost_limit: 80
