@@ -2,20 +2,20 @@
 // they are drawn from. driver/study.ts runs one.
 
 /**
- * A study: every configuration on every problem, `repeats` times each, `concurrency` problem runs
- * at a time. The first configuration is the control the others are compared with. `factory` is
- * the path of the factory holding the configurations, relative to the study file. Held-out
- * problems run only in a study marked `final`. A study with `calibrate` also runs SlopCodeBench's
- * own harness at that effort, as the configuration `slopcodebench`.
+ * A study: every configuration on every problem, `repeats` times each. The first configuration is
+ * the control the others are compared with. `factory` is the path of the factory holding the
+ * configurations, relative to the study file. Held-out problems run only in a study marked
+ * `final`. A study with `calibrate` also runs SlopCodeBench's own harness at that effort, as the
+ * configuration `slopcodebench`, for its `repeats` or the study's. How many problem runs go at once
+ * is not the study's: it is chosen per invocation of the driver.
  */
 export type Study = {
   factory: string;
   configurations: readonly string[];
   problems: readonly string[];
   repeats: number;
-  concurrency: number;
   final?: boolean;
-  calibrate?: { effort: string };
+  calibrate?: { effort: string; repeats?: number };
 };
 
 /** Declares a study, so the compiler checks its fields. */
