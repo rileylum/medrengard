@@ -50,7 +50,12 @@ async function engineWith<N extends string>(
 ) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  // Writable again first: a test that failed after making part of it read-only, such as the log's
+  // directory, never restored it, and rm cannot remove what is under it.
+  t.after(async () => {
+    spawnSync("chmod", ["-R", "u+rwx", directory]);
+    await rm(directory, { recursive: true, force: true });
+  });
 
   // The log's own directory, apart from the test's, which every step is kept out of.
   const record = join(directory, "record");
