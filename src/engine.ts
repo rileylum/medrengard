@@ -834,13 +834,19 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
           unspool(spool);
         } catch (error) {
           // The engine's own failure, such as a full disk, is nothing it can classify: the owner
-          // decides. If this write fails too, the next advance finds the attempt interrupted, and
-          // keeps what was spooled.
-          write(commission, read(commission), {
-            type: "escalated",
-            reason: failedIn(name, error instanceof Error ? error.message : String(error)),
-            attempt,
-          });
+          // decides, with what the step's program wrote, if it ran and the store can keep it. If
+          // this write fails too, the next advance finds the attempt interrupted, and keeps what
+          // was spooled.
+          let reason = failedIn(name, error instanceof Error ? error.message : String(error));
+          let kept = {};
+
+          try {
+            kept = spooled(spool);
+          } catch (keeping) {
+            reason += `; its transcript could not be kept: ${keeping instanceof Error ? keeping.message : String(keeping)}`;
+          }
+
+          write(commission, read(commission), { type: "escalated", reason, attempt, ...kept });
           unspool(spool);
         } finally {
           running.delete(key);
@@ -1290,16 +1296,12 @@ async function run(
   const input = join(directory, "input");
   const output = join(directory, "output");
 
-  // stdout and stderr together, in the order they arrive, up to the transcript limit; and the
-  // stderr of it alone, as the attempt's errors.
-  const transcript = openSync(spool.transcript, "w");
-  const errors = openSync(spool.errors, "w");
+  // The spooled transcript and errors, opened just before the step's program starts: before, such
+  // as while its workspace is built, the attempt has no transcript, rather than an empty one, and
+  // an engine that finds the attempt ended finds no spool to keep.
+  let spooling: { transcript: number; errors: number } | undefined;
   let erred = false;
   let written = 0;
-
-  // Whether the step's program started: before, such as while its workspace is built, the attempt
-  // has no transcript, rather than an empty one.
-  let ran = false;
 
   // Stores the transcript, and the errors when there are any, on the event that ends the attempt.
   const recorded = <E extends Ending>(event: Omit<E, "transcript">): E => {
@@ -1314,7 +1316,7 @@ async function run(
   };
 
   const escalate = (reason: string): Ending =>
-    ran
+    spooling !== undefined
       ? recorded<Extract<Ending, { type: "escalated" }>>({ type: "escalated", reason, attempt })
       : { type: "escalated", reason, attempt };
 
@@ -1403,7 +1405,12 @@ async function run(
       bounds,
     );
 
-    ran = true;
+    // stdout and stderr together, in the order they arrive, up to the transcript limit; and the
+    // stderr of it alone, as the attempt's errors.
+    const transcript = openSync(spool.transcript, "w");
+    const errors = openSync(spool.errors, "w");
+
+    spooling = { transcript, errors };
 
     // Its own session and process group: stopping the step also stops what it started, and
     // without a controlling terminal the step cannot push input into the owner's.
@@ -1621,8 +1628,12 @@ async function run(
     });
   } finally {
     clearInterval(watching);
-    closeSync(transcript);
-    closeSync(errors);
+
+    if (spooling !== undefined) {
+      closeSync(spooling.transcript);
+      closeSync(spooling.errors);
+    }
+
     await rm(directory, { recursive: true, force: true });
   }
 }

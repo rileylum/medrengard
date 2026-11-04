@@ -1,6 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { mkdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -2821,7 +2822,36 @@ test("an engine error during an attempt escalates the commission, naming the err
 
   assert.partialDeepStrictEqual(state, { status: "escalated", step: { name: "build" } });
   assert.ok(state.status === "escalated");
-  assert.match(state.reason, /^Step build failed in the engine: EACCES: permission denied/);
+  assert.match(
+    state.reason,
+    /^Step build failed in the engine: EACCES: permission denied.*; its transcript could not be kept: EACCES: permission denied/,
+  );
+});
+
+test("an engine error after a step ran keeps its transcript on the escalation", async (t) => {
+  // The store cannot keep the claimed body, whose partial file is already a directory, but it
+  // can keep the transcript.
+  const body = "A plan the store cannot keep.";
+
+  const { engine, record } = await engineRunning(
+    t,
+    `echo "a transcript of its own"; echo "and errors" >&2
+     printf '${body}' > "$MEDRENGARD_OUT/plan.md"
+     echo '${JSON.stringify(planAt("plan.md"))}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const hash = createHash("sha256").update(body).digest("hex");
+
+  await mkdir(join(record, "store", `${hash}.${process.pid}.partial`));
+
+  const state = await engine.advance("first");
+
+  assert.partialDeepStrictEqual(state, { status: "escalated", step: { name: "build" } });
+  assert.ok(state.status === "escalated");
+  assert.match(state.reason, /^Step build failed in the engine: EISDIR/);
+  assert.equal(engine.transcript("first", 1).toString(), "a transcript of its own\nand errors\n");
+  assert.equal(engine.errors("first", 1).toString(), "and errors\n");
+  assert.deepEqual(await readdir(join(record, "attempts")), []);
 });
 
 test("an engine error while a step runs stops the step and escalates, naming the error", async (t) => {

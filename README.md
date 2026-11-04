@@ -559,8 +559,9 @@ How the attempt ends:
   running for the attempt, and one that arrives before the attempt's end is written wins, so
   nothing the attempt claimed is recorded. What the step already did, such as a push, stays done;
 - the engine failing on its own side, such as a full disk or a note it cannot write: the step is
-  stopped and the commission escalates, naming the error. If even that cannot be written, the next
-  `advance` finds the attempt interrupted, in this process or any other. A failure reading the
+  stopped and the commission escalates, naming the error, with the transcript and errors if the
+  step ran; if the store cannot keep them, the reason says so. If even that cannot be written, the
+  next `advance` finds the attempt interrupted, in this process or any other. A failure reading the
   step's inputs from the store escalates before the attempt starts, so no budget is spent;
 - the engine dying mid-attempt: the next `advance` finds the attempt interrupted and escalates. A
   running attempt's transcript and errors are written as they arrive, to the `attempts` directory
