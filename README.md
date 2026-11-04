@@ -435,7 +435,7 @@ const design = {
 - Nothing else of Claude Code's own loads: no bundled skills or built-in plugins, no settings
   files, no memory, no `CLAUDE.md` or `AGENTS.md`, and no `Co-Authored-By` in the agent's
   commits. Some of the settings that do this are undocumented, as of Claude Code
-  2.1.316.
+  2.1.318.
 - Claude Code's managed settings in `/etc/claude-code`, which no flag turns off, are hidden from
   `claude` when they exist.
 - If `claude` loads tools, skills, plugins or MCP servers the agent did not declare, the adapter
