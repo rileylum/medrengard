@@ -2,11 +2,17 @@
 // benchmark's seed and publish, on one log. Running a commission here spends the owner's
 // subscription: only with their approval.
 import baseline from "./configurations/baseline.ts";
+import codeReview from "./configurations/code-review.ts";
+import verification from "./configurations/verification.ts";
 import { benchmarkKinds, benchmarkLimits, benchmarkWorkflow, implementAccess, implementPrompt, type Configuration, type Environment } from "./workflow.ts";
 
 const trajectoriesPath = new URL("state/trajectories.git", import.meta.url).pathname;
 
-const configurations: Record<string, (environment: Environment) => Configuration> = { baseline };
+const configurations: Record<string, (environment: Environment) => Configuration> = {
+  baseline,
+  "code-review": codeReview,
+  verification,
+};
 
 const environment = { access: implementAccess(), prompt: implementPrompt };
 

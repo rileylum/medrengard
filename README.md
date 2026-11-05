@@ -22,7 +22,12 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
 - `configurations/`: one file per configuration, a function from the benchmark's environment (the
   access its agent steps run with, the prompt telling an agent to do what the request says) to its
   steps. A configuration names nothing of SlopCodeBench. `baseline.ts`: Claude Code through
-  Medrengard's adapter, one step.
+  Medrengard's adapter, one step. `claude-code.ts`: the baseline's step with a prompt, a skill and only the
+  tools the skill needs, which the review and verify configurations are: `code-review.ts` (Matt Pocock's
+  `code-review`, with `Agent` for its subagent reviewers) and `verification.ts` (obra/superpowers'
+  `verification-before-completion`). The plan they belong to is `docs/review-verify.md`.
+- `skills/`: published skills, copied verbatim at a pinned commit, per source with its `LICENSE` and a
+  `SOURCE` naming the repository, commit and path. A configuration's hash covers their contents.
 - `workflow.ts`'s `implementAccess` gives every agent step /tmp and its home as Medrengard scratch
   areas, on disk in the attempt's work area, bounded by a 16 GiB disk limit (`benchmarkLimits`).
 - `factory.ts`: every configuration, each its own workflow, on one log under `state/`. **Running
@@ -37,7 +42,9 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   set, with calibration once. `survey.ts`: the baseline once on `unused`, with the selection that
   chooses the iteration set's next problems from it; `survey-rerun.ts` runs again the two whose
   survey run filled a 256 MiB /tmp held in memory, and places them. `baseline-added.ts`: the baseline five
-  times on `added`, the six problems chosen from the survey to iterate on with `iteration`. `dry-easy.ts` is free.
+  times on `added`, the six problems chosen from the survey to iterate on with `iteration`. `pilot-review.ts`:
+  `code-review` and `verification` once on datagate, to check their setup, in no comparison. `code-review.ts`
+  and `verification.ts`: each three times on all twelve, compared with the published baseline. `dry-easy.ts` is free.
 - `driver/study.ts`: runs a study, `--concurrency` problem runs at a time (2 by default), every
   configuration's and problem's first repeat before any second. Concurrency is how a study is run,
   not part of it: each run appends what it was asked for to `results/<study>/invocations.jsonl`. Before anything runs it writes

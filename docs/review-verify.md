@@ -75,4 +75,27 @@ Looked at and not run:
 
 ## Design of the first tests
 
-Open, one decision at a time with the owner; see the benchmark log for each decision as it is made.
+Decided with the owner, one at a time:
+
+- **V1, skill files.** Copied verbatim from a pinned commit into `skills/<source>/<skill>/`, with the source's
+  `LICENSE` and a `SOURCE` naming repository, commit and path. A reader sees the exact text that ran; the
+  configuration's hash covers it; reproducing needs no network.
+- **V2, tools.** Each configuration gets the tools its skill needs and no more: `Agent` (Claude Code's subagent
+  tool) only where the skill starts subagents (1, 4, 5, 6). `Skill` comes with any skill. In 1 the tool and the
+  skill arrive together; a baseline with `Agent` (about $150) separates them, only if 1 shows an effect.
+- **V3, prompts.** The prompt names the skill, after its author's own use, and supplies what the skill would ask
+  a person for; the skills are not edited.
+  - 1: "Do what the request says, in your workspace. When you are done, commit your work, then use the
+    code-review skill to review it since the commit you started from, with the request as its spec. Act on its
+    findings, then commit all your work and claim the commit." The skill reviews committed work, so the agent
+    commits first. "Act on its findings" is ours: the skill only reports, and Pocock's `implement` does not say
+    to fix.
+  - 2: "Do what the request says, in your workspace. Use the verification-before-completion skill before you
+    claim your work is done. When you are done, commit all your work and claim the commit."
+- **V4, pilot.** `studies/pilot-review.ts`: each once on datagate (Easy, $2.50 a baseline run, and the rowid
+  misreading the baseline makes in 5 of 5 runs at checkpoint 2). It checks from transcripts and result lines
+  that the skill is invoked, that 1's reviewers start as subagents and the agent commits again after them, that
+  Claude Code's cost counts the subagents, and that nothing escalates. Its scores join no comparison; it may
+  change only how a configuration is set up, put to the owner before any study runs. Then `studies/code-review.ts`
+  and `studies/verification.ts`, n=3 on the twelve, reported with
+  `study.ts report studies/baseline.ts studies/baseline-added.ts studies/<study>.ts`.
