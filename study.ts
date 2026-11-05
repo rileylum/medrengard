@@ -48,6 +48,22 @@ export function defineSelection(selection: Selection): Selection {
 /** The problems configurations are compared and improved on. */
 export const iteration = ["datagate", "textdrop", "file_query_tool", "mvvault", "meshctl", "eve_industry"];
 
+/**
+ * The problems added to iterate on, chosen from the survey by driver/select.ts (results/survey/
+ * selection.md), save one: the rule ranked tied problems by name, which put env_manager, solved at
+ * every checkpoint, among the middle third. The owner replaced it with eve_jump_planner, drawn with
+ * the survey's seed from the middle third's high-erosion problems once ties are kept together.
+ * Configurations are compared on `iteration` and these together.
+ */
+export const added = [
+  "layered_config_synthesizer",
+  "test_translator",
+  "eve_market_tools",
+  "file_merger",
+  "eve_jump_planner",
+  "execution_server",
+];
+
 /** The problems neither set holds: surveyed by the baseline once, to choose more to iterate on. */
 export const unused = [
   "cfgpipe",
