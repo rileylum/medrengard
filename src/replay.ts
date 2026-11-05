@@ -34,7 +34,8 @@ export type Agent = {
  *
  * A path not covered by `paths` is invisible. Where declared paths nest, the deeper one decides;
  * on the same path, read wins. An empty path is a fresh directory of at most `size` bytes over
- * whatever is there. The workspace, the input (read-only) and the output are always there, the
+ * whatever is there, held in memory. A scratch path is a fresh directory there too, on disk in the
+ * attempt's work area, so the step's disk limit bounds it; it is gone when the attempt ends. The workspace, the input (read-only) and the output are always there, the
  * workspace in the mode `workspace` gives.
  *
  * `environment` names the variables passed through from the engine's own environment, or "all";
@@ -48,7 +49,7 @@ export type Agent = {
  */
 export type Access = {
   paths: readonly (
-    | { path: string; mode: "read" | "write" }
+    | { path: string; mode: "read" | "write" | "scratch" }
     | { path: string; mode: "empty"; size: number }
   )[];
   network: boolean;

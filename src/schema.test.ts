@@ -74,7 +74,8 @@ type Pinned = {
   path: Expect<
     Same<
       Path,
-      { path: string; mode: "read" | "write" } | { path: string; mode: "empty"; size: number }
+      | { path: string; mode: "read" | "write" | "scratch" }
+      | { path: string; mode: "empty"; size: number }
     >
   >;
   query: Expect<Same<Extract<Query, string>, "subject" | "request">>;

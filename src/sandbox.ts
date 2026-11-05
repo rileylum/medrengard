@@ -1,13 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { Access } from "./replay.ts";
 
-// The directories the step contract always gives a step, by path, and the record's: the log's
-// directory, which every program is kept out of.
-type Areas = { workspace: string; input: string; output: string; record: string };
+// The directories the step contract always gives a step, by path; the record's: the log's
+// directory, which every program is kept out of; and where its scratch areas go, on disk beside
+// its workspace, so its disk limit counts them.
+type Areas = { workspace: string; input: string; output: string; record: string; scratch: string };
 
-const order = { write: 0, empty: 1, read: 2, hidden: 3 };
+const order = { write: 0, empty: 1, scratch: 1, read: 2, hidden: 3 };
 
 /** What a program may use at once: bytes of memory, and processes and threads. */
 export type Bounds = { memory: number; processes: number };
@@ -36,8 +38,17 @@ export function confine(
     ? areas
     : { workspace: "/workspace", input: "/input", output: "/output" };
 
+  // Each scratch area a fresh directory of its own, made here so the mount has something to bind.
   const mounts = [
-    ...access.paths.map((entry) => ({ ...entry, source: entry.path })),
+    ...access.paths.map((entry, index) => {
+      if (entry.mode !== "scratch") return { ...entry, source: entry.path };
+
+      const source = join(areas.scratch, String(index));
+
+      mkdirSync(source, { recursive: true });
+
+      return { ...entry, source };
+    }),
     { source: areas.workspace, path: seen.workspace, mode: access.workspace },
     { source: areas.input, path: seen.input, mode: "read" as const },
     { source: areas.output, path: seen.output, mode: "write" as const },
@@ -59,6 +70,7 @@ export function confine(
       case "read":
         return ["--ro-bind", mount.source, mount.path];
       case "write":
+      case "scratch":
         return ["--bind", mount.source, mount.path];
       case "empty":
         return ["--size", String(mount.size), "--tmpfs", mount.path];

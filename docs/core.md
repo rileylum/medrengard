@@ -163,7 +163,7 @@ _Definition: what the owner writes; data, verified before anything runs._
 - Skill: packaged instructions or tools given to an agent.
 - Artifact kind: a role, subject or judgement, a schema and a body rule, with an optional verifier, materialiser and outcome field. Built in: document, commit, verdict and decision.
 - Outcome: a label a step declares; the engine routes on it.
-- Access: what a step's process may read, write and reach.
+- Access: what a step's process may read, write and reach, and its scratch areas: fresh directories on disk at the paths it names, which its disk limit bounds.
 - Query: what a step declares to name the artifacts one of its inputs holds.
 - Budget: the attempts a step may spend between the owner's decisions.
 - Limit: any other declared bound, such as time, size or disk.
