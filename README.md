@@ -800,3 +800,8 @@ does, and needs the owner's terminal as stdin and stdout. The factory is found a
 
 `npm test` runs the type check, the linter, the format check and the tests. Tests write only under
 the system temp directory.
+
+## Licence
+
+MIT: see [`LICENSE`](LICENSE). `tools/oxlint/anti-slop/` is vendored from
+[anti-slop](https://github.com/dmmulroy/anti-slop) under its own MIT licence, beside it.
