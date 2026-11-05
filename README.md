@@ -133,5 +133,15 @@ one problem run alone, as `--factory`, `--configuration`, `--problem` and `--run
 `npm test`: type check and the drivers' tests, which run the real workflow with the stub, a fake
 runner and a fake SlopCodeBench harness, under the system temp directory.
 
-SlopCodeBench is MIT-licensed; its problems repository's LICENSE file is Apache-2.0. Cite the
-paper (arXiv 2603.24755) with any results.
+## Results and examples
+
+[`published/`](published/) holds the studies' scores and reports, with
+[`published/METHODS.md`](published/METHODS.md) on how they were made. Each problem's median run's
+code, with its history across checkpoints, is in
+[medrengard-bench-examples](https://github.com/rileylum/medrengard-bench-examples).
+
+## Licence
+
+MIT: see [`LICENSE`](LICENSE). SlopCodeBench is MIT-licensed and its problems Apache-2.0; neither
+is held here (`bin/fetch.sh` checks them out under `vendor/`). Cite the paper (arXiv 2603.24755)
+with any results.
