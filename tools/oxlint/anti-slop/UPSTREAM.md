@@ -6,3 +6,4 @@
 - Installed at: `tools/oxlint/anti-slop/`, registered in `oxlint.config.ts`
 - Dependencies: `oxlint` and `@oxlint/plugins` pinned together at 1.89.0 (upstream tested 1.78.0)
 - Deviations: none; the Effect plugin is copied but not registered.
+- Licence: MIT, upstream's `LICENSE` beside this file.
