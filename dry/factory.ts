@@ -3,8 +3,7 @@
 // one step, as the baseline; `polished`, the stub and then the stub again adding a file, so a
 // configuration of several agent steps runs free.
 import { join } from "node:path";
-import { limits } from "#medrengard/defaults/limits.ts";
-import { benchmarkKinds, benchmarkWorkflow, implementAccess, implementPrompt, type Configuration } from "../workflow.ts";
+import { benchmarkKinds, benchmarkLimits, benchmarkWorkflow, implementAccess, implementPrompt, type Configuration } from "../workflow.ts";
 import type { Access } from "#medrengard/src/replay.ts";
 
 const stub = new URL("agent.ts", import.meta.url).pathname;
@@ -45,7 +44,7 @@ export function dryFactory(state: string, problems: string) {
   };
   const factory = {
     log: join(state, "log", "log.sqlite"),
-    defaults: { limits },
+    defaults: { limits: benchmarkLimits },
     kinds: benchmarkKinds,
     workflows: Object.fromEntries(
       Object.entries(configurations).map(([name, configuration]) => [name, benchmarkWorkflow({ trajectories, configuration })]),

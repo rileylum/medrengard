@@ -15,7 +15,12 @@ type Fields = {
   repeats: number;
   final?: boolean;
   calibrate?: { effort: string; repeats?: number };
-  selection?: { current: { problems: string[]; study: string; run: string }; perCell: number; seed: number };
+  selection?: {
+    current: { problems: string[]; study: string; run: string };
+    reruns?: { problems: string[]; study: string; run: string };
+    perCell: number;
+    seed: number;
+  };
 };
 
 // The toy problem with a study `name` over it, committed in a repository of its own.
@@ -338,12 +343,13 @@ test(
   { timeout: 120_000 },
   async (t) => {
     // Five surveyed problems and one current, a cell each with one per cell: every one is kept or chosen.
-    const { driver, results } = study(t, ["Do one.\n"], {
+    const fields = {
       configurations: ["stub"],
       problems: ["a", "b", "c", "d", "e"],
       repeats: 1,
       selection: { current: { problems: ["f"], study: "base", run: "base-stub-r1" }, perCell: 1, seed: 1 },
-    });
+    };
+    const { driver, results, write } = study(t, ["Do one.\n"], fields);
     const line = (checkpoint: number, solved: boolean, erosion: number, status = "finished") => ({
       checkpoint,
       checkpoints: 2,
@@ -385,5 +391,14 @@ test(
 
     assert.equal(waiting.status, 2);
     assert.match(waiting.stderr, /c is not complete in trial-stub-r1/);
+
+    // Run again in a study of its own, as after a limit of the setup's, c is placed by that run.
+    write({ ...fields, selection: { ...fields.selection, reruns: { study: "again", run: "again-stub-r1", problems: ["c"] } } });
+    put(join(results, "again", "runs", "again-stub-r1", "c.jsonl"), [line(1, true, 0.8), line(2, true, 0.8)]);
+
+    const rerun = driver("select");
+
+    assert.equal(rerun.status, 0, rerun.stderr);
+    assert.match(rerun.stdout, /\| middle \| high \| \+c \(1\.00, 0\.80\) \|/);
   },
 );

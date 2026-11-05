@@ -327,17 +327,17 @@ function placement(problem: string, run: string, path: string): Placement {
   return { problem, solved: scores.solved, core: scores.core, erosion: scores.erosion };
 }
 
-// A survey's problems by its first run, the current ones by the run the selection names.
+// A survey's problems by its first run, or the rerun the selection names, the current ones by theirs.
 function selectIteration() {
   if (selection === undefined) refuse(`${name} names no selection.`);
 
-  const surveyed = `${name}-${study.configurations[0]}-r1`;
-  const current = selection.current;
+  const surveyed = { study: name, run: `${name}-${study.configurations[0]}-r1` };
+  const { current, reruns } = selection;
+  const from = (problem: string, source: { study: string; run: string }) =>
+    placement(problem, source.run, join(resolve(values.results), source.study, "runs", source.run, `${problem}.jsonl`));
   const placements = [
-    ...study.problems.map((problem) => placement(problem, surveyed, join(runs, surveyed, `${problem}.jsonl`))),
-    ...current.problems.map((problem) =>
-      placement(problem, current.run, join(resolve(values.results), current.study, "runs", current.run, `${problem}.jsonl`)),
-    ),
+    ...study.problems.map((problem) => from(problem, reruns?.problems.includes(problem) ? reruns : surveyed)),
+    ...current.problems.map((problem) => from(problem, current)),
   ];
   const text = `# ${name}\n\n${renderSelection(select(placements, { current: current.problems, perCell: selection.perCell, seed: selection.seed }))}`;
 

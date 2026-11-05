@@ -89,6 +89,20 @@ test(
 );
 
 test(
+  "an agent's /tmp and home are fresh scratch areas on disk, beside its workspace, not in memory",
+  { timeout: 120_000 },
+  async (t) => {
+    // The stub fails unless both are on the workspace's device and empty of anything but its own.
+    const { bench, read } = toy(t, ["Do one.\ndry: scratch\n"]);
+
+    const ran = bench("r1");
+
+    assert.equal(ran.status, 0, ran.stderr);
+    assert.equal(read("r1")[0]?.status, "finished");
+  },
+);
+
+test(
   "a problem with no assets starts from an empty repository",
   { timeout: 120_000 },
   async (t) => {
