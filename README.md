@@ -23,6 +23,8 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   access its agent steps run with, the prompt telling an agent to do what the request says) to its
   steps. A configuration names nothing of SlopCodeBench. `baseline.ts`: Claude Code through
   Medrengard's adapter, one step.
+- `workflow.ts`'s `implementAccess` gives every agent step /tmp and its home as Medrengard scratch
+  areas, on disk in the attempt's work area, bounded by a 16 GiB disk limit (`benchmarkLimits`).
 - `factory.ts`: every configuration, each its own workflow, on one log under `state/`. **Running
   it spends the owner's subscription: only with the owner's approval.**
 - `dry/`: the same workflow with a stub that commits the problem's reference solution, at no cost,
@@ -32,7 +34,8 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   `unused`, the rest, which a survey study runs once to choose more to iterate on.
 - `studies/`: the studies. `baseline.ts` is the first: the baseline five times on the iteration
   set, with calibration once. `survey.ts`: the baseline once on `unused`, with the selection that
-  chooses the iteration set's next problems from it. `dry-easy.ts` is free.
+  chooses the iteration set's next problems from it; `survey-rerun.ts` runs again the two whose
+  survey run filled a 256 MiB /tmp held in memory, and places them. `dry-easy.ts` is free.
 - `driver/study.ts`: runs a study, `--concurrency` problem runs at a time (2 by default), every
   configuration's and problem's first repeat before any second. Concurrency is how a study is run,
   not part of it: each run appends what it was asked for to `results/<study>/invocations.jsonl`. Before anything runs it writes
@@ -68,7 +71,7 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
 - `pins.json`: the runner's and problems' commits, and the Python they run on. `bin/fetch.sh`
   checks them out under `vendor/`.
 
-It needs Medrengard at `2e1f372` or later: the commit verifier comparing a claim with any subject
+It needs Medrengard at `f7cf6c1` or later, for scratch areas, and from `2e1f372`: the commit verifier comparing a claim with any subject
 that names a `sha` (for the start kind), the adapter turning off `cc-plugin-privacy`, and steps
 seeing `/workspace`, `/input` and `/output`. `.medrengard` follows the checkout's working tree.
 

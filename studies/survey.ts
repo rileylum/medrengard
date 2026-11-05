@@ -13,6 +13,8 @@ export default defineStudy({
 
 export const selection = defineSelection({
   current: { problems: iteration, study: "baseline", run: "baseline-baseline-r1" },
+  // Added after the survey: these two stopped when the agent filled a 256 MiB /tmp held in memory.
+  reruns: { problems: ["dynamic_buffer", "mocked_http"], study: "survey-rerun", run: "survey-rerun-baseline-r1" },
   perCell: 2,
   seed: 20261105,
 });

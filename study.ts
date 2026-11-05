@@ -26,9 +26,12 @@ export function defineStudy(study: Study): Study {
 /**
  * How a survey study's results choose the iteration set (driver/select.ts): the current problems,
  * each placed by one run of another study, kept, and the grid's cells filled to `perCell` by seed.
+ * `reruns` places the surveyed problems it names by a run of another study instead, as when the
+ * survey's run of them stopped at a limit of the setup's, not the model's.
  */
 export type Selection = {
   current: { problems: readonly string[]; study: string; run: string };
+  reruns?: { problems: readonly string[]; study: string; run: string };
   perCell: number;
   seed: number;
 };

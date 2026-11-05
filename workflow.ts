@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import type { Access, Workflow } from "#medrengard/src/replay.ts";
 import { claudeCode, contract } from "#medrengard/defaults/access.ts";
 import { builtIn } from "#medrengard/defaults/kinds.ts";
+import { limits } from "#medrengard/defaults/limits.ts";
 import type { Kind } from "#medrengard/src/kinds.ts";
 
 const read = (path: string) => ({ path, mode: "read" as const });
@@ -28,9 +29,10 @@ function python312() {
 }
 
 /**
- * The implement step's access: Claude Code's, a 1 GiB home for pip's and uv's caches, Python 3.12
- * first on PATH, uv, and Git told to leave out what SlopCodeBench's snapshots leave out, such as
- * `.venv`. `paths` are added, such as a stub and what it reads.
+ * The implement step's access: Claude Code's, with /tmp and the home, which holds pip's and uv's
+ * caches, as scratch areas on disk rather than in memory, Python 3.12 first on PATH, uv, and Git
+ * told to leave out what SlopCodeBench's snapshots leave out, such as `.venv`. `paths` are added,
+ * such as a stub and what it reads.
  */
 export function implementAccess(paths: Access["paths"] = []): Access {
   const python = python312();
@@ -39,8 +41,10 @@ export function implementAccess(paths: Access["paths"] = []): Access {
   return {
     ...claudeCode,
     paths: [
-      ...claudeCode.paths.filter((entry) => entry.path !== ownerHome),
-      { path: ownerHome, mode: "empty", size: 1024 * 1024 * 1024 },
+      ...claudeCode.paths.filter((entry) => entry.path !== ownerHome && entry.path !== "/tmp"),
+      // An agent may install whole toolchains to test with, as SlopCodeBench's own harness lets it.
+      { path: "/tmp", mode: "scratch" },
+      { path: ownerHome, mode: "scratch" },
       read(python),
       read(join(bin, "excludes")),
       ...paths,
@@ -63,6 +67,12 @@ export function implementAccess(paths: Access["paths"] = []): Access {
     },
   };
 }
+
+/**
+ * Medrengard's default limits, with 16 GiB of disk for an attempt: its scratch areas count there,
+ * and SlopCodeBench's harness, in Docker, bounds none.
+ */
+export const benchmarkLimits = { ...limits, disk: 16 * 1024 * 1024 * 1024 };
 
 /**
  * The built-in kinds and start: the commit a checkpoint is given, which, unlike a commit, need not
