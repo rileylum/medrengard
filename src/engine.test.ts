@@ -439,7 +439,12 @@ test("a step cannot write to its input", async (t) => {
  * makes from the test's directory, and claims `done` once it ends. The script's `$1` is that
  * directory; what the script prints is the attempt's transcript.
  */
-function engineConfined(t: TestContext, confined: (directory: string) => Access, script: string) {
+function engineConfined(
+  t: TestContext,
+  confined: (directory: string) => Access,
+  script: string,
+  limits: Partial<Limits> = {},
+) {
   return engineWith(t, (directory) =>
     defineWorkflow({
       start: "build",
@@ -460,7 +465,7 @@ function engineConfined(t: TestContext, confined: (directory: string) => Access,
           on: { done: "end" },
           budget: 1,
           access: confined(directory),
-          limits: { idle: 5, attempt: 10, transcript: 65536, input: 65536 },
+          limits: { idle: 5, attempt: 10, transcript: 65536, input: 65536, ...limits },
         },
       },
     }),
@@ -688,6 +693,65 @@ test("a step that fills an empty area of its access escalates", async (t) => {
     status: "escalated",
     reason: "Step build filled /scratch, its area of 1048576 bytes.",
   });
+});
+
+test("a scratch area of a step's access is a fresh directory at its path, on the disk of the attempt's work area", async (t) => {
+  // The same device as /workspace, which is in the attempt's work area: not a memory-backed mount.
+  const { engine, directory } = await engineConfined(
+    t,
+    () => ({ ...access, paths: [...access.paths, { path: "/scratch", mode: "scratch" }] }),
+    `ls -A /scratch | wc -l > "$1/before"
+     head -c 2000000 /dev/zero > /scratch/big && echo written > "$1/written"
+     test "$(stat -c %d /scratch)" = "$(stat -c %d /workspace)" && echo same > "$1/device"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.equal((await readFile(join(directory, "before"), "utf8")).trim(), "0");
+  assert.equal(await readFile(join(directory, "written"), "utf8"), "written\n");
+  assert.equal(await readFile(join(directory, "device"), "utf8"), "same\n");
+});
+
+test(
+  "a step that writes past its disk limit in a scratch area escalates",
+  { timeout: 10_000 },
+  async (t) => {
+    const { engine } = await engineConfined(
+      t,
+      () => ({ ...access, paths: [...access.paths, { path: "/scratch", mode: "scratch" }] }),
+      "head -c 5000000 /dev/zero > /scratch/big; sleep 30",
+      { attempt: 60, disk: 1024 * 1024 },
+    );
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      reason: "Step build used more than its disk limit of 1048576 bytes.",
+    });
+  },
+);
+
+test("a scratch area with a size of its own is refused, as the disk limit bounds it", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        steps: {
+          build: {
+            ...stepRunning("true", "end"),
+            // SAFETY: the workflow module is the owner's JavaScript, which the type cannot hold to.
+            access: {
+              ...access,
+              paths: [...access.paths, { path: "/scratch", mode: "scratch", size: 1 } as never],
+            },
+          },
+        },
+      }),
+    ),
+    {
+      message:
+        "Workflow build is invalid: step build's paths must each be an absolute path and a mode: " +
+        "read, write, scratch, or empty with a size.",
+    },
+  );
 });
 
 test("a step gets only the environment its access names, PATH included", async (t) => {

@@ -290,11 +290,12 @@ function accessProblem(access: Access): string | undefined {
         path.startsWith("/") &&
         (mode === "empty"
           ? hasExactly(entry, ["path", "mode", "size"]) && Number.isInteger(size) && size! > 0
-          : hasExactly(entry, ["path", "mode"]) && (mode === "read" || mode === "write"))
+          : hasExactly(entry, ["path", "mode"]) &&
+            (mode === "read" || mode === "write" || mode === "scratch"))
       );
     })
   ) {
-    return "paths must each be an absolute path and a mode: read, write, or empty with a size";
+    return "paths must each be an absolute path and a mode: read, write, scratch, or empty with a size";
   }
 
   if (

@@ -1521,7 +1521,7 @@ async function run(
 
     const confined = confine(
       step.access,
-      { workspace, input, output, record: spool.record },
+      { workspace, input, output, record: spool.record, scratch: join(directory, "scratch") },
       step.kind === "agent" ? step.agent.harness.run : step.run,
       bounds,
     );
@@ -2258,7 +2258,7 @@ async function areaFor(directory: string, program: string) {
   await mkdir(input);
   await mkdir(output);
 
-  return { input, output };
+  return { input, output, scratch: join(area, "scratch") };
 }
 
 // Runs the claim's kind's verifier in the attempt's workspace, and stores the files it keeps.
@@ -2273,7 +2273,7 @@ async function verify(
   store: Store,
   cancelled: () => boolean,
 ): Promise<{ kept: Record<string, string> } | { reason: string }> {
-  const { input, output } = await areaFor(spool.work, "verifier");
+  const { input, output, scratch } = await areaFor(spool.work, "verifier");
   const { kind } = claim;
 
   const failed = (why: string) => ({
@@ -2295,7 +2295,7 @@ async function verify(
 
   const why = await runProgram(
     verifier,
-    { workspace, input, output, record: spool.record },
+    { workspace, input, output, record: spool.record, scratch },
     cancelled,
   );
 
@@ -2373,7 +2373,7 @@ async function materialise(
     return `Step ${name}'s workspace cannot be built from a ${artifact.kind}, whose kind has no materialiser.`;
   }
 
-  const { input, output } = await areaFor(spool.work, "materialiser");
+  const { input, output, scratch } = await areaFor(spool.work, "materialiser");
 
   await mkdir(join(input, "kept"));
 
@@ -2398,7 +2398,7 @@ async function materialise(
 
   const why = await runProgram(
     materialiser,
-    { workspace, input, output, record: spool.record },
+    { workspace, input, output, record: spool.record, scratch },
     cancelled,
   );
 
