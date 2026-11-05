@@ -32,7 +32,7 @@ const mean = (values: readonly number[]) => values.reduce((a, b) => a + b, 0) / 
 // One complete run's scores, or undefined while it waits for the owner or is still running. A
 // checkpoint never graded, after an abandon, counts as unsolved with no Core test passing; erosion
 // and verbosity are means over the graded checkpoints.
-function score(run: Run): Scores | undefined {
+export function score(run: Run): Scores | undefined {
   const last = new Map(run.lines.map((line) => [line.checkpoint, line]));
   const lines = [...last.values()];
   const total = lines[0]?.checkpoints ?? 0;
@@ -65,7 +65,7 @@ function score(run: Run): Scores | undefined {
 }
 
 // A small seeded generator (mulberry32), so intervals do not change from one summary to the next.
-function generator(seed: number) {
+export function generator(seed: number) {
   let state = seed;
 
   return () => {

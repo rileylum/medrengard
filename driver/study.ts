@@ -5,6 +5,7 @@
 //                                              runs them, or the named problems' only, n at a time (2)
 //   study.ts status <study.ts>                 where each problem run stands
 //   study.ts report <study.ts>                 its summary, also written to results/<study>/report.md
+//   study.ts select <study.ts>                 a survey's iteration set, also results/<study>/selection.md
 //
 // Before anything runs it writes results/<study>/manifest.json: the study, the commits of its
 // repository and Medrengard's, the runner's pins, the versions, and each configuration's hash. It
@@ -18,8 +19,9 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realp
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
-import type { Study } from "../study.ts";
-import { render, summarise, type Run } from "./report.ts";
+import type { Selection, Study } from "../study.ts";
+import { render, score, summarise, type Run } from "./report.ts";
+import { render as renderSelection, select, type Placement } from "./select.ts";
 import { heldOut } from "../study.ts";
 
 const { values, positionals } = parseArgs({
@@ -34,10 +36,10 @@ const { values, positionals } = parseArgs({
 });
 
 const usage =
-  "Usage: study.ts run|status|report <study.ts> [--problems a,b] [--concurrency n] [--runner <argv>…] [--calibration <argv>…] [--results <dir>]";
+  "Usage: study.ts run|status|report|select <study.ts> [--problems a,b] [--concurrency n] [--runner <argv>…] [--calibration <argv>…] [--results <dir>]";
 const [command, file] = positionals;
 
-if (!["run", "status", "report"].includes(command ?? "") || file === undefined) {
+if (!["run", "status", "report", "select"].includes(command ?? "") || file === undefined) {
   console.error(usage);
   process.exit(2);
 }
@@ -49,8 +51,8 @@ function refuse(message: string): never {
 
 const studyFile = resolve(file);
 const name = basename(studyFile, ".ts");
-// SAFETY: a study file's default export is a Study, as defineStudy declares it.
-const study = (await import(studyFile)).default as Study;
+// SAFETY: a study file's default export is a Study, and its selection a Selection, as declared.
+const { default: study, selection } = (await import(studyFile)) as { default: Study; selection?: Selection };
 const factory = resolve(dirname(studyFile), study.factory);
 // SAFETY: a benchmark factory exports the engine's options and its trajectories repository.
 const loaded = (await import(factory)) as { default: { workflows: Record<string, unknown> }; trajectories: string };
@@ -307,6 +309,43 @@ function report() {
   process.stdout.write(text);
 }
 
+// One complete run's placement on the selection grid, refusing a run still waiting or running.
+function placement(problem: string, run: string, path: string): Placement {
+  const lines = existsSync(path)
+    ? readFileSync(path, "utf8")
+        .trim()
+        .split("\n")
+        // SAFETY: only driver/bench.ts writes these lines.
+        .map((line) => JSON.parse(line) as Run["lines"][number])
+    : [];
+  const scores = score({ configuration: "", problem, repeat: 1, lines });
+
+  if (scores?.solved === undefined || scores.core === undefined || scores.erosion === undefined) {
+    refuse(`${problem} is not complete in ${run}: decide it, or run the study, before selecting.`);
+  }
+
+  return { problem, solved: scores.solved, core: scores.core, erosion: scores.erosion };
+}
+
+// A survey's problems by its first run, the current ones by the run the selection names.
+function selectIteration() {
+  if (selection === undefined) refuse(`${name} names no selection.`);
+
+  const surveyed = `${name}-${study.configurations[0]}-r1`;
+  const current = selection.current;
+  const placements = [
+    ...study.problems.map((problem) => placement(problem, surveyed, join(runs, surveyed, `${problem}.jsonl`))),
+    ...current.problems.map((problem) =>
+      placement(problem, current.run, join(resolve(values.results), current.study, "runs", current.run, `${problem}.jsonl`)),
+    ),
+  ];
+  const text = `# ${name}\n\n${renderSelection(select(placements, { current: current.problems, perCell: selection.perCell, seed: selection.seed }))}`;
+
+  writeFileSync(join(results, "selection.md"), text);
+  process.stdout.write(text);
+}
+
 if (command === "status") status();
 else if (command === "report") report();
+else if (command === "select") selectIteration();
 else await runStudy();

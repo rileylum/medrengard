@@ -28,9 +28,11 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
 - `dry/`: the same workflow with a stub that commits the problem's reference solution, at no cost,
   as two configurations: `stub`, one step, and `polished`, two agent steps.
 - `study.ts`: what a study is, and the problem sets: `iteration`, which configurations are compared
-  on, and `heldOut`, which only a study marked `final` runs. Drawn by seed before any study ran.
+  on, and `heldOut`, which only a study marked `final` runs, drawn by seed before any study ran;
+  `unused`, the rest, which a survey study runs once to choose more to iterate on.
 - `studies/`: the studies. `baseline.ts` is the first: the baseline five times on the iteration
-  set, with calibration once. `dry-easy.ts` is free.
+  set, with calibration once. `survey.ts`: the baseline once on `unused`, with the selection that
+  chooses the iteration set's next problems from it. `dry-easy.ts` is free.
 - `driver/study.ts`: runs a study, `--concurrency` problem runs at a time (2 by default), every
   configuration's and problem's first repeat before any second. Concurrency is how a study is run,
   not part of it: each run appends what it was asked for to `results/<study>/invocations.jsonl`. Before anything runs it writes
@@ -47,6 +49,11 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   hash, the agent attempts' time, their cost, turns and session time summed from Claude Code's
   result lines, whether it solved the checkpoint (all Core tests pass), SlopCodeBench's verbosity
   and erosion (its own `scb-check` call) and the grader's report.
+- `driver/select.ts`: the selection rule. Each problem is placed by one baseline run: ranked by
+  solve rate (ties by Core pass fraction, then name) into thirds, each split at its median erosion.
+  The current iteration problems stay; each of the six cells is filled to two from the surveyed
+  ones, by the seed fixed in the survey study, which also picks the cells left short when the
+  current ones overfill one. `study.ts select <survey>` prints the grid, also `selection.md`.
 - `driver/report.ts`: the summary. Per problem, each configuration's mean and range over complete
   runs; per configuration, means over problems with bootstrap 95% intervals (problems resampled,
   then repeats); each configuration against the study's first, paired by problem. A checkpoint never
@@ -86,6 +93,7 @@ node driver/study.ts run studies/baseline.ts --problems datagate,textdrop --conc
 
 node driver/study.ts status studies/baseline.ts   # where each problem run stands
 node driver/study.ts report studies/baseline.ts   # the summary, also results/baseline/report.md
+node driver/study.ts select studies/survey.ts     # once the survey is complete: the iteration set
 ```
 
 A problem run stops for the owner when a checkpoint escalates, with exit 3, and the study starts no
