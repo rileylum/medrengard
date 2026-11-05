@@ -4,6 +4,7 @@ import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { join } from "node:path";
 import { createEngine } from "#medrengard/src/engine.ts";
 import { repository, toy, type Result } from "./toy.ts";
@@ -14,6 +15,7 @@ type Fields = {
   repeats: number;
   final?: boolean;
   calibrate?: { effort: string; repeats?: number };
+  selection?: { current: { problems: string[]; study: string; run: string }; perCell: number; seed: number };
 };
 
 // The toy problem with a study `name` over it, committed in a repository of its own.
@@ -29,11 +31,12 @@ function study(t: TestContext, prompts: string[], fields: Fields, name = "trial"
       encoding: "utf8",
     });
 
-  const write = (changed: Fields) => {
+  const write = ({ selection, ...changed }: Fields) => {
     writeFileSync(
       file,
       `import { defineStudy } from ${JSON.stringify(join(repository, "study.ts"))};
        export default defineStudy(${JSON.stringify({ factory: "../factory.ts", ...changed })});
+       export const selection = ${JSON.stringify(selection)};
       `,
     );
   };
@@ -327,5 +330,60 @@ test(
       lines("trial-slopcodebench-r1").map((line) => [line.checkpoint, line.status, line.reason]),
       [[1, "stopped", "their checkpoint 1 is error, not ran"]],
     );
+  },
+);
+
+test(
+  "a survey's select places its problems and the current ones by one run each, and names the iteration set",
+  { timeout: 120_000 },
+  async (t) => {
+    // Five surveyed problems and one current, a cell each with one per cell: every one is kept or chosen.
+    const { driver, results } = study(t, ["Do one.\n"], {
+      configurations: ["stub"],
+      problems: ["a", "b", "c", "d", "e"],
+      repeats: 1,
+      selection: { current: { problems: ["f"], study: "base", run: "base-stub-r1" }, perCell: 1, seed: 1 },
+    });
+    const line = (checkpoint: number, solved: boolean, erosion: number, status = "finished") => ({
+      checkpoint,
+      checkpoints: 2,
+      status,
+      solved,
+      erosion,
+      cost: { usd: 1 },
+      seconds: 1,
+      grade: { pass_counts: { Core: solved ? 1 : 0 }, total_counts: { Core: 1 } },
+    });
+    const put = (path: string, lines: object[]) => {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, lines.map((one) => `${JSON.stringify(one)}\n`).join(""));
+    };
+    const surveyed = (problem: string, lines: object[]) =>
+      put(join(results, "trial", "runs", "trial-stub-r1", `${problem}.jsonl`), lines);
+
+    // Solve rates a 0, b .5, c .5, d 1, e 1; f, current, 1. Ranked: a, b, c, d, e, f (ties by name).
+    surveyed("a", [line(1, false, 0.9), line(2, false, 0.9)]);
+    surveyed("b", [line(1, true, 0.2), line(2, false, 0.2)]);
+    surveyed("c", [line(1, true, 0.8), line(2, false, 0.8)]);
+    surveyed("d", [line(1, true, 0.7), line(2, true, 0.7)]);
+    surveyed("e", [line(1, true, 0.1), line(2, true, 0.1)]);
+    put(join(results, "base", "runs", "base-stub-r1", "f.jsonl"), [line(1, true, 0.3), line(2, true, 0.3)]);
+
+    const selected = driver("select");
+
+    assert.equal(selected.status, 0, selected.stderr);
+    // Hard a, b: b erodes less. Middle c, d: d less. Easy e, f: e less.
+    assert.match(selected.stdout, /\| hard \| low \| \+b \(0\.50, 0\.20\) \|/);
+    assert.match(selected.stdout, /\| easy \| high \| \*f \(1\.00, 0\.30\) \|/);
+    assert.match(selected.stdout, /Iteration set: f, b, a, d, c, e\./);
+    assert.equal(readFileSync(join(results, "trial", "selection.md"), "utf8"), selected.stdout);
+
+    // A run not complete cannot place its problem: the owner decides it first.
+    surveyed("c", [line(1, true, 0.8), line(2, false, 0.8, "escalated")]);
+
+    const waiting = driver("select");
+
+    assert.equal(waiting.status, 2);
+    assert.match(waiting.stderr, /c is not complete in trial-stub-r1/);
   },
 );
