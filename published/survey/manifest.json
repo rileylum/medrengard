@@ -1,0 +1,59 @@
+{
+  "study": {
+    "hash": "084e0b02603fa14acf0e9727cca156e5d0603cb192426116fe0ecfeeda4c4167",
+    "factory": "../factory.ts",
+    "configurations": [
+      "baseline"
+    ],
+    "problems": [
+      "cfgpipe",
+      "circuit_eval",
+      "dag_execution",
+      "database_migration",
+      "dynamic_buffer",
+      "env_manager",
+      "etl_pipeline",
+      "eve_jump_planner",
+      "eve_market_tools",
+      "eve_route_planner",
+      "execution_server",
+      "file_backup",
+      "file_merger",
+      "forge",
+      "l2m",
+      "layered_config_synthesizer",
+      "log_query",
+      "migrate_configs",
+      "mocked_http",
+      "pwd_manager",
+      "rejector",
+      "sheeteval",
+      "sith",
+      "test_translator"
+    ],
+    "repeats": 1
+  },
+  "repositories": [
+    {
+      "path": "medrengard-bench",
+      "commit": "50bc1c103436610c9d627e4d5d39810f0f8d983f"
+    },
+    {
+      "path": "medrengard",
+      "commit": "2e1f3726c59629480b18c3aa5169d3b080506d19"
+    }
+  ],
+  "pins": {
+    "runner": "af5a9cbc311605b5cceb80200ca9832bdff2d7b1",
+    "problems": "9cd9ca3a51c3d3e2a99d2488a25baf73a2204451",
+    "python": "3.12.14",
+    "matches": true
+  },
+  "versions": {
+    "node": "v24.13.0",
+    "claude": "2.1.318 (Claude Code)"
+  },
+  "configurations": {
+    "baseline": "97ec32116034c2a14409d75265ef7800713dee2d99219fec1139560fe900f000"
+  }
+}

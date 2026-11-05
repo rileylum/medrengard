@@ -1,0 +1,37 @@
+{
+  "study": {
+    "hash": "0e7440835ae9d15af8fc2b6e0be284f8b6f2e605ad9f689fef6061267a9e7e39",
+    "factory": "../factory.ts",
+    "configurations": [
+      "baseline"
+    ],
+    "problems": [
+      "dynamic_buffer",
+      "mocked_http"
+    ],
+    "repeats": 1
+  },
+  "repositories": [
+    {
+      "path": "medrengard-bench",
+      "commit": "aece210d52664bb5cec9585793f891be494c870a"
+    },
+    {
+      "path": "medrengard",
+      "commit": "f7cf6c17b3b229f61148f1f061fb135de9cf3486"
+    }
+  ],
+  "pins": {
+    "runner": "af5a9cbc311605b5cceb80200ca9832bdff2d7b1",
+    "problems": "9cd9ca3a51c3d3e2a99d2488a25baf73a2204451",
+    "python": "3.12.14",
+    "matches": true
+  },
+  "versions": {
+    "node": "v24.13.0",
+    "claude": "2.1.318 (Claude Code)"
+  },
+  "configurations": {
+    "baseline": "2b3921ca80cd0b3ac989eeedb8919396413b75f3941cdaffe1ca1af6444c67eb"
+  }
+}
