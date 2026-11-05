@@ -1,7 +1,7 @@
 // A study's summary, from result lines whose figures are worked out by hand below.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { summarise, type Run } from "../driver/report.ts";
+import { representative, summarise, type Run } from "../driver/report.ts";
 
 const graded = (checkpoint: number, passed: number, total: number, erosion: number, verbosity: number, usd: number) => ({
   checkpoint,
@@ -74,4 +74,46 @@ test("a summary's intervals resample problems, then repeats, and compare each co
 
   // Seeded: the same lines give the same summary.
   assert.deepEqual(summarise(runs, { control: "base" }), summary);
+});
+
+test("a problem's representative run is its median: solved, then erosion, nearest the median, then the first repeat", () => {
+  const run = (repeat: number, solves: boolean[], erosion: number): Run => ({
+    configuration: "base",
+    problem: "p",
+    repeat,
+    lines: solves.map((solved, index) => ({
+      ...graded(index + 1, solved ? 1 : 0, 1, erosion, 0.2, 1),
+      checkpoints: solves.length,
+    })),
+  });
+  const waiting: Run = {
+    configuration: "base",
+    problem: "p",
+    repeat: 9,
+    lines: [{ checkpoint: 1, checkpoints: 2, status: "escalated", cost: null }],
+  };
+
+  // Solved 1, .25, .75, .25, .5: the median .5 is repeat 5's alone; a run still waiting is not a candidate.
+  const spread = [
+    run(1, [true, true, true, true], 0.1),
+    run(2, [true, false, false, false], 0.1),
+    run(3, [true, true, true, false], 0.1),
+    run(4, [true, false, false, false], 0.1),
+    run(5, [true, true, false, false], 0.9),
+    waiting,
+  ];
+
+  assert.equal(representative(spread)?.repeat, 5);
+
+  // All solved 1: erosion .9, .5, .6 has the median .6, repeat 3's.
+  const tied = [run(1, [true], 0.9), run(2, [true], 0.5), run(3, [true], 0.6)];
+
+  assert.equal(representative(tied)?.repeat, 3);
+
+  // Solved and erosion the same: the first repeat. Even counts take the mean of the middle two:
+  // solved 0 and 1 have the median .5, each as near; erosion the same; repeat 2 comes first.
+  assert.equal(representative([run(4, [true], 0.5), run(2, [false], 0.5)])?.repeat, 2);
+
+  // No complete run: none.
+  assert.equal(representative([waiting]), undefined);
 });

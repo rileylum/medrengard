@@ -64,6 +64,40 @@ export function score(run: Run): Scores | undefined {
   };
 }
 
+const median = (values: readonly number[]) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+
+  return sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
+};
+
+/**
+ * One configuration's runs of one problem: the complete run whose solved fraction, then erosion,
+ * is nearest its median, then the first repeat; none when no run is complete.
+ */
+export function representative<R extends Run>(runs: readonly R[]): R | undefined {
+  const complete = runs.flatMap((run) => {
+    const scores = score(run);
+
+    return scores === undefined ? [] : [{ run, solved: scores.solved!, erosion: scores.erosion }];
+  });
+
+  if (complete.length === 0) return undefined;
+
+  const solved = median(complete.map((one) => one.solved));
+  const erosions = complete.flatMap((one) => (one.erosion === undefined ? [] : [one.erosion]));
+  const erosion = erosions.length === 0 ? 0 : median(erosions);
+  // A run with no erosion, as one abandoned before any grade, is never nearer than one with it.
+  const distance = (value: number | undefined, to: number) => (value === undefined ? Infinity : Math.abs(value - to));
+
+  return complete.toSorted(
+    (a, b) =>
+      distance(a.solved, solved) - distance(b.solved, solved) ||
+      distance(a.erosion, erosion) - distance(b.erosion, erosion) ||
+      a.run.repeat - b.run.repeat,
+  )[0]!.run;
+}
+
 // A small seeded generator (mulberry32), so intervals do not change from one summary to the next.
 export function generator(seed: number) {
   let state = seed;
