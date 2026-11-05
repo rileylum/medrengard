@@ -3,8 +3,8 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname } from "node:path";
 import { join } from "node:path";
 import { createEngine } from "#medrengard/src/engine.ts";
 import { repository, toy, type Result } from "./toy.ts";
@@ -36,9 +36,10 @@ function study(t: TestContext, prompts: string[], fields: Fields, name = "trial"
       encoding: "utf8",
     });
 
-  const write = ({ selection, ...changed }: Fields) => {
+  const fileOf = (study: string) => join(studies, `${study}.ts`);
+  const write = ({ selection, ...changed }: Fields, as = name) => {
     writeFileSync(
-      file,
+      fileOf(as),
       `import { defineStudy } from ${JSON.stringify(join(repository, "study.ts"))};
        export default defineStudy(${JSON.stringify({ factory: "../factory.ts", ...changed })});
        export const selection = ${JSON.stringify(selection)};
@@ -73,17 +74,27 @@ function study(t: TestContext, prompts: string[], fields: Fields, name = "trial"
      });
      writeFileSync(join(out, "checkpoint_results.jsonl"),
        Array.from({ length: reached }, (_, i) => JSON.stringify(row(i + 1)) + "\\n").join(""));
+     for (let idx = 1; idx <= reached; idx++) {
+       const snapshot = join(out, problem, "checkpoint_" + idx, "snapshot");
+       mkdirSync(snapshot, { recursive: true });
+       writeFileSync(join(snapshot, "a.py"), "theirs " + idx + "\\n");
+     }
     `,
   );
 
+  const published = join(problem.directory, "published");
+  const examples = join(problem.directory, "examples.git");
   const driver = (...args: string[]) => run({}, ...args);
-  const run = (env: Record<string, string>, ...args: string[]) =>
+  const run = (env: Record<string, string>, ...args: string[]) => invoke(env, [file], args);
+  // The driver on several studies of this repository, by name.
+  const across = (names: string[], ...args: string[]) => invoke({}, names.map(fileOf), args);
+  const invoke = (env: Record<string, string>, files: string[], args: string[]) =>
     spawnSync(
       process.execPath,
       [
         join(repository, "driver/study.ts"),
         ...args,
-        file,
+        ...files,
         "--runner",
         process.execPath,
         "--runner",
@@ -94,6 +105,10 @@ function study(t: TestContext, prompts: string[], fields: Fields, name = "trial"
         process.execPath,
         "--calibration",
         harness,
+        "--published",
+        published,
+        "--examples",
+        examples,
       ],
       { encoding: "utf8", cwd: problem.directory, env: { ...process.env, ...env } },
     );
@@ -113,7 +128,20 @@ function study(t: TestContext, prompts: string[], fields: Fields, name = "trial"
       .map((listed) => listed.commission);
   };
 
-  return { ...problem, file, git, write, driver, run, lines, commissions, manifest: join(problem.results, name, "manifest.json") };
+  return {
+    ...problem,
+    file,
+    git,
+    write,
+    driver,
+    run,
+    across,
+    lines,
+    commissions,
+    published,
+    examples,
+    manifest: join(problem.results, name, "manifest.json"),
+  };
 }
 
 test(
@@ -400,5 +428,206 @@ test(
 
     assert.equal(rerun.status, 0, rerun.stderr);
     assert.match(rerun.stdout, /\| middle \| high \| \+c \(1\.00, 0\.80\) \|/);
+  },
+);
+
+test(
+  "a report over several studies joins their runs, heads them with each study's configuration hashes, and refuses a configuration and problem in two",
+  { timeout: 120_000 },
+  async (t) => {
+    const fields = { configurations: ["stub"], problems: ["toy"], repeats: 1 };
+    const { driver, across, write, git, results } = study(t, ["Do one.\n", "Do two.\n"], fields);
+
+    write({ ...fields, configurations: ["polished"] }, "other");
+    git("add", "-A");
+    git("commit", "--quiet", "-m", "other");
+    assert.equal(driver("run").status, 0);
+    assert.equal(across(["other"], "run").status, 0);
+
+    // Only a report reads several studies.
+    const both = across(["trial", "other"], "run");
+
+    assert.equal(both.status, 2);
+    assert.match(both.stderr, /run takes one study/);
+
+    const hash = (name: string, configuration: string) =>
+      // SAFETY: the driver writes the manifest as JSON.
+      (
+        JSON.parse(readFileSync(join(results, name, "manifest.json"), "utf8")) as {
+          configurations: Record<string, string>;
+        }
+      ).configurations[configuration]!.slice(0, 12);
+    const joined = across(["trial", "other"], "report");
+
+    assert.equal(joined.status, 0, joined.stderr);
+    const heads = `- trial: stub ${hash("trial", "stub")}\n- other: polished ${hash("other", "polished")}\n`;
+
+    assert.ok(joined.stdout.startsWith(`# trial, other\n\n${heads}`), joined.stdout);
+    assert.match(joined.stdout, /\| stub \| toy \| 1 \|/);
+    assert.match(joined.stdout, /\| polished \| stub \| 0 \[0, 0\] \|/);
+    // Several studies' report has no place of its own: it is printed only.
+    assert.ok(!existsSync(join(results, "trial", "report.md")));
+    assert.ok(!existsSync(join(results, "other", "report.md")));
+
+    // The same configuration on the same problem in both would count its runs twice.
+    write(fields, "other");
+    git("commit", "--quiet", "-am", "overlap");
+
+    const overlapping = across(["trial", "other"], "report");
+
+    assert.equal(overlapping.status, 2);
+    assert.match(overlapping.stderr, /stub on toy is in both trial and other/);
+  },
+);
+
+// Every file under `directory`, by its path relative to it.
+const tree = (directory: string): string[] =>
+  readdirSync(directory, { recursive: true, encoding: "utf8" })
+    .filter((path) => statSync(join(directory, path)).isFile())
+    .sort();
+
+test(
+  "publish writes a study's scores without the machine's paths, and the median run's history per problem and configuration, theirs from their snapshots",
+  { timeout: 120_000 },
+  async (t) => {
+    const { driver, lines, published, examples, directory, results } = study(t, ["Do one.\n", "Do two.\n"], {
+      configurations: ["stub"],
+      problems: ["toy"],
+      repeats: 2,
+      calibrate: { effort: "medium", repeats: 1 },
+    });
+
+    assert.equal(driver("run").status, 0);
+
+    const done = driver("publish");
+
+    assert.equal(done.status, 0, done.stderr);
+
+    const at = join(published, "trial");
+    const read = (run: string) =>
+      readFileSync(join(at, "runs", run, "toy.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Result & { output?: string });
+
+    assert.deepEqual(tree(at), [
+      "invocations.jsonl",
+      "manifest.json",
+      "report.md",
+      "runs/trial-slopcodebench-r1/toy.jsonl",
+      "runs/trial-stub-r1/toy.jsonl",
+      "runs/trial-stub-r2/toy.jsonl",
+    ]);
+    assert.deepEqual(read("trial-stub-r2"), lines("trial-stub-r2"));
+
+    // Their lines lose the path to their harness's output, which is not published.
+    const theirs = lines("trial-slopcodebench-r1") as (Result & { output?: string })[];
+
+    assert.ok(theirs[0]?.output !== undefined);
+    assert.deepEqual(
+      read("trial-slopcodebench-r1"),
+      theirs.map(({ output: _, ...line }) => line),
+    );
+
+    // The manifest names repositories, not where they are.
+    // SAFETY: the driver writes the manifest as JSON.
+    const manifest = (path: string) =>
+      JSON.parse(readFileSync(path, "utf8")) as { repositories: { path: string; commit: string }[] };
+    const original = manifest(join(results, "trial", "manifest.json"));
+
+    assert.deepEqual(
+      manifest(join(at, "manifest.json")).repositories,
+      original.repositories.map(({ path, commit }) => ({ path: basename(path), commit })),
+    );
+    assert.equal(
+      readFileSync(join(at, "invocations.jsonl"), "utf8"),
+      readFileSync(join(results, "trial", "invocations.jsonl"), "utf8"),
+    );
+    assert.match(readFileSync(join(at, "report.md"), "utf8"), /^# trial\n[^]*\| slopcodebench \| stub \|/);
+
+    for (const path of tree(at)) assert.ok(!readFileSync(join(at, path), "utf8").includes(directory), path);
+
+    // Ours: the median run's own commits, r1 as both repeats score alike; tagged per checkpoint.
+    const git = (...args: string[]) => execFileSync("git", ["-C", examples, ...args], { encoding: "utf8" }).trim();
+    const [first, second] = lines("trial-stub-r1");
+
+    assert.deepEqual(git("branch", "--format=%(refname:short)").split("\n").sort(), [
+      "trial/toy/slopcodebench",
+      "trial/toy/stub",
+    ]);
+    assert.equal(git("rev-parse", "trial/toy/stub"), second?.commit);
+    assert.equal(git("rev-parse", "trial/toy/stub/checkpoint-1^{commit}"), first?.commit);
+
+    // Theirs: a commit per checkpoint, of what their harness kept of it.
+    assert.equal(git("rev-list", "--count", "trial/toy/slopcodebench"), "2");
+    assert.equal(git("show", "trial/toy/slopcodebench/checkpoint-1:a.py"), "theirs 1");
+    assert.equal(git("show", "trial/toy/slopcodebench:a.py"), "theirs 2");
+
+    // Dated by when their harness kept each snapshot, so publishing again makes the same commits.
+    const kept = join(theirs[0]!.output!, "toy", "checkpoint_1", "snapshot");
+
+    const keptAt = String(Math.floor(statSync(kept).mtimeMs / 1000));
+
+    assert.equal(git("log", "-1", "--format=%at %ct", "trial/toy/slopcodebench/checkpoint-1"), `${keptAt} ${keptAt}`);
+
+    // Published again, every name points where it did, so links to it keep working.
+    const refs = git("show-ref");
+
+    assert.equal(driver("publish").status, 0);
+    assert.equal(git("show-ref"), refs);
+
+    // A line naming where the results are is refused, and what was published stays.
+    const before = readFileSync(join(at, "runs", "trial-stub-r1", "toy.jsonl"), "utf8");
+    const path = join(results, "trial", "runs", "trial-stub-r1", "toy.jsonl");
+
+    writeFileSync(path, `${readFileSync(path, "utf8")}${JSON.stringify({ ...second, note: join(results, "x") })}\n`);
+
+    const refused = driver("publish");
+
+    assert.equal(refused.status, 2);
+    assert.match(refused.stderr, /trial's runs\/trial-stub-r1\/toy\.jsonl would publish /);
+    assert.equal(readFileSync(join(at, "runs", "trial-stub-r1", "toy.jsonl"), "utf8"), before);
+  },
+);
+
+test(
+  "publish adds to an abandoned run why it escalated and the owner's feedback, and a run with nothing graded has no history",
+  { timeout: 120_000 },
+  async (t) => {
+    const { driver, published, examples, factory } = study(t, ["Do one.\ndry: exit1\n"], {
+      configurations: ["stub"],
+      problems: ["toy"],
+      repeats: 1,
+    });
+
+    assert.equal(driver("run").status, 3);
+
+    const { default: options } = await import(factory);
+    const engine = createEngine(options);
+    const state = engine.state("trial-stub-r1-toy-1");
+
+    if (state.status !== "escalated") assert.fail(`trial-stub-r1-toy-1 is ${state.status}, not escalated`);
+
+    engine.decide("trial-stub-r1-toy-1", {
+      subject: state.subject,
+      since: state.since,
+      outcome: "abandon",
+      feedback: "Not ours to fix.",
+    });
+    assert.equal(driver("run").status, 0);
+
+    const done = driver("publish");
+
+    assert.equal(done.status, 0, done.stderr);
+
+    const path = join(published, "trial", "runs", "trial-stub-r1", "toy.jsonl");
+    const last = readFileSync(path, "utf8").trim().split("\n").at(-1)!;
+    // SAFETY: the driver writes one result per line.
+    const abandoned = JSON.parse(last) as { status: string; escalation?: string; feedback?: string };
+
+    assert.equal(abandoned.status, "abandoned");
+    assert.match(abandoned.escalation ?? "", /implement/);
+    assert.equal(abandoned.feedback, "Not ours to fix.");
+    assert.equal(execFileSync("git", ["-C", examples, "branch"], { encoding: "utf8" }), "");
   },
 );
