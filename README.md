@@ -59,6 +59,16 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   The current iteration problems stay; each of the six cells is filled to two from the surveyed
   ones, by the seed fixed in the survey study, which also picks the cells left short when the
   current ones overfill one. `study.ts select <survey>` prints the grid, also `selection.md`.
+- `study.ts publish <study>…`: each study's scores into `published/<study>/`, to commit: its
+  manifests with each repository named, not located; its invocations and selection; every run's
+  lines, without the path to their harness's output, and an abandoned one's with why it escalated
+  and the owner's feedback; and its summary. It refuses a file naming the owner's home or where
+  the results are. Per problem and configuration it puts the median run's history (see
+  `representative` in `report.ts`) into the examples repository (`--examples`, by default
+  `../medrengard-bench-examples`) as the branch `<study>/<problem>/<configuration>`, each graded
+  checkpoint tagged `<branch>/checkpoint-<n>`: ours the run's own commits, theirs a commit per
+  checkpoint of the snapshot their harness kept, dated by it. Published again, names point where
+  they did. Pushing either is the owner's.
 - `driver/report.ts`: the summary. Per problem, each configuration's mean and range over complete
   runs; per configuration, means over problems with bootstrap 95% intervals (problems resampled,
   then repeats); each configuration against the study's first, paired by problem. A checkpoint never
@@ -99,6 +109,12 @@ node driver/study.ts run studies/baseline.ts --problems datagate,textdrop --conc
 node driver/study.ts status studies/baseline.ts   # where each problem run stands
 node driver/study.ts report studies/baseline.ts   # the summary, also results/baseline/report.md
 node driver/study.ts select studies/survey.ts     # once the survey is complete: the iteration set
+
+# Several studies' runs together, printed only; a configuration on a problem in two is refused.
+node driver/study.ts report studies/baseline.ts studies/baseline-added.ts
+
+# Free: scores into published/, the median runs into ../medrengard-bench-examples.
+node driver/study.ts publish studies/baseline.ts studies/baseline-added.ts studies/survey.ts studies/survey-rerun.ts
 ```
 
 A problem run stops for the owner when a checkpoint escalates, with exit 3, and the study starts no
