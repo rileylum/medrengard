@@ -52,9 +52,12 @@ before its study, and each paid run needs the owner's approval.
 
 Later:
 
-- `requesting-code-review` as Medrengard steps: a review step claiming a verdict, a fix step on fail.
-  Tests whether the workflow adds anything over the skill. A verdict is a judgement, so Core finding 5
-  (a step claiming a document moves the subject) does not arise.
+- Pocock's `code-review` as Medrengard steps: implement, then a read-only review step running his two reviewers
+  and claiming a verdict with the findings as its body, then on fail a fix step with a fresh context given the
+  request and the verdict. The same review content as 1 in another structure, so the paired difference isolates
+  what the workflow adds (isolation enforced by the sandbox, findings in the record, a bounded loop) against what
+  it costs (the skill split up, a fix agent without the implementer's context). A verdict is a judgement, so Core
+  finding 5 (a step claiming a document moves the subject) does not arise.
 - [kunchenguid/no-mistakes](https://github.com/kunchenguid/no-mistakes) (9k): a review, test, docs and lint
   pipeline with auto-fix. A Go program in front of a git remote that fetches the base branch from the forge;
   needs a fake remote and its push, PR and CI stages skipped.
