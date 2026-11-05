@@ -31,11 +31,13 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   as two configurations: `stub`, one step, and `polished`, two agent steps.
 - `study.ts`: what a study is, and the problem sets: `iteration`, which configurations are compared
   on, and `heldOut`, which only a study marked `final` runs, drawn by seed before any study ran;
-  `unused`, the rest, which a survey study runs once to choose more to iterate on.
+  `unused`, the rest, which a survey study runs once to choose more to iterate on; `added`,
+  the six chosen from it.
 - `studies/`: the studies. `baseline.ts` is the first: the baseline five times on the iteration
   set, with calibration once. `survey.ts`: the baseline once on `unused`, with the selection that
   chooses the iteration set's next problems from it; `survey-rerun.ts` runs again the two whose
-  survey run filled a 256 MiB /tmp held in memory, and places them. `dry-easy.ts` is free.
+  survey run filled a 256 MiB /tmp held in memory, and places them. `baseline-added.ts`: the baseline five
+  times on `added`, the six problems chosen from the survey to iterate on with `iteration`. `dry-easy.ts` is free.
 - `driver/study.ts`: runs a study, `--concurrency` problem runs at a time (2 by default), every
   configuration's and problem's first repeat before any second. Concurrency is how a study is run,
   not part of it: each run appends what it was asked for to `results/<study>/invocations.jsonl`. Before anything runs it writes
