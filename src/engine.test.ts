@@ -678,6 +678,32 @@ test("a step that exits at once past its disk limit escalates", async (t) => {
   });
 });
 
+test("a step that locks directories in its work area completes, and its work area is still removed", async (t) => {
+  // Mode 000 below a mode 000 directory: nothing can be listed or removed until it is opened again.
+  const { engine, directory } = await engineRunning(
+    t,
+    `mkdir -p locked/inner && touch locked/inner/file && chmod 000 locked/inner locked
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.deepEqual(await readdir(join(directory, "record", "attempts")), []);
+});
+
+test("a step that hides its bytes under a locked directory past its disk limit escalates", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `mkdir hidden && head -c 5000000 /dev/zero > hidden/big && chmod 000 hidden
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    { idle: 5, attempt: 5, transcript: 65536, input: 65536, disk: 1024 * 1024 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build used more than its disk limit of 1048576 bytes.",
+  });
+});
+
 test("a step that fills an empty area of its access escalates", async (t) => {
   // The write fails once the area is full; the step carries on, long enough to be seen.
   const { engine } = await engineConfined(
@@ -3180,6 +3206,39 @@ test(
       (await readFile(join(directory, "started.workspace"), "utf8")).trim(),
       "/workspace",
     );
+    assert.deepEqual(await readdir(join(record, "attempts")), []);
+  },
+);
+
+test(
+  "an interrupted attempt whose step locked directories in its work area leaves no directory",
+  { timeout: 10_000 },
+  async (t) => {
+    const { engine, directory, record, options } = await engineRunning(
+      t,
+      `mkdir -p locked/inner && chmod 000 locked/inner locked
+       echo started >> "$1"; exec sleep 30`,
+      { idle: 60, attempt: 60, transcript: 65536, input: 65536 },
+    );
+
+    const crashing = join(directory, "crashing.ts");
+
+    await writeFile(
+      crashing,
+      `import { createEngine } from ${JSON.stringify(join(import.meta.dirname, "engine.ts"))};
+    await createEngine(${JSON.stringify(options)}).advance("first");`,
+    );
+
+    const child = spawn(process.execPath, [crashing], { stdio: "ignore" });
+
+    await untilStarted(directory);
+    child.kill("SIGKILL");
+    await once(child, "exit");
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      reason: "Step build was interrupted.",
+    });
     assert.deepEqual(await readdir(join(record, "attempts")), []);
   },
 );

@@ -5,8 +5,10 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import {
   closeSync,
+  chmodSync,
   constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -171,6 +173,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
   }
 
   function unspool(spool: Spool): void {
+    opened(spool.directory);
     rmSync(spool.directory, { recursive: true, force: true });
   }
 
@@ -1184,19 +1187,44 @@ function bounded(reason: string): string {
 }
 
 // The bytes the files under `directory` take on disk. What vanishes as it is walked counts for
-// nothing; what cannot be read, too, so a step could hide bytes under a directory it locks.
+// nothing; so does what is under a directory that cannot be read, until its program ends and the
+// engine opens it again.
 async function bytesUnder(directory: string): Promise<number> {
-  let total = 0;
+  const stats = await lstat(directory).catch(() => undefined);
+  let total = (stats?.blocks ?? 0) * 512;
 
-  const entries = await readdir(directory, { recursive: true }).catch(() => []);
-
-  for (const entry of entries) {
-    const stats = await lstat(join(directory, entry)).catch(() => undefined);
-
-    total += (stats?.blocks ?? 0) * 512;
+  if (stats?.isDirectory()) {
+    for (const entry of await readdir(directory).catch(() => [])) {
+      total += await bytesUnder(join(directory, entry));
+    }
   }
 
   return total;
+}
+
+// A step's programs may leave directories they made unreadable or unremovable, such as one at mode
+// 000. Once they end, the work area is the engine's: each directory under `path` is opened again for
+// its owner, without following links.
+function opened(path: string): void {
+  const stats = (() => {
+    try {
+      return lstatSync(path);
+    } catch {
+      return undefined;
+    }
+  })();
+
+  if (!stats?.isDirectory()) return;
+
+  if ((stats.mode & 0o700) !== 0o700) chmodSync(path, stats.mode | 0o700);
+
+  for (const entry of readdirSync(path)) opened(join(path, entry));
+}
+
+// Removes `directory` and all under it, opening again what a step's programs locked.
+async function removed(directory: string): Promise<void> {
+  opened(directory);
+  await rm(directory, { recursive: true, force: true });
 }
 
 // Why the step must stop if an empty area of its access is full, seen through its sandbox's root,
@@ -1410,7 +1438,7 @@ async function run(
 
   // Attempt numbers are not reused, so anything already there is a removal that failed: start
   // clean.
-  await rm(spool.directory, { recursive: true, force: true });
+  await removed(spool.directory);
   await mkdir(directory, { recursive: true });
 
   const workspace = join(directory, "workspace");
@@ -1480,8 +1508,10 @@ async function run(
 
   const halted = () => halt() !== undefined;
 
-  // Why the attempt must stop once a program has ended, measured afresh.
+  // Why the attempt must stop once a program has ended, measured afresh, with every directory
+  // opened again so that none hides its bytes.
   const after = async () => {
+    opened(directory);
     over ||= (await bytesUnder(directory)) > disk;
 
     return halt();
@@ -1807,7 +1837,7 @@ async function run(
       closeSync(spooling.errors);
     }
 
-    await rm(directory, { recursive: true, force: true });
+    await removed(directory);
   }
 }
 
