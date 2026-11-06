@@ -104,7 +104,21 @@ ln -s ~/dev/medrengard/node_modules node_modules
 bin/fetch.sh
 ```
 
-Grading needs Docker, and the network for the grader's image and each snapshot's dependencies.
+Grading needs rootless Podman, and the network for the grader's image and each snapshot's dependencies:
+SlopCodeBench's grader starts a container per checkpoint, and under Docker each one adds and removes a
+network interface on the host, which other programs, such as Chrome, take for a network change. Under
+rootless Podman those interfaces live in the owner's user namespace. `bin/podman-python3.12-uv.yaml` is
+SlopCodeBench's environment with `binary: podman`, used for grading only; requests are rendered with the
+original. The runtime's version is in each manifest's pins. Once:
+
+```sh
+sudo pacman -S podman passt                      # and a riley line in /etc/subuid and /etc/subgid
+printf '[containers]\nuserns = "keep-id"\n' > ~/.config/containers/containers.conf
+systemctl --user enable --now podman.socket
+```
+
+`keep-id` keeps files the grader writes into its bind mount owned by the owner. Studies before
+`review-verify`'s second stage graded under Docker.
 
 ## Running a study
 

@@ -30,6 +30,8 @@ PROBLEMS = BENCH / "vendor" / "scb-problems"
 # What calibration/run.sh adds to the runner checkout: its model and provider, which grading never reads.
 CALIBRATION = {"configs/providers.yaml", "configs/models/opus-5.5.yaml"}
 ENVIRONMENT = RUNNER / "configs" / "environments" / "docker-python3.12-uv.yaml"
+# The same environment run through rootless Podman, for grading only (the file says why).
+GRADING = BENCH / "bin" / "podman-python3.12-uv.yaml"
 PROMPT = "just-solve"
 
 
@@ -77,7 +79,7 @@ def grade(snapshot, name, n, out):
             shutil.copy2(snapshot / path, graded / path)
         shutil.rmtree(out, ignore_errors=True)
         report = json.loads(
-            slop_code("eval-snapshot", str(graded), "-o", out, "-p", name, "-c", n, "-e", str(ENVIRONMENT), "--json")
+            slop_code("eval-snapshot", str(graded), "-o", out, "-p", name, "-c", n, "-e", str(GRADING), "--json")
         )
         report["quality"] = _get_scb_check_metrics(Path(checkpoint))
         return report
@@ -100,10 +102,12 @@ def pins():
     problems = git(PROBLEMS, "rev-parse", "HEAD").strip()
     python = sys.version.split()[0]
     changes = changed(RUNNER, CALIBRATION) + changed(PROBLEMS)
+    grader = subprocess.run(["podman", "--version"], check=True, capture_output=True, text=True).stdout.strip()
     return {
         "runner": runner,
         "problems": problems,
         "python": python,
+        "grader": grader,
         "matches": runner == pinned["runner"]["commit"]
         and problems == pinned["problems"]["commit"]
         and python.startswith(pinned["python"] + ".")
