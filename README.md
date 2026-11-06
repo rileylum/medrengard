@@ -43,8 +43,10 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   chooses the iteration set's next problems from it; `survey-rerun.ts` runs again the two whose
   survey run filled a 256 MiB /tmp held in memory, and places them. `baseline-added.ts`: the baseline five
   times on `added`, the six problems chosen from the survey to iterate on with `iteration`. `pilot-review.ts`:
-  `code-review` and `verification` once on datagate, to check their setup, in no comparison. `code-review.ts`
-  and `verification.ts`: each three times on all twelve, compared with the published baseline. `dry-easy.ts` is free.
+  `code-review` and `verification` once on datagate, to check their setup, in no comparison;
+  `pilot-review-hard.ts` the same and the baseline on eve_market_tools; `drift-check.ts` the baseline once more
+  on datagate. `review-verify.ts`: the baseline, `code-review` and `verification` three times each on eleven of
+  the twelve, without test_translator. `dry-easy.ts` is free.
 - `driver/study.ts`: runs a study, `--concurrency` problem runs at a time (2 by default), every
   configuration's and problem's first repeat before any second. Concurrency is how a study is run,
   not part of it: each run appends what it was asked for to `results/<study>/invocations.jsonl`. Before anything runs it writes

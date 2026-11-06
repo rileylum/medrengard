@@ -17,11 +17,10 @@ a misreading. Erosion is the likelier place for an effect, solved the less likel
 
 ## How many runs (decision N1)
 
-n=3 for each configuration under test, compared with the published n=5 baseline, paired by problem. No
-fresh control at this stage: the baseline ran on 2026-11-05/06, and Claude Code is still 2.1.318 as in its
-manifests. A change of model on the server side would not show.
+n=3 for each configuration under test, paired by problem. At first against the published n=5 baseline, with no
+fresh control; changed by V6 below.
 
-Smallest difference a study can detect against the n=5 baseline (80% power, two-sided 5%, run-to-run noise
+Smallest difference a study could detect against the n=5 baseline (80% power, two-sided 5%, run-to-run noise
 only, so a lower bound; the bootstrap also resamples problems):
 
 | metric | at n=3 |
@@ -102,3 +101,25 @@ Decided with the owner, one at a time:
   change only how a configuration is set up, put to the owner before any study runs. Then `studies/code-review.ts`
   and `studies/verification.ts`, n=3 on the twelve, reported with
   `study.ts report studies/baseline.ts studies/baseline-added.ts studies/<study>.ts`.
+
+## After the pilots
+
+`pilot-review` (datagate), `pilot-review-hard` (eve_market_tools, with the baseline) and `drift-check` (the
+baseline on datagate), each n=1, about $31 in all, nothing escalated:
+
+| | datagate solved / erosion / $ | eve_market_tools solved / erosion / $ |
+|---|---|---|
+| baseline, published n=5 | 0.657 / 0.639 (0.598–0.725) / 2.53 | 0.25 / 0.851 (0.803–0.952) / 3.31 |
+| baseline, 2026-11-06 | 0.571 / 0.526 / 2.47 | 0.25 / 0.845 / 3.70 (Core 0.419, below every published run) |
+| code-review | 0.714 / 0.395 / 6.89 | 0 / 0.609 / 7.94 |
+| verification | 0.571 / 0.498 / 3.83 | 0.25 / 0.839 / 4.03 |
+
+- Setup held: every checkpoint called its skill; code-review's two reviewers ran as subagents and the agent
+  committed again after them; Claude Code's cost includes the subagents; their messages reach the transcript.
+- datagate's rowid misreading survived: the Spec reviewer flagged rowid but was unsure of the numbering, and the
+  agent kept the first data row as 1.
+- **V6, a fresh control.** The baseline a day later fell below all five published runs on datagate's erosion, so
+  the study runs the baseline again beside both configurations, at n=3; the published n=5 stays as the record.
+- **V7, eleven problems.** test_translator left out: $15.30 a run against $1.40–5.30, 66 minutes, the noisiest on
+  Core and cost; chosen by the baseline's cost, not the pilots. Detectable at n=3 per arm: solved 0.055, erosion
+  0.047. The always-solved problems stay, where a regression shows. About $515, `studies/review-verify.ts`.
