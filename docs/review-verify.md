@@ -123,3 +123,34 @@ baseline on datagate), each n=1, about $31 in all, nothing escalated:
 - **V7, eleven problems.** test_translator left out: $15.30 a run against $1.40–5.30, 66 minutes, the noisiest on
   Core and cost; chosen by the baseline's cost, not the pilots. Detectable at n=3 per arm: solved 0.055, erosion
   0.047. The always-solved problems stay, where a regression shows. About $515, `studies/review-verify.ts`.
+
+## Grading and the engine between stages
+
+- **G1, grading under rootless Podman** from stage 2: Docker's containers each added and removed a veth on the
+  host, which Chrome took for a network change. Grading needs the network (each container installs from PyPI), so
+  `--network none` was out; rootless Podman keeps those interfaces in the owner's user namespace. Host events in
+  30 s: 90 grading under Docker, 0 under Podman. Ten stage-1 checkpoints regraded test by test, on a quiet Docker
+  and then on Podman: 0 of 10 differ in each (1169 tests), so grading under load flipped nothing.
+- **Core finding 7**, fixed in Medrengard b80a357: a step left a mode 000 directory in its scratch area; removing
+  the attempt's work area failed, which replaced the agent's completed claim with an engine failure and then
+  crashed its problem run. The checkpoint (code-review r3, execution_server 6) was retried as a setup failure.
+- Stage 1 ran on bench 85e45f0 and Medrengard 6bf3786 (`manifest-85e45f0.json`), stage 2 on bench e4fabe0 and
+  Medrengard b80a357 with Podman (`manifest.json`). Configuration hashes are the same in both.
+
+## Results
+
+`studies/review-verify.ts`, complete, about $465. Each configuration against the baseline run beside it, paired by
+problem, n=3 on eleven problems, bootstrap 95%:
+
+| | solved | Core | erosion | verbosity | $ per problem |
+|---|---|---|---|---|---|
+| baseline | 0.697 | 0.855 | 0.707 | 0.358 | 3.20 |
+| code-review − baseline | +0.001 [−0.059, 0.059] | +0.016 [−0.007, 0.046] | **−0.190 [−0.246, −0.134]** | **−0.098 [−0.135, −0.059]** | +3.69 (2.2×) |
+| verification − baseline | −0.012 [−0.065, 0.036] | −0.008 [−0.034, 0.014] | −0.050 [−0.097, −0.001] | −0.049 [−0.091, −0.008] | +0.80 (1.25×) |
+
+- Pocock's `code-review` lowers erosion on every one of the eleven problems and leaves correctness where it was.
+- `verification-before-completion` changes little: a small fall in erosion and verbosity at the edge of the
+  interval, no change in correctness.
+- Neither fixes the misreadings the baseline repeats.
+- The fresh baseline's mean erosion equals the published one's; per problem it moved both ways, so the drift
+  check's gap on datagate was mostly run-to-run noise.
