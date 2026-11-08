@@ -199,6 +199,65 @@ sections.push(
   "",
 );
 
+// Post 4: the same without the two problems whose breakage the specs explain (posts 3 and 5), by
+// checkpoint; and what a Regression failure usually is: a test that never passed in the first place.
+const specGaps = new Set(["test_translator", "layered_config_synthesizer"]);
+const rest = broken.filter((row) => !specGaps.has(row.problem) && row.study !== "review-verify-long");
+const tally = (rows: readonly (typeof broken)[number][]) => [
+  String(rows.length),
+  `${rows.reduce((sum, row) => sum + row.broken, 0)} / ${rows.reduce((sum, row) => sum + row.passed, 0)}`,
+  percent(mean(rows.map((row) => row.broken / row.passed))),
+];
+let regressionFailed = 0;
+let neverPassed = 0;
+
+for (const [index, name] of studies.entries()) {
+  if (name === "review-verify-long") continue;
+
+  for (const run of recorded[index]!.filter((one) => !specGaps.has(one.problem))) {
+    const last = lastOf(run);
+
+    for (const [checkpoint, line] of last) {
+      for (const [group, result] of Object.entries(line.grade?.tests ?? {})) {
+        const earlier = Number(/^checkpoint_(\d+)-Regression$/.exec(group)?.[1]);
+        const own = last.get(earlier)?.grade?.tests;
+
+        if (!(earlier < checkpoint) || own === undefined) continue;
+
+        const passed = new Set(
+          Object.entries(own)
+            .filter(([name]) => name.startsWith(`checkpoint_${earlier}-`) && !name.endsWith("-Regression"))
+            .flatMap(([, ownResult]) => ownResult.passed),
+        );
+
+        regressionFailed += result.failed.length;
+        neverPassed += result.failed.filter((test) => !passed.has(test)).length;
+      }
+    }
+  }
+}
+
+sections.push(
+  "## Breakage without test_translator and layered_config_synthesizer",
+  "",
+  "Every study but review-verify-long; their harness's calibration runs list no tests.",
+  "",
+  table(
+    ["", "checkpoints", "broken / earlier tests passed", "mean"],
+    [
+      ["all", ...tally(rest)],
+      ...configurations.map((one) => [`review-verify ${one}`, ...tally(rest.filter((row) => row.study === "review-verify" && row.configuration === one))]),
+      ...[...Map.groupBy(rest, (row) => row.checkpoint)]
+        .toSorted(([a], [b]) => a - b)
+        .map(([checkpoint, rows]) => [`at checkpoint ${checkpoint}`, ...tally(rows)]),
+    ],
+  ),
+  "",
+  `Regression failures over the same runs: ${regressionFailed}, of which ${neverPassed} ` +
+    `(${percent(neverPassed / regressionFailed)}) are tests that never passed at their own checkpoint.`,
+  "",
+);
+
 // Post 3: what the review itself changed, from data/reviews.jsonl.
 type Review = {
   problem: string;

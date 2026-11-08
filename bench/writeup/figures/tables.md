@@ -115,6 +115,26 @@ Checkpoints breaking 5% or more:
 | review-verify-long | verification | test_translator | 1 | 7 | 471 / 740 (0.64) |
 | review-verify-long | verification | test_translator | 1 | 8 | 471 / 745 (0.63) |
 
+## Breakage without test_translator and layered_config_synthesizer
+
+Every study but review-verify-long; their harness's calibration runs list no tests.
+
+|  | checkpoints | broken / earlier tests passed | mean |
+|---|---|---|---|
+| all | 653 | 37 / 57862 | 0.07% |
+| review-verify baseline | 120 | 12 / 10327 | 0.16% |
+| review-verify code-review | 120 | 8 / 10489 | 0.07% |
+| review-verify verification | 120 | 5 / 10384 | 0.04% |
+| at checkpoint 2 | 163 | 3 / 5200 | 0.02% |
+| at checkpoint 3 | 163 | 7 / 9637 | 0.07% |
+| at checkpoint 4 | 144 | 10 / 13588 | 0.11% |
+| at checkpoint 5 | 113 | 12 / 15161 | 0.11% |
+| at checkpoint 6 | 49 | 5 / 7729 | 0.07% |
+| at checkpoint 7 | 18 | 0 / 5652 | 0.00% |
+| at checkpoint 8 | 3 | 0 / 895 | 0.00% |
+
+Regression failures over the same runs: 4311, of which 4274 (99.14%) are tests that never passed at their own checkpoint.
+
 ## code-review: before and after its review, at the same checkpoint
 
 177 checkpoints. Lines changed by the review: mean 112. Erosion lower after the review at 114, higher at 61.
