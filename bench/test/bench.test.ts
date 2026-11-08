@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { createEngine } from "#medrengard/src/engine.ts";
+import { createEngine } from "@medrengard/core/src/engine.ts";
 import { toy } from "./toy.ts";
 
 

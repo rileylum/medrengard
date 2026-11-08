@@ -25,8 +25,10 @@ from slop_code.execution.snapshot import _walk_candidates
 from slop_code.metrics.checkpoint.driver import _get_scb_check_metrics
 
 BENCH = Path(__file__).resolve().parent.parent
-RUNNER = BENCH / "vendor" / "slop-code-bench"
-PROBLEMS = BENCH / "vendor" / "scb-problems"
+# runner.sh names the data directory holding the pinned checkouts.
+VENDOR = Path(os.environ["MEDRENGARD_BENCH_DATA"]) / "vendor"
+RUNNER = VENDOR / "slop-code-bench"
+PROBLEMS = VENDOR / "scb-problems"
 # What calibration/run.sh adds to the runner checkout: its model and provider, which grading never reads.
 CALIBRATION = {"configs/providers.yaml", "configs/models/opus-5.5.yaml"}
 ENVIRONMENT = RUNNER / "configs" / "environments" / "docker-python3.12-uv.yaml"

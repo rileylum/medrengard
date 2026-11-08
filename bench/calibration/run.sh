@@ -14,7 +14,8 @@
 # The pass policy any-case keeps their run going past failing tests, as ours does.
 set -eu
 here=$(dirname "$(realpath "$0")")
-runner="$here/../vendor/slop-code-bench"
+vendor=${MEDRENGARD_BENCH_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/medrengard/bench}/vendor
+runner="$vendor/slop-code-bench"
 scratch=${SCRATCH:-/var/tmp/medrengard/bench-calibration}
 problem=$1 effort=$2 count=${3:-0}
 
@@ -30,7 +31,7 @@ YAML
 
 rm -rf "$scratch/problems/$problem"
 mkdir -p "$scratch/problems" "$scratch/outputs"
-cp -r "$here/../vendor/scb-problems/$problem" "$scratch/problems/$problem"
+cp -r "$vendor/scb-problems/$problem" "$scratch/problems/$problem"
 uv run --quiet --project "$runner" python -I - "$scratch/problems/$problem/config.yaml" "$count" <<'PY'
 import sys, yaml
 path, count = sys.argv[1], int(sys.argv[2])

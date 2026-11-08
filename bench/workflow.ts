@@ -5,11 +5,11 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { Access, Workflow } from "#medrengard/src/replay.ts";
-import { claudeCode, contract } from "#medrengard/defaults/access.ts";
-import { builtIn } from "#medrengard/defaults/kinds.ts";
-import { limits } from "#medrengard/defaults/limits.ts";
-import type { Kind } from "#medrengard/src/kinds.ts";
+import type { Access, Workflow } from "@medrengard/core/src/replay.ts";
+import { claudeCode, contract } from "@medrengard/core/defaults/access.ts";
+import { builtIn } from "@medrengard/core/defaults/kinds.ts";
+import { limits } from "@medrengard/core/defaults/limits.ts";
+import type { Kind } from "@medrengard/core/src/kinds.ts";
 
 const read = (path: string) => ({ path, mode: "read" as const });
 const bin = new URL("bin", import.meta.url).pathname;

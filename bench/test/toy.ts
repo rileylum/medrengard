@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createEngine } from "#medrengard/src/engine.ts";
+import { createEngine } from "@medrengard/core/src/engine.ts";
 
 export const repository = join(import.meta.dirname, "..");
 

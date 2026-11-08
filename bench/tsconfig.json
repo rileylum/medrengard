@@ -7,8 +7,7 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
-    "types": ["node"],
-    "typeRoots": ["./.medrengard/node_modules/@types"]
+    "types": ["node"]
   },
   "include": ["*.ts", "bin/*.ts", "dry/*.ts", "driver/*.ts", "test/*.ts"]
 }

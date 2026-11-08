@@ -30,7 +30,8 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   `SOURCE` naming the repository, commit and path. A configuration's hash covers their contents.
 - `workflow.ts`'s `implementAccess` gives every agent step /tmp and its home as Medrengard scratch
   areas, on disk in the attempt's work area, bounded by a 16 GiB disk limit (`benchmarkLimits`).
-- `factory.ts`: every configuration, each its own workflow, on one log under `state/`. **Running
+- `factory.ts`: every configuration, each its own workflow, on one log under the data directory's
+  `state/`. **Running
   it spends the owner's subscription: only with the owner's approval.**
 - `dry/`: the same workflow with a stub that commits the problem's reference solution, at no cost,
   as two configurations: `stub`, one step, and `polished`, two agent steps.
@@ -49,11 +50,14 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   the twelve, without test_translator. `dry-easy.ts` is free.
 - `driver/study.ts`: runs a study, `--concurrency` problem runs at a time (2 by default), every
   configuration's and problem's first repeat before any second. Concurrency is how a study is run,
-  not part of it: each run appends what it was asked for to `results/<study>/invocations.jsonl`. Before anything runs it writes
-  `results/<study>/manifest.json`: the study, its repository's and Medrengard's commits, the
-  runner's pins, Node's and Claude Code's versions, each configuration's hash. It refuses
-  uncommitted changes, pins that do not match, held-out problems outside a final study, and a study
-  changed since it started. An escalation stops it starting problem runs. Run again, it goes on
+  not part of it: each run appends what it was asked for to `results/<study>/invocations.jsonl`. A
+  study runs from a worktree of its own, which holds the study, the driver and Medrengard, so one
+  commit names them all. Before anything runs it writes `results/<study>/manifest.json`: the study,
+  the worktree's commit, the runner's pins, Node's and Claude Code's versions, each configuration's
+  hash. It refuses the main checkout, a study and a Medrengard in different checkouts, uncommitted
+  changes, pins that do not match, held-out problems outside a final study, and a study changed
+  since it started. Manifests before the monorepo name two repositories, the benchmark's and
+  Medrengard's; their commits are in this repository's history. An escalation stops it starting problem runs. Run again, it goes on
   where it stopped.
 - `driver/bench.ts`: one problem run, one configuration on one problem's checkpoints. For each it
   builds the start (the previous result with the problem's assets put back, as SlopCodeBench's
@@ -86,22 +90,26 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   `bin/runner.sh`: problems, grading and pins. Tests replace it with a fake.
 - `calibration/`: SlopCodeBench's own harness on the same model and the owner's subscription.
   `run.sh <problem> <effort> [<count>]` adds a model config and a provider to the runner checkout
-  under `vendor/` and runs on a copy of the problem, in `$SCRATCH`, with the pass policy `any-case`
+  under the data directory's `vendor/` and runs on a copy of the problem, in `$SCRATCH`, with the pass policy `any-case`
   so it goes past failing tests as ours does. `cell.ts` is one problem run of it in a study, its
   results written as ours under the configuration `slopcodebench`. Paid.
 - `pins.json`: the runner's and problems' commits, and the Python they run on. `bin/fetch.sh`
-  checks them out under `vendor/`.
+  checks them out under the data directory's `vendor/`.
+- `data.ts`: the data directory, `~/.local/share/medrengard/bench` (or `$XDG_DATA_HOME`'s), or
+  `MEDRENGARD_BENCH_DATA`. It holds `state/` (the log and the trajectories repository),
+  `results/` and `vendor/`, outside every checkout, so a study's worktree and the main checkout see
+  one record. Nothing else keeps a copy: back it up.
 
-It needs Medrengard at `f7cf6c1` or later, for scratch areas, and from `2e1f372`: the commit verifier comparing a claim with any subject
-that names a `sha` (for the start kind), the adapter turning off `cc-plugin-privacy`, and steps
-seeing `/workspace`, `/input` and `/output`. `.medrengard` follows the checkout's working tree.
+The benchmark imports Medrengard as `@medrengard/core`, the package beside it, and runs its Claude
+Code adapter from `../core/adapters`.
 
 ## Setup
 
+From the repository's root:
+
 ```sh
-ln -s ~/dev/medrengard .medrengard
-ln -s ~/dev/medrengard/node_modules node_modules
-bin/fetch.sh
+npm install
+bench/bin/fetch.sh
 ```
 
 Grading needs rootless Podman, and the network for the grader's image and each snapshot's dependencies:
@@ -122,7 +130,15 @@ systemctl --user enable --now podman.socket
 
 ## Running a study
 
+A study runs from a worktree of its own, at the commit it starts on, and stays there through its
+stages; the main checkout goes on with other work. A change agreed between stages moves the
+worktree to the new commit, with the manifest set aside as `manifest-<commit>.json`. Reports,
+status and publishing run from any checkout.
+
 ```sh
+git worktree add --detach ~/dev/medrengard-studies/<study>
+cd ~/dev/medrengard-studies/<study> && npm install && cd bench
+
 # Free: the stub through the real grader.
 node driver/study.ts run studies/dry-easy.ts
 
@@ -136,7 +152,8 @@ node driver/study.ts select studies/survey.ts     # once the survey is complete:
 # Several studies' runs together, printed only; a configuration on a problem in two is refused.
 node driver/study.ts report studies/baseline.ts studies/baseline-added.ts
 
-# Free: scores into published/, the median runs into ../medrengard-bench-examples.
+# Free, from a branch of the main checkout: scores into published/, the median runs into
+# medrengard-bench-examples beside the repository.
 node driver/study.ts publish studies/baseline.ts studies/baseline-added.ts studies/survey.ts studies/survey-rerun.ts
 ```
 
@@ -154,7 +171,9 @@ one problem run alone, as `--factory`, `--configuration`, `--problem` and `--run
 ## Development
 
 `npm test`: type check and the drivers' tests, which run the real workflow with the stub, a fake
-runner and a fake SlopCodeBench harness, under the system temp directory.
+runner and a fake SlopCodeBench harness, under the system temp directory. The study driver's tests
+run it from a worktree of a copy of the working tree, so they need nothing committed. The root's
+linter and formatter skip the benchmark for now.
 
 ## Results and examples
 
@@ -166,5 +185,5 @@ code, with its history across checkpoints, is in
 ## Licence
 
 MIT: see [`LICENSE`](LICENSE). SlopCodeBench is MIT-licensed and its problems Apache-2.0; neither
-is held here (`bin/fetch.sh` checks them out under `vendor/`). Cite the paper (arXiv 2603.24755)
+is held here (`bin/fetch.sh` checks them out into the data directory). Cite the paper (arXiv 2603.24755)
 with any results.

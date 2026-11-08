@@ -4,9 +4,11 @@
 import baseline from "./configurations/baseline.ts";
 import codeReview from "./configurations/code-review.ts";
 import verification from "./configurations/verification.ts";
+import { join } from "node:path";
+import { data } from "./data.ts";
 import { benchmarkKinds, benchmarkLimits, benchmarkWorkflow, implementAccess, implementPrompt, type Configuration, type Environment } from "./workflow.ts";
 
-const trajectoriesPath = new URL("state/trajectories.git", import.meta.url).pathname;
+const trajectoriesPath = join(data, "state", "trajectories.git");
 
 const configurations: Record<string, (environment: Environment) => Configuration> = {
   baseline,
@@ -17,7 +19,7 @@ const configurations: Record<string, (environment: Environment) => Configuration
 const environment = { access: implementAccess(), prompt: implementPrompt };
 
 export default {
-  log: new URL("state/log/log.sqlite", import.meta.url).pathname,
+  log: join(data, "state", "log", "log.sqlite"),
   defaults: { limits: benchmarkLimits },
   kinds: benchmarkKinds,
   workflows: Object.fromEntries(

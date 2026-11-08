@@ -12,7 +12,8 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { createEngine } from "#medrengard/src/engine.ts";
+import { createEngine } from "@medrengard/core/src/engine.ts";
+import { data } from "../data.ts";
 
 const { values } = parseArgs({
   options: {
@@ -22,7 +23,7 @@ const { values } = parseArgs({
     runner: { type: "string", multiple: true },
     problem: { type: "string" },
     run: { type: "string" },
-    results: { type: "string", default: "results" },
+    results: { type: "string", default: join(data, "results") },
     checkpoints: { type: "string" },
   },
 });

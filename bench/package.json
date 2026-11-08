@@ -1,13 +1,15 @@
 {
-  "name": "medrengard-bench",
+  "name": "@medrengard/bench",
   "private": true,
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=24" },
-  "imports": {
-    "#medrengard/*": "./.medrengard/*"
+  "engines": {
+    "node": ">=24"
   },
   "scripts": {
     "test": "tsc -p . && node --test 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "@medrengard/core": "*"
   }
 }

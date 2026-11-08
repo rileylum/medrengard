@@ -1,12 +1,12 @@
-// The study driver, outside in: a study file in its own repository, run over the toy problem with
-// the dry stub's configurations and a fake runner, so no Docker, network or spend.
+// The study driver, outside in: a study file in a worktree of the repository as the working tree
+// has it, run over the toy problem with the dry stub's configurations and a fake runner, so no
+// Docker, network or spend.
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
-import { join } from "node:path";
-import { createEngine } from "#medrengard/src/engine.ts";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative } from "node:path";
+import { createEngine } from "@medrengard/core/src/engine.ts";
 import { repository, toy, type Result } from "./toy.ts";
 
 type Fields = {
@@ -23,32 +23,63 @@ type Fields = {
   };
 };
 
-// The toy problem with a study `name` over it, committed in a repository of its own.
+const gitIn =
+  (directory: string) =>
+  (...args: string[]) =>
+    execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@localhost", "-C", directory, ...args], {
+      encoding: "utf8",
+    }).trim();
+
+// The repository as the working tree has it, committed in a repository of its own, its main
+// checkout, with a worktree beside it as a study runs from: the driver and Medrengard under test are
+// the working tree's, whatever it has not committed. Each has Medrengard linked, as npm links it.
+function copy(directory: string) {
+  const root = join(repository, "..");
+  const main = join(directory, "repository");
+  const worktree = join(directory, "checkout");
+  const files = gitIn(root)("ls-files", "-z", "-co", "--exclude-standard", "--", ".gitignore", "package.json", "core", "bench")
+    .split("\0")
+    .filter((file) => file !== "" && !file.startsWith("bench/published/") && existsSync(join(root, file)));
+
+  for (const file of files) cpSync(join(root, file), join(main, file));
+
+  gitIn(main)("init", "--quiet");
+  gitIn(main)("add", "-A");
+  gitIn(main)("commit", "--quiet", "-m", "copy");
+  gitIn(main)("worktree", "add", "--quiet", "--detach", worktree);
+
+  for (const at of [main, worktree]) {
+    mkdirSync(join(at, "node_modules", "@medrengard"), { recursive: true });
+    symlinkSync("../../core", join(at, "node_modules", "@medrengard", "core"));
+  }
+
+  return { main, worktree };
+}
+
+// The toy problem with a study `name` over it, committed in a worktree of a copy of the repository.
 function study(t: TestContext, prompts: string[], fields: Fields, name = "trial") {
   const problem = toy(t, prompts);
-  const studies = join(problem.directory, "studies");
+  const { main, worktree } = copy(problem.directory);
+  const studies = join(worktree, "trials");
   const file = join(studies, `${name}.ts`);
 
   mkdirSync(studies);
 
-  const git = (...args: string[]) =>
-    execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@localhost", "-C", studies, ...args], {
-      encoding: "utf8",
-    });
-
+  const git = gitIn(worktree);
   const fileOf = (study: string) => join(studies, `${study}.ts`);
-  const write = ({ selection, ...changed }: Fields, as = name) => {
+  // A study file in `at`, over the toy factory, importing the study module beside the driver that runs it.
+  const writeIn = (at: string, { selection, ...changed }: Fields, as = name) => {
     writeFileSync(
-      fileOf(as),
-      `import { defineStudy } from ${JSON.stringify(join(repository, "study.ts"))};
-       export default defineStudy(${JSON.stringify({ factory: "../factory.ts", ...changed })});
+      join(at, `${as}.ts`),
+      `import { defineStudy } from ${JSON.stringify(join(worktree, "bench", "study.ts"))};
+       export default defineStudy(${JSON.stringify({ factory: relative(at, problem.factory), ...changed })});
        export const selection = ${JSON.stringify(selection)};
       `,
     );
   };
+  const write = (fields: Fields, as = name) => writeIn(studies, fields, as);
 
   write(fields);
-  git("init", "--quiet");
   git("add", "-A");
   git("commit", "--quiet", "-m", "study");
 
@@ -85,14 +116,15 @@ function study(t: TestContext, prompts: string[], fields: Fields, name = "trial"
   const published = join(problem.directory, "published");
   const examples = join(problem.directory, "examples.git");
   const driver = (...args: string[]) => run({}, ...args);
-  const run = (env: Record<string, string>, ...args: string[]) => invoke(env, [file], args);
+  const run = (env: Record<string, string>, ...args: string[]) => invoke(worktree, env, [file], args);
   // The driver on several studies of this repository, by name.
-  const across = (names: string[], ...args: string[]) => invoke({}, names.map(fileOf), args);
-  const invoke = (env: Record<string, string>, files: string[], args: string[]) =>
+  const across = (names: string[], ...args: string[]) => invoke(worktree, {}, names.map(fileOf), args);
+  // The driver of the checkout `from` on study files.
+  const invoke = (from: string, env: Record<string, string>, files: string[], args: string[]) =>
     spawnSync(
       process.execPath,
       [
-        join(repository, "driver/study.ts"),
+        join(from, "bench", "driver", "study.ts"),
         ...args,
         ...files,
         "--runner",
@@ -133,6 +165,10 @@ function study(t: TestContext, prompts: string[], fields: Fields, name = "trial"
     file,
     git,
     write,
+    writeIn,
+    invoke,
+    main,
+    worktree,
     driver,
     run,
     across,
@@ -148,7 +184,7 @@ test(
   "a study runs every configuration, problem and repeat, repeats first, and records what it ran on",
   { timeout: 120_000 },
   async (t) => {
-    const { driver, lines, commissions, manifest } = study(t, ["Do one.\n", "Do two.\n"], {
+    const { driver, lines, commissions, manifest, worktree, git } = study(t, ["Do one.\n", "Do two.\n"], {
       configurations: ["stub", "polished"],
       problems: ["toy"],
       repeats: 2,
@@ -200,7 +236,8 @@ test(
       invocations.map(({ problems, concurrency }) => ({ problems, concurrency })),
       [{ problems: ["toy"], concurrency: 2 }],
     );
-    assert.equal(recorded.repositories.length, 2);
+    // One checkout names the study, the driver and Medrengard.
+    assert.deepEqual(recorded.repositories, [{ path: realpathSync(worktree), commit: git("rev-parse", "HEAD") }]);
     assert.deepEqual(recorded.pins, { runner: "fake", problems: "fake", python: "3.12.0", matches: true });
     assert.equal(recorded.versions.node, process.version);
     assert.notEqual(recorded.configurations.stub, recorded.configurations.polished);
@@ -286,6 +323,46 @@ test(
 
     assert.equal(dirty.status, 2);
     assert.match(dirty.stderr, /has uncommitted changes/);
+    assert.ok(!existsSync(join(results, "trial")));
+  },
+);
+
+test(
+  "a study refuses the repository's main checkout, and a study file outside the driver's checkout",
+  { timeout: 120_000 },
+  async (t) => {
+    const fields = { configurations: ["stub"], problems: ["toy"], repeats: 1 };
+    const { invoke, writeIn, main, worktree, directory, results } = study(t, ["Do one.\n"], fields);
+
+    // The main checkout's own driver, on a study committed there.
+    const trials = join(main, "trials");
+
+    mkdirSync(trials);
+    writeIn(trials, fields);
+    gitIn(main)("add", "-A");
+    gitIn(main)("commit", "--quiet", "-m", "study");
+
+    const fromMain = invoke(main, {}, [join(trials, "trial.ts")], ["run"]);
+
+    assert.equal(fromMain.status, 2);
+    assert.match(fromMain.stderr, /is the repository's main checkout/);
+
+    // A worktree of another repository, run by this one's driver: what ran would need two commits.
+    const other = join(directory, "other");
+    const elsewhere = join(directory, "elsewhere");
+
+    mkdirSync(other);
+    gitIn(other)("init", "--quiet");
+    gitIn(other)("commit", "--quiet", "--allow-empty", "-m", "empty");
+    gitIn(other)("worktree", "add", "--quiet", "--detach", elsewhere);
+    writeIn(elsewhere, fields);
+    gitIn(elsewhere)("add", "-A");
+    gitIn(elsewhere)("commit", "--quiet", "-m", "study");
+
+    const outside = invoke(worktree, {}, [join(elsewhere, "trial.ts")], ["run"]);
+
+    assert.equal(outside.status, 2);
+    assert.match(outside.stderr, /are not in one checkout/);
     assert.ok(!existsSync(join(results, "trial")));
   },
 );

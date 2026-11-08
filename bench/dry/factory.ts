@@ -4,7 +4,8 @@
 // configuration of several agent steps runs free.
 import { join } from "node:path";
 import { benchmarkKinds, benchmarkLimits, benchmarkWorkflow, implementAccess, implementPrompt, type Configuration } from "../workflow.ts";
-import type { Access } from "#medrengard/src/replay.ts";
+import type { Access } from "@medrengard/core/src/replay.ts";
+import { data } from "../data.ts";
 
 const stub = new URL("agent.ts", import.meta.url).pathname;
 
@@ -56,7 +57,7 @@ export function dryFactory(state: string, problems: string) {
 
 const dry = dryFactory(
   "/var/tmp/medrengard/bench-dry",
-  new URL("../vendor/scb-problems", import.meta.url).pathname,
+  join(data, "vendor", "scb-problems"),
 );
 
 export default dry.factory;

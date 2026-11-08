@@ -10,10 +10,11 @@
 //   study.ts publish <study.ts>…               each study's scores into published/<study>/, and each
 //                                              problem's median run into the examples repository
 //
-// Before anything runs it writes results/<study>/manifest.json: the study, the commits of its
-// repository and Medrengard's, the runner's pins, the versions, and each configuration's hash. It
-// refuses uncommitted changes, pins that do not match, and, once a study has started, any change
-// to what its manifest names. Each run appends to results/<study>/invocations.jsonl what it was
+// A study runs from a worktree of its own that holds the study, this driver and Medrengard. Before
+// anything runs it writes results/<study>/manifest.json, under the data directory: the study, the
+// worktree's commit, the runner's pins, the versions, and each configuration's hash. It refuses the
+// main checkout, uncommitted changes, pins that do not match, and, once a study has started, any
+// change to what its manifest names. Each run appends to results/<study>/invocations.jsonl what it was
 // asked for, as that may differ between runs of one study. An escalation stops it starting problem
 // runs; the running ones finish.
 import { execFileSync, spawn } from "node:child_process";
@@ -35,7 +36,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import type { Selection, Study } from "../study.ts";
-import { createEngine } from "#medrengard/src/engine.ts";
+import { createEngine } from "@medrengard/core/src/engine.ts";
+import { data } from "../data.ts";
 import { render, representative, score, summarise, type Run } from "./report.ts";
 import { render as renderSelection, select, type Placement } from "./select.ts";
 import { heldOut } from "../study.ts";
@@ -44,7 +46,7 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     runner: { type: "string", multiple: true },
-    results: { type: "string", default: "results" },
+    results: { type: "string", default: join(data, "results") },
     problems: { type: "string" },
     concurrency: { type: "string", default: "2" },
     calibration: { type: "string", multiple: true },
@@ -189,10 +191,20 @@ function status() {
 const git = (directory: string, ...args: string[]) =>
   execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" }).trim();
 
-// The repository holding `path`: its commit, refusing uncommitted changes, so a result can be
-// traced to the code that produced it.
-function repository(path: string) {
-  const top = git(path, "rev-parse", "--show-toplevel");
+// The checkout a study runs from: one commit names the study, this driver and Medrengard, so it
+// must hold all three, be a worktree of its own so work on the main checkout goes on beside the
+// study, and have no uncommitted changes, so a result can be traced to the code that produced it.
+function checkout() {
+  const top = realpathSync(git(dirname(studyFile), "rev-parse", "--show-toplevel"));
+  const medrengard = realpathSync(fileURLToPath(import.meta.resolve("@medrengard/core/src/engine.ts")));
+
+  if (!medrengard.startsWith(`${top}/`)) {
+    refuse(`${studyFile} and the Medrengard this driver runs (${medrengard}) are not in one checkout.`);
+  }
+
+  if (git(top, "rev-parse", "--absolute-git-dir") === git(top, "rev-parse", "--path-format=absolute", "--git-common-dir")) {
+    refuse(`${top} is the repository's main checkout: run a study from a worktree of its own (git worktree add).`);
+  }
 
   if (git(top, "status", "--porcelain") !== "") refuse(`${top} has uncommitted changes: commit them first.`);
 
@@ -227,7 +239,6 @@ function version(program: string) {
 }
 
 function manifest() {
-  const medrengard = dirname(realpathSync(fileURLToPath(import.meta.resolve("#medrengard/src/engine.ts"))));
   const pins = JSON.parse(execFileSync(runner[0]!, [...runner.slice(1), "pins"], { encoding: "utf8" })) as {
     matches: boolean;
   };
@@ -236,7 +247,7 @@ function manifest() {
 
   return {
     study: { hash: createHash("sha256").update(readFileSync(studyFile)).digest("hex"), ...study },
-    repositories: [repository(dirname(studyFile)), repository(medrengard)],
+    repositories: [checkout()],
     pins,
     versions: { node: process.version, claude: version("claude") },
     configurations: Object.fromEntries(

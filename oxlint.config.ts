@@ -2,6 +2,9 @@ import { defineConfig } from "oxlint";
 
 export default defineConfig({
   ignorePatterns: [
+    // lazy: bench predates the linter and the formatter (104 errors, 37 files on joining); it is left
+    // out of both, here and in .oxfmtrc.json, until a branch brings it up to them.
+    "bench/**",
     ".agent/**",
     ".agents/**",
     ".claude/**",

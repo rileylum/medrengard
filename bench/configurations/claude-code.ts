@@ -2,7 +2,7 @@
 // tools the skill needs. The review and verify configurations are each one of these, so each differs
 // from the baseline only in what its skill brings.
 import { realpathSync } from "node:fs";
-import type { Access } from "#medrengard/src/replay.ts";
+import type { Access } from "@medrengard/core/src/replay.ts";
 import type { Configuration } from "../workflow.ts";
 
 /** A skill copied verbatim under skills/, by its source and name. */
@@ -36,7 +36,7 @@ export function claudeCodeConfiguration({
           harness: {
             run: [
               "node",
-              realpathSync(new URL("../.medrengard/adapters/claude-code.ts", import.meta.url)),
+              realpathSync(new URL("../../core/adapters/claude-code.ts", import.meta.url)),
               "--permission-mode",
               "bypassPermissions",
               "--effort",

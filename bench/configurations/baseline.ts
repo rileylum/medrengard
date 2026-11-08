@@ -15,7 +15,7 @@ export default function baseline({ access, prompt }: Environment): Configuration
             // Real, because the sandbox grants the adapter's real directory, not the symlink.
             run: [
               "node",
-              realpathSync(new URL("../.medrengard/adapters/claude-code.ts", import.meta.url)),
+              realpathSync(new URL("../../core/adapters/claude-code.ts", import.meta.url)),
               "--permission-mode",
               "bypassPermissions",
               // The owner's usual effort; SlopCodeBench's thinking=medium sets the same on Claude 5.
