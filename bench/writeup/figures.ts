@@ -202,6 +202,10 @@ sections.push(
 // Post 3: what the review itself changed, from data/reviews.jsonl.
 type Review = {
   problem: string;
+  checkpoint: number;
+  commission: string;
+  tests: Record<"fixed" | "broken", string[]>;
+  core: Record<"before" | "after", [number, number]>;
   insertions: number;
   deletions: number;
   quality: Record<"before" | "after", Record<string, number>>;
@@ -231,6 +235,45 @@ sections.push(
       ["all", String(reviews.length), ...keys.map((key) => change(reviews, key))],
     ],
   ),
+  "",
+);
+
+// Post 3: what the review did to the checkpoint's own tests, graded before and after it.
+const own = (review: Review, tests: readonly string[]) =>
+  tests.filter((test) => test.startsWith(`checkpoint_${review.checkpoint}-`) && !test.startsWith(`checkpoint_${review.checkpoint}-Regression`));
+const solvedAt = ([passed, total]: [number, number]) => total > 0 && passed === total;
+
+sections.push(
+  "## code-review: the checkpoint's tests before and after its review",
+  "",
+  "Each review's commit before and after, graded at its checkpoint as the study graded it. Own tests: the " +
+    "checkpoint's groups other than Regression, which reruns earlier checkpoints' tests. A parametrized test counts once per case.",
+  "",
+  table(
+    ["problem", "checkpoints", "with a test fixed", "with a test broken", "own tests fixed", "own tests broken", "Regression fixed", "Regression broken", "solved gained", "solved lost"],
+    [
+      ...[...Map.groupBy(reviews, (row) => row.problem)].toSorted(([a], [b]) => a.localeCompare(b)),
+      ["all", reviews] as const,
+    ].map(([problem, rows]) => [
+      problem,
+      String(rows.length),
+      String(rows.filter((row) => row.tests.fixed.length > 0).length),
+      String(rows.filter((row) => row.tests.broken.length > 0).length),
+      String(rows.reduce((sum, row) => sum + own(row, row.tests.fixed).length, 0)),
+      String(rows.reduce((sum, row) => sum + own(row, row.tests.broken).length, 0)),
+      String(rows.reduce((sum, row) => sum + row.tests.fixed.length - own(row, row.tests.fixed).length, 0)),
+      String(rows.reduce((sum, row) => sum + row.tests.broken.length - own(row, row.tests.broken).length, 0)),
+      String(rows.filter((row) => !solvedAt(row.core.before) && solvedAt(row.core.after)).length),
+      String(rows.filter((row) => solvedAt(row.core.before) && !solvedAt(row.core.after)).length),
+    ]),
+  ),
+  "",
+  "Checkpoints whose review changed whether they were solved: " +
+    reviews
+      .filter((row) => solvedAt(row.core.before) !== solvedAt(row.core.after))
+      .map((row) => `${row.commission} (Core ${row.core.before.join("/")} → ${row.core.after.join("/")})`)
+      .join(", ") +
+    ".",
   "",
 );
 

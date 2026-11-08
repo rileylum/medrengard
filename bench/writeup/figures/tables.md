@@ -134,6 +134,27 @@ Checkpoints breaking 5% or more:
 | textdrop | 18 | 0.44 → 0.41 | 0.66 → 0.65 | 0.19 → 0.19 | 749.44 → 754.89 | 64.22 → 66.11 | 4.33 → 4.28 |
 | all | 177 | 0.53 → 0.50 | 0.73 → 0.72 | 0.27 → 0.26 | 873.97 → 874.75 | 68.11 → 70.28 | 7.40 → 7.10 |
 
+## code-review: the checkpoint's tests before and after its review
+
+Each review's commit before and after, graded at its checkpoint as the study graded it. Own tests: the checkpoint's groups other than Regression, which reruns earlier checkpoints' tests. A parametrized test counts once per case.
+
+| problem | checkpoints | with a test fixed | with a test broken | own tests fixed | own tests broken | Regression fixed | Regression broken | solved gained | solved lost |
+|---|---|---|---|---|---|---|---|---|---|
+| datagate | 21 | 11 | 2 | 43 | 3 | 155 | 0 | 2 | 0 |
+| eve_industry | 18 | 3 | 3 | 4 | 5 | 0 | 0 | 0 | 0 |
+| eve_jump_planner | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| eve_market_tools | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| execution_server | 18 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| file_merger | 12 | 0 | 1 | 0 | 1 | 0 | 0 | 0 | 1 |
+| file_query_tool | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| layered_config_synthesizer | 12 | 1 | 0 | 9 | 0 | 0 | 0 | 1 | 0 |
+| meshctl | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| mvvault | 18 | 1 | 1 | 1 | 2 | 0 | 0 | 0 | 0 |
+| textdrop | 18 | 3 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
+| all | 177 | 19 | 7 | 60 | 11 | 155 | 0 | 3 | 1 |
+
+Checkpoints whose review changed whether they were solved: review-verify-code-review-r2-datagate-1 (Core 3/4 → 4/4), review-verify-code-review-r3-datagate-1 (Core 3/4 → 4/4), review-verify-code-review-r3-file_merger-1 (Core 18/18 → 17/18), review-verify-code-review-r3-layered_config_synthesizer-1 (Core 3/8 → 8/8).
+
 ## The final code: each configuration's last checkpoint, mean over problems
 
 | measure | baseline | code-review | verification | code-review lower on | verification lower on |
