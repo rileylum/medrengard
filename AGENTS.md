@@ -12,6 +12,14 @@ Then read `HANDOFF.md`, if present: where the last session stopped and the owner
 - **Cannot classify something?** Stop and ask the owner.
 - **Specs:** a sentence in `docs/core.md` without a test is a proposal.
 - **Tests** write only under the system temp directory, never inside the repository.
-- **Checks:** `npm test` (type check, lint, format check, tests).
+- **Checks:** `npm test` at the root: lint and format check, then each package's type check and
+  tests. `npm test -w core` (or `-w bench`) runs one package's.
+- **Layout:** npm workspaces. `core/` is Medrengard, the package `@medrengard/core`: zero runtime
+  dependencies, and other packages import only what its `exports` names. `bench/` is the
+  benchmark; its data live outside the repository (`bench/data.ts`), and a study runs from a
+  worktree of its own (`bench/README.md`). Only a future `ui/` may take third-party runtime
+  dependencies. The owner's factories stay in their own repositories.
+- **Branches:** `<type>/<package>-<slug>`, or `<type>/<slug>` across packages; commit subjects
+  start with the part they change (`engine:`, `bench:`, `monorepo:`).
 - **Git, overriding the global workflow:** branches stay local; push only when the owner asks.
   The owner merges.

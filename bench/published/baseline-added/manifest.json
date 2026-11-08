@@ -1,0 +1,41 @@
+{
+  "study": {
+    "hash": "6d93e057c6c52397ff3ae56776170b5a143e936b6ccef73605e84f5398febe5f",
+    "factory": "../factory.ts",
+    "configurations": [
+      "baseline"
+    ],
+    "problems": [
+      "layered_config_synthesizer",
+      "test_translator",
+      "eve_market_tools",
+      "file_merger",
+      "eve_jump_planner",
+      "execution_server"
+    ],
+    "repeats": 5
+  },
+  "repositories": [
+    {
+      "path": "medrengard-bench",
+      "commit": "92a646c5698eadab3d96fd2e0aabb0d1f09bed5d"
+    },
+    {
+      "path": "medrengard",
+      "commit": "f7cf6c17b3b229f61148f1f061fb135de9cf3486"
+    }
+  ],
+  "pins": {
+    "runner": "af5a9cbc311605b5cceb80200ca9832bdff2d7b1",
+    "problems": "9cd9ca3a51c3d3e2a99d2488a25baf73a2204451",
+    "python": "3.12.14",
+    "matches": true
+  },
+  "versions": {
+    "node": "v24.13.0",
+    "claude": "2.1.318 (Claude Code)"
+  },
+  "configurations": {
+    "baseline": "2b3921ca80cd0b3ac989eeedb8919396413b75f3941cdaffe1ca1af6444c67eb"
+  }
+}
