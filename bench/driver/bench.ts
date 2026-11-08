@@ -182,6 +182,41 @@ function cost(commission: string, agents: Set<string>) {
   };
 }
 
+// The subscription's weekly use, a fraction, as Claude Code last reported it in the configuration's
+// agent attempts, and when it was read: the whole account's use, not this run's alone.
+function weekly(commission: string, agents: Set<string>) {
+  const readings = engine
+    .record(commission)
+    .entries.flatMap((entry) =>
+      entry.entry === "attempt" && agents.has(entry.step) && !("running" in entry)
+        ? [weeklyOf(engine.transcript(commission, entry.attempt).toString())]
+        : [],
+    )
+    .filter((reading) => reading !== undefined);
+  const used = readings.at(-1);
+
+  return used === undefined ? {} : { weekly: { used, at: new Date().toISOString() } };
+}
+
+function weeklyOf(transcript: string) {
+  return transcript
+    .split("\n")
+    .filter((line) => line.startsWith("{"))
+    .map((line) => {
+      try {
+        // SAFETY: only the field read below is used, checked by its use.
+        return JSON.parse(line) as {
+          type?: string;
+          rate_limit_info?: { unifiedWindows?: { seven_day?: { utilization?: number } } };
+        };
+      } catch {
+        return {};
+      }
+    })
+    .map((event) => (event.type === "rate_limit_event" ? event.rate_limit_info?.unifiedWindows?.seven_day?.utilization : undefined))
+    .findLast((used) => used !== undefined);
+}
+
 // The time the configuration's agent attempts took, summed.
 function timing(commission: string, agents: Set<string>) {
   const spans = engine
@@ -243,7 +278,12 @@ for (let n = 1; n <= count; n += 1) {
   const current = engine.state(commission);
   const waiting = current.status === "escalated" || current.status === "awaiting";
   const state = waiting || current.status === "finished" ? current : await engine.advance(commission);
-  const spent = { ...timing(commission, agents), cost: cost(commission, agents), definition: definitionOf(commission) };
+  const spent = {
+    ...timing(commission, agents),
+    cost: cost(commission, agents),
+    ...weekly(commission, agents),
+    definition: definitionOf(commission),
+  };
 
   if (state.status === "finished" && state.by === "abandoned") {
     record({ checkpoint: n, commission, status: "abandoned", ...spent });
