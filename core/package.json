@@ -13,7 +13,7 @@
     "./defaults/limits.ts": "./defaults/limits.ts"
   },
   "scripts": {
-    "test": "tsc -p . && node --test"
+    "test": "tsc -p . && mkdir -p /var/tmp/medrengard && TMPDIR=/var/tmp/medrengard node --test"
   },
   "engines": {
     "node": ">=24"
