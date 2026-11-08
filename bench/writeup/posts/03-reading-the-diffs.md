@@ -157,42 +157,39 @@ review with the same tests the study used:
 
 | | checkpoints |
 |---|---|
-| review fixed at least one test | 19 of 177 |
+| review fixed at least one test | 12 of 177 |
 | review broke at least one test | 7 of 177 |
 | unsolved → solved | 3 |
 | solved → unsolved | 1 |
 
-Counting tests rather than checkpoints, the reviews fixed 60 of their own checkpoint's tests and
-broke 11. They also re-fixed 155 Regression tests, earlier checkpoints' tests run again, all on
-datagate (more on that below). Only 7 of the 60 were Core tests. Everywhere else, the reviews left
-the tests exactly as they found them: on five of the eleven problems, no review changed a single
-test result.
+By test family (a parametrized test's cases counted once), the reviews fixed 23 families of their
+own checkpoint's tests and broke 9. In cases, 33 fixed and 11 broken, of which 7 and 1 were Core
+tests. No review changed an earlier checkpoint's test. On five of the eleven problems, no review
+changed a single test result.
 
 That fits part 2: a reviewer that's the same model reading the same spec rarely finds a failure the
-implementer missed.
+implementer missed. When it does, it's mostly at the first checkpoint, where the program is new.
 
 ### When the review catches a real miss
 
-datagate, repeat 3, checkpoint 1. Before the review, 7 tests failed; after it, 1. The Spec reviewer
-found several requirements handled loosely, and the agent fixed them: single-column CSVs, rows with
-more fields than the header, protocol errors returned in the JSON error format, an empty `charset`
-treated as omitted. The checkpoint went from unsolved to solved.
+datagate, repeats 2 and 3, checkpoint 1. Before the review, 7 tests failed; after it, 1, in both
+runs. In repeat 3 the Spec reviewer found several requirements handled loosely, and the agent fixed
+them: single-column CSVs, rows with more fields than the header, protocol errors returned in the
+JSON error format, an empty `charset` treated as omitted. The checkpoint went from unsolved to
+solved.
 
 Erosion went *up*, from 0.40 to 0.51, because the fixes added branches. Correct code was more
 complex code here, and the metric marks it down.
 
-### When the review acts as a safety net
+### A correction: no safety net
 
-datagate, repeats 1 and 3. In repeat 3, a family of 27 parametrized error tests from checkpoint 2
-(`test_bad_offset_values[-1]`, `[2.5]`, `[oops]` and so on) failed before checkpoint 2's review
-and passed after it. Then at checkpoints 3 and 4 the same thing happened again: each checkpoint's
-new work broke those tests, and its review restored them. Repeat 1 did the same at checkpoints 3,
-4 and 5. That's 155 Regression test
-results the reviews put back.
-
-Without the reviews, would those tests have stayed broken? We can't say from this data whether the
-breakage would have happened at all without a review in the loop. But here, at least, the review
-is doing what people hope a review does: catching regressions before they ship.
+An earlier draft of this post reported that datagate's reviews kept restoring a family of 27 error
+tests that each checkpoint's new work had broken, 155 test results in all. That came from our own
+measurement. The first pass of grading the commits before each review ran while the machine's
+temporary storage was full, and some grades recorded failures that weren't there. Graded again,
+with everything else unchanged, those commits pass the tests. Three commits the study had already
+graded, regraded the same way, matched the study's grades exactly. The figures above are from the
+clean regrade. No review in the study fixed or broke an earlier checkpoint's test.
 
 ### When the review makes things worse
 
@@ -240,8 +237,9 @@ Our reading, case by case:
   are what we'd ask for in a human code review.
 - **Better, and the metric understates it:** datagate's fixes made the code more correct and more
   complex. Erosion went up.
-- **Worse:** file_merger's reworked inference, argued from the spec's supposed intent, broke a
-  Core case. Rare: one checkpoint in 177.
+- **Worse, sometimes:** reviews broke 9 test families at 7 checkpoints, against 23 fixed at 12.
+  Only one cost a solved checkpoint: file_merger's reworked inference, argued from the spec's
+  supposed intent.
 - **Neutral:** most reviews. On five of eleven problems no review changed a test result, and most
   diffs are renames, extracted helpers and docstrings that a reader would find slightly easier
   going.

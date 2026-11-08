@@ -199,7 +199,7 @@ Each review's commit before and after, graded at its checkpoint as the study gra
 
 | problem | checkpoints | with a test fixed | with a test broken | own tests fixed | own tests broken | Regression fixed | Regression broken | solved gained | solved lost |
 |---|---|---|---|---|---|---|---|---|---|
-| datagate | 21 | 11 | 2 | 43 | 3 | 155 | 0 | 2 | 0 |
+| datagate | 21 | 4 | 2 | 16 | 3 | 0 | 0 | 2 | 0 |
 | eve_industry | 18 | 3 | 3 | 4 | 5 | 0 | 0 | 0 | 0 |
 | eve_jump_planner | 9 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | eve_market_tools | 12 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -210,7 +210,7 @@ Each review's commit before and after, graded at its checkpoint as the study gra
 | meshctl | 24 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | mvvault | 18 | 1 | 1 | 1 | 2 | 0 | 0 | 0 | 0 |
 | textdrop | 18 | 3 | 0 | 3 | 0 | 0 | 0 | 0 | 0 |
-| all | 177 | 19 | 7 | 60 | 11 | 155 | 0 | 3 | 1 |
+| all | 177 | 12 | 7 | 33 | 11 | 0 | 0 | 3 | 1 |
 
 Checkpoints whose review changed whether they were solved: review-verify-code-review-r2-datagate-1 (Core 3/4 → 4/4), review-verify-code-review-r3-datagate-1 (Core 3/4 → 4/4), review-verify-code-review-r3-file_merger-1 (Core 18/18 → 17/18), review-verify-code-review-r3-layered_config_synthesizer-1 (Core 3/8 → 8/8).
 
