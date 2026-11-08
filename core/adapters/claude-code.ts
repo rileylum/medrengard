@@ -256,9 +256,12 @@ const nested = [
 const { CLAUDE_CODE_OAUTH_TOKEN: _, ...environment } = process.env;
 
 // CLAUDE.md loads as Claude Code's own, not through a plugin, so only this variable keeps it out.
+// No telemetry, error reports or feature flags: flags fetched from Anthropic could change how
+// claude behaves between attempts of one commission, so it runs on its own defaults.
 const claudeEnvironment: NodeJS.ProcessEnv = {
   ...environment,
   CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: "3",
 };
 
@@ -380,6 +383,8 @@ type StreamEvent = {
   subtype?: string;
   // A hook that ran, in its hook_response event.
   hook_event?: string;
+  // Whether claude sends telemetry, in its init event.
+  analytics_disabled?: boolean;
   // Which claude ran, and in what session, in its init event.
   claude_code_version?: string;
   session_id?: string;
@@ -394,6 +399,8 @@ type StreamEvent = {
     content?: { type: string; text?: string; name?: string; input?: ToolInput }[];
   };
   is_error?: boolean;
+  // The tools claude refused the agent, in its result event.
+  permission_denials?: { tool_name: string; tool_input?: ToolInput }[];
   num_turns?: number;
   duration_ms?: number;
   total_cost_usd?: number;
@@ -422,6 +429,11 @@ function leaksOf(init: StreamEvent): void {
 
   if (leaks.length > 0) {
     report(`Claude Code loaded what the agent did not declare: ${leaks.join(", ")}.`);
+  }
+
+  // Its start has sent what it sends by the time init says so; stopping would save nothing.
+  if (init.analytics_disabled === false) {
+    report("Claude Code did not turn off its nonessential traffic: telemetry and error reports.");
   }
 }
 
@@ -637,6 +649,12 @@ function notesOf(event: StreamEvent): void {
 
   if (event.type === "result") {
     result = event;
+
+    // Why an agent could not do what it tried, such as run the tests under acceptEdits: the
+    // permission mode at work, so a note, not an error.
+    for (const { tool_name, tool_input } of event.permission_denials ?? []) {
+      note(`Claude Code denied ${toolNote(tool_name, tool_input ?? {})}`);
+    }
 
     const how = event.is_error ? "Failed" : "Finished";
 

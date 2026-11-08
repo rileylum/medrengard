@@ -441,6 +441,12 @@ const design = {
   agent's commits. Nothing the workspace holds configures `claude` either: not its `.mcp.json`,
   `.claude/` settings, hooks, skills or subagents, nor its `CLAUDE.md`. Some of the settings that
   do this are undocumented, as of Claude Code 2.1.318.
+- `claude` sends no telemetry, error reports or feedback, and fetches no feature flags
+  (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`), so it runs on its own defaults rather than on flags
+  that could change between attempts of one commission; features Anthropic gates by flag stay
+  off. If `claude` says it still sends telemetry, the adapter records it as a leak.
+- A tool `claude` refused the agent, such as `Bash` under `acceptEdits`, is noted:
+  `Claude Code denied Bash: npm test`. An attended session shows its refusals on screen.
 - Claude Code's managed settings in `/etc/claude-code`, which no flag turns off, are hidden from
   `claude` when they exist. Managed settings an organisation's token brings from the server are
   not; a personal subscription has none.
