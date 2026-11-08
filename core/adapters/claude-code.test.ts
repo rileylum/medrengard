@@ -803,6 +803,7 @@ test(
         env: {
           PATH: process.env.PATH,
           HOME: home,
+          TMPDIR: directory,
           MEDRENGARD_IN: input,
           MEDRENGARD_OUT: output,
           CLAUDE_CODE_MAX_RETRIES: "0",
@@ -972,6 +973,8 @@ ${session}
     "env",
     `PATH=${directory}:${process.env.PATH}`,
     `HOME=${home}`,
+    // Outside the engine's sandbox, what the adapter makes in its temporary directory stays.
+    `TMPDIR=${directory}`,
     `MEDRENGARD_IN=${input}`,
     `MEDRENGARD_OUT=${output}`,
     process.execPath,
