@@ -38,7 +38,8 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
 - `study.ts`: what a study is, and the problem sets: `iteration`, which configurations are compared
   on, and `heldOut`, which only a study marked `final` runs, drawn by seed before any study ran;
   `unused`, the rest, which a survey study runs once to choose more to iterate on; `added`,
-  the six chosen from it.
+  the six chosen from it; `screen`, the six a configuration is screened on from 2026-11-08, one per
+  cell of the survey's grid, the cheapest in each, at about half the cost of the eleven.
 - `studies/`: the studies. `baseline.ts` is the first: the baseline five times on the iteration
   set, with calibration once. `survey.ts`: the baseline once on `unused`, with the selection that
   chooses the iteration set's next problems from it; `survey-rerun.ts` runs again the two whose

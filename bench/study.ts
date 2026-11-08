@@ -64,6 +64,24 @@ export const added = [
   "execution_server",
 ];
 
+/**
+ * The problems configurations are screened on from 2026-11-08, the owner's choice: one per cell of
+ * the survey's grid (solve rate thirds by erosion halves), the cheapest of the iteration problems in
+ * each by review-verify's mean cost per run, so the choice reads no configuration's effect. About
+ * half the eleven's cost ($27 against $52 per configuration and repeat), with intervals about 1.35
+ * times as wide. test_translator is out: its checkpoint 5 asks for an exception the specification
+ * never states, which every configuration misses alike. The rest of `iteration` and `added` stay to
+ * confirm a result, and `heldOut` for a final claim.
+ */
+export const screen = [
+  "layered_config_synthesizer",
+  "file_merger",
+  "datagate",
+  "eve_jump_planner",
+  "textdrop",
+  "file_query_tool",
+];
+
 /** The problems neither set holds: surveyed by the baseline once, to choose more to iterate on. */
 export const unused = [
   "cfgpipe",
