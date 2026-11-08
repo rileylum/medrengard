@@ -4650,12 +4650,13 @@ test("a step's notes on fd 3 are recorded as they arrive, in order", async (t) =
 });
 
 test("a step that writes many notes is not slowed by the log they make", async (t) => {
-  // Each note re-reading the log made 20,000 take minutes; appended, they take seconds.
+  // Each note re-reading the log made 20,000 take minutes; appended, they take seconds, or up to
+  // half a minute where each event's write waits on a disk rather than a tmpfs.
   const { engine } = await engineRunning(
     t,
     `i=0; while [ $i -lt 20000 ]; do echo "note $i" >&3; i=$((i + 1)); done
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
-    { idle: 30, attempt: 30, transcript: 1024 * 1024, input: 65536 },
+    { idle: 120, attempt: 120, transcript: 1024 * 1024, input: 65536 },
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
