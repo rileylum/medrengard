@@ -11,8 +11,8 @@ import { git, quality, runsOf } from "./record.ts";
 const study = "review-verify";
 
 /** Every graded code-review checkpoint of the study, with its commits before and after the review. */
-export function reviews() {
-  return runsOf(study)
+export async function reviews() {
+  return (await runsOf(study))
     .filter((run) => run.configuration === "code-review")
     .flatMap(({ problem, repeat, lines }) =>
       [...new Map(lines.map((line) => [line.checkpoint, line])).values()]
@@ -37,7 +37,7 @@ if (import.meta.main) {
   const [command, commission] = process.argv.slice(2);
 
   if (command === "measure") {
-    const lines = reviews().map((review) => {
+    const lines = (await reviews()).map((review) => {
       const [, insertions = "0", deletions = "0"] =
         /(?:(\d+) insertions?\(\+\))?(?:, )?(?:(\d+) deletions?\(-\))?$/.exec(
           git("diff", "--shortstat", review.before, review.after).trim(),
@@ -54,7 +54,7 @@ if (import.meta.main) {
     mkdirSync(join(import.meta.dirname, "data"), { recursive: true });
     writeFileSync(join(import.meta.dirname, "data", "reviews.jsonl"), lines.map((line) => `${JSON.stringify(line)}\n`).join(""));
   } else if (command === "show" && commission !== undefined) {
-    const review = reviews().find((one) => one.commission === commission);
+    const review = (await reviews()).find((one) => one.commission === commission);
 
     if (review === undefined) throw new Error(`No code-review checkpoint ${commission} in ${study}.`);
 

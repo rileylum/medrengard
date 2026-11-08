@@ -18,7 +18,7 @@ const lastOf = (run: Recorded) => new Map(run.lines.map((line) => [line.checkpoi
 
 mkdirSync(out, { recursive: true });
 
-const study = runsOf("review-verify");
+const study = await runsOf("review-verify");
 const summary = summarise(study, { control: "baseline" });
 const problems = [...new Set(study.map((run) => run.problem))];
 const sections: string[] = ["# Figures and tables", "", "Made by `writeup/figures.ts`; do not edit by hand.", ""];
@@ -95,8 +95,8 @@ const corePerCheckpoint = (runs: readonly Recorded[]) => {
   return [...byCheckpoint].toSorted(([a], [b]) => a - b).map(([checkpoint, values]) => [checkpoint, mean(values)] as const);
 };
 const translator = [
-  ...runsOf("baseline-added").filter((run) => run.problem === "test_translator"),
-  ...runsOf("review-verify-long"),
+  ...(await runsOf("baseline-added")).filter((run) => run.problem === "test_translator"),
+  ...(await runsOf("review-verify-long")),
 ];
 const panelsOf = (runs: readonly Recorded[], problem: string) => ({
   label: problem,
@@ -164,8 +164,9 @@ writeFileSync(
 
 // Post 4: breakage, the mean over checkpoints after the first, by study and configuration.
 const studies = ["baseline", "survey", "survey-rerun", "baseline-added", "review-verify", "review-verify-long"];
-const broken = studies.flatMap((name) =>
-  runsOf(name).flatMap((run) =>
+const recorded = await Promise.all(studies.map(runsOf));
+const broken = studies.flatMap((name, index) =>
+  recorded[index]!.flatMap((run) =>
     breakage(run).map((one) => ({ study: name, configuration: run.configuration, problem: run.problem, repeat: run.repeat, ...one })),
   ),
 );

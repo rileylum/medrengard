@@ -1,33 +1,45 @@
 // What the write-up reads from the data directory: a study's result lines and the commits behind
 // them. Read only; nothing here runs a model.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { data } from "../data.ts";
 import type { Run } from "../driver/report.ts";
+import type { Study } from "../study.ts";
 
 export type Line = Run["lines"][number] & { commission: string; commit?: string };
 export type Recorded = Omit<Run, "lines"> & { lines: readonly Line[] };
 
 const trajectories = join(data, "state", "trajectories.git");
 
-/** Every problem run a study has begun, from its result lines. */
-export function runsOf(study: string): Recorded[] {
-  const runs = join(data, "results", study, "runs");
+/**
+ * Every problem run a study has begun, from its result lines, in the order the study driver reads
+ * them (repeat, then the study's configurations, then its problems), so seeded intervals match its
+ * report.
+ */
+export async function runsOf(name: string): Promise<Recorded[]> {
+  // SAFETY: a study file's default export is a Study.
+  const { default: study } = (await import(`../studies/${name}.ts`)) as { default: Study };
+  const configurations = [...study.configurations, ...(study.calibrate === undefined ? [] : ["slopcodebench"])];
+  const runs = join(data, "results", name, "runs");
 
-  return readdirSync(runs).flatMap((run) =>
-    readdirSync(join(runs, run))
-      .filter((file) => file.endsWith(".jsonl"))
-      .map((file) => {
+  return Array.from({ length: study.repeats }, (_, index) => index + 1).flatMap((repeat) =>
+    configurations.flatMap((configuration) =>
+      study.problems.flatMap((problem) => {
+        const path = join(runs, `${name}-${configuration}-r${repeat}`, `${problem}.jsonl`);
+
+        if (!existsSync(path)) return [];
+
         // SAFETY: driver/bench.ts wrote these lines.
-        const lines = readFileSync(join(runs, run, file), "utf8")
+        const lines = readFileSync(path, "utf8")
           .trim()
           .split("\n")
-          .map((line) => JSON.parse(line) as Line & { configuration: string; repeat: number });
+          .map((line) => JSON.parse(line) as Line);
 
-        return { configuration: lines[0]!.configuration, problem: basename(file, ".jsonl"), repeat: lines[0]!.repeat, lines };
+        return [{ configuration, problem, repeat, lines }];
       }),
+    ),
   );
 }
 
