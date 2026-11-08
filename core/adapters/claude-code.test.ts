@@ -43,6 +43,7 @@ async function engineWithClaude(
 printf '%s\\0' "$@" > "${join(directory, "arguments")}"
 printf '%s\\0' "$MEDRENGARD_IN" "$MEDRENGARD_OUT" > "${join(directory, "directories")}"
 printf '%s' "$CLAUDE_CODE_DISABLE_CLAUDE_MDS" > "${join(directory, "claude-mds")}"
+printf '%s' "$CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" > "${join(directory, "traffic")}"
 cat > "${join(directory, "prompt")}"
 ${script}
 `,
@@ -145,6 +146,7 @@ const canary = `echo '{"type":"system","subtype":"hook_response","hook_event":"S
 
 // The parts of claude's init these tests vary.
 type Loaded = {
+  analytics_disabled?: boolean;
   claude_code_version?: string;
   session_id?: string;
   tools?: string[];
@@ -230,6 +232,9 @@ test("the Claude Code adapter runs claude headless with the agent, whose claim c
   assert.deepEqual(hooks.SessionStart, [{ hooks: [{ type: "command", command: "true" }] }]);
   assert.partialDeepStrictEqual(hooks.InstructionsLoaded, [{ hooks: [{ type: "command" }] }]);
   assert.equal(await readFile(join(directory, "claude-mds"), "utf8"), "1");
+
+  // No telemetry, error reports or feature flags: an attempt runs on Claude Code's own defaults.
+  assert.equal(await readFile(join(directory, "traffic"), "utf8"), "1");
   assert.ok(prompt.startsWith("Plan the change.\n"));
   assert.ok(prompt.includes('["done"]'));
   assert.ok(!prompt.includes("CLAUDE.md"));
@@ -641,6 +646,56 @@ test("the Claude Code adapter notes a session claude ran other than the one it g
   ]);
 });
 
+test("the Claude Code adapter records that claude did not turn off its nonessential traffic", async (t) => {
+  const { engine } = await engineWithClaude(
+    t,
+    `${initOf({ tools: ["Bash", "Read", "Edit", "Write"], analytics_disabled: false })}
+     ${succeeded}
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const leak =
+    "Claude Code did not turn off its nonessential traffic: telemetry and error reports.";
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    { outcome: "done", notes: [{ note: leak, from: "step" }], errors: true },
+  ]);
+  assert.equal(engine.errors("first", 1).toString(), `${leak}\n`);
+});
+
+test("the Claude Code adapter notes each tool claude denied the agent", async (t) => {
+  const result = {
+    type: "result",
+    is_error: false,
+    num_turns: 2,
+    duration_ms: 1000,
+    total_cost_usd: 0.01,
+    permission_denials: [
+      { tool_name: "Bash", tool_use_id: "a", tool_input: { command: "npm test" } },
+      { tool_name: "Write", tool_use_id: "b", tool_input: { file_path: "/etc/hosts" } },
+    ],
+  };
+
+  const { engine } = await engineWithClaude(
+    t,
+    `echo '${JSON.stringify(result)}'
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    {
+      notes: [
+        "Claude Code denied Bash: npm test",
+        "Claude Code denied Write: /etc/hosts",
+        "Finished in 1 s, 2 turns, $0.01.",
+      ].map((note) => ({ note, from: "step" })),
+    },
+  ]);
+});
+
 test("the Claude Code adapter records that claude did not say what it loaded", async (t) => {
   const { engine, directory } = await engineWithClaude(
     t,
@@ -732,7 +787,7 @@ test(
 
     assert.doesNotMatch(errors, /did not say what it loaded/);
     assert.doesNotMatch(errors, /loaded what the agent did not declare: .*/);
-    assert.doesNotMatch(errors, /did not apply|could not load|did not load/);
+    assert.doesNotMatch(errors, /did not apply|could not load|did not load|nonessential/);
   },
 );
 
@@ -907,6 +962,9 @@ test(
     assert.doesNotMatch(said, /did not declare/);
     assert.doesNotMatch(said, /could not load/);
 
+    // The installed claude says it sends no telemetry, as the adapter's environment asks.
+    assert.doesNotMatch(said, /nonessential/);
+
     // Which claude ran, as it says itself, in the session the adapter gave it.
     const version = execFileSync(installed, ["--version"], { encoding: "utf8" }).split(" ")[0];
 
@@ -1043,6 +1101,7 @@ fi
 printf '%s\\0' "$@" > "${join(directory, "arguments")}"
 [ -t 0 ] && echo yes > "${join(directory, "terminal")}"
 printf '%s' "$DISABLE_AUTOUPDATER" > "${join(directory, "updater")}"
+printf '%s' "$CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" > "${join(directory, "traffic")}"
 while [ $# -gt 0 ]; do
   [ "$1" = --append-system-prompt-file ] && cp "$2" "${join(directory, "system")}"
   shift
@@ -1095,6 +1154,7 @@ ${session}
     system: await recorded("system"),
     claudeJson: await recorded("claude.json"),
     updater: await recorded("updater"),
+    traffic: await recorded("traffic"),
   };
 }
 
@@ -1106,6 +1166,7 @@ test("the Claude Code adapter runs an attended agent's claude in the owner's ter
 
   // It cannot update itself in its sandbox, and would say so on the owner's screen.
   assert.equal(run.updater, "1");
+  assert.equal(run.traffic, "1");
 
   // An interactive session, which the agent begins: no -p and no stream on stdout.
   assert.equal(run.arguments[0], "Begin your step.");
