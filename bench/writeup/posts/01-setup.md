@@ -14,7 +14,7 @@ results:
 2. Review and verify: what changed, and what it cost
 3. Reading the diffs: is the reviewed code actually better?
 4. Why lower erosion doesn't raise the solve rate
-5. Where the failures come from: misreading the spec
+5. Where the failures come from: the benchmark's specs
 
 Everything here is one model (Claude Opus 5.5 at medium effort) in one harness (Claude Code
 2.1.318, and 2.1.319 for one late study), with three runs per configuration. The numbers are

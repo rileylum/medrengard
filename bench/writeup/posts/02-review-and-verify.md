@@ -128,9 +128,10 @@ The baseline gets some checkpoints wrong in the same way in every run, and so do
 datagate's checkpoint 2 is the clearest case. The tests number rows by their line in the source
 file, with the header as line 1, and all nine runs, three per configuration, number them from the
 first data row instead, failing the same three tests. In a pilot run, code-review's Spec reviewer
-flagged the numbering as doubtful, and the agent kept its reading. A reviewer that's the
-same model, reading the same spec, tends to share the implementer's misreading. Part 5 looks at
-these failures.
+flagged the numbering as doubtful, and the agent kept its reading. The spec's sentence ("1-based
+source-file row number") honestly allows both. A reviewer that's the same model, reading the same
+spec, tends to settle an ambiguity the same way. Part 5 finds that most of the failures every run
+shares are like this, or worse: places where the spec is silent or contradicts its own tests.
 
 ## What we can't say from this
 

@@ -63,7 +63,7 @@ Core pass rate per checkpoint shows the same thing. Most problems stay at or nea
 Where a checkpoint dips, the three configurations dip together and recover together: datagate
 at checkpoint 2, file_merger at checkpoints 2 and 4, eve_market_tools at 4. The same tests fail in
 every configuration. When every run gets a checkpoint wrong in the same way and then recovers at
-the next one, the spec is being misread; the code isn't decaying.
+the next one, the problem is in how that checkpoint's spec is read, not in the code decaying.
 
 Only one panel collapses: test_translator, where every configuration falls to near zero from
 checkpoint 5 and stays there. That's the first of the two problems left out above.
@@ -92,8 +92,9 @@ Putting it together:
 1. Clean code's payoff is fewer regressions as code changes.
 2. Within SlopCodeBench's horizon, this model makes almost no regressions, clean code or not:
    0.16% for the baseline, 0.07% for code-review.
-3. The failures that do happen are first-attempt misreadings of a checkpoint's spec, which every
-   configuration shares, and which structure has nothing to do with.
+3. The failures that do happen are at a checkpoint's first attempt, the same in every
+   configuration, and mostly where the spec is ambiguous or disagrees with its tests (part 5).
+   Structure has nothing to do with them.
 
 The baseline's erosion does climb across checkpoints, from 0.63 at checkpoint 1 to 0.75 at
 checkpoint 4 averaged over problems, in line with what SlopCodeBench was built to show. But at eight checkpoints of a few
