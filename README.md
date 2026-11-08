@@ -22,7 +22,12 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
 - `configurations/`: one file per configuration, a function from the benchmark's environment (the
   access its agent steps run with, the prompt telling an agent to do what the request says) to its
   steps. A configuration names nothing of SlopCodeBench. `baseline.ts`: Claude Code through
-  Medrengard's adapter, one step.
+  Medrengard's adapter, one step. `claude-code.ts`: the baseline's step with a prompt, a skill and only the
+  tools the skill needs, which the review and verify configurations are: `code-review.ts` (Matt Pocock's
+  `code-review`, with `Agent` for its subagent reviewers) and `verification.ts` (obra/superpowers'
+  `verification-before-completion`). The plan they belong to is `docs/review-verify.md`.
+- `skills/`: published skills, copied verbatim at a pinned commit, per source with its `LICENSE` and a
+  `SOURCE` naming the repository, commit and path. A configuration's hash covers their contents.
 - `workflow.ts`'s `implementAccess` gives every agent step /tmp and its home as Medrengard scratch
   areas, on disk in the attempt's work area, bounded by a 16 GiB disk limit (`benchmarkLimits`).
 - `factory.ts`: every configuration, each its own workflow, on one log under `state/`. **Running
@@ -37,7 +42,11 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   set, with calibration once. `survey.ts`: the baseline once on `unused`, with the selection that
   chooses the iteration set's next problems from it; `survey-rerun.ts` runs again the two whose
   survey run filled a 256 MiB /tmp held in memory, and places them. `baseline-added.ts`: the baseline five
-  times on `added`, the six problems chosen from the survey to iterate on with `iteration`. `dry-easy.ts` is free.
+  times on `added`, the six problems chosen from the survey to iterate on with `iteration`. `pilot-review.ts`:
+  `code-review` and `verification` once on datagate, to check their setup, in no comparison;
+  `pilot-review-hard.ts` the same and the baseline on eve_market_tools; `drift-check.ts` the baseline once more
+  on datagate. `review-verify.ts`: the baseline, `code-review` and `verification` three times each on eleven of
+  the twelve, without test_translator. `dry-easy.ts` is free.
 - `driver/study.ts`: runs a study, `--concurrency` problem runs at a time (2 by default), every
   configuration's and problem's first repeat before any second. Concurrency is how a study is run,
   not part of it: each run appends what it was asked for to `results/<study>/invocations.jsonl`. Before anything runs it writes
@@ -95,7 +104,21 @@ ln -s ~/dev/medrengard/node_modules node_modules
 bin/fetch.sh
 ```
 
-Grading needs Docker, and the network for the grader's image and each snapshot's dependencies.
+Grading needs rootless Podman, and the network for the grader's image and each snapshot's dependencies:
+SlopCodeBench's grader starts a container per checkpoint, and under Docker each one adds and removes a
+network interface on the host, which other programs, such as Chrome, take for a network change. Under
+rootless Podman those interfaces live in the owner's user namespace. `bin/podman-python3.12-uv.yaml` is
+SlopCodeBench's environment with `binary: podman`, used for grading only; requests are rendered with the
+original. The runtime's version is in each manifest's pins. Once:
+
+```sh
+sudo pacman -S podman passt                      # and a riley line in /etc/subuid and /etc/subgid
+printf '[containers]\nuserns = "keep-id"\n' > ~/.config/containers/containers.conf
+systemctl --user enable --now podman.socket
+```
+
+`keep-id` keeps files the grader writes into its bind mount owned by the owner. Studies before
+`review-verify`'s second stage graded under Docker.
 
 ## Running a study
 
