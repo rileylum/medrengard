@@ -4,7 +4,9 @@
 // home are on the workspace's disk, not memory, rmassets also removes `files`, noop
 // claims the start unchanged. Given the mode `polish` instead of `solve`, it only adds POLISHED to
 // what it was given, as a second step of a configuration would.
-// It ends with a line shaped as Claude Code's stream-json result, so the driver reads its cost.
+// It ends with a line shaped as Claude Code's stream-json result, so the driver reads its cost: $0,
+// or what a line `dry cost: <usd>` says. A line `dry weekly: <fraction>` adds the rate limit event
+// Claude Code reports the subscription's weekly use in.
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -19,7 +21,10 @@ const input = JSON.parse(readFileSync(join(inDir, "input.json"), "utf8")) as {
 };
 const [request] = input.inputs.request;
 const [problem, , n] = request.fields.title.split(" ");
-const behaviour = /^dry: (\S+)$/m.exec(readFileSync(join(inDir, request.body), "utf8"))?.[1];
+const body = readFileSync(join(inDir, request.body), "utf8");
+const behaviour = /^dry: (\S+)$/m.exec(body)?.[1];
+const usd = Number(/^dry cost: (\S+)$/m.exec(body)?.[1] ?? 0);
+const weekly = /^dry weekly: (\S+)$/m.exec(body)?.[1];
 
 console.log(`stub: ${problem} checkpoint ${n}, ${behaviour ?? "solve"}`);
 console.log(`stub: .venv ${existsSync(".venv/bin/python") ? "present" : "absent"}`);
@@ -31,10 +36,17 @@ const claim = () =>
     JSON.stringify({ outcome: "done", artifacts: [{ kind: "commit", fields: { sha: git("rev-parse", "HEAD") } }] }),
   );
 
-const result = () =>
+const result = () => {
+  if (weekly !== undefined) {
+    const window = { utilization: Number(weekly), resetsAt: 0, status: "allowed" };
+
+    console.log(JSON.stringify({ type: "rate_limit_event", rate_limit_info: { unifiedWindows: { seven_day: window } } }));
+  }
+
   console.log(
-    JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 1, duration_ms: 1, total_cost_usd: 0 }),
+    JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 1, duration_ms: 1, total_cost_usd: usd }),
   );
+};
 
 if (mode === "polish") {
   writeFileSync("POLISHED", `${problem} checkpoint ${n}\n`);

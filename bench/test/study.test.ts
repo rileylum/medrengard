@@ -279,6 +279,108 @@ test(
 );
 
 test(
+  "a study runs up to the repeat it is asked for, and on to the next ones when asked again",
+  { timeout: 120_000 },
+  async (t) => {
+    const { driver, commissions, manifest } = study(t, ["Do one.\n"], {
+      configurations: ["stub"],
+      problems: ["toy"],
+      repeats: 3,
+    });
+
+    const first = driver("run", "--repeats", "1");
+
+    assert.equal(first.status, 0, first.stderr);
+    assert.deepEqual(await commissions(), ["trial-stub-r1-toy-1"]);
+
+    const beyond = driver("run", "--repeats", "4");
+
+    assert.equal(beyond.status, 2);
+    assert.match(beyond.stderr, /--repeats must be a whole number from 1 to the study's 3/);
+
+    // Up to repeat 3 runs the two not yet run; the study's own repeats are the default.
+    const rest = driver("run", "--repeats", "3");
+
+    assert.equal(rest.status, 0, rest.stderr);
+    assert.deepEqual((await commissions()).sort(), ["trial-stub-r1-toy-1", "trial-stub-r2-toy-1", "trial-stub-r3-toy-1"]);
+    assert.equal(driver("run").status, 0);
+    assert.equal((await commissions()).length, 3);
+
+    // SAFETY: the driver writes one invocation per line.
+    const invocations = readFileSync(join(manifest, "..", "invocations.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { repeats: number });
+
+    assert.deepEqual(
+      invocations.map(({ repeats }) => repeats),
+      [1, 3, 3],
+    );
+  },
+);
+
+test(
+  "a budget stops a study starting problem runs once this run has spent it, and the next run has its own",
+  { timeout: 120_000 },
+  async (t) => {
+    const { driver, commissions } = study(t, ["Do one.\ndry cost: 2\n"], {
+      configurations: ["stub"],
+      problems: ["toy"],
+      repeats: 3,
+    });
+
+    // $2 spent after the first, under $3; $4 after the second, so the third waits.
+    const capped = driver("run", "--concurrency", "1", "--budget", "3");
+
+    assert.equal(capped.status, 0, capped.stderr);
+    assert.match(capped.stderr, /spent \$4\.00 of its \$3 budget: 1 problem run not started/);
+    assert.deepEqual((await commissions()).sort(), ["trial-stub-r1-toy-1", "trial-stub-r2-toy-1"]);
+
+    assert.equal(driver("run", "--budget", "3").status, 0);
+    assert.equal((await commissions()).length, 3);
+    assert.match(driver("run", "--budget", "0").stderr, /--budget must be a number of dollars above 0/);
+  },
+);
+
+test(
+  "a weekly cap stops a study starting problem runs once the subscription's weekly use reaches it",
+  { timeout: 120_000 },
+  async (t) => {
+    const { driver, commissions, lines } = study(t, ["Do one.\ndry cost: 1\ndry weekly: 0.42\n"], {
+      configurations: ["stub"],
+      problems: ["toy"],
+      repeats: 2,
+    });
+
+    const capped = driver("run", "--concurrency", "1", "--weekly", "40");
+
+    assert.equal(capped.status, 0, capped.stderr);
+    assert.match(capped.stderr, /weekly use is 42%, at its 40% cap: 1 problem run not started/);
+    assert.deepEqual(await commissions(), ["trial-stub-r1-toy-1"]);
+    assert.equal(lines("trial-stub-r1")[0]?.weekly?.used, 0.42);
+
+    // A run that starts over the cap starts nothing.
+    assert.match(driver("run", "--weekly", "40").stderr, /1 problem run not started/);
+    assert.equal((await commissions()).length, 1);
+    assert.match(driver("run", "--weekly", "101").stderr, /--weekly must be a percentage from 1 to 100/);
+  },
+);
+
+test("a weekly cap stops a study when a problem run's agents gave no reading", { timeout: 120_000 }, async (t) => {
+  const { driver, commissions } = study(t, ["Do one.\ndry cost: 1\n"], {
+    configurations: ["stub"],
+    problems: ["toy"],
+    repeats: 2,
+  });
+
+  const unread = driver("run", "--concurrency", "1", "--weekly", "90");
+
+  assert.equal(unread.status, 1);
+  assert.match(unread.stderr, /trial-stub-r1 toy gave no weekly reading/);
+  assert.deepEqual(await commissions(), ["trial-stub-r1-toy-1"]);
+});
+
+test(
   "an escalation stops a study starting problem runs, and its status lists it for the owner",
   { timeout: 120_000 },
   async (t) => {

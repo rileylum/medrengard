@@ -49,8 +49,15 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   on datagate. `review-verify.ts`: the baseline, `code-review` and `verification` three times each on eleven of
   the twelve, without test_translator. `dry-easy.ts` is free.
 - `driver/study.ts`: runs a study, `--concurrency` problem runs at a time (2 by default), every
-  configuration's and problem's first repeat before any second. Concurrency is how a study is run,
-  not part of it: each run appends what it was asked for to `results/<study>/invocations.jsonl`. A
+  configuration's and problem's first repeat before any second. `--repeats n` runs only up to repeat
+  n, so a study is paid for in stages: `--repeats 1`, then `--repeats 3` runs the second and third.
+  Two optional caps stop it starting problem runs, the running ones finishing, so either can be
+  passed by what they spend: `--budget <usd>`, what this run has spent, and `--weekly <percent>`,
+  the subscription's weekly use, which counts the owner's other use too. The weekly use comes from
+  the rate limit events in Claude Code's output, recorded on each checkpoint's line as `weekly`; a
+  run's first problem runs start on the latest reading of any study, and one that gives no reading
+  stops the run. Concurrency, repeats and caps are how a study is run, not part of it: each run
+  appends what it was asked for to `results/<study>/invocations.jsonl`. A
   study runs from a worktree of its own, which holds the study, the driver and Medrengard, so one
   commit names them all. Before anything runs it writes `results/<study>/manifest.json`: the study,
   the worktree's commit, the runner's pins, Node's and Claude Code's versions, each configuration's
@@ -142,8 +149,9 @@ cd ~/dev/medrengard-studies/<study> && npm install && cd bench
 # Free: the stub through the real grader.
 node driver/study.ts run studies/dry-easy.ts
 
-# Paid, with the owner's approval: one stage of a study at a time.
+# Paid, with the owner's approval: one stage of a study at a time, by problems or by repeats.
 node driver/study.ts run studies/baseline.ts --problems datagate,textdrop --concurrency 6
+node driver/study.ts run studies/baseline.ts --repeats 1 --budget 60 --weekly 70
 
 node driver/study.ts status studies/baseline.ts   # where each problem run stands
 node driver/study.ts report studies/baseline.ts   # the summary, also results/baseline/report.md

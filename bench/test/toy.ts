@@ -23,6 +23,7 @@ export type Result = {
   reason?: string;
   seconds?: number;
   cost: { usd: number; turns: number; seconds?: number; attempts?: number } | null;
+  weekly?: { used: number; at: string };
   solved?: boolean;
   verbosity?: number;
   erosion?: number;

@@ -1,7 +1,7 @@
 // The study driver: runs a study file's problem runs, each a configuration on a problem for one
 // repeat, through driver/bench.ts, repeats first, a few at a time.
 //
-//   study.ts run <study.ts> [--problems a,b] [--concurrency n]
+//   study.ts run <study.ts> [--problems a,b] [--concurrency n] [--repeats n] [--budget usd] [--weekly percent]
 //                                              runs them, or the named problems' only, n at a time (2)
 //   study.ts status <study.ts>                 where each problem run stands
 //   study.ts report <study.ts>…                its summary, also written to results/<study>/report.md;
@@ -49,6 +49,9 @@ const { values, positionals } = parseArgs({
     results: { type: "string", default: join(data, "results") },
     problems: { type: "string" },
     concurrency: { type: "string", default: "2" },
+    repeats: { type: "string" },
+    budget: { type: "string" },
+    weekly: { type: "string" },
     calibration: { type: "string", multiple: true },
     published: { type: "string", default: "published" },
     examples: { type: "string" },
@@ -56,7 +59,7 @@ const { values, positionals } = parseArgs({
 });
 
 const usage =
-  "Usage: study.ts run|status|report|select|publish <study.ts>… [--problems a,b] [--concurrency n] [--runner <argv>…] " +
+  "Usage: study.ts run|status|report|select|publish <study.ts>… [--problems a,b] [--concurrency n] [--repeats n] [--budget usd] [--weekly percent] [--runner <argv>…] " +
   "[--calibration <argv>…] [--results <dir>] [--published <dir>] [--examples <repository>]";
 const [command, ...paths] = positionals;
 const file = paths[0];
@@ -125,6 +128,28 @@ const concurrency = Number(values.concurrency);
 
 if (!Number.isInteger(concurrency) || concurrency < 1) refuse(`--concurrency must be a whole number from 1.`);
 
+// How far this run goes, so a study is paid for a few repeats at a time: up to this repeat, those
+// before it already run or not. Like concurrency, how a study is run, not part of it.
+const upTo = Number(values.repeats ?? study.repeats);
+
+if (!Number.isInteger(upTo) || upTo < 1 || upTo > study.repeats) {
+  refuse(`--repeats must be a whole number from 1 to the study's ${study.repeats}.`);
+}
+
+// Two optional caps on starting problem runs, both checked before each one starts; the running
+// ones finish, so either can be passed by what they spend. The budget is this run's own spend, in
+// dollars as Claude Code reports it. The weekly cap is the subscription's weekly use, a percentage,
+// which counts the owner's other use too: it keeps the benchmark from taking the account past it.
+const budget = values.budget === undefined ? undefined : Number(values.budget);
+
+if (budget !== undefined && !(Number.isFinite(budget) && budget > 0)) refuse(`--budget must be a number of dollars above 0.`);
+
+const weeklyCap = values.weekly === undefined ? undefined : Number(values.weekly);
+
+if (weeklyCap !== undefined && !(weeklyCap >= 1 && weeklyCap <= 100)) {
+  refuse(`--weekly must be a percentage from 1 to 100.`);
+}
+
 type Cell = { configuration: string; problem: string; repeat: number; run: string };
 
 // SlopCodeBench's own harness, in a calibrating study: after the study's own in each repeat.
@@ -151,7 +176,60 @@ const cellsOf = (loaded: Loaded, problems: readonly string[]): Cell[] => {
 };
 const cells = (problems: readonly string[]) => cellsOf(first, problems);
 
-type Line = { checkpoint: number; checkpoints: number; commission: string; status: string; step?: string; reason?: string };
+type Line = {
+  checkpoint: number;
+  checkpoints: number;
+  commission: string;
+  status: string;
+  step?: string;
+  reason?: string;
+  cost?: { usd?: number } | null;
+  weekly?: { used: number; at: string };
+};
+
+// A problem run's lines, in the order written; a checkpoint's last line holds what its commission
+// spent in all.
+const writtenOf = (cell: Cell): Line[] => {
+  const path = join(runs, cell.run, `${cell.problem}.jsonl`);
+
+  return existsSync(path)
+    ? readFileSync(path, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        // SAFETY: only driver/bench.ts and calibration/cell.ts write these lines.
+        .map((line) => JSON.parse(line) as Line)
+    : [];
+};
+const lastOf = (cell: Cell) => [...new Map(writtenOf(cell).map((line) => [line.checkpoint, line])).values()];
+
+// Graded to its last checkpoint, or abandoned: a run of it starts nothing.
+const complete = (cell: Cell) => {
+  const lines = lastOf(cell);
+
+  return (
+    lines.some((line) => line.status === "abandoned") ||
+    (lines.length > 0 && lines.length === lines[0]!.checkpoints && lines.every((line) => line.status === "finished"))
+  );
+};
+
+const spentOn = (cells: readonly Cell[]) =>
+  cells.flatMap(lastOf).reduce((sum, line) => sum + (line.cost?.usd ?? 0), 0);
+
+// The latest weekly use any study's problem run read, as a fraction, or undefined before any.
+function latestWeekly() {
+  const root = resolve(values.results);
+  const readings = readdirSync(root)
+    .map((study) => join(root, study, "runs"))
+    .filter((path) => existsSync(path))
+    .flatMap((path) => readdirSync(path).map((run) => join(path, run)))
+    .flatMap((run) => readdirSync(run).filter((file) => file.endsWith(".jsonl")).map((file) => join(run, file)))
+    .flatMap((file) => readFileSync(file, "utf8").trim().split("\n").filter(Boolean))
+    // SAFETY: only driver/bench.ts and calibration/cell.ts write these lines.
+    .flatMap((line) => (JSON.parse(line) as Line).weekly ?? []);
+
+  return readings.sort((a, b) => a.at.localeCompare(b.at)).at(-1)?.used;
+}
 
 function status() {
   for (const cell of cells(study.problems)) {
@@ -323,23 +401,62 @@ async function runStudy() {
 
   appendFileSync(
     join(results, "invocations.jsonl"),
-    `${JSON.stringify({ at: new Date().toISOString(), problems: chosen, concurrency })}\n`,
+    `${JSON.stringify({ at: new Date().toISOString(), problems: chosen, concurrency, repeats: upTo, budget, weekly: weeklyCap })}\n`,
   );
 
-  const queue = cells(chosen);
-  const ended = { failed: false, waiting: false };
+  const queue = cells(chosen).filter((cell) => cell.repeat <= upTo);
+  const ended: { failed: boolean; waiting: boolean; capped?: string } = { failed: false, waiting: false };
+  const planned = [...queue];
+  const before = spentOn(planned);
 
-  // A wait or a failure stops new problem runs; the running ones finish.
+  // What stops the next problem run starting, if a cap does.
+  const capped = () => {
+    const spent = spentOn(planned) - before;
+
+    if (budget !== undefined && spent >= budget) return `spent $${spent.toFixed(2)} of its $${budget} budget`;
+
+    const used = latestWeekly();
+
+    if (weeklyCap !== undefined && used !== undefined && used * 100 >= weeklyCap) {
+      return `found the subscription's weekly use is ${Math.round(used * 100)}%, at its ${weeklyCap}% cap`;
+    }
+
+    return undefined;
+  };
+
+  // A wait, a failure or a cap stops new problem runs; the running ones finish.
   const worker = async () => {
-    for (let next = queue.shift(); next !== undefined && !ended.failed && !ended.waiting; next = queue.shift()) {
+    while (queue.length > 0 && !ended.failed && !ended.waiting && ended.capped === undefined) {
+      const next = queue[0]!;
+
+      if (!complete(next)) ended.capped = capped();
+
+      if (ended.capped !== undefined) return;
+
+      queue.shift();
+
+      const written = writtenOf(next).length;
       const code = await cell(next);
+      const newest = writtenOf(next).at(-1);
 
       if (code === 3) ended.waiting = true;
       else if (code !== 0) ended.failed = true;
+
+      // Without a reading the cap could not hold: Claude Code may have stopped reporting it.
+      if (weeklyCap !== undefined && writtenOf(next).length > written && newest?.cost != null && newest.weekly === undefined) {
+        console.error(`${next.run} ${next.problem} gave no weekly reading, so the weekly cap cannot hold.`);
+        ended.failed = true;
+      }
     }
   };
 
   await Promise.all(Array.from({ length: concurrency }, worker));
+
+  if (ended.capped !== undefined) {
+    const left = queue.filter((cell) => !complete(cell)).length;
+
+    console.error(`The study ${name} ${ended.capped}: ${left} problem run${left === 1 ? "" : "s"} not started.`);
+  }
 
   if (ended.failed || ended.waiting) {
     console.error(`The study ${name} stopped for the owner: see study.ts status ${file}.`);
