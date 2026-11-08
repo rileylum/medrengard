@@ -94,6 +94,8 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   runs; per configuration, means over problems with bootstrap 95% intervals (problems resampled,
   then repeats); each configuration against the study's first, paired by problem. A checkpoint never
   reached after an abandon counts as unsolved. Seeded, so the same results give the same summary.
+- `writeup/`: the posts on the studies' findings, with the scripts that make their figures and tables
+  from the data directory (`writeup/README.md`).
 - `bin/runner.py`: the driver's side of SlopCodeBench, run in its pinned environment by
   `bin/runner.sh`: problems, grading and pins. Tests replace it with a fake.
 - `calibration/`: SlopCodeBench's own harness on the same model and the owner's subscription.
