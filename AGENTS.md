@@ -17,8 +17,8 @@ Then read `HANDOFF.md`, if present: where the last session stopped and the owner
 - **Layout:** npm workspaces. `core/` is Medrengard, the package `@medrengard/core`: zero runtime
   dependencies, and other packages import only what its `exports` names. `bench/` is the
   benchmark; its data live outside the repository (`bench/data.ts`), and a study runs from a
-  worktree of its own (`bench/README.md`). Only a future `ui/` may take third-party runtime dependencies. The
-  owner's factories stay in their own repositories.
+  worktree of its own (`bench/README.md`). Only a future `ui/` may take third-party runtime
+  dependencies. The owner's factories stay in their own repositories.
 - **Branches:** `<type>/<package>-<slug>`, or `<type>/<slug>` across packages; commit subjects
   start with the part they change (`engine:`, `bench:`, `monorepo:`).
 - **Git, overriding the global workflow:** branches stay local; push only when the owner asks.
