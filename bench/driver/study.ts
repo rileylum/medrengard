@@ -1,7 +1,7 @@
 // The study driver: runs a study file's problem runs, each a configuration on a problem for one
 // repeat, through driver/bench.ts, repeats first, a few at a time.
 //
-//   study.ts run <study.ts> [--problems a,b] [--concurrency n]
+//   study.ts run <study.ts> [--problems a,b] [--concurrency n] [--repeats n]
 //                                              runs them, or the named problems' only, n at a time (2)
 //   study.ts status <study.ts>                 where each problem run stands
 //   study.ts report <study.ts>…                its summary, also written to results/<study>/report.md;
@@ -49,6 +49,7 @@ const { values, positionals } = parseArgs({
     results: { type: "string", default: join(data, "results") },
     problems: { type: "string" },
     concurrency: { type: "string", default: "2" },
+    repeats: { type: "string" },
     calibration: { type: "string", multiple: true },
     published: { type: "string", default: "published" },
     examples: { type: "string" },
@@ -56,7 +57,7 @@ const { values, positionals } = parseArgs({
 });
 
 const usage =
-  "Usage: study.ts run|status|report|select|publish <study.ts>… [--problems a,b] [--concurrency n] [--runner <argv>…] " +
+  "Usage: study.ts run|status|report|select|publish <study.ts>… [--problems a,b] [--concurrency n] [--repeats n] [--runner <argv>…] " +
   "[--calibration <argv>…] [--results <dir>] [--published <dir>] [--examples <repository>]";
 const [command, ...paths] = positionals;
 const file = paths[0];
@@ -124,6 +125,14 @@ if (strays.length > 0) refuse(`The study has no problem named ${strays.join(", "
 const concurrency = Number(values.concurrency);
 
 if (!Number.isInteger(concurrency) || concurrency < 1) refuse(`--concurrency must be a whole number from 1.`);
+
+// How far this run goes, so a study is paid for a few repeats at a time: up to this repeat, those
+// before it already run or not. Like concurrency, how a study is run, not part of it.
+const upTo = Number(values.repeats ?? study.repeats);
+
+if (!Number.isInteger(upTo) || upTo < 1 || upTo > study.repeats) {
+  refuse(`--repeats must be a whole number from 1 to the study's ${study.repeats}.`);
+}
 
 type Cell = { configuration: string; problem: string; repeat: number; run: string };
 
@@ -323,10 +332,10 @@ async function runStudy() {
 
   appendFileSync(
     join(results, "invocations.jsonl"),
-    `${JSON.stringify({ at: new Date().toISOString(), problems: chosen, concurrency })}\n`,
+    `${JSON.stringify({ at: new Date().toISOString(), problems: chosen, concurrency, repeats: upTo })}\n`,
   );
 
-  const queue = cells(chosen);
+  const queue = cells(chosen).filter((cell) => cell.repeat <= upTo);
   const ended = { failed: false, waiting: false };
 
   // A wait or a failure stops new problem runs; the running ones finish.

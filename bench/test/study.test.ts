@@ -279,6 +279,47 @@ test(
 );
 
 test(
+  "a study runs up to the repeat it is asked for, and on to the next ones when asked again",
+  { timeout: 120_000 },
+  async (t) => {
+    const { driver, commissions, manifest } = study(t, ["Do one.\n"], {
+      configurations: ["stub"],
+      problems: ["toy"],
+      repeats: 3,
+    });
+
+    const first = driver("run", "--repeats", "1");
+
+    assert.equal(first.status, 0, first.stderr);
+    assert.deepEqual(await commissions(), ["trial-stub-r1-toy-1"]);
+
+    const beyond = driver("run", "--repeats", "4");
+
+    assert.equal(beyond.status, 2);
+    assert.match(beyond.stderr, /--repeats must be a whole number from 1 to the study's 3/);
+
+    // Up to repeat 3 runs the two not yet run; the study's own repeats are the default.
+    const rest = driver("run", "--repeats", "3");
+
+    assert.equal(rest.status, 0, rest.stderr);
+    assert.deepEqual((await commissions()).sort(), ["trial-stub-r1-toy-1", "trial-stub-r2-toy-1", "trial-stub-r3-toy-1"]);
+    assert.equal(driver("run").status, 0);
+    assert.equal((await commissions()).length, 3);
+
+    // SAFETY: the driver writes one invocation per line.
+    const invocations = readFileSync(join(manifest, "..", "invocations.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { repeats: number });
+
+    assert.deepEqual(
+      invocations.map(({ repeats }) => repeats),
+      [1, 3, 3],
+    );
+  },
+);
+
+test(
   "an escalation stops a study starting problem runs, and its status lists it for the owner",
   { timeout: 120_000 },
   async (t) => {
