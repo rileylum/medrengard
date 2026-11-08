@@ -19,7 +19,11 @@ type Line = {
   verbosity?: number;
   cost: { usd?: number } | null;
   seconds?: number;
-  grade?: { pass_counts: Record<string, number>; total_counts: Record<string, number> };
+  grade?: {
+    pass_counts: Record<string, number>;
+    total_counts: Record<string, number>;
+    tests?: Record<string, { passed: string[]; failed: string[] }>;
+  };
 };
 
 const metrics = ["solved", "core", "reliable", "erosion", "verbosity", "usd", "seconds"] as const;
@@ -62,6 +66,47 @@ export function score(run: Run): Scores | undefined {
     usd: sumOf(lines.map((line) => line.cost?.usd)),
     seconds: sumOf(lines.map((line) => line.seconds)),
   };
+}
+
+/**
+ * What a run broke: at each checkpoint after the first, of the tests every earlier checkpoint passed
+ * in its own groups, how many fail in that checkpoint's Regression group now. A test is matched by
+ * name, which is the same in its own group and in Regression. Checkpoints whose grade lists no
+ * tests, as their harness's calibration runs, are left out.
+ */
+export function breakage(run: Run) {
+  const last = new Map(run.lines.map((line) => [line.checkpoint, line]));
+  const tests = new Map(
+    [...last].flatMap(([checkpoint, line]) =>
+      line.status === "finished" && line.grade?.tests !== undefined ? [[checkpoint, line.grade.tests] as const] : [],
+    ),
+  );
+  const passedOwn = (checkpoint: number) =>
+    Object.entries(tests.get(checkpoint)!)
+      .filter(([group]) => group.startsWith(`checkpoint_${checkpoint}-`) && !group.endsWith("-Regression"))
+      .flatMap(([, result]) => result.passed);
+
+  return [...tests]
+    .filter(([checkpoint]) => checkpoint > 1)
+    .toSorted(([a], [b]) => a - b)
+    .flatMap(([checkpoint, groups]) => {
+      let broken = 0;
+      let passed = 0;
+
+      for (const earlier of tests.keys()) {
+        const regression = groups[`checkpoint_${earlier}-Regression`];
+
+        if (earlier >= checkpoint || regression === undefined) continue;
+
+        const failed = new Set(regression.failed);
+        const own = passedOwn(earlier);
+
+        passed += own.length;
+        broken += own.filter((name) => failed.has(name)).length;
+      }
+
+      return passed === 0 ? [] : [{ checkpoint, broken, passed }];
+    });
 }
 
 const median = (values: readonly number[]) => {
