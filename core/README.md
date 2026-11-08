@@ -458,6 +458,11 @@ const design = {
   directory holding one, is recorded the same way, through Claude Code's `InstructionsLoaded`
   hook. `AGENTS.md` fires no such hook, so its loading cannot be seen; it is kept out by turning
   off the built-in plugin that loads it.
+- Each attempt notes which Claude Code ran it and in what session:
+  `Claude Code 2.1.319, session <uuid>.` The version is the one `claude` says it is; the session is
+  a random id the adapter gives it with `--session-id`, so the note is there for an attempt that
+  fails too. If `claude` never says what it is, the version is unknown; if it ran another session,
+  the note names both. The session's files are still discarded with the attempt's home.
 - The adapter tells the agent where its inputs are, and how to claim each kind its step's `claims`
   lists, from the kinds' rules in `input.json`.
 - `--token <file>` is the file holding the subscription token, `~/.config/medrengard/claude-token`
@@ -500,7 +505,8 @@ carries on from there. With the Claude Code adapter:
   once it has said, before its first request: it costs nothing. What it loaded is checked as an
   unattended attempt's is, and one unfit to run opens no session: the attempt fails. This assumes
   `claude` loads the same in a session as headless, which nothing checks. Instruction files the
-  session loads are recorded as an unattended attempt's are;
+  session loads are recorded as an unattended attempt's are, and the version noted is the dry
+  run's; the dry run keeps no session, so the session's id is the session's own;
 - `--max-budget-usd`, which `claude` keeps only with `-p`, is refused: the attempt escalates.
 
 The step runs under `script(1)`, in a pseudo-terminal of its own: its window follows the owner's

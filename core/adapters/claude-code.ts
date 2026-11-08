@@ -23,6 +23,7 @@
  * token would otherwise be found.
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
   cpSync,
@@ -295,6 +296,10 @@ const configuration = [
 // prints only at the end, which the idle limit would stop.
 const headless = ["-p", "--output-format", "stream-json", "--verbose", "--include-hook-events"];
 
+// The attempt's session, chosen here so the record names it even when claude never says: an
+// attended session does not. Random, as a commission's name is unique only within its log.
+const sessionId = randomUUID();
+
 // Starts claude in its sandbox, with `session` before its configuration and `secret` on fd 3.
 // stdin, when piped, is given `prompt`: Linux refuses one argument over 128 KiB.
 function start(
@@ -375,6 +380,9 @@ type StreamEvent = {
   subtype?: string;
   // A hook that ran, in its hook_response event.
   hook_event?: string;
+  // Which claude ran, and in what session, in its init event.
+  claude_code_version?: string;
+  session_id?: string;
   // What claude loaded, in its init event.
   tools?: string[];
   skills?: string[];
@@ -445,12 +453,25 @@ function unfitOf(init: StreamEvent, applied: boolean): string[] {
   ];
 }
 
-// What claude said of its start: whether its settings applied, whether it said what it loaded,
-// and whether that stopped it.
-type Startup = { applied: boolean; initialised: boolean; stopped: boolean };
+// What claude said of its start: whether its settings applied, whether it said what it loaded and
+// which version it is, and whether that stopped it.
+type Startup = { applied: boolean; initialised: boolean; stopped: boolean; version?: string };
 
-// Follows claude's start in its stream: at init, records its leaks and, if it is unfit, stops it
-// before its first turn. `then` stops it anyway, as a dry run does.
+// Which claude ran the attempt, and in what session: the one it was given unless it says otherwise.
+function identityOf(version?: string, ran?: string): string {
+  const which = version === undefined ? "Claude Code, version unknown" : `Claude Code ${version}`;
+
+  const session =
+    ran === undefined || ran === sessionId
+      ? sessionId
+      : `${ran}, not ${sessionId}, which it was given`;
+
+  return `${which}, session ${session}.`;
+}
+
+// Follows claude's start in its stream: at init, notes which claude it is, records its leaks and, if
+// it is unfit, stops it before its first turn. `then` stops it anyway, as a dry run does, whose
+// session is not the attempt's and goes unnoted.
 function startupOf(
   claude: ChildProcess,
   event: StreamEvent,
@@ -463,6 +484,12 @@ function startupOf(
 
   if (event.type === "system" && event.subtype === "init") {
     startup.initialised = true;
+    startup.version = event.claude_code_version;
+
+    if (then === undefined) {
+      note(identityOf(event.claude_code_version, event.session_id));
+    }
+
     leaksOf(event);
 
     const unfit = unfitOf(event, startup.applied);
@@ -506,9 +533,11 @@ function follow(claude: ChildProcess, echo: boolean, each: (event: StreamEvent) 
   });
 }
 
-// Records that claude never said what it loaded; without that, nothing of its start was checked.
+// Records that claude never said what it loaded; without that, nothing of its start was checked,
+// and its version is unknown.
 function unsaid(startup: Startup): void {
   if (!startup.initialised) {
+    note(identityOf());
     report("Claude Code did not say what it loaded.");
   }
 }
@@ -577,7 +606,8 @@ async function dryRun(session: string[]): Promise<Startup> {
   const dryStartup: Startup = { applied: false, initialised: false, stopped: false };
 
   const dry = start(
-    [...headless, ...session],
+    // It keeps no session, which would take the attempt's id from the session after it.
+    [...headless, "--no-session-persistence", ...session],
     "medrengard-dry-run",
     ["pipe", "pipe", "ignore"],
     "Begin your step.",
@@ -623,15 +653,30 @@ let claude: ChildProcess;
 if (attended) {
   const session = attendedSession();
 
-  if ((await dryRun(session)).stopped) {
+  const dry = await dryRun(session);
+
+  if (dry.stopped) {
     process.exit(1);
   }
 
+  if (dry.initialised) {
+    note(identityOf(dry.version));
+  }
+
   // The terminal is claude's.
-  claude = start(["Begin your step.", ...session], token, ["inherit", "inherit", "inherit"]);
+  claude = start(["Begin your step.", ...session, "--session-id", sessionId], token, [
+    "inherit",
+    "inherit",
+    "inherit",
+  ]);
 } else {
   // stdout is read, to note what the agent does, and passed on unchanged as the transcript.
-  claude = start(headless, token, ["pipe", "pipe", "inherit"], prompt);
+  claude = start(
+    [...headless, "--session-id", sessionId],
+    token,
+    ["pipe", "pipe", "inherit"],
+    prompt,
+  );
 
   follow(claude, true, (event) => {
     startupOf(claude, event, startup);
