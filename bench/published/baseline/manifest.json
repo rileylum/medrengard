@@ -1,0 +1,45 @@
+{
+  "study": {
+    "hash": "0a6f35518a3d840ced43d1bd902c6f4d37e2154deaa17bb0c36dc58a1cc3ee78",
+    "factory": "../factory.ts",
+    "configurations": [
+      "baseline"
+    ],
+    "problems": [
+      "datagate",
+      "textdrop",
+      "file_query_tool",
+      "mvvault",
+      "meshctl",
+      "eve_industry"
+    ],
+    "repeats": 5,
+    "calibrate": {
+      "effort": "medium",
+      "repeats": 1
+    }
+  },
+  "repositories": [
+    {
+      "path": "medrengard-bench",
+      "commit": "2388a71d42f183692d05137d82b4457757c5a8aa"
+    },
+    {
+      "path": "medrengard",
+      "commit": "2e1f3726c59629480b18c3aa5169d3b080506d19"
+    }
+  ],
+  "pins": {
+    "runner": "af5a9cbc311605b5cceb80200ca9832bdff2d7b1",
+    "problems": "9cd9ca3a51c3d3e2a99d2488a25baf73a2204451",
+    "python": "3.12.14",
+    "matches": true
+  },
+  "versions": {
+    "node": "v24.13.0",
+    "claude": "2.1.318 (Claude Code)"
+  },
+  "configurations": {
+    "baseline": "97ec32116034c2a14409d75265ef7800713dee2d99219fec1139560fe900f000"
+  }
+}

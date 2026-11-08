@@ -1,0 +1,15 @@
+# Opus 5.5, which their catalog lacks. Pricing is copied from their opus-5.yaml; the cost compared
+# is Claude Code's own total_cost_usd, from each harness's transcript.
+internal_name: claude-opus-5-5
+provider: anthropic-subscription
+pricing:
+  input: 5
+  output: 25
+  cache_read: 0.5
+  cache_write: 6.25
+thinking_style: effort
+aliases:
+  - claude-opus-5-5
+  - opus-5.5
+agent_specific:
+  claude_code: {}
