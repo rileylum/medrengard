@@ -46,6 +46,23 @@ for (const [module, names] of Object.entries(exports)) {
   });
 }
 
+// The package lets a client import these modules and no other, at the paths listed here.
+test("the package exports exactly the public modules, at their paths", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+
+  assert.deepEqual(
+    manifest.exports,
+    Object.fromEntries(Object.keys(exports).map((module) => [`./${module}`, `./${module}`])),
+  );
+});
+
+// Technology: Node 24 and its built-ins, with zero runtime dependencies.
+test("the package has no runtime dependencies", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+
+  assert.equal(manifest.dependencies, undefined);
+});
+
 // What a client calls: the engine's methods.
 test("the engine has exactly the pinned methods", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));

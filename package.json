@@ -2,9 +2,12 @@
   "name": "medrengard",
   "private": true,
   "license": "MIT",
+  "workspaces": [
+    "core"
+  ],
   "type": "module",
   "scripts": {
-    "test": "tsc && oxlint --deny-warnings && oxfmt --check && node --test",
+    "test": "oxlint --deny-warnings && oxfmt --check && npm test --workspaces",
     "fmt": "oxfmt"
   },
   "devDependencies": {

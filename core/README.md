@@ -2,7 +2,7 @@
 
 A framework for building a personal software factory: workflows that take an idea to merged code.
 
-[`docs/core.md`](docs/core.md) holds what Medrengard is and the rules it keeps; this file shows how
+[`docs/core.md`](../docs/core.md) holds what Medrengard is and the rules it keeps; this file shows how
 to use what exists so far. The engine, the sandbox, the CLI, the TUI, attended steps and a Claude
 Code adapter run, and the engine and CLI let an observer follow the log.
 
@@ -34,8 +34,9 @@ Code adapter run, and the engine and CLI let an observer follow the log.
   start time and boot on each attempt it starts, so another can tell a live attempt from an
   interrupted one. Without its own entry in `/proc` the engine refuses to start.
 
-There is no package yet. The examples import from `medrengard/…`: replace that with the path to your
-checkout of this repository.
+Medrengard is the package `@medrengard/core`, in this directory, and is not published. A factory
+outside this repository depends on it by path, `npm install ~/dev/medrengard/core`, and imports only
+the modules its `exports` names.
 
 ## A first factory
 
@@ -46,10 +47,10 @@ owner.
 
 ```ts
 // factory.ts
-import { defineWorkflow } from "medrengard/src/replay.ts";
-import { contract } from "medrengard/defaults/access.ts";
-import { builtIn } from "medrengard/defaults/kinds.ts";
-import { limits } from "medrengard/defaults/limits.ts";
+import { defineWorkflow } from "@medrengard/core/src/replay.ts";
+import { contract } from "@medrengard/core/defaults/access.ts";
+import { builtIn } from "@medrengard/core/defaults/kinds.ts";
+import { limits } from "@medrengard/core/defaults/limits.ts";
 
 export default {
   // Relative to this file.
@@ -110,7 +111,7 @@ Run it with the CLI:
 
 ```sh
 export MEDRENGARD_FACTORY=$PWD/factory.ts
-alias medrengard="node medrengard/cli/medrengard.ts"
+alias medrengard="node medrengard/core/cli/medrengard.ts"
 
 medrengard commission greet first --title Greet --body "Say hello."
 medrengard advance first
@@ -159,7 +160,7 @@ The fields of a command or agent step:
   every loop: a step that has spent its budget escalates.
 - `access`: what the step's process may read, write and reach. See [Access](#access).
 - `limits`, optional: the ones the step changes from the factory's `defaults.limits`, which must
-  name all seven, so every step has each. `medrengard/defaults/limits.ts` holds a set to spread and
+  name all seven, so every step has each. `@medrengard/core/defaults/limits.ts` holds a set to spread and
   change: 600 s idle, 3600 s per attempt, a 32 MiB transcript, 4 MiB of inputs, 4 GiB of memory,
   1024 processes and 4 GiB of disk. Each is over zero:
   - `idle`: seconds without output before the step is stopped; at an attended step, without
@@ -255,7 +256,7 @@ An input name is also a directory in the step's input, so it may hold only lette
 Every command and agent step runs in bubblewrap under its `access`:
 
 ```ts
-import type { Access } from "medrengard/src/replay.ts";
+import type { Access } from "@medrengard/core/src/replay.ts";
 
 const access: Access = {
   // In order of depth; on the same path, read wins. A path not listed is invisible.
@@ -298,7 +299,7 @@ kind program whatever its access: it is empty and read-only, but for the attempt
 input and output and any path the access names under it. So no access can let a step write a
 decision without naming the log's directory itself.
 
-`medrengard/defaults/access.ts` holds two values to use as they are or to change one dial of, and
+`@medrengard/core/defaults/access.ts` holds two values to use as they are or to change one dial of, and
 `gitIdentity(name, email)`, the `values` that make Git author and commit as that identity.
 "The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they
 exist.
@@ -315,7 +316,7 @@ exist.
   stays invisible until you add it: the deeper entry wins.
 
 ```ts
-import { contract } from "medrengard/defaults/access.ts";
+import { contract } from "@medrengard/core/defaults/access.ts";
 
 // A step that clones the owner's repository into its empty workspace.
 const cloning = {
@@ -327,13 +328,13 @@ const cloning = {
 ## Kinds
 
 A kind says what an artifact of it holds, and how the engine checks a claim of it. The factory
-passes its kinds by name; `medrengard/defaults/kinds.ts` exports the built-ins as `builtIn`, to use
+passes its kinds by name; `@medrengard/core/defaults/kinds.ts` exports the built-ins as `builtIn`, to use
 as they are, change, or add to:
 
 ```ts
-import { contract } from "medrengard/defaults/access.ts";
-import { builtIn } from "medrengard/defaults/kinds.ts";
-import type { Kind } from "medrengard/src/kinds.ts";
+import { contract } from "@medrengard/core/defaults/access.ts";
+import { builtIn } from "@medrengard/core/defaults/kinds.ts";
+import type { Kind } from "@medrengard/core/src/kinds.ts";
 
 // A judgement, so the subject stays the commit it was opened for.
 const pullRequest: Kind = {
@@ -393,7 +394,7 @@ An agent is a harness adapter to run, a model, a prompt and any skills. The adap
 like any command; `adapters/claude-code.ts` runs the agent through `claude -p`:
 
 ```ts
-import { claudeCode } from "medrengard/defaults/access.ts";
+import { claudeCode } from "@medrengard/core/defaults/access.ts";
 
 const design = {
   kind: "agent",
@@ -402,7 +403,7 @@ const design = {
       // An absolute path: the program runs in its workspace.
       run: [
         "node",
-        "/path/to/medrengard/adapters/claude-code.ts",
+        "/path/to/medrengard/core/adapters/claude-code.ts",
         "--permission-mode",
         "bypassPermissions",
       ],
@@ -622,7 +623,7 @@ How the attempt ends:
 The CLI is a thin layer over `createEngine`, and so is any other client:
 
 ```ts
-import { createEngine } from "medrengard/src/engine.ts";
+import { createEngine } from "@medrengard/core/src/engine.ts";
 import factory from "./factory.ts";
 
 const engine = createEngine({
@@ -774,7 +775,7 @@ medrengard <command> [--json] [--factory <path>]
 ## The TUI
 
 ```text
-node medrengard/tui/medrengard-tui.ts [--factory <path>]
+node medrengard/core/tui/medrengard-tui.ts [--factory <path>]
 ```
 
 The owner's terminal UI, a default a factory can replace: it calls the engine's methods as the CLI
@@ -798,10 +799,10 @@ does, and needs the owner's terminal as stdin and stdout. The factory is found a
 
 ## Development
 
-`npm test` runs the type check, the linter, the format check and the tests. Tests write only under
-the system temp directory.
+`npm test` here runs the type check and the tests; at the repository's root it also runs the linter
+and the format check, for every package. Tests write only under the system temp directory.
 
 ## Licence
 
-MIT: see [`LICENSE`](LICENSE). `tools/oxlint/anti-slop/` is vendored from
+MIT: see [`LICENSE`](../LICENSE). [`tools/oxlint/anti-slop/`](../tools/oxlint/anti-slop/) is vendored from
 [anti-slop](https://github.com/dmmulroy/anti-slop) under its own MIT licence, beside it.

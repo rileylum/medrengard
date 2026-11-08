@@ -1,0 +1,21 @@
+{
+  "name": "@medrengard/core",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./src/replay.ts": "./src/replay.ts",
+    "./src/kinds.ts": "./src/kinds.ts",
+    "./src/engine.ts": "./src/engine.ts",
+    "./src/store.ts": "./src/store.ts",
+    "./defaults/access.ts": "./defaults/access.ts",
+    "./defaults/kinds.ts": "./defaults/kinds.ts",
+    "./defaults/limits.ts": "./defaults/limits.ts"
+  },
+  "scripts": {
+    "test": "tsc -p . && node --test"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
