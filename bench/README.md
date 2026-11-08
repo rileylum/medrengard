@@ -74,7 +74,9 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   `<results>/<run>/<problem>.jsonl`: the configuration and repeat, the commit, the definition's
   hash, the agent attempts' time, their cost, turns and session time summed from Claude Code's
   result lines, whether it solved the checkpoint (all Core tests pass), SlopCodeBench's verbosity
-  and erosion (its own `scb-check` call) and the grader's report.
+  and erosion (its own `scb-check` call) and the grader's report; and under `commits`, each commit the
+  configuration made in the checkpoint before the one it claimed, such as its work before a review,
+  oldest first, graded the same way, so a study sees what each step changed.
 - `driver/select.ts`: the selection rule. Each problem is placed by one baseline run: ranked by
   solve rate (ties by Core pass fraction, then name) into thirds, each split at its median erosion.
   The current iteration problems stay; each of the six cells is filled to two from the surveyed
