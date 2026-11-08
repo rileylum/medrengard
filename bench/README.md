@@ -96,6 +96,12 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   runs; per configuration, means over problems with bootstrap 95% intervals (problems resampled,
   then repeats); each configuration against the study's first, paired by problem. A checkpoint never
   reached after an abandon counts as unsolved. Seeded, so the same results give the same summary.
+  Breakage is a metric beside the others: at each checkpoint after the first, the share of the tests
+  earlier checkpoints passed that fail in their Regression group. Then, test by test, by family (a
+  test's name without a parametrized case's parameters): within a run, what each checkpoint's claimed
+  commit fixed and broke against its first commit; the families every run of a configuration passes
+  and every run of the control fails, or the other way round; and the families every run fails, a
+  ceiling no configuration gets past.
 - `writeup/`: the posts on the studies' findings, with the scripts that make their figures and tables
   from the data directory (`writeup/README.md`).
 - `bin/runner.py`: the driver's side of SlopCodeBench, run in its pinned environment by

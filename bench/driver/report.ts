@@ -19,14 +19,15 @@ type Line = {
   verbosity?: number;
   cost: { usd?: number } | null;
   seconds?: number;
-  grade?: {
-    pass_counts: Record<string, number>;
-    total_counts: Record<string, number>;
-    tests?: Record<string, { passed: string[]; failed: string[] }>;
-  };
+  grade?: Grade;
+  // The commits a configuration made in the checkpoint before the one it claimed, oldest first.
+  commits?: readonly { commit: string; grade: Grade }[];
 };
 
-const metrics = ["solved", "core", "reliable", "erosion", "verbosity", "usd", "seconds"] as const;
+type Tests = Record<string, { passed: string[]; failed: string[] }>;
+type Grade = { pass_counts: Record<string, number>; total_counts: Record<string, number>; tests?: Tests };
+
+const metrics = ["solved", "core", "reliable", "erosion", "verbosity", "breakage", "usd", "seconds"] as const;
 
 type Metric = (typeof metrics)[number];
 type Scores = Record<Metric, number | undefined>;
@@ -63,6 +64,7 @@ export function score(run: Run): Scores | undefined {
     reliable: solved === total ? 1 : 0,
     erosion: meanOf(defined(graded.map((line) => line.erosion))),
     verbosity: meanOf(defined(graded.map((line) => line.verbosity))),
+    breakage: meanOf(breakage(run).map((one) => one.broken / one.passed)),
     usd: sumOf(lines.map((line) => line.cost?.usd)),
     seconds: sumOf(lines.map((line) => line.seconds)),
   };
@@ -107,6 +109,148 @@ export function breakage(run: Run) {
 
       return passed === 0 ? [] : [{ checkpoint, broken, passed }];
     });
+}
+
+// A test's family: its name without the parameters of a parametrized case, within its group.
+const familyOf = (group: string, name: string) => `${group}::${name.replace(/\[.*\]$/, "")}`;
+const own = (group: string, checkpoint: number) => group.startsWith(`checkpoint_${checkpoint}-`) && !group.endsWith("-Regression");
+const solvedBy = (grade: Grade) => (grade.total_counts.Core ?? 0) > 0 && grade.pass_counts.Core === grade.total_counts.Core;
+
+// Each family of a checkpoint's own tests: its cases, and whether every one passed.
+function families(tests: Tests, checkpoint: number) {
+  const found = new Map<string, { cases: number; passed: boolean }>();
+
+  for (const [group, result] of Object.entries(tests).filter(([group]) => own(group, checkpoint))) {
+    for (const [names, passed] of [[result.passed, true], [result.failed, false]] as const) {
+      for (const name of names) {
+        const key = familyOf(group, name);
+        const before = found.get(key) ?? { cases: 0, passed: true };
+
+        found.set(key, { cases: before.cases + 1, passed: before.passed && passed });
+      }
+    }
+  }
+
+  return found;
+}
+
+/**
+ * What a study's runs did test by test, by family: within a run, what each checkpoint's claimed
+ * commit changed from its first; the families every run of a configuration passes and every run of
+ * the control fails, or the other way round; and the families every run fails.
+ */
+export function tests(runs: readonly Run[], { control }: { control: string }) {
+  // Each run's graded checkpoints, the last line of each winning.
+  const graded = runs.flatMap((run) =>
+    [...new Map(run.lines.map((line) => [line.checkpoint, line])).values()]
+      .filter((line) => line.status === "finished" && line.grade?.tests !== undefined)
+      .map((line) => ({ run, line, tests: line.grade!.tests! })),
+  );
+
+  type Count = { families: number; cases: number };
+  const count = (cases: readonly string[]): Count => ({
+    families: new Set(cases.map((test) => test.replace(/\[.*\]$/, ""))).size,
+    cases: cases.length,
+  });
+  const add = (a: Count, b: Count) => ({ families: a.families + b.families, cases: a.cases + b.cases });
+  // The cases, as group::name, that `to` passes and `from` failed.
+  const gained = (from: Tests, to: Tests) =>
+    Object.entries(to).flatMap(([group, result]) =>
+      result.passed.filter((name) => from[group]?.failed.includes(name)).map((name) => `${group}::${name}`),
+    );
+  const zero = { families: 0, cases: 0 };
+
+  const within = [
+    ...Map.groupBy(
+      graded.filter(({ line }) => (line.commits?.length ?? 0) > 0 && line.commits![0]!.grade.tests !== undefined),
+      ({ run }) => `${run.configuration}\n${run.problem}`,
+    ),
+  ].map(([key, checkpoints]) => {
+    const [configuration, problem] = key.split("\n") as [string, string];
+    const changes = checkpoints.map(({ line, tests: last }) => {
+      const first = line.commits![0]!.grade;
+      const fixed = gained(first.tests!, last);
+      const broken = gained(last, first.tests!);
+      const isOwn = (test: string) => own(test.split("::")[0]!, line.checkpoint);
+
+      return {
+        fixed,
+        broken,
+        own: { fixed: count(fixed.filter(isOwn)), broken: count(broken.filter(isOwn)) },
+        earlier: { fixed: count(fixed.filter((test) => !isOwn(test))), broken: count(broken.filter((test) => !isOwn(test))) },
+        gained: !solvedBy(first) && solvedBy(line.grade!),
+        lost: solvedBy(first) && !solvedBy(line.grade!),
+      };
+    });
+
+    return {
+      configuration,
+      problem,
+      checkpoints: changes.length,
+      fixedAt: changes.filter((change) => change.fixed.length > 0).length,
+      brokenAt: changes.filter((change) => change.broken.length > 0).length,
+      own: {
+        fixed: changes.reduce((sum, change) => add(sum, change.own.fixed), zero),
+        broken: changes.reduce((sum, change) => add(sum, change.own.broken), zero),
+      },
+      earlier: {
+        fixed: changes.reduce((sum, change) => add(sum, change.earlier.fixed), zero),
+        broken: changes.reduce((sum, change) => add(sum, change.earlier.broken), zero),
+      },
+      solvedGained: changes.filter((change) => change.gained).length,
+      solvedLost: changes.filter((change) => change.lost).length,
+    };
+  });
+
+  // Per problem and checkpoint, each configuration's runs' families.
+  const at = Map.groupBy(graded, ({ run, line }) => `${run.problem}\n${line.checkpoint}`);
+  const consistent: {
+    configuration: string;
+    control: string;
+    problem: string;
+    checkpoint: number;
+    family: string;
+    cases: number;
+    passedBy: string;
+  }[] = [];
+  const shared: { problem: string; checkpoint: number; family: string; cases: number; runs: number }[] = [];
+
+  for (const [key, entries] of [...at].toSorted(([a], [b]) => a.localeCompare(b, "en", { numeric: true }))) {
+    const [problem, n] = key.split("\n") as [string, string];
+    const checkpoint = Number(n);
+    const byConfiguration = Map.groupBy(
+      entries.map(({ run, tests: grade }) => ({ configuration: run.configuration, families: families(grade, checkpoint) })),
+      (entry) => entry.configuration,
+    );
+    const all = entries.map(({ tests: grade }) => families(grade, checkpoint));
+    const names = [...new Set(all.flatMap((one) => [...one.keys()]))].toSorted();
+    const passes = (runFamilies: Map<string, { passed: boolean }>, name: string) => runFamilies.get(name)?.passed === true;
+    const casesOf = (name: string) => Math.max(...all.map((one) => one.get(name)?.cases ?? 0));
+    const theirs = byConfiguration.get(control);
+
+    for (const name of names) {
+      if (all.every((one) => !passes(one, name))) {
+        shared.push({ problem, checkpoint, family: name, cases: casesOf(name), runs: all.length });
+      }
+    }
+
+    if (theirs === undefined) continue;
+
+    for (const [configuration, ours] of byConfiguration) {
+      if (configuration === control) continue;
+
+      for (const name of names) {
+        const every = (group: typeof ours, passed: boolean) => group.every((one) => passes(one.families, name) === passed);
+        const passedBy = every(ours, true) && every(theirs, false) ? configuration : every(ours, false) && every(theirs, true) ? control : undefined;
+
+        if (passedBy !== undefined) {
+          consistent.push({ configuration, control, problem, checkpoint, family: name, cases: casesOf(name), passedBy });
+        }
+      }
+    }
+  }
+
+  return { within, consistent, shared };
 }
 
 const median = (values: readonly number[]) => {
@@ -172,9 +316,16 @@ function interval(draw: () => number) {
  * the others are compared with.
  */
 export function summarise(runs: readonly Run[], { control, seed = 1 }: { control: string; seed?: number }) {
+  // Breakage draws from a generator of its own, so adding it left every other metric's intervals
+  // as they were.
   const random = generator(seed);
-  const pick = <T>(values: readonly T[]) => values[Math.floor(random() * values.length)]!;
-  const resampledMean = (values: readonly number[]) => mean(values.map(() => pick(values)));
+  const apart = generator(seed);
+  const drawing = (metric: Metric) => {
+    const source = metric === "breakage" ? apart : random;
+    const pick = <T>(values: readonly T[]) => values[Math.floor(source() * values.length)]!;
+
+    return { pick, resampledMean: (values: readonly number[]) => mean(values.map(() => pick(values))) };
+  };
 
   const incomplete: { configuration: string; problem: string; repeat: number }[] = [];
   // Each configuration's scores, by problem, one per complete run.
@@ -212,6 +363,7 @@ export function summarise(runs: readonly Run[], { control, seed = 1 }: { control
       reliable: mean(valuesOf(runScores, "reliable")),
       erosion: range(valuesOf(runScores, "erosion")),
       verbosity: range(valuesOf(runScores, "verbosity")),
+      breakage: range(valuesOf(runScores, "breakage")),
       usd: range(valuesOf(runScores, "usd")),
       seconds: range(valuesOf(runScores, "seconds")),
     })),
@@ -228,6 +380,7 @@ export function summarise(runs: readonly Run[], { control, seed = 1 }: { control
     configuration,
     ...Object.fromEntries(
       metrics.map((metric) => {
+        const { pick, resampledMean } = drawing(metric);
         const groups = perProblem(byProblem, metric).map(([, values]) => values);
 
         if (groups.length === 0) return [metric, undefined];
@@ -251,6 +404,7 @@ export function summarise(runs: readonly Run[], { control, seed = 1 }: { control
       control,
       ...Object.fromEntries(
         metrics.map((metric) => {
+          const { pick, resampledMean } = drawing(metric);
           const theirs = new Map(perProblem(controlScores!, metric));
           const paired = perProblem(byProblem, metric, new Set(theirs.keys())).map(
             ([problem, values]) => [values, theirs.get(problem)!] as const,
@@ -280,7 +434,7 @@ export function summarise(runs: readonly Run[], { control, seed = 1 }: { control
     { difference: number; low: number; high: number } | undefined
   >)[];
 
-  return { incomplete, problems, overall, versus };
+  return { incomplete, problems, overall, versus, ...tests(runs, { control }) };
 }
 
 const figure = (value: number | undefined) => (value === undefined ? "–" : String(Math.round(value * 1000) / 1000));
@@ -295,6 +449,7 @@ export function render(summary: ReturnType<typeof summarise>) {
     `${figure(value.mean)} (${figure(value.min)}–${figure(value.max)})`;
   const ci = (value: { mean: number; low: number; high: number } | undefined) =>
     value === undefined ? "–" : `${figure(value.mean)} [${figure(value.low)}, ${figure(value.high)}]`;
+  const tally = (count: { families: number; cases: number }) => `${count.families} (${count.cases})`;
   const diff = (value: { difference: number; low: number; high: number } | undefined) =>
     value === undefined ? "–" : `${figure(value.difference)} [${figure(value.low)}, ${figure(value.high)}]`;
 
@@ -302,7 +457,7 @@ export function render(summary: ReturnType<typeof summarise>) {
     "## Per problem: mean (min–max) over complete runs",
     "",
     table(
-      ["configuration", "problem", "runs", "solved", "Core", "reliable", "erosion", "verbosity", "$", "seconds"],
+      ["configuration", "problem", "runs", "solved", "Core", "reliable", "erosion", "verbosity", "breakage", "$", "seconds"],
       summary.problems.map((row) => [
         row.configuration,
         row.problem,
@@ -312,6 +467,7 @@ export function render(summary: ReturnType<typeof summarise>) {
         figure(row.reliable),
         spread(row.erosion),
         spread(row.verbosity),
+        spread(row.breakage),
         spread(row.usd),
         spread(row.seconds),
       ]),
@@ -320,7 +476,7 @@ export function render(summary: ReturnType<typeof summarise>) {
     "## Per configuration: mean over problems [bootstrap 95%]",
     "",
     table(
-      ["configuration", "solved", "Core", "reliable", "erosion", "verbosity", "$ per problem"],
+      ["configuration", "solved", "Core", "reliable", "erosion", "verbosity", "breakage", "$ per problem"],
       summary.overall.map((row) => [
         row.configuration,
         ci(row.solved),
@@ -328,6 +484,7 @@ export function render(summary: ReturnType<typeof summarise>) {
         ci(row.reliable),
         ci(row.erosion),
         ci(row.verbosity),
+        ci(row.breakage),
         ci(row.usd),
       ]),
     ),
@@ -337,7 +494,7 @@ export function render(summary: ReturnType<typeof summarise>) {
     summary.versus.length === 0
       ? "No configuration to compare."
       : table(
-          ["configuration", "control", "solved", "Core", "reliable", "erosion", "verbosity", "$ per problem"],
+          ["configuration", "control", "solved", "Core", "reliable", "erosion", "verbosity", "breakage", "$ per problem"],
           summary.versus.map((row) => [
             row.configuration,
             row.control,
@@ -346,8 +503,55 @@ export function render(summary: ReturnType<typeof summarise>) {
             diff(row.reliable),
             diff(row.erosion),
             diff(row.verbosity),
+            diff(row.breakage),
             diff(row.usd),
           ]),
+        ),
+    "",
+    "## Within a run: what each checkpoint's claimed commit changed from its first",
+    "",
+    "Test families (cases) the claimed commit passes and the checkpoint's first commit failed (fixed), or the other way " +
+      "round (broken): the checkpoint's own tests, and earlier checkpoints' rerun as Regression.",
+    "",
+    summary.within.length === 0
+      ? "No configuration made more than one commit in a checkpoint."
+      : table(
+          ["configuration", "problem", "checkpoints", "with a fix", "with a break", "own fixed", "own broken", "earlier fixed", "earlier broken", "solved gained", "solved lost"],
+          summary.within.map((row) => [
+            row.configuration,
+            row.problem,
+            String(row.checkpoints),
+            String(row.fixedAt),
+            String(row.brokenAt),
+            tally(row.own.fixed),
+            tally(row.own.broken),
+            tally(row.earlier.fixed),
+            tally(row.earlier.broken),
+            String(row.solvedGained),
+            String(row.solvedLost),
+          ]),
+        ),
+    "",
+    "## Consistent differences against the control",
+    "",
+    "Test families of a checkpoint's own tests that every run of one passes and every run of the other fails.",
+    "",
+    summary.consistent.length === 0
+      ? "None."
+      : table(
+          ["configuration", "control", "problem", "checkpoint", "family", "cases", "passed by"],
+          summary.consistent.map((row) => [row.configuration, row.control, row.problem, String(row.checkpoint), row.family, String(row.cases), row.passedBy]),
+        ),
+    "",
+    "## Shared failures",
+    "",
+    "Test families of a checkpoint's own tests that every run of every configuration fails: no configuration here gets past them.",
+    "",
+    summary.shared.length === 0
+      ? "None."
+      : table(
+          ["problem", "checkpoint", "family", "cases", "runs"],
+          summary.shared.map((row) => [row.problem, String(row.checkpoint), row.family, String(row.cases), String(row.runs)]),
         ),
     "",
     summary.incomplete.length === 0
