@@ -11,7 +11,8 @@ Then read `HANDOFF.md`, if present: where the last session stopped and the owner
   the choices the owner did not see.
 - **Cannot classify something?** Stop and ask the owner.
 - **Specs:** a sentence in `docs/core.md` without a test is a proposal.
-- **Tests** write only under the system temp directory, never inside the repository.
+- **Tests** write only under the system temp directory, never inside the repository. Each package's
+  `npm test` sets it to `/var/tmp/medrengard`, on disk: `/tmp` is often a small tmpfs held in memory.
 - **Checks:** `npm test` at the root: lint and format check, then each package's type check and
   tests. `npm test -w core` (or `-w bench`) runs one package's.
 - **Layout:** npm workspaces. `core/` is Medrengard, the package `@medrengard/core`: zero runtime

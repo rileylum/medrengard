@@ -894,9 +894,14 @@ test("a step whose access does not grant sandboxes cannot make namespaces of its
 });
 
 test("a step whose access grants sandboxes can start one of its own", async (t) => {
+  // bwrap prepares a new sandbox's root under /tmp, so a step that starts one needs a /tmp of its own.
   const { engine } = await engineConfined(
     t,
-    () => ({ ...access, sandboxes: true }),
+    () => ({
+      ...access,
+      sandboxes: true,
+      paths: [...access.paths, { path: "/tmp", mode: "scratch" }],
+    }),
     `bwrap --ro-bind / / --unshare-pid -- true && echo started`,
   );
 
