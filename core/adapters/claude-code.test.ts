@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { once } from "node:events";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -145,6 +145,8 @@ const canary = `echo '{"type":"system","subtype":"hook_response","hook_event":"S
 
 // The parts of claude's init these tests vary.
 type Loaded = {
+  claude_code_version?: string;
+  session_id?: string;
   tools?: string[];
   skills?: string[];
   plugins?: { name: string }[];
@@ -205,6 +207,8 @@ test("the Claude Code adapter runs claude headless with the agent, whose claim c
     "stream-json",
     "--verbose",
     "--include-hook-events",
+    "--session-id",
+    valueOf(rest, "--session-id")!,
     "--permission-mode",
     "acceptEdits",
     "--strict-mcp-config",
@@ -575,8 +579,70 @@ test("the Claude Code adapter records the instructions claude loaded, and lets i
   assert.equal(engine.errors("first", 1).toString(), `${leak}\n`);
 });
 
+// A version 4 UUID, as --session-id takes.
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+test("the Claude Code adapter notes the version claude says it is and the session it gave it", async (t) => {
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `${initOf({ tools: ["Bash", "Read", "Edit", "Write"], claude_code_version: "2.1.319" })}
+     ${succeeded}
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const session = valueOf(await argumentsOf(directory), "--session-id")!;
+
+  assert.match(session, uuid);
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    { notes: [{ note: `Claude Code 2.1.319, session ${session}.`, from: "step" }] },
+  ]);
+});
+
+test("the Claude Code adapter gives each attempt a session of its own", async (t) => {
+  const sessions = [];
+
+  for (const _ of [1, 2]) {
+    const { engine, directory } = await engineWithClaude(
+      t,
+      `${succeeded}
+       echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    );
+
+    await engine.advance("first");
+    sessions.push(valueOf(await argumentsOf(directory), "--session-id"));
+  }
+
+  assert.notEqual(sessions[0], sessions[1]);
+});
+
+test("the Claude Code adapter notes a session claude ran other than the one it gave it", async (t) => {
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `${initOf({ claude_code_version: "2.1.319", session_id: "chosen-by-claude" })}
+     ${succeeded}
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const session = valueOf(await argumentsOf(directory), "--session-id")!;
+
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    {
+      notes: [
+        {
+          note: `Claude Code 2.1.319, session chosen-by-claude, not ${session}, which it was given.`,
+          from: "step",
+        },
+      ],
+    },
+  ]);
+});
+
 test("the Claude Code adapter records that claude did not say what it loaded", async (t) => {
-  const { engine } = await engineWithClaude(
+  const { engine, directory } = await engineWithClaude(
     t,
     `echo '{"type":"result","is_error":false}'
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
@@ -585,8 +651,18 @@ test("the Claude Code adapter records that claude did not say what it loaded", a
   const unsaid = "Claude Code did not say what it loaded.";
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const session = valueOf(await argumentsOf(directory), "--session-id")!;
+
   assert.partialDeepStrictEqual(engine.record("first").entries, [
-    { outcome: "done", notes: [{ note: unsaid, from: "step" }], errors: true },
+    {
+      outcome: "done",
+      notes: [
+        { note: `Claude Code, version unknown, session ${session}.`, from: "step" },
+        { note: unsaid, from: "step" },
+      ],
+      errors: true,
+    },
   ]);
   assert.equal(engine.errors("first", 1).toString(), `${unsaid}\n`);
 });
@@ -830,6 +906,14 @@ test(
     assert.doesNotMatch(said, /did not apply/);
     assert.doesNotMatch(said, /did not declare/);
     assert.doesNotMatch(said, /could not load/);
+
+    // Which claude ran, as it says itself, in the session the adapter gave it.
+    const version = execFileSync(installed, ["--version"], { encoding: "utf8" }).split(" ")[0];
+
+    assert.match(
+      said,
+      new RegExp(`^Claude Code ${version.replaceAll(".", "\\.")}, session [0-9a-f-]{36}\\.$`, "m"),
+    );
   },
 );
 
@@ -1037,7 +1121,30 @@ test("the Claude Code adapter runs an attended agent's claude in the owner's ter
     hasCompletedOnboarding: true,
     projects: { [run.workspace]: { hasTrustDialogAccepted: true } },
   });
-  assert.equal(run.notes, "");
+  assert.equal(
+    run.notes,
+    `Claude Code, version unknown, session ${valueOf(run.arguments, "--session-id")}.\n`,
+  );
+});
+
+test("the Claude Code adapter notes an attended agent's version from its dry run, and the session it gave it", async (t) => {
+  const run = await attendedAdapter(
+    t,
+    [],
+    undefined,
+    `${initOf({ tools: ["Bash", "Read", "Edit", "Write"], claude_code_version: "2.1.319" })}
+     sleep 30`,
+  );
+
+  const session = valueOf(run.arguments, "--session-id")!;
+
+  assert.equal(run.code, 0);
+  assert.match(session, uuid);
+
+  // The dry run keeps no session, so the session's id is free for the session.
+  assert.ok(run.dryArguments.includes("--no-session-persistence"));
+  assert.ok(!run.dryArguments.includes("--session-id"));
+  assert.equal(run.notes, `Claude Code 2.1.319, session ${session}.\n`);
 });
 
 test("the Claude Code adapter first runs an attended agent's claude headless, to check what it loads", async (t) => {
@@ -1096,7 +1203,9 @@ test("the Claude Code adapter records what an attended agent's dry run loaded be
   assert.equal(run.code, 0);
   assert.equal(
     run.notes,
-    'Claude Code loaded what the agent did not declare: tools ["WebFetch"].\n',
+    `Claude Code loaded what the agent did not declare: tools ["WebFetch"].
+Claude Code, version unknown, session ${valueOf(run.arguments, "--session-id")}.
+`,
   );
 });
 
@@ -1106,7 +1215,9 @@ test("the Claude Code adapter records the instructions an attended agent's claud
   assert.equal(run.code, 0);
   assert.equal(
     run.notes,
-    "Claude Code loaded instructions the agent did not declare: /workspace/CLAUDE.md at session_start.\n",
+    `Claude Code, version unknown, session ${valueOf(run.arguments, "--session-id")}.
+Claude Code loaded instructions the agent did not declare: /workspace/CLAUDE.md at session_start.
+`,
   );
 });
 
