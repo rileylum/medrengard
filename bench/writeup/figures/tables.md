@@ -135,6 +135,45 @@ Every study but review-verify-long; their harness's calibration runs list no tes
 
 Regression failures over the same runs: 4311, of which 4274 (99.14%) are tests that never passed at their own checkpoint.
 
+## review-verify: failures shared across runs
+
+A checkpoint's own test failures (not Regression), counted once per run: 1772. In tests every run fails: 1053 (59.42%); in tests at least seven of nine runs fail: 1437 (81.09%). Distinct tests every run fails: 117 of 297.
+
+| problem | checkpoint | tests every run fails | of them Core |
+|---|---|---|---|
+| datagate | 1 | 1 | 0 |
+| datagate | 2 | 3 | 2 |
+| datagate | 3 | 1 | 0 |
+| datagate | 4 | 3 | 1 |
+| datagate | 5 | 5 | 0 |
+| eve_industry | 5 | 3 | 0 |
+| eve_industry | 6 | 2 | 0 |
+| eve_jump_planner | 1 | 2 | 0 |
+| eve_jump_planner | 2 | 1 | 0 |
+| eve_jump_planner | 3 | 8 | 0 |
+| eve_market_tools | 1 | 2 | 1 |
+| eve_market_tools | 2 | 4 | 2 |
+| eve_market_tools | 3 | 5 | 0 |
+| eve_market_tools | 4 | 7 | 5 |
+| execution_server | 1 | 2 | 0 |
+| file_merger | 1 | 1 | 0 |
+| file_merger | 2 | 2 | 1 |
+| file_merger | 4 | 5 | 5 |
+| layered_config_synthesizer | 1 | 2 | 0 |
+| layered_config_synthesizer | 2 | 11 | 8 |
+| layered_config_synthesizer | 3 | 10 | 7 |
+| layered_config_synthesizer | 4 | 14 | 7 |
+| meshctl | 1 | 6 | 0 |
+| meshctl | 2 | 1 | 0 |
+| meshctl | 3 | 3 | 0 |
+| meshctl | 4 | 1 | 0 |
+| meshctl | 5 | 5 | 0 |
+| meshctl | 7 | 1 | 0 |
+| mvvault | 1 | 2 | 0 |
+| textdrop | 2 | 2 | 0 |
+| textdrop | 4 | 1 | 0 |
+| textdrop | 6 | 1 | 0 |
+
 ## code-review: before and after its review, at the same checkpoint
 
 177 checkpoints. Lines changed by the review: mean 112. Erosion lower after the review at 114, higher at 61.

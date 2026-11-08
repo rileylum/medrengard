@@ -258,6 +258,49 @@ sections.push(
   "",
 );
 
+// Post 5: how many of a checkpoint's own test failures every run shares.
+const failedBy = new Map<string, number>();
+const gradedRuns = new Map<string, number>();
+
+for (const run of study) {
+  for (const line of lastOf(run).values()) {
+    const at = `${run.problem}|${line.checkpoint}`;
+
+    if (line.grade?.tests === undefined) continue;
+
+    gradedRuns.set(at, (gradedRuns.get(at) ?? 0) + 1);
+
+    for (const [group, result] of Object.entries(line.grade.tests)) {
+      if (!group.startsWith(`checkpoint_${line.checkpoint}-`) || group.endsWith("-Regression")) continue;
+
+      for (const test of result.failed) failedBy.set(`${at}|${group}::${test}`, (failedBy.get(`${at}|${group}::${test}`) ?? 0) + 1);
+    }
+  }
+}
+
+const runsAt = (key: string) => gradedRuns.get(key.split("|").slice(0, 2).join("|"))!;
+const failures = [...failedBy.values()].reduce((sum, count) => sum + count, 0);
+const sharedBy = (least: (key: string) => number) =>
+  [...failedBy].filter(([key, count]) => count >= least(key)).reduce((sum, [, count]) => sum + count, 0);
+const everyRun = [...failedBy].filter(([key, count]) => count === runsAt(key));
+
+sections.push(
+  "## review-verify: failures shared across runs",
+  "",
+  `A checkpoint's own test failures (not Regression), counted once per run: ${failures}. ` +
+    `In tests every run fails: ${sharedBy(runsAt)} (${percent(sharedBy(runsAt) / failures)}); ` +
+    `in tests at least seven of nine runs fail: ${sharedBy(() => 7)} (${percent(sharedBy(() => 7) / failures)}). ` +
+    `Distinct tests every run fails: ${everyRun.length} of ${failedBy.size}.`,
+  "",
+  table(
+    ["problem", "checkpoint", "tests every run fails", "of them Core"],
+    [...Map.groupBy(everyRun, ([key]) => key.split("|").slice(0, 2).join("|"))]
+      .toSorted(([a], [b]) => a.localeCompare(b, "en", { numeric: true }))
+      .map(([at, rows]) => [...at.split("|"), String(rows.length), String(rows.filter(([key]) => key.includes("-Core::")).length)]),
+  ),
+  "",
+);
+
 // Post 3: what the review itself changed, from data/reviews.jsonl.
 type Review = {
   problem: string;
