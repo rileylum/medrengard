@@ -213,7 +213,7 @@ function parseKinds(text: string): Kinds {
         throw refused(`its ${program}'s program must be a command and its arguments`);
       }
 
-      const problem = accessProblem(access);
+      const problem = accessProblem(access, false);
 
       if (problem !== undefined) {
         throw refused(`its ${program}'s ${problem}`);
@@ -269,7 +269,12 @@ function parseKinds(text: string): Kinds {
 }
 
 // What is wrong with `access`, said of whatever it belongs to, or undefined when nothing is.
-function accessProblem(access: Access): string | undefined {
+// A host a step's access may list: a name or address, any of its subdomains as *.name, and a port.
+const host = /^(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*(:[0-9]{1,5})?$/;
+
+// Why `access` cannot confine a program, if it cannot. `hosts`, whether its network may list the
+// hosts it reaches: a step's may, a kind program's not.
+function accessProblem(access: Access, hosts = true): string | undefined {
   const keys = ["paths", "network", "environment", "workspace", "sandboxes"];
 
   if (!hasExactly(access, Object.hasOwn(access, "values") ? [...keys, "values"] : keys)) {
@@ -300,16 +305,31 @@ function accessProblem(access: Access): string | undefined {
 
   if (
     paths.some(({ path }) =>
-      ["/workspace", "/input", "/output"].some(
+      ["/workspace", "/input", "/output", "/network"].some(
         (area) => path === area || path.startsWith(`${area}/`),
       ),
     )
   ) {
-    return "paths cannot name /workspace, /input or /output, where the step contract's directories are";
+    return "paths cannot name /workspace, /input, /output or /network, where the step contract's directories and its network's proxy are";
   }
 
-  if (network !== true && network !== false) {
-    return "network access must be true or false";
+  // lazy: a kind program's network is all or none. Let it list hosts once a verifier needs some.
+  const named = hasExactly(network, ["hosts"]) ? Object.values(network)[0] : undefined;
+
+  const listed =
+    hosts &&
+    Array.isArray(named) &&
+    named.length > 0 &&
+    named.every((each) => isText(each) && host.test(each));
+
+  if (network !== true && network !== false && !listed) {
+    return hosts
+      ? "network access must be true, false, or hosts it may reach"
+      : "network access must be true or false";
+  }
+
+  if (listed && paths.some(({ path }) => path === "/")) {
+    return "network access cannot list hosts when its paths grant /, which leaves no place for its proxy";
   }
 
   if (
@@ -417,6 +437,14 @@ function parseWorkflow(
     throw invalid("its start is not one of its steps");
   }
 
+  // Whether a session query names a step of the workflow whose attempts run a program.
+  const kindsOfSteps = new Map(
+    Object.entries(steps).map(([step, declared]) => [step, declared?.kind]),
+  );
+
+  const runsProgram = (step: string) =>
+    names.includes(step) && kindsOfSteps.get(step) !== "approval";
+
   for (const [name, step] of Object.entries(steps)) {
     const on = step?.on;
     const kind = step?.kind;
@@ -505,7 +533,9 @@ function parseWorkflow(
         (query) =>
           query === "subject" ||
           query === "request" ||
+          (hasExactly(query, ["session"]) && runsProgram(String(Object.values(query)[0]))) ||
           (isRecord(query) &&
+            !Object.hasOwn(query, "session") &&
             Object.entries(query).every(
               ([field, value]) =>
                 (field === "from" &&
@@ -519,7 +549,7 @@ function parseWorkflow(
       )
     ) {
       throw invalid(
-        `step ${name}'s inputs must each be subject, request, or a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all`,
+        `step ${name}'s inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, or a session of one of its steps that runs a program`,
       );
     }
 
@@ -662,16 +692,19 @@ function refuseUnbuildable(
 
     const query = step.workspace === "subject" ? "subject" : step.inputs[step.workspace.input];
 
+    // A workspace input that is a session was refused above, so it names no kind here.
     const possible =
       query === "subject"
         ? subjects
         : query === "request"
           ? ["document"]
-          : query.kind !== undefined
-            ? [query.kind]
-            : query.from !== undefined
-              ? claimedBy(query.from)
-              : [...Object.keys(kinds), "decision"];
+          : "session" in query
+            ? []
+            : query.kind !== undefined
+              ? [query.kind]
+              : query.from !== undefined
+                ? claimedBy(query.from)
+                : [...Object.keys(kinds), "decision"];
 
     const unbuildable = possible.find((kind) => kinds[kind]?.materialiser === undefined);
 

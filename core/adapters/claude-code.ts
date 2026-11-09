@@ -30,6 +30,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
   writeSync,
@@ -53,6 +54,8 @@ type Given = {
   attended: boolean;
   claims: Record<string, Kind>;
   agent: { model: string; prompt: string; skills: { name: string; path: string }[] };
+  // An artifact has a kind; a session, which a session query names, has none.
+  inputs: Record<string, { hash: string; kind?: string; body?: string }[]>;
 };
 
 const input = process.env.MEDRENGARD_IN!;
@@ -173,7 +176,26 @@ When you are done, write ${join(output, "output.json")} as JSON:
 {"outcome": one of ${JSON.stringify(given.outcomes)}, "artifacts": [...]}.
 Leave out "artifacts" to claim none. ${claiming}${attended ? together : ""}`;
 
-const prompt = `${given.agent.prompt}\n\n${contract}`;
+// The session the step declared to continue, if an earlier attempt left one: listed without a kind.
+const continued = Object.values(given.inputs)
+  .flat()
+  .filter((listed) => listed.kind === undefined);
+
+if (continued.length > 1) {
+  refuse(`An agent continues at most one session; its inputs hold ${continued.length}.`);
+}
+
+// A resumed agent remembers files its workspace may no longer hold: the workspace and the
+// conversation are two continuities, and only the commit carries the first.
+const resumed =
+  continued.length === 0
+    ? ""
+    : `
+
+You are continuing your earlier conversation, now as this step. Your workspace was rebuilt from
+the latest commit, so anything you did not commit is gone: check a file before you rely on it.`;
+
+const prompt = `${given.agent.prompt}\n\n${contract}${resumed}`;
 
 // Where claude's InstructionsLoaded hook writes each CLAUDE.md or rules file it loads, one JSON
 // line each; the stream does not carry that hook's events.
@@ -403,6 +425,9 @@ type StreamEvent = {
   };
   // Every message's tokens together, in its result event.
   usage?: Tokens;
+  // The account's usage limit, in a rate_limit_event; on an API error, in its parameters.
+  rate_limit_info?: RateLimit;
+  api_error_params?: { rate_limit_info?: RateLimit };
   is_error?: boolean;
   // The tools claude refused the agent, in its result event.
   permission_denials?: { tool_name: string; tool_input?: ToolInput }[];
@@ -410,6 +435,96 @@ type StreamEvent = {
   duration_ms?: number;
   total_cost_usd?: number;
 };
+
+// The account's usage limit as claude reports it: whether requests are refused, the window that
+// refuses them and when it resets, in epoch seconds.
+type RateLimit = { status?: string; rateLimitType?: string; resetsAt?: number };
+
+// What the owner calls each window claude names.
+const windows = new Map([
+  ["five_hour", "five-hour"],
+  ["seven_day", "weekly"],
+  ["seven_day_opus", "weekly Opus"],
+  ["seven_day_sonnet", "weekly Sonnet"],
+  ["seven_day_overage_included", "weekly extra usage"],
+  ["overage", "extra usage"],
+]);
+
+// How the adapter keeps a session for the record: the conversation claude wrote, with the harness
+// and session it belongs to, so a later attempt can continue it, and refuse another harness's.
+type Kept = { harness: string; version?: string; id: string; conversation: string };
+
+// claude keeps a conversation under its home's projects, in a directory named for the working
+// directory with every character but letters and digits as -.
+const conversations = join(homedir(), ".claude", "projects");
+const project = join(conversations, process.cwd().replace(/[^A-Za-z0-9]/g, "-"));
+
+// Restores the session the step continues where claude finds it, and returns the flags that
+// continue it as a fork: the stored session never changes. A session claude cannot continue, such
+// as another harness's, fails the attempt rather than start afresh.
+function restored(): string[] {
+  if (continued.length === 0) {
+    return [];
+  }
+
+  let kept: Kept;
+
+  try {
+    // SAFETY: an adapter's session is opaque to the engine; this one's is a Kept, checked below.
+    kept = JSON.parse(readFileSync(join(input, continued[0]!.body!), "utf8")) as Kept;
+  } catch (error) {
+    return failed(
+      `The session to continue cannot be read: ${error instanceof Error ? error.message : String(error)}.`,
+    );
+  }
+
+  if (kept.harness !== "claude-code") {
+    return failed(`The session to continue is ${kept.harness}'s, not Claude Code's.`);
+  }
+
+  mkdirSync(project, { recursive: true });
+  writeFileSync(join(project, `${kept.id}.jsonl`), kept.conversation);
+
+  // The step's own contract, not the one the conversation began with.
+  return ["--resume", kept.id, "--fork-session", "--system-prompt-snapshot", "off"];
+}
+
+// Says why the attempt cannot run, and ends it.
+function failed(why: string): never {
+  report(why);
+  process.exit(1);
+}
+
+// Keeps the conversation claude had in this attempt, if it wrote one, in the output, where the
+// engine records it as the attempt's session however the attempt ends.
+function keep(version: string | undefined): void {
+  if (!existsSync(conversations)) {
+    return;
+  }
+
+  const file = readdirSync(conversations, { withFileTypes: true, recursive: true }).find(
+    (entry) => entry.isFile() && entry.name === `${sessionId}.jsonl`,
+  );
+
+  if (file === undefined) {
+    return;
+  }
+
+  const kept: Kept = {
+    harness: "claude-code",
+    id: sessionId,
+    conversation: readFileSync(join(file.parentPath, file.name), "utf8"),
+  };
+
+  if (version !== undefined) {
+    kept.version = version;
+  }
+
+  writeFileSync(join(output, "session"), JSON.stringify(kept));
+}
+
+// The latest refusal by the account's usage limit, if claude reported one.
+let refused: RateLimit | undefined;
 
 // Tokens as the Anthropic API counts them.
 type Tokens = {
@@ -536,7 +651,13 @@ function startupOf(
 
     leaksOf(event);
 
-    const unfit = unfitOf(event, startup.applied);
+    // A resumed session must be the fork it was given, or claude did not continue it.
+    const forked =
+      then === undefined && continued.length > 0 && event.session_id !== sessionId
+        ? [`Claude Code did not continue the session as a fork: it ran ${event.session_id}.`]
+        : [];
+
+    const unfit = [...unfitOf(event, startup.applied), ...forked];
 
     unfit.forEach(report);
     startup.stopped = unfit.length > 0;
@@ -669,6 +790,12 @@ let result: StreamEvent | undefined;
 
 // What the agent says, each tool it calls, and how its run finished.
 function notesOf(event: StreamEvent): void {
+  const limit = event.rate_limit_info ?? event.api_error_params?.rate_limit_info;
+
+  if (limit?.status === "rejected") {
+    refused = limit;
+  }
+
   // The tokens so far after each message, so the engine knows them while the agent works; the
   // result's totals and cost replace them at the end.
   const { id, usage } = event.message ?? {};
@@ -727,6 +854,12 @@ function notesOf(event: StreamEvent): void {
 
 const startup: Startup = { applied: false, initialised: false, stopped: false };
 
+// The dry run continues it too, so restoring is checked before the owner's session opens.
+configuration.push(...restored());
+
+// The version claude said it is, kept with its session.
+let version: string | undefined;
+
 let claude: ChildProcess;
 
 if (attended) {
@@ -741,6 +874,8 @@ if (attended) {
   if (dry.initialised) {
     note(identityOf(dry.version));
   }
+
+  version = dry.version;
 
   // The terminal is claude's.
   claude = start(["Begin your step.", ...session, "--session-id", sessionId], token, [
@@ -766,6 +901,9 @@ if (attended) {
 const closed = await once(claude, "close").catch((error: NodeJS.ErrnoException) => error);
 
 instructionsOf();
+
+// However it ended: a failed attempt's conversation may be continued too.
+keep(version ?? startup.version);
 
 if (!attended) {
   unsaid(startup);
@@ -794,6 +932,20 @@ if (closed instanceof Error) {
 
   if (failure !== undefined) {
     console.error(failure);
+  }
+
+  // A run the account's usage limit refused failed for no fault of the agent's: say which window,
+  // and when it resets, so the owner retries then.
+  if ((code !== 0 || failure !== undefined) && refused !== undefined) {
+    const type = refused.rateLimitType;
+    const window = type === undefined ? "usage limit" : `${windows.get(type) ?? type} usage window`;
+
+    const when =
+      refused.resetsAt === undefined
+        ? ""
+        : `; it resets at ${new Date(refused.resetsAt * 1000).toISOString()}`;
+
+    report(`Claude Code's ${window} is used up${when}.`);
   }
 
   // A claude ended by a signal has no exit code; the attempt failed all the same.

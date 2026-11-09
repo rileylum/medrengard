@@ -13,6 +13,7 @@ Code adapter run, and the engine and CLI let an observer follow the log.
 - [Workflows](#workflows)
 - [Inputs](#inputs)
 - [Access](#access)
+  - [Reaching only some hosts](#reaching-only-some-hosts)
 - [Preparing a workspace](#preparing-a-workspace)
 - [Kinds](#kinds)
 - [Agents and the Claude Code adapter](#agents-and-the-claude-code-adapter)
@@ -201,9 +202,14 @@ any step claims; for an input, its `kind`, or else every kind its `from` steps m
 editing the factory affects only new commissions. The definition holds `run` as argv, not the program it names, so editing a script that
 `run` points at changes every commission that runs it next. To pin a prompt, put its text in the
 definition, not a path to it. An agent's skills are read when the commission starts and kept with
-its definition, so editing a skill affects only new commissions. The engine itself is not pinned:
-upgrading Medrengard can change how an unfinished commission runs from then on, so finish or
-abandon commissions before upgrading. A test keeps a log written on 2026-11-03 readable.
+its definition, so editing a skill affects only new commissions. The engine is pinned as well:
+commissioning and every attempt record the engine's version, a hash of its source, and an
+upgraded engine never quietly changes how an unfinished commission goes on. Before its next
+attempt, such a commission escalates, `Commission first last ran on engine 3f9a2c1d; this engine
+is 7b01e4aa.`; the owner's retry carries it on with this engine, and abandoning ends it. Only a
+decision on that escalation accepts the engine, not one at an approval step. A commission written
+before engines recorded their version escalates the same way, once. A test keeps a log written on
+2026-11-03 readable.
 
 `src/replay.ts` exports the types `Workflow`, `Agent`, `Access` and `Query`. A `run` is a non-empty
 argv, `readonly [string, ...string[]]`: a function that builds steps from a `string[]` must declare
@@ -254,6 +260,15 @@ claimed and each decision the owner made. Each field narrows it, and every field
 `{ kind: "verdict", about: "earlier" }`, for instance, gives a fix step the verdicts on the commits
 its earlier fixes replaced. A query that finds nothing gives an empty list, not an error.
 
+One more query is not over artifacts: `{ session: "implement" }` gives the latest session an attempt
+of the step `implement` left, however that attempt ended, or none before it has left one. A session
+is a harness's conversation, which the step's program leaves in its output as `session`; the
+engine keeps it by hash and gives it to a later step whose query names it, which its adapter
+continues. `input.json` lists it by its hash and body alone, with no kind or fields, and no
+workspace is built from it. Its bytes count toward the input limit. A step that continues its own
+session, `implement: { inputs: { earlier: { session: "implement" } } }`, picks up where its last
+attempt left off, a failed one included, once the owner retries it.
+
 A decision on an escalation is decided at the escalated step, so `from` keeps it too. Without a
 `kind`, `{ from: ["design"], take: "latest" }` gives the owner's retry, not the plan, once design
 has escalated and been retried.
@@ -279,6 +294,7 @@ const access: Access = {
     // A fresh directory of at most 256 MiB over whatever is there.
     { path: "/tmp", mode: "empty", size: 256 * 1024 * 1024 },
   ],
+  // true, false, or only some hosts: { hosts: ["api.anthropic.com", "registry.npmjs.org"] }.
   network: false,
   // Variable names passed through from the engine's environment, or "all".
   environment: ["LANG"],
@@ -322,7 +338,8 @@ exist.
 - `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
   256 MiB, Node and npm (Node's `bin` directory and npm's package, or the `node` executable
   alone when npm is not beside it; never other global packages), the `adapters` directory, the `claude` executable and the token
-  file `~/.config/medrengard/claude-token` to read, the network, `PATH`, `HOME` and `LANG`, the
+  file `~/.config/medrengard/claude-token` to read, only the model API, `api.anthropic.com`, as
+  network, `PATH`, `HOME` and `LANG`, the
   Git identity `Medrengard <medrengard@localhost>` as `values`, and `sandboxes`: the adapter runs `claude` in a sandbox of its own, in which what
   the agent runs cannot make namespaces. Its home is empty, so the owner's settings, skills, hooks
   and MCP servers never load. A path under the home, such as a repository,
@@ -337,6 +354,32 @@ const cloning = {
   paths: [...contract.paths, { path: "/home/owner/dev/app", mode: "read" as const }],
 };
 ```
+
+### Reaching only some hosts
+
+`network: { hosts: [...] }` lets a step reach those hosts and nothing else: `host` on port 443,
+`host:port` on another, `*.example.com` any subdomain of it. The step has no network of its own,
+only loopback. The engine runs a proxy outside the sandbox that tunnels a CONNECT to a listed host
+and refuses anything else, and a forwarder inside, on loopback, relays to it; `HTTPS_PROXY` and
+`HTTP_PROXY`, in both cases, point there. `curl`, `git`, `npm`, `pip` and `claude` follow them; a
+program that does not has no network at all, so it fails rather than leaks. Only HTTPS, as
+CONNECT, gets through. Each host refused is noted once, from the engine,
+`Step implement was refused network access to pastebin.com:443.`, so an agent that could not
+fetch says why, and one that tried to send something somewhere shows it.
+
+`claudeCode` lists only the model API, so nothing the agent runs reaches anywhere else. List more
+for an agent that must, readably in the definition:
+
+```ts
+const access = {
+  ...claudeCode,
+  network: { hosts: [...claudeCode.network.hosts, "registry.npmjs.org", "github.com"] },
+};
+```
+
+Workspace preparation runs in the same step, so it reaches the same hosts. The paths may not name
+`/network`, where the forwarder goes, nor grant `/` itself with a list of hosts, which leaves no
+place for it. A kind's verifier or materialiser has all of the network or none.
 
 ## Preparing a workspace
 
@@ -487,6 +530,18 @@ const design = {
   (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`), so it runs on its own defaults rather than on flags
   that could change between attempts of one commission; features Anthropic gates by flag stay
   off. If `claude` says it still sends telemetry, the adapter records it as a leak.
+- The adapter keeps the conversation `claude` had as the attempt's session, however it ended, so a
+  later step can continue it: `inputs: { earlier: { session: "plan" } }`. When a step declares one,
+  `claude` continues it as a fork (`--resume`, `--fork-session`, under the attempt's own session
+  id), so the session kept never changes; the agent is told its workspace was rebuilt from the
+  latest commit, and is given this step's prompt, not the one its conversation began with. Before
+  the step's first session there is none, and the agent starts afresh. A session `claude` cannot
+  continue, such as another harness's, fails the attempt; it never starts afresh instead. An
+  attended step continues one the same way.
+- A run the account's usage limit refused, such as the five-hour or weekly window of a
+  subscription, fails the attempt like any other, but its errors and a note say so, and when the
+  window resets: `Claude Code's five-hour usage window is used up; it resets at
+  2026-11-09T14:00:00.000Z.` Retry once it has.
 - A tool `claude` refused the agent, such as `Bash` under `acceptEdits`, is noted:
   `Claude Code denied Bash: npm test`. An attended session shows its refusals on screen.
 - Claude Code's managed settings in `/etc/claude-code`, which no flag turns off, are hidden from
@@ -590,6 +645,11 @@ Every command and agent step is a program, started:
   The Claude Code adapter reports the tokens so far after each message, then the cost and tokens
   of its result. Claude Code's cost is its own estimate, even on a subscription, and an attended
   session reports nothing.
+- with the option to leave a file `session` in its output: its harness's conversation, which a
+  later step may continue (see [Inputs](#inputs)). It is kept however the attempt ends, an
+  interrupted one included, if it is a regular file of at most the step's transcript limit; one
+  over it is not kept, and the reason says so, and an attempt that would otherwise complete
+  escalates instead.
 
 `input.json` lists each input's artifacts, oldest first, always as a list. A body is a file at
 `<input>/<hash>`, and `body` holds that path. An agent's skills are directories under `.skills`,

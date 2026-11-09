@@ -16,7 +16,10 @@ export type Query<N extends string = string> =
       kind?: string;
       about?: "subject" | "earlier" | "any";
       take?: "latest" | "all";
-    };
+    }
+  // The latest session an attempt of the step N left, if any: a harness's conversation, opaque to
+  // the engine, which a later attempt's adapter may continue.
+  | { session: N };
 
 /**
  * A reusable agent: the harness adapter program that runs it, the model and prompt it is given,
@@ -52,7 +55,9 @@ export type Access = {
     | { path: string; mode: "read" | "write" | "scratch" }
     | { path: string; mode: "empty"; size: number }
   )[];
-  network: boolean;
+  // All of it, none, or only these hosts, through a proxy the engine runs: `host` on port 443,
+  // `host:port`, or `*.domain` for its subdomains.
+  network: boolean | { hosts: readonly string[] };
   environment: readonly string[] | "all";
   values?: Readonly<Record<string, string>>;
   workspace: "read" | "write";
@@ -126,11 +131,13 @@ export type Workflow<N extends string = string, Bounded = Stated> = {
 // workflow is the definition's name; definition is the hash of the definition as it was when the
 // commission started, which the commission runs on. request is the hash of the owner's request,
 // the commission's first subject.
+// engine is the version of the engine that commissioned it, as attempt-started's.
 export type Commissioned = {
   type: "commissioned";
   workflow: string;
   definition: string;
   request: string;
+  engine?: string;
 };
 
 // subject and inputs name what the attempt was given, by hash: each input's artifacts, oldest
@@ -145,6 +152,9 @@ type AttemptStarted<N extends string> = {
   subject: string;
   inputs: readonly { name: string; hashes: readonly string[] }[];
   process: { pid: number; start: number; boot?: string };
+  // The version of the engine that ran it: a hash of its source, absent in events written before
+  // engines recorded it. A commission runs on the engine it last ran on, or escalates.
+  engine?: string;
 };
 
 /**
@@ -169,6 +179,8 @@ type AttemptCompleted<N extends string> = {
   transcript: string;
   errors?: string;
   usage?: Usage;
+  // The session its program left in its output, by hash, when it left one.
+  session?: string;
   next: N | "end";
 };
 
@@ -184,6 +196,10 @@ type Escalated = {
   transcript?: string;
   errors?: string;
   usage?: Usage;
+  session?: string;
+  // When it escalated because this engine is not the one the commission last ran on: this
+  // engine's version, which the owner's decision on it accepts.
+  engine?: string;
 };
 
 // note is one line for the owner, recorded as it arrives: one the attempt's program wrote to fd 3,

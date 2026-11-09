@@ -18,6 +18,9 @@ import {
   watch,
   writeFileSync,
   writeSync,
+  fstatSync,
+  readSync,
+  realpathSync,
 } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import {
@@ -29,7 +32,8 @@ import {
   resolve as resolvePath,
   sep,
 } from "node:path";
-import { hostname } from "node:os";
+import { hostname, tmpdir } from "node:os";
+import { connect as connectTo, createServer as createNetServer, type Socket } from "node:net";
 import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -167,6 +171,23 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
   // What an attempt no engine finished had spooled, in the store, for the escalation that ends
   // it: nothing for one spooled before there were spools.
+  // What an attempt no engine finished left, for the escalation that ends it, with `reason`: its
+  // transcript, errors and usage as spooled, and its session if within its step's transcript
+  // limit, `limit`. One over it is not kept, and the reason says so.
+  function ended(spool: Spool, limit: number, reason: string) {
+    const left = sessionLeft(join(spool.work, "output"), limit);
+
+    if (left === undefined) {
+      return { reason, ...spooled(spool) };
+    }
+
+    if ("over" in left) {
+      return { reason: `${reason}${unkept(left.over, limit)}`, ...spooled(spool) };
+    }
+
+    return { reason, ...spooled(spool), session: store.keep(left.body) };
+  }
+
   function spooled(spool: Spool) {
     if (!existsSync(spool.transcript)) {
       return {};
@@ -394,6 +415,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       const event: Commissioned = {
         type: "commissioned",
         workflow,
+        engine: engineVersion(),
         definition: store.keep(text),
         request: store.put({
           kind: "document",
@@ -789,9 +811,12 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
         write(commission, events, {
           type: "escalated",
-          reason: cancelledReason(started.step),
           attempt: started.attempt,
-          ...spooled(spool),
+          ...ended(
+            spool,
+            transcriptOf(definitionOf(events).workflow.steps[started.step]),
+            cancelledReason(started.step),
+          ),
         });
         unspool(spool);
 
@@ -861,9 +886,12 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
         write(commission, events, {
           type: "escalated",
-          reason: `Step ${state.step.name} was interrupted.`,
           attempt: started.attempt,
-          ...spooled(spool),
+          ...ended(
+            spool,
+            transcriptOf(workflow.steps[state.step.name]),
+            `Step ${state.step.name} was interrupted.`,
+          ),
         });
         unspool(spool);
 
@@ -884,6 +912,15 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       // Replay arrives at an approval step as awaiting, never ready.
       if (step.kind === "approval") {
         throw new Error(`Step ${name} is an approval step, so it cannot be ready.`);
+      }
+
+      // Upgrading Medrengard could change how the commission goes on: the owner decides first.
+      const upgraded = unacceptedEngine(commission, events);
+
+      if (upgraded !== undefined) {
+        write(commission, events, { type: "escalated", reason: upgraded, engine: engineVersion() });
+
+        continue;
       }
 
       const attempts = sinceDecision(events).filter(
@@ -919,10 +956,14 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       const prepared = (() => {
         try {
           return {
-            inputs: given.map(({ name, hashes }) => ({
-              name,
-              artifacts: hashes.map((hash) => ({ hash, artifact: store.get(hash) })),
-            })),
+            inputs: given.map(({ name, hashes }): Input => {
+              const query = step.inputs[name];
+
+              // A session is no artifact: its body is the bytes its program left.
+              return isRecord(query) && "session" in query
+                ? { name, sessions: hashes.map((hash) => ({ hash, body: store.read(hash) })) }
+                : { name, artifacts: hashes.map((hash) => ({ hash, artifact: store.get(hash) })) };
+            }),
             skills: (step.kind === "agent" ? (step.agent.skills ?? []) : []).map((path) => {
               const { name: skill, files } = definition.skills[path];
 
@@ -952,10 +993,9 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       const source = step.workspace;
       const named = source === "subject" || source === "empty" ? undefined : source.input;
 
-      const built =
-        named === undefined
-          ? undefined
-          : inputs.find((input) => input.name === named)?.artifacts[0];
+      // The definition refuses a workspace built from a session.
+      const from = inputs.find((input) => input.name === named);
+      const built = from !== undefined && "artifacts" in from ? from.artifacts[0] : undefined;
 
       if (named !== undefined && built === undefined) {
         write(commission, events, {
@@ -971,8 +1011,12 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
       const bytes =
         inputs
-          .flatMap(({ artifacts }) => artifacts)
-          .reduce((sum, { artifact }) => sum + Buffer.byteLength(artifact.body ?? ""), 0) +
+          .flatMap((input) =>
+            "artifacts" in input
+              ? input.artifacts.map(({ artifact }) => Buffer.byteLength(artifact.body ?? ""))
+              : input.sessions.map(({ body }) => body.length),
+          )
+          .reduce((sum, size) => sum + size, 0) +
         skills
           .flatMap(({ files }) => files)
           .reduce((sum, { bytes: file }) => sum + file.length, 0) +
@@ -1020,6 +1064,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
         subject: state.subject,
         inputs: given,
         process: self,
+        engine: engineVersion(),
       } as const;
 
       write(commission, events, started);
@@ -1097,16 +1142,19 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
         // decides, with what the step's program wrote, if it ran and the store can keep it. If
         // this write fails too, the next advance finds the attempt interrupted, and keeps what
         // was spooled.
-        let reason = failedIn(name, error instanceof Error ? error.message : String(error));
-        let kept = {};
+        const failed = failedIn(name, error instanceof Error ? error.message : String(error));
 
-        try {
-          kept = spooled(spool);
-        } catch (keeping) {
-          reason += `; its transcript could not be kept: ${keeping instanceof Error ? keeping.message : String(keeping)}`;
-        }
+        const kept = (() => {
+          try {
+            return ended(spool, step.limits.transcript, failed);
+          } catch (keeping) {
+            return {
+              reason: `${failed}; its transcript could not be kept: ${keeping instanceof Error ? keeping.message : String(keeping)}`,
+            };
+          }
+        })();
 
-        write(commission, read(commission), { type: "escalated", reason, attempt, ...kept });
+        write(commission, read(commission), { type: "escalated", attempt, ...kept });
         unspool(spool);
       } finally {
         running.delete(key);
@@ -1221,6 +1269,10 @@ function resolve(
     case "request":
       return [events[0].request];
     default: {
+      if ("session" in query) {
+        return sessionsOf(events, query.session).slice(-1);
+      }
+
       const { from, kind, about, take } = query;
 
       const named = recorded(events, kinds).flatMap((artifact) =>
@@ -1236,6 +1288,25 @@ function resolve(
       return take === "latest" ? named.slice(-1) : named;
     }
   }
+}
+
+// The sessions attempts of `step` left, oldest first, by hash, however each attempt ended.
+function sessionsOf(events: Log, step: string): string[] {
+  const steps = new Map<number, string>();
+
+  return events.flatMap((event) => {
+    if (event.type === "attempt-started") {
+      steps.set(event.attempt, event.step);
+    }
+
+    const ended =
+      event.type === "attempt-completed" ||
+      (event.type === "escalated" && event.attempt !== undefined);
+
+    return ended && event.session !== undefined && steps.get(event.attempt!) === step
+      ? [event.session]
+      : [];
+  });
 }
 
 // Every artifact in the commission's record, oldest first, with the step that claimed or decided
@@ -1282,6 +1353,17 @@ function keptOf(events: Log, hash: string): Readonly<Record<string, string>> {
   }
 
   return {};
+}
+
+// The transcript limit of a step: none for an approval step, which runs no program to leave a
+// session.
+function transcriptOf(step: Definition["workflow"]["steps"][string]): number {
+  return step.kind === "approval" ? 0 : step.limits.transcript;
+}
+
+// What an escalation's reason adds when the attempt's session was over its limit.
+function unkept(size: number, limit: number): string {
+  return ` Its session of ${size} bytes, over its transcript limit of ${limit}, was not kept.`;
 }
 
 // What an attempt may cost: its step's money limit, and what its commission's leaves, if it has
@@ -1349,6 +1431,65 @@ function moneyLeft(
   return { limit, spent: spent.spent };
 }
 
+// The version of this engine: a hash of its own source, the modules beside this one but their
+// tests, so any change to the engine is a different engine. Read once per process.
+let version: string | undefined;
+
+function engineVersion(): string {
+  if (version === undefined) {
+    const hash = createHash("sha256");
+
+    for (const file of readdirSync(import.meta.dirname)
+      .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+      .sort()) {
+      hash
+        .update(file)
+        .update("\0")
+        .update(readFileSync(join(import.meta.dirname, file)));
+    }
+
+    version = hash.digest("hex");
+  }
+
+  return version;
+}
+
+// Why the commission must not go on with this engine, if it must not: it last ran on another,
+// by its latest attempt or its commissioning, and the owner has not decided on an escalation
+// that named this engine since.
+function unacceptedEngine(commission: string, events: Log): string | undefined {
+  const current = engineVersion();
+
+  const last = events.findLastIndex(
+    (event) => event.type === "attempt-started" || event.type === "commissioned",
+  );
+
+  // The commissioned event is first, so one is always found.
+  const latest = events[last]!;
+
+  const ran =
+    latest.type === "attempt-started" || latest.type === "commissioned" ? latest.engine : undefined;
+
+  if (ran === current) {
+    return undefined;
+  }
+
+  const since = events.slice(last + 1);
+
+  const named = since.findLastIndex(
+    (event) => event.type === "escalated" && event.engine === current,
+  );
+
+  if (named !== -1 && since.slice(named + 1).some((event) => event.type === "decided")) {
+    return undefined;
+  }
+
+  const was =
+    ran === undefined ? "an engine that recorded no version" : `engine ${ran.slice(0, 8)}`;
+
+  return `Commission ${commission} last ran on ${was}; this engine is ${current.slice(0, 8)}.`;
+}
+
 // Only the owner renews a budget or permits a repeat: both count from the latest decision.
 function sinceDecision(events: Log): Log[number][] {
   return events.slice(events.findLastIndex((event) => event.type === "decided") + 1);
@@ -1369,12 +1510,14 @@ type Given = {
   kinds: Kinds;
   subject: Subject;
   workspace: Subject | undefined;
-  inputs: readonly {
-    name: string;
-    artifacts: readonly { hash: string; artifact: Artifact }[];
-  }[];
+  inputs: readonly Input[];
   skills: readonly { name: string; files: readonly { file: string; bytes: Buffer }[] }[];
 };
+
+// A declared input as given: the artifacts its query names, or the session a session query names.
+type Input =
+  | { name: string; artifacts: readonly { hash: string; artifact: Artifact }[] }
+  | { name: string; sessions: readonly { hash: string; body: Buffer }[] };
 
 type Store = ReturnType<typeof createStore>;
 
@@ -1580,27 +1723,43 @@ function pin(
   return pinned;
 }
 
+// A session as input.json lists it.
+type Listed = { hash: string; body: string };
+
 // Writes input.json, listing each declared input's artifacts, and each body as <input>/<hash>.
 // The sandbox binds the input read-only.
-async function prepare(input: string, step: Runnable, given: Given): Promise<void> {
-  await mkdir(input);
+async function prepare(input_: string, step: Runnable, given: Given): Promise<void> {
+  await mkdir(input_);
 
   const inputs = new Map<
     string,
-    { hash: string; kind: string; fields: Artifact["fields"]; body?: string }[]
+    ({ hash: string; kind: string; fields: Artifact["fields"]; body?: string } | Listed)[]
   >();
 
-  for (const { name, artifacts } of given.inputs) {
+  for (const input of given.inputs) {
+    const { name } = input;
     const listed = [];
 
-    for (const { hash, artifact } of artifacts) {
+    // A session is listed by its hash and body alone: it has no kind or fields.
+    if ("sessions" in input) {
+      for (const { hash, body } of input.sessions) {
+        await mkdir(join(input_, name), { recursive: true });
+        await writeFile(join(input_, name, hash), body);
+        listed.push({ hash, body: `${name}/${hash}` });
+      }
+
+      inputs.set(name, listed);
+      continue;
+    }
+
+    for (const { hash, artifact } of input.artifacts) {
       const { kind, fields } = artifact;
 
       if (artifact.body === undefined) {
         listed.push({ hash, kind, fields });
       } else {
-        await mkdir(join(input, name), { recursive: true });
-        await writeFile(join(input, name, hash), artifact.body);
+        await mkdir(join(input_, name), { recursive: true });
+        await writeFile(join(input_, name, hash), artifact.body);
         listed.push({ hash, kind, fields, body: `${name}/${hash}` });
       }
     }
@@ -1611,8 +1770,8 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
   // Under .skills, which no input name can be.
   for (const { name, files } of given.skills) {
     for (const { file, bytes } of files) {
-      await mkdir(dirname(join(input, ".skills", name, file)), { recursive: true });
-      await writeFile(join(input, ".skills", name, file), bytes);
+      await mkdir(dirname(join(input_, ".skills", name, file)), { recursive: true });
+      await writeFile(join(input_, ".skills", name, file), bytes);
     }
   }
 
@@ -1643,7 +1802,7 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
         : undefined,
   };
 
-  await writeFile(join(input, "input.json"), JSON.stringify(encoded));
+  await writeFile(join(input_, "input.json"), JSON.stringify(encoded));
 }
 
 // The transcript and claimed artifacts go to the store before the event naming them is written.
@@ -1678,6 +1837,12 @@ async function run(
   // The step's latest usage report, which every ending carries.
   let usage: Usage | undefined;
 
+  // The proxy its network goes through, while it runs, when its access lists hosts.
+  let proxy: Proxy | undefined;
+
+  // The session the program left, read once it has ended: kept with the ending, or over its limit.
+  let left: ReturnType<typeof sessionLeft>;
+
   // Stores the transcript, and the errors when there are any, on the event that ends the attempt.
   const recorded = <E extends Ending>(event: Omit<E, "transcript">): E => {
     // SAFETY: E is the event given, with the transcript every ending event can carry.
@@ -1691,12 +1856,24 @@ async function run(
       ended.usage = usage;
     }
 
+    if (left !== undefined && "body" in left) {
+      ended.session = store.keep(left.body);
+    }
+
     return ended;
   };
 
+  // A session over its limit is not kept, and the reason says so.
   const escalate = (reason: string): Ending =>
     spooling !== undefined
-      ? recorded<Extract<Ending, { type: "escalated" }>>({ type: "escalated", reason, attempt })
+      ? recorded<Extract<Ending, { type: "escalated" }>>({
+          type: "escalated",
+          reason:
+            left !== undefined && "over" in left
+              ? `${reason}${unkept(left.over, step.limits.transcript)}`
+              : reason,
+          attempt,
+        })
       : { type: "escalated", reason, attempt };
 
   const { disk } = step.limits;
@@ -1779,11 +1956,22 @@ async function run(
     // An agent step's program is its harness adapter, under the same contract.
     const bounds = { memory: step.limits.memory, processes: step.limits.processes };
 
+    // The hosts it may reach, through a proxy of the engine's, when its access lists them.
+    const { network } = step.access;
+
+    proxy =
+      network !== true && network !== false
+        ? await openProxy(network.hosts, (target) =>
+            note(`Step ${name} was refused network access to ${target}.`, "engine"),
+          )
+        : undefined;
+
     const confined = confine(
       step.access,
       { workspace, input, output, record: spool.record, scratch: join(directory, "scratch") },
       step.kind === "agent" ? step.agent.harness.run : step.run,
       bounds,
+      proxy?.socket,
     );
 
     const { unit } = confined;
@@ -2047,6 +2235,8 @@ async function run(
     noteLine(pending);
     usageLine(reporting);
 
+    left = sessionLeft(output, step.limits.transcript);
+
     if (closed instanceof Error) {
       return escalate(`Step ${name} could not start: ${closed.code}.`);
     }
@@ -2071,6 +2261,17 @@ async function run(
 
       return escalate(
         signal ? `Step ${name} was ended by ${signal}.` : `Step ${name} exited with code ${code}.`,
+      );
+    }
+
+    // A claim cannot complete an attempt whose session the record could not keep.
+    if (left !== undefined && "over" in left) {
+      const over = left.over;
+
+      left = undefined;
+
+      return escalate(
+        `Step ${name} left a session of ${over} bytes, over its transcript limit of ${step.limits.transcript}.`,
       );
     }
 
@@ -2135,6 +2336,7 @@ async function run(
     });
   } finally {
     clearInterval(watching);
+    await proxy?.close();
 
     if (spooling !== undefined) {
       closeSync(spooling.transcript);
@@ -2173,6 +2375,124 @@ function usageIn(text: string): Usage | undefined {
 
   // SAFETY: checked above to hold only the fields a Usage defines, each of its type.
   return dollars && counted ? (report as Usage) : undefined;
+}
+
+// The engine's proxy for a step that may reach only some hosts: where its socket is, and how to
+// close it.
+type Proxy = { socket: string; close: () => Promise<void> };
+
+// The most a request's head may hold before the proxy refuses it.
+const headLimit = 8192;
+
+// Opens a proxy that tunnels a CONNECT to one of `hosts`, and refuses anything else, calling
+// `refused` once for each target it refuses. It listens on a socket in a short directory of its
+// own: a socket's path is bounded, and an attempt's directory is deep. It runs in the engine, so
+// it reaches the network the engine reaches; the step reaches only it.
+async function openProxy(
+  hosts: readonly string[],
+  refused: (target: string) => void,
+): Promise<Proxy> {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-proxy-"));
+  const socket = join(directory, "socket");
+  const told = new Set<string>();
+  const open = new Set<Socket>();
+
+  const server = createNetServer((client) => {
+    open.add(client);
+    client.on("close", () => open.delete(client));
+    client.on("error", () => client.destroy());
+
+    let head = Buffer.alloc(0);
+
+    const reading = (chunk: Buffer) => {
+      head = Buffer.concat([head, chunk]);
+
+      const end = head.indexOf("\r\n\r\n");
+
+      if (end === -1) {
+        if (head.length > headLimit) {
+          client.end("HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n");
+        }
+
+        return;
+      }
+
+      client.off("data", reading);
+
+      const [method, target] = head.subarray(0, end).toString("latin1").split(" ");
+      const rest = head.subarray(end + 4);
+
+      if (method !== "CONNECT" || target === undefined || !reachable(target, hosts)) {
+        const named = method === "CONNECT" && target !== undefined ? target : `${method} ${target}`;
+
+        if (!told.has(named)) {
+          told.add(named);
+          refused(named);
+        }
+
+        client.end("HTTP/1.1 403 Forbidden\r\n\r\nRefused by the step's access.\n");
+
+        return;
+      }
+
+      const separator = target.lastIndexOf(":");
+      const upstream = connectTo(Number(target.slice(separator + 1)), target.slice(0, separator));
+
+      open.add(upstream);
+      upstream.on("close", () => open.delete(upstream));
+
+      upstream.on("connect", () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        upstream.write(rest);
+        upstream.pipe(client);
+        client.pipe(upstream);
+      });
+
+      upstream.on("error", () => {
+        client.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+        upstream.destroy();
+      });
+
+      client.on("close", () => upstream.destroy());
+    };
+
+    client.on("data", reading);
+  });
+
+  await new Promise<void>((resolve) => server.listen(socket, resolve));
+
+  return {
+    socket,
+    async close() {
+      for (const each of open) {
+        each.destroy();
+      }
+
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+// Whether a CONNECT target, host:port, is one of `hosts`: `host` is port 443, `host:port` that
+// port, and `*.domain` any of its subdomains.
+function reachable(target: string, hosts: readonly string[]): boolean {
+  const separator = target.lastIndexOf(":");
+  const name = target.slice(0, separator).toLowerCase();
+  const port = target.slice(separator + 1);
+
+  return (
+    separator > 0 &&
+    /^[0-9]+$/.test(port) &&
+    hosts.some((entry) => {
+      const [listed, listedPort = "443"] = entry.toLowerCase().split(":");
+
+      return (
+        port === listedPort &&
+        (listed!.startsWith("*.") ? name.endsWith(listed!.slice(1)) : name === listed)
+      );
+    })
+  );
 }
 
 type Claim = { outcome: string; artifacts: Artifact[] };
@@ -2461,6 +2781,54 @@ async function readBody(
   }
 
   return { text };
+}
+
+// The session a program left in its output, at `output/session`: its bytes within `limit`, its size
+// when over it, or nothing when it left no regular file there. Resolved first, as a claimed body
+// is, so a symbolic link cannot make the engine read outside the output; read at most one byte past
+// the limit, so a file still growing is never read whole.
+function sessionLeft(
+  output: string,
+  limit: number,
+): { body: Buffer } | { over: number } | undefined {
+  let real;
+
+  try {
+    real = realpathSync(join(output, "session"));
+
+    if (relative(realpathSync(output), real).split(sep)[0] === "..") {
+      return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+
+  let file;
+
+  try {
+    file = openSync(real, constants.O_RDONLY | constants.O_NONBLOCK);
+  } catch {
+    return undefined;
+  }
+
+  try {
+    const stats = fstatSync(file);
+
+    if (!stats.isFile()) {
+      return undefined;
+    }
+
+    if (stats.size > limit) {
+      return { over: stats.size };
+    }
+
+    const body = Buffer.alloc(limit + 1);
+    const read = readSync(file, body, 0, body.length, 0);
+
+    return read > limit ? { over: read } : { body: body.subarray(0, read) };
+  } finally {
+    closeSync(file);
+  }
 }
 
 // Reads the file `path` names under `root`, as readAtMost does. Resolved first, so neither .. nor a

@@ -137,7 +137,7 @@ test("the built-in kinds' programs see nothing of the owner's home but Node and 
 
 test("claudeCode gives the adapter the token file to read, and no token in the environment", () => {
   // In the environment, the token would be in reach of everything the agent runs.
-  assert.ok(claudeCode.environment !== "all");
+  assert.ok(Array.isArray(claudeCode.environment));
   assert.ok(!claudeCode.environment.includes("CLAUDE_CODE_OAUTH_TOKEN"));
   assert.ok(claudeCode.paths.some(({ path, mode }) => path === tokenFile && mode === "read"));
 });

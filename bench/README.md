@@ -25,7 +25,9 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   Medrengard's adapter, one step. `claude-code.ts`: the baseline's step with a prompt, a skill and only the
   tools the skill needs, which the review and verify configurations are: `code-review.ts` (Matt Pocock's
   `code-review`, with `Agent` for its subagent reviewers) and `verification.ts` (obra/superpowers'
-  `verification-before-completion`). The plan they belong to is `docs/review-verify.md`.
+  `verification-before-completion`). The plan they belong to is `docs/review-verify.md`. Also
+  `test-driven-development.ts` (obra/superpowers' `test-driven-development`) and `codebase-design.ts` (Matt
+  Pocock's `codebase-design`, the agent told to design its changes before writing them), neither with more tools.
 - `skills/`: published skills, copied verbatim at a pinned commit, per source with its `LICENSE` and a
   `SOURCE` naming the repository, commit and path. A configuration's hash covers their contents.
 - `workflow.ts`'s `implementAccess` gives every agent step /tmp and its home as Medrengard scratch
@@ -48,7 +50,9 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   `code-review` and `verification` once on datagate, to check their setup, in no comparison;
   `pilot-review-hard.ts` the same and the baseline on eve_market_tools; `drift-check.ts` the baseline once more
   on datagate. `review-verify.ts`: the baseline, `code-review` and `verification` three times each on eleven of
-  the twelve, without test_translator. `dry-easy.ts` is free.
+  the twelve, without test_translator. `tdd-design.ts`: the baseline, `test-driven-development` and
+  `codebase-design` three times each on `screen`; `pilot-tdd-design.ts`, the two once on datagate. `dry-easy.ts`
+  is free.
 - `driver/study.ts`: runs a study, `--concurrency` problem runs at a time (2 by default), every
   configuration's and problem's first repeat before any second. `--repeats n` runs only up to repeat
   n, so a study is paid for in stages: `--repeats 1`, then `--repeats 3` runs the second and third.

@@ -3,6 +3,8 @@
 // subscription: only with their approval.
 import baseline from "./configurations/baseline.ts";
 import codeReview from "./configurations/code-review.ts";
+import codebaseDesign from "./configurations/codebase-design.ts";
+import testDrivenDevelopment from "./configurations/test-driven-development.ts";
 import verification from "./configurations/verification.ts";
 import { join } from "node:path";
 import { data } from "./data.ts";
@@ -14,6 +16,8 @@ const configurations: Record<string, (environment: Environment) => Configuration
   baseline,
   "code-review": codeReview,
   verification,
+  "test-driven-development": testDrivenDevelopment,
+  "codebase-design": codebaseDesign,
 };
 
 const environment = { access: implementAccess(), prompt: implementPrompt };

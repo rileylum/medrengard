@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { existsSync, mkdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -511,8 +513,8 @@ test("an access that names /workspace, /input or /output, or a path under one, i
       ),
       {
         message:
-          "Workflow build is invalid: step build's paths cannot name /workspace, /input or /output, " +
-          "where the step contract's directories are.",
+          "Workflow build is invalid: step build's paths cannot name /workspace, /input, /output or /network, " +
+          "where the step contract's directories and its network's proxy are.",
       },
       path,
     );
@@ -2599,7 +2601,7 @@ test("a workflow whose input queries a step it does not have cannot be commissio
     ),
     {
       message:
-        "Workflow build is invalid: step build's inputs must each be subject, request, or a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all.",
+        "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, or a session of one of its steps that runs a program.",
     },
   );
 });
@@ -2614,7 +2616,7 @@ test("a workflow whose input queries a kind there is not cannot be commissioned"
     ),
     {
       message:
-        "Workflow build is invalid: step build's inputs must each be subject, request, or a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all.",
+        "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, or a session of one of its steps that runs a program.",
     },
   );
 });
@@ -2640,7 +2642,7 @@ for (const [what, query] of [
       ),
       {
         message:
-          "Workflow build is invalid: step build's inputs must each be subject, request, or a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all.",
+          "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, or a session of one of its steps that runs a program.",
       },
     );
   });
@@ -4792,12 +4794,16 @@ test("the log's events are exactly the six types, each with its pinned fields", 
         build: stepRunning(
           `echo note >&3; echo warning >&2; printf 'Do it.' > "$MEDRENGARD_OUT/plan.md"
            echo '{"usd":0.5,"tokens":{"input":1,"output":2,"cacheRead":3,"cacheWrite":4}}' >&4
+           printf 'a conversation' > "$MEDRENGARD_OUT/session"
            echo '${JSON.stringify(planAt("plan.md"))}' > "$MEDRENGARD_OUT/output.json"`,
           "review",
         ),
         review: { kind: "approval", on: { approve: "fail" } },
         fail: {
-          ...stepRunning(`echo '{"usd":0.25}' >&4; echo broken >&2; exit 3`, "end"),
+          ...stepRunning(
+            `echo '{"usd":0.25}' >&4; printf 'another' > "$MEDRENGARD_OUT/session"; echo broken >&2; exit 3`,
+            "end",
+          ),
           inputs: { plan: "subject" },
         },
       },
@@ -4828,6 +4834,7 @@ test("the log's events are exactly the six types, each with its pinned fields", 
     subject: "string",
     inputs,
     process: { pid: "number", start: "number", boot: "string" },
+    engine: "string",
     at: "number",
   });
 
@@ -4837,6 +4844,7 @@ test("the log's events are exactly the six types, each with its pinned fields", 
       workflow: "string",
       definition: "string",
       request: "string",
+      engine: "string",
       at: "number",
     },
     started([]),
@@ -4853,6 +4861,7 @@ test("the log's events are exactly the six types, each with its pinned fields", 
         usd: "number",
         tokens: { input: "number", output: "number", cacheRead: "number", cacheWrite: "number" },
       },
+      session: "string",
       next: "string",
       at: "number",
     },
@@ -4873,6 +4882,7 @@ test("the log's events are exactly the six types, each with its pinned fields", 
       transcript: "string",
       errors: "string",
       usage: { usd: "number" },
+      session: "string",
       at: "number",
     },
   ]);
@@ -5381,3 +5391,374 @@ for (const [what, workflow, problem] of [
     });
   });
 }
+
+/**
+ * Starts an engine whose step `build` runs `script` with `$1` the test's directory, and declares
+ * its own latest session as the input `earlier`; done leads to the end. Its transcript limit is
+ * `transcript`.
+ */
+function engineResuming(t: TestContext, script: string, transcript = 65536) {
+  return engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          kind: "command",
+          claims,
+          workspace: "empty",
+          inputs: { earlier: { session: "build" } },
+          run: ["sh", "-c", script, "sh", directory],
+          on: { done: "end" },
+          access,
+          budget: 2,
+          limits: { idle: 10, attempt: 20, transcript, input: 65536 },
+        },
+      },
+    }),
+  );
+}
+
+// The step's script: its first attempt leaves a session and fails; its retry keeps what it was
+// given, its input.json and the session's body.
+const resuming = `if [ ! -e "$1/failed" ]; then
+    touch "$1/failed"
+    cp "$MEDRENGARD_IN/input.json" "$1/first.json"
+    printf 'the first conversation' > "$MEDRENGARD_OUT/session"
+    exit 3
+  fi
+  cp "$MEDRENGARD_IN/input.json" "$1/second.json"
+  cp "$MEDRENGARD_IN"/earlier/* "$1/session"
+  echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`;
+
+test("a session a failed attempt left is given to a later attempt that declares it", async (t) => {
+  const { engine, directory } = await engineResuming(t, resuming);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build exited with code 3.",
+  });
+
+  // Its first attempt had no session to continue: an empty list, not an error.
+  assert.deepEqual(
+    JSON.parse(await readFile(join(directory, "first.json"), "utf8")).inputs.earlier,
+    [],
+  );
+
+  engine.decide("first", { subject: subjectOf(engine), since: sinceOf(engine), outcome: "retry" });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const [given] = JSON.parse(await readFile(join(directory, "second.json"), "utf8")).inputs.earlier;
+  const hash = createHash("sha256").update("the first conversation").digest("hex");
+
+  assert.deepEqual(given, { hash, body: `earlier/${hash}` });
+  assert.equal(await readFile(join(directory, "session"), "utf8"), "the first conversation");
+
+  const escalated = engine.events(0).find(({ event }) => event.type === "escalated")?.event;
+
+  assert.partialDeepStrictEqual(escalated, { type: "escalated", attempt: 1, session: hash });
+});
+
+test("a session over the step's transcript limit escalates, and is not kept", async (t) => {
+  const { engine } = await engineResuming(
+    t,
+    `head -c 200 /dev/zero > "$MEDRENGARD_OUT/session"
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    100,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build left a session of 200 bytes, over its transcript limit of 100.",
+  });
+
+  const escalated = engine.events(0).find(({ event }) => event.type === "escalated")?.event;
+
+  assert.ok(escalated !== undefined && !("session" in escalated));
+});
+
+test(
+  "an interrupted attempt keeps the session its step left before its engine died",
+  { timeout: 10_000 },
+  async (t) => {
+    const { engine, directory, options } = await engineResuming(
+      t,
+      `printf 'cut short' > "$MEDRENGARD_OUT/session"; echo started >> "$1/started"; exec sleep 30`,
+    );
+
+    const crashing = join(directory, "crashing.ts");
+
+    await writeFile(
+      crashing,
+      `import { createEngine } from ${JSON.stringify(join(import.meta.dirname, "engine.ts"))};
+    await createEngine(${JSON.stringify(options)}).advance("first");`,
+    );
+
+    const child = spawn(process.execPath, [crashing], { stdio: "ignore" });
+
+    await untilStarted(directory);
+    child.kill("SIGKILL");
+    await once(child, "exit");
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      reason: "Step build was interrupted.",
+    });
+
+    const escalated = engine.events(0).find(({ event }) => event.type === "escalated")?.event;
+
+    assert.partialDeepStrictEqual(escalated, {
+      session: createHash("sha256").update("cut short").digest("hex"),
+    });
+  },
+);
+
+for (const [what, session, problem] of [
+  ["a step it lacks", "nowhere", "a query whose from names its steps"],
+  ["an approval step", "review", "a session of one of its steps that runs a program"],
+] as const) {
+  test(`a session input naming ${what} cannot be commissioned`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+    t.after(() => rm(directory, { recursive: true, force: true }));
+
+    const engine = createEngine({
+      log: join(directory, "log.sqlite"),
+      kinds: builtIn,
+      defaults: { limits: defaultLimits },
+      workflows: {
+        build: {
+          start: "build",
+          steps: {
+            build: {
+              ...stepRunning("true", "review"),
+              // As a factory written in JavaScript could name any step.
+              inputs: { earlier: { session: JSON.parse(JSON.stringify(session)) } },
+            },
+            review: { kind: "approval", on: { approve: "end" } },
+          },
+        },
+      },
+    });
+
+    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+      message: new RegExp(RegExp.escape(problem)),
+    });
+  });
+}
+
+/**
+ * Rewrites the log at `log` as an older engine would have left the commission `first`: its
+ * commissioned event recording the engine `engine`, or none when it is undefined.
+ */
+function commissionedBy(log: string, engine: string | undefined): void {
+  const database = new DatabaseSync(log);
+
+  database
+    .prepare(
+      engine === undefined
+        ? "UPDATE events SET event = json_remove(event, '$.engine') WHERE commission = 'first' AND position = 0"
+        : "UPDATE events SET event = json_set(event, '$.engine', ?) WHERE commission = 'first' AND position = 0",
+    )
+    .run(...(engine === undefined ? [] : [engine]));
+  database.close();
+}
+
+/** The engine this process runs, as it records it when commissioning. */
+function engineOf(engine: ReturnType<typeof createEngine>): string {
+  const [commissioned] = engine.events(0);
+
+  assert.ok(commissioned?.event.type === "commissioned" && commissioned.event.engine !== undefined);
+
+  return commissioned.event.engine;
+}
+
+test("a commission that last ran on another engine escalates once, and the owner's retry carries it on with this one", async (t) => {
+  const { engine, options } = await engineRunning(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const current = engineOf(engine);
+
+  commissionedBy(options.log, "0123456789abcdef");
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: `Commission first last ran on engine 01234567; this engine is ${current.slice(0, 8)}.`,
+  });
+  assert.deepEqual(engine.record("first").entries.length, 1);
+
+  engine.decide("first", { subject: subjectOf(engine), since: sinceOf(engine), outcome: "retry" });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const started = engine.events(0).find(({ event }) => event.type === "attempt-started")?.event;
+
+  assert.partialDeepStrictEqual(started, { type: "attempt-started", engine: current });
+});
+
+test("a decision at an approval step does not carry a commission on with another engine", async (t) => {
+  const { engine, options } = await engineAwaiting(t);
+
+  const current = engineOf(engine);
+
+  commissionedBy(options.log, "0123456789abcdef");
+  engine.decide("first", {
+    subject: subjectOf(engine),
+    since: sinceOf(engine),
+    outcome: "approve",
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: `Commission first last ran on engine 01234567; this engine is ${current.slice(0, 8)}.`,
+  });
+});
+
+test("a commission written before engines recorded their version escalates once", async (t) => {
+  const { engine, options } = await engineRunning(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const current = engineOf(engine);
+
+  commissionedBy(options.log, undefined);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: `Commission first last ran on an engine that recorded no version; this engine is ${current.slice(0, 8)}.`,
+  });
+});
+
+test("a commission run on by the engine it last ran on does not escalate", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+});
+
+/** A server on loopback, outside any sandbox, answering every request with `answer`; its port. */
+async function serving(t: TestContext, answer: string): Promise<number> {
+  const server = createServer((_, response) => response.end(answer));
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  // SAFETY: a TCP server listening on a port has an address of that kind.
+  return (server.address() as AddressInfo).port;
+}
+
+test("a step whose access lists hosts reaches them through the engine's proxy, and nothing else", async (t) => {
+  const allowed = await serving(t, "reached");
+  const other = await serving(t, "should not be reached");
+
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          ...stepRunning(
+            `printenv HTTPS_PROXY > "$1/proxy"
+             curl -sS -p "http://127.0.0.1:${allowed}/" > "$1/allowed"
+             curl -sS -p "http://127.0.0.1:${other}/" > "$1/refused" 2>&1
+             curl -sS --noproxy '*' "http://127.0.0.1:${allowed}/" > "$1/direct" 2>&1
+             echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+            [directory],
+          ),
+          access: { ...access, network: { hosts: [`127.0.0.1:${allowed}`] } },
+        },
+      },
+    }),
+  );
+
+  const ended = await engine.advance("first");
+
+  assert.partialDeepStrictEqual(
+    ended,
+    { status: "finished" },
+    engine.errors("first", 1).toString(),
+  );
+
+  const read = (name: string) => readFile(join(directory, name), "utf8");
+
+  assert.match(await read("proxy"), /^http:\/\/127\.0\.0\.1:\d+\n$/);
+  assert.equal(await read("allowed"), "reached");
+  assert.doesNotMatch(await read("refused"), /should not be reached/);
+  assert.doesNotMatch(await read("direct"), /reached/);
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    {
+      notes: [
+        { note: `Step build was refused network access to 127.0.0.1:${other}.`, from: "engine" },
+      ],
+    },
+  ]);
+});
+
+for (const [what, network, problem] of [
+  ["no hosts", { hosts: [] }, "network access must be true, false, or hosts it may reach"],
+  [
+    "a host that is no host",
+    { hosts: ["not a host"] },
+    "network access must be true, false, or hosts it may reach",
+  ],
+] as const) {
+  test(`access whose network lists ${what} cannot be commissioned`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+    t.after(() => rm(directory, { recursive: true, force: true }));
+
+    const engine = createEngine({
+      log: join(directory, "log.sqlite"),
+      kinds: builtIn,
+      defaults: { limits: defaultLimits },
+      workflows: {
+        build: {
+          start: "build",
+          steps: {
+            build: {
+              ...stepRunning("true", "end"),
+              // As a factory written in JavaScript could give it.
+              access: { ...access, network: JSON.parse(JSON.stringify(network)) },
+            },
+          },
+        },
+      },
+    });
+
+    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+      message: `Workflow build is invalid: step build's ${problem}.`,
+    });
+  });
+}
+
+test("access whose paths name /network, where the step's proxy goes, cannot be commissioned", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const engine = createEngine({
+    log: join(directory, "log.sqlite"),
+    kinds: builtIn,
+    defaults: { limits: defaultLimits },
+    workflows: {
+      build: {
+        start: "build",
+        steps: {
+          build: {
+            ...stepRunning("true", "end"),
+            access: { ...access, paths: [...access.paths, { path: "/network", mode: "read" }] },
+          },
+        },
+      },
+    },
+  });
+
+  assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+    message: /paths cannot name \/workspace, \/input, \/output or \/network/,
+  });
+});
