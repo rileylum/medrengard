@@ -30,6 +30,7 @@ export function confine(
   areas: Areas,
   argv: readonly [string, ...string[]],
   bounds: Bounds,
+  proxy?: string,
 ) {
   // The step contract's directories, where the program sees them: fixed paths that name nothing of
   // the owner's machine, the same for every step. A step given / sees the machine as it is, its
@@ -92,6 +93,23 @@ export function confine(
 
   const unit = `medrengard-${randomUUID()}`;
 
+  // A step that may reach only some hosts has loopback alone: the forwarder there relays to the
+  // engine's proxy, at `proxy`, which decides. This Node and the forwarder are bound in to run it.
+  const forwarding =
+    proxy === undefined
+      ? []
+      : [
+          "--ro-bind",
+          process.execPath,
+          "/network/node",
+          "--ro-bind",
+          join(import.meta.dirname, "forward.ts"),
+          "/network/forward.mts",
+          "--bind",
+          proxy,
+          "/network/socket",
+        ];
+
   const unset =
     access.environment === "all"
       ? []
@@ -127,9 +145,11 @@ export function confine(
       "--unshare-ipc",
       "--unshare-uts",
       "--unshare-pid",
-      ...(access.network ? [] : ["--unshare-net"]),
+      ...(access.network === true ? [] : ["--unshare-net"]),
       ...(access.sandboxes ? [] : ["--disable-userns"]),
       ...binds,
+      // Before the root is read-only, so their places can be made.
+      ...forwarding,
       // Read-only once the mounts under it are made; they are mounts of their own, so keep theirs.
       "--remount-ro",
       areas.record,
@@ -147,7 +167,9 @@ export function confine(
       "--chdir",
       seen.workspace,
       "--",
-      ...argv,
+      ...(proxy === undefined
+        ? argv
+        : ["/network/node", "/network/forward.mts", "/network/socket", "--", ...argv]),
     ],
     env: {
       XDG_RUNTIME_DIR: runtime,

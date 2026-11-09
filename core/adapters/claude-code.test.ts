@@ -997,6 +997,17 @@ test(
 
     const errors = engine.errors("first", 1).toString();
 
+    // claudeCode's network is the model API alone, through the engine's proxy: the API refused
+    // the token, so the request reached it, and nothing was refused on the way.
+    assert.match(engine.transcript("first", 1).toString(), /"error_status":401/);
+    assert.deepEqual(
+      engine
+        .record("first")
+        .entries.flatMap((entry) =>
+          entry.entry === "attempt" ? entry.notes.filter(({ from }) => from === "engine") : [],
+        ),
+      [],
+    );
     assert.doesNotMatch(errors, /did not say what it loaded/);
     assert.doesNotMatch(errors, /loaded what the agent did not declare: .*/);
     assert.doesNotMatch(errors, /did not apply|could not load|did not load|nonessential/);
