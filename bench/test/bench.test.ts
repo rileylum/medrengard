@@ -223,3 +223,36 @@ test(
     assert.equal(second?.grade?.contents[".dry"], "toy checkpoint 2\n");
   },
 );
+
+test(
+  "every commit a configuration makes before the one it claims is graded too, oldest first",
+  { timeout: 120_000 },
+  async (t) => {
+    const { bench, read, trajectories } = toy(t, ["Do one.\n", "Keep going: do two.\n"]);
+
+    // polished commits the stub's work, then a commit adding POLISHED, and claims the second.
+    for (const [run, configuration] of [["p1", "polished"], ["s1", "stub"]] as const) {
+      const ran = bench(run, configuration);
+
+      assert.equal(ran.status, 0, ran.stderr);
+    }
+
+    for (const line of read("p1")) {
+      const parent = execFileSync("git", ["-C", trajectories, "rev-parse", `${line.commit!}^`], { encoding: "utf8" }).trim();
+
+      assert.deepEqual(
+        line.commits?.map((one) => one.commit),
+        [parent],
+      );
+      // Graded as it stood: the stub's work, before this checkpoint's polish wrote POLISHED (a
+      // checkpoint after the first starts with the last one's).
+      const polish = `toy checkpoint ${line.checkpoint}\n`;
+
+      assert.notEqual(line.commits![0]!.grade.contents["POLISHED"], polish);
+      assert.equal(line.grade!.contents["POLISHED"], polish);
+    }
+
+    // One commit per checkpoint, the one claimed: nothing earlier to grade.
+    for (const line of read("s1")) assert.deepEqual(line.commits, []);
+  },
+);

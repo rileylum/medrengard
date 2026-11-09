@@ -1,7 +1,7 @@
 // A study's summary, from result lines whose figures are worked out by hand below.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { breakage, representative, summarise, type Run } from "../driver/report.ts";
+import { breakage, representative, summarise, tests, type Run } from "../driver/report.ts";
 
 const graded = (checkpoint: number, passed: number, total: number, erosion: number, verbosity: number, usd: number) => ({
   checkpoint,
@@ -175,4 +175,110 @@ test("breakage leaves out checkpoints with no tests listed, as their harness's c
   };
 
   assert.deepEqual(breakage(run), []);
+});
+
+test("breakage is one of a summary's metrics, per problem, per configuration and against the control", () => {
+  const graded = (checkpoint: number, groups: Record<string, { passed?: string[]; failed?: string[] }>) => ({
+    ...tested(checkpoint, groups),
+    checkpoints: 2,
+    solved: true,
+    grade: { ...tested(checkpoint, groups).grade, pass_counts: { Core: 1 }, total_counts: { Core: 1 } },
+  });
+  const run = (configuration: string, broken: string[]): Run => ({
+    configuration,
+    problem: "p",
+    repeat: 1,
+    lines: [
+      graded(1, { "checkpoint_1-Core": { passed: ["a", "b"] } }),
+      graded(2, {
+        "checkpoint_1-Regression": { passed: ["a", "b"].filter((name) => !broken.includes(name)), failed: broken },
+        "checkpoint_2-Core": { passed: ["c"] },
+      }),
+    ],
+  });
+  // base breaks b of a and b at checkpoint 2: .5; other breaks nothing.
+  const summary = summarise([run("base", ["b"]), run("other", [])], { control: "base" });
+
+  assert.equal(summary.problems.find((row) => row.configuration === "base")!.breakage.mean, 0.5);
+  assert.deepEqual(summary.overall.find((row) => row.configuration === "base")!.breakage, { mean: 0.5, low: 0.5, high: 0.5 });
+  assert.equal(summary.versus[0]!.breakage!.difference, -0.5);
+});
+
+// The tests of one checkpoint's grade, by group, and its Core counts.
+const gradeOf = (groups: Record<string, { passed?: string[]; failed?: string[] }>) => {
+  const { grade } = tested(1, groups);
+  const core = Object.entries(grade.tests).filter(([group]) => group.endsWith("-Core"));
+
+  return {
+    ...grade,
+    pass_counts: { Core: core.reduce((sum, [, result]) => sum + result.passed.length, 0) },
+    total_counts: { Core: core.reduce((sum, [, result]) => sum + result.passed.length + result.failed.length, 0) },
+  };
+};
+// A run's line for a checkpoint: the claimed commit's grade, and the earlier commits' if any.
+const line = (
+  checkpoint: number,
+  claimed: Record<string, { passed?: string[]; failed?: string[] }>,
+  earlier?: Record<string, { passed?: string[]; failed?: string[] }>,
+) => ({
+  checkpoint,
+  checkpoints: 2,
+  status: "finished",
+  cost: null,
+  grade: gradeOf(claimed),
+  ...(earlier === undefined ? {} : { commits: [{ commit: "c0", grade: gradeOf(earlier) }] }),
+});
+
+// At checkpoint 1, family b has two cases; e fails in every run. Checkpoint 2 adds c, and reruns
+// checkpoint 1's tests.
+const unfixed = { "checkpoint_1-Core": { passed: ["a"], failed: ["b[1]", "b[2]"] }, "checkpoint_1-Error": { failed: ["e"] } };
+const fixed = { "checkpoint_1-Core": { passed: ["a", "b[1]", "b[2]"] }, "checkpoint_1-Error": { failed: ["e"] } };
+// Family d at checkpoint 2 passes only in review r1: not every run of review, so no consistent
+// difference, and not failed by every run, so not shared.
+const second = (failing: string[], d = false) => ({
+  "checkpoint_1-Regression": { passed: ["a", "b[1]", "b[2]"].filter((name) => !failing.includes(name)), failed: [...failing, "e"] },
+  "checkpoint_2-Core": { passed: ["c"] },
+  "checkpoint_2-Functionality": d ? { passed: ["d"] } : { failed: ["d"] },
+});
+const studied: Run[] = [
+  // The control never fixes b.
+  ...[1, 2].map((repeat) => ({
+    configuration: "base",
+    problem: "p",
+    repeat,
+    lines: [line(1, unfixed), line(2, second(["b[1]", "b[2]"]))],
+  })),
+  // review r1's review fixes b at checkpoint 1, solving it, and at checkpoint 2 restores a, which
+  // its work there broke.
+  { configuration: "review", problem: "p", repeat: 1, lines: [line(1, fixed, unfixed), line(2, second([], true), second(["a"], true))] },
+  // review r2's work had b right already; its review changes nothing.
+  { configuration: "review", problem: "p", repeat: 2, lines: [line(1, fixed, fixed), line(2, second([]), second([]))] },
+];
+
+test("within a run, what the claimed commit changed from the first commit of its checkpoint, by test family", () => {
+  assert.deepEqual(tests(studied, { control: "base" }).within, [
+    {
+      configuration: "review",
+      problem: "p",
+      checkpoints: 4,
+      fixedAt: 2,
+      brokenAt: 0,
+      own: { fixed: { families: 1, cases: 2 }, broken: { families: 0, cases: 0 } },
+      earlier: { fixed: { families: 1, cases: 1 }, broken: { families: 0, cases: 0 } },
+      solvedGained: 1,
+      solvedLost: 0,
+    },
+  ]);
+});
+
+test("a family every run of one passes and every run of the other fails is a consistent difference", () => {
+  assert.deepEqual(tests(studied, { control: "base" }).consistent, [
+    { configuration: "review", control: "base", problem: "p", checkpoint: 1, family: "checkpoint_1-Core::b", cases: 2, passedBy: "review" },
+  ]);
+});
+
+test("a family every run of every configuration fails at a checkpoint is a shared failure", () => {
+  assert.deepEqual(tests(studied, { control: "base" }).shared, [
+    { problem: "p", checkpoint: 1, family: "checkpoint_1-Error::e", cases: 1, runs: 4 },
+  ]);
 });

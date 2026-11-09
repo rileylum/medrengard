@@ -28,6 +28,7 @@ export type Result = {
   verbosity?: number;
   erosion?: number;
   grade?: { files: string[]; contents: Record<string, string> };
+  commits?: { commit: string; grade: { files: string[]; contents: Record<string, string> } }[];
 };
 
 // A problem whose two reference solutions write a.py, the second the same as the first if `same`,

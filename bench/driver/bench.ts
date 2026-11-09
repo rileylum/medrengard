@@ -238,14 +238,14 @@ function timing(commission: string, agents: Set<string>) {
 const definitionOf = (commission: string) =>
   createHash("sha256").update(JSON.stringify(engine.definition(commission))).digest("hex");
 
-function grade(commit: string, n: number) {
+function grade(commit: string, n: number, output = join(out, name, `checkpoint_${n}`)) {
   const snapshot = mkdtempSync(join(tmpdir(), "medrengard-bench-snapshot-"));
 
   try {
     execFileSync("sh", ["-c", 'git -C "$1" archive "$2" | tar -x -C "$3"', "sh", trajectories, commit, snapshot]);
 
     // SAFETY: the runner's grade command prints SlopCodeBench's eval-snapshot report.
-    return runnerJson("grade", snapshot, name, String(n), join(out, name, `checkpoint_${n}`)) as Grade;
+    return runnerJson("grade", snapshot, name, String(n), output) as Grade;
   } finally {
     rmSync(snapshot, { recursive: true, force: true });
   }
@@ -313,11 +313,17 @@ for (let n = 1; n <= count; n += 1) {
   }
 
   const graded = grade(commit, n);
+  // The commits the configuration made in this checkpoint before the one it claimed, such as its
+  // work before a review, each graded as the claimed one is, so a study sees what each step changed.
+  const commits = git(trajectories, "rev-list", "--reverse", "--first-parent", `refs/heads/${commission}..${commit}`)
+    .split("\n")
+    .filter((one) => one !== "" && one !== commit)
+    .map((one) => ({ commit: one, grade: grade(one, n, join(out, name, `checkpoint_${n}`, "commits", one)) }));
   const solved = (graded.total_counts.Core ?? 0) > 0 && graded.pass_counts.Core === graded.total_counts.Core;
 
   const { verbosity, erosion } = graded.quality;
 
-  record({ checkpoint: n, commission, status: "finished", commit, ...spent, solved, verbosity, erosion, grade: graded });
+  record({ checkpoint: n, commission, status: "finished", commit, ...spent, solved, verbosity, erosion, grade: graded, commits });
   console.log(
     `${commission}: ${solved ? "solved" : "not solved"}, Core ${graded.pass_counts.Core ?? 0}/${graded.total_counts.Core ?? 0}` +
       `, verbosity ${verbosity}, erosion ${erosion}` +
