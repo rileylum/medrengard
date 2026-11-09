@@ -41,7 +41,7 @@
 2. Everything has a declared limit. Every attempt, output stream, artifact, transcript and disk area has an explicit bound; only an attended step's time may be declared unbounded. Money is bounded where the owner declares it, per step and per commission: an attempt that reports no cost counts as over a money limit, since unknown cost is not zero, and an agent whose harness declares it reports no cost cannot be given one. Exceeding a bound escalates; nothing is silently truncated or allowed to grow without limit. A wait has no bound: nothing runs while the commission waits for the owner.
 3. A commission runs on the definitions it started with. Commissioning records its workflow, agent and kind definitions and the factory's defaults by hash. Editing a definition affects only new commissions. It runs on the engine it last ran on, too: every attempt records the engine's version, a hash of its source, and before an attempt on another engine the commission escalates, until the owner decides to go on with it.
 4. Hermetic steps. A step sees only its declared inputs, workspace, environment and tools. A harness adapter loads only declared skills and configuration, or records the leak on every attempt.
-5. Commissions are independent. Commissions share no state, and each has one writer at a time. Any number of commissions, across repositories and workflows, can advance at once.
+5. Commissions are independent. Commissions share no mutable state, and each has one writer at a time. A parent gives its children artifacts and reads theirs, by hash; nothing else passes between commissions. Any number of commissions, across repositories and workflows, can advance at once.
 6. Large data by reference. The log holds events and hashes; artifact bodies, kept files, transcripts and definitions live in a content-addressed store.
 7. A pinned surface. The public exports and types, the definition's schema, the event types, the step's and kind programs' contracts, the engine's methods and the CLI's commands and JSON results are listed in tests. Growing any list is a logged decision.
 8. The fold is pure. Rebuilding state from the log does no I/O and reads no clock or randomness.
@@ -61,7 +61,7 @@ Every step except an approval step is a program. The engine starts it with:
 
 An attended step has the owner's terminal, recorded through a pseudo-terminal: it starts only when the owner attends it, in their terminal, and ends when its program does, so the owner can go back and forth with its agent until they leave. Their typing counts as activity, though what they type is not kept. While it runs, the engine notes for the owner what each `output.json` it writes would amount to: its outcome and artifacts, or why it would escalate. An unattended step gets empty stdin, and its stdout and stderr are its transcript.
 
-`input.json` names the commission, step, attempt and declared outcomes, and lists each declared input's artifacts, oldest first, as a list even when it holds one artifact or none; the rules of each kind the step may claim; an agent step's also carries its agent and whether it is attended. `output.json` holds one outcome and the claimed artifacts, at most 64 KiB. Bodies are files, referenced by a path relative to their directory: an input's body is at `<input>/<hash>` under `MEDRENGARD_IN`.
+`input.json` names the commission, step, attempt and declared outcomes, and lists each declared input's artifacts, oldest first, as a list even when it holds one artifact or none; the rules of each kind the step may claim; an agent step's also carries its agent and whether it is attended. `output.json` holds one outcome and the claimed artifacts, at most 64 KiB. Instead of writing an artifact out, a claim may adopt one of the attempt's inputs by its hash, of a kind the step may claim: it is recorded as it is, with the files its verifier kept, and becomes the subject if it is a subject; adopting the current subject is invalid. Bodies are files, referenced by a path relative to their directory: an input's body is at `<input>/<hash>` under `MEDRENGARD_IN`.
 
 The exit code reports the step's health; the outcome reports its result. A test run that finds failures exits 0 with a failing verdict. When the step ends:
 
@@ -84,6 +84,7 @@ A step declares each input as a name and a query. The name is the input's direct
   - `kind`: one artifact kind;
   - `about`: judgements only, about the current subject (the evidence), earlier subjects (history), or any;
   - `take`: the latest, or all, which is the default;
+- `children` and a children step, with a kind and optionally take: from the step's latest attempt, each child that reached its end, in the order commissioned, its latest artifact of that kind, or all of them. `input.json` names the child each artifact came from;
 - `session` and a step: the latest session an attempt of that step left, however it ended, or none. It is no artifact: `input.json` lists it by its hash and body alone, and no workspace is built from it. A harness adapter continues it as a fork, so the session kept never changes, and escalates rather than start afresh when it cannot.
 
 The commission is refused before it starts if a query names a step the workflow lacks, a kind there is not, or a field or value a query does not define. Passing new data between steps is a new query in the workflow, not a change to the core.
@@ -100,15 +101,16 @@ Replay derives a commission's state; none is stored.
 - Attempting: an attempt has started and not completed.
 - Awaiting: at an approval step, waiting for the owner's decision.
 - Escalated: paused for the owner, with a reason.
-- Finished: an edge reached the end, or the owner abandoned the commission; what finished it is recorded.
+- Finished: an edge reached the end, the owner abandoned the commission, or its parent withdrew it; what finished it is recorded.
 
-Six events are the whole log vocabulary. Each carries the time the engine wrote it:
+Seven events are the whole log vocabulary. Each carries the time the engine wrote it:
 
-- `commissioned`: the workflow, its definitions by hash and the request artifact.
+- `commissioned`: the workflow, its definitions by hash and the request artifact; a child's also names its parent's commission, step and attempt, and the artifacts it was given, by hash with their kinds and kept files.
 - `attempt-started`: the step and attempt, the subject and each input's artifacts by hash; spends one unit of the step's budget.
 - `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, its transcript and, when it wrote to stderr, its errors, its latest usage report when it made one, the session it left when it left one, and the next step or end.
 - `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, at most 1 MiB, and the next step or end.
 - `noted`: the attempt and one note for the owner, recorded as it arrives: one the attempt wrote, or the engine's, marked as such. It changes no state.
+- `withdrawn`: the reason a child's parent no longer waits for it. It finishes the child; it is the engine's, not the owner's decision.
 - `escalated`: the reason, and the attempt if one was involved, with its transcript and errors when its program ran, its latest usage report when it made one, and the session it left when it left one. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it. A reason is at most 4096 bytes; a longer one is cut on a character boundary and says so.
 
 Transitions:
@@ -121,7 +123,13 @@ Transitions:
 - Escalated, a decision to retry makes the step ready again; a decision to abandon finishes the commission. It too names the current subject and the wait.
 - Finished, nothing is accepted.
 
-A step's budget counts its attempts since the commission's latest decision, so only the owner renews a budget. Every agent and command step has a budget above zero, which bounds every unattended loop. A step is never attempted twice on the same subject and inputs without a decision between. An edge leads to a step or to the end; there are no handoffs between workflows.
+A step's budget counts its attempts since the commission's latest decision, so only the owner renews a budget. Every agent, command and children step has a budget above zero, which bounds every unattended loop. A step is never attempted twice on the same subject and inputs without a decision between. An edge leads to a step or to the end; a children step starts child commissions of a named workflow and waits on them, bounded, while the parent stays in charge.
+
+**Children**
+
+A children step commissions child commissions of one workflow: one per document a query names, each the child's request, or a declared count on the parent's request or a document a query names. Each child is also given the artifacts named queries name, and its first subject is the latest subject among them, or its request. A child is a commission like any other, named `<parent>.<step>.<attempt>.<n>`; its workflow is the one the parent's commission pinned, which may not lead back to a workflow it is within. At most its width are commissioned, more escalating before any starts, and at most its concurrent number are unfinished at once.
+
+The attempt is the wait: it spends a unit of the step's budget and runs no program. A child succeeds when its workflow reaches its end, on the wait's outcome when the wait names one. The wait is for every child, the first or at least some; without an outcome, met it follows `done` and once it can no longer be met the commission escalates; with one, met it follows `met` and once it can no longer be met, `unmet`. Past its wait limit, or cancelled by the owner, it escalates. Once the wait is decided, the children still unfinished are withdrawn, an attempt in flight stopped first, and the attempt ends once every child has finished. An engine stopping does not interrupt the wait: the next engine to look carries it on.
 
 **Artifact kinds**
 
@@ -158,7 +166,7 @@ _Definition: what the owner writes; data, verified before anything runs._
 
 - Factory: the owner's workflows, agents and extensions. Medrengard builds factories; it is not one.
 - Workflow: a graph of steps whose edges are labelled by outcome.
-- Step: a node of a workflow, of one kind: an agent step runs an agent through its harness adapter, attended or unattended; a command step runs the owner's program; an approval step waits for the owner's decision.
+- Step: a node of a workflow, of one kind: an agent step runs an agent through its harness adapter, attended or unattended; a command step runs the owner's program; an approval step waits for the owner's decision; a children step waits on child commissions.
 - Agent: a reusable definition of harness, model, prompt and skills. The step supplies its workspace and inputs.
 - Harness: the vendor tool an agent runs in, such as Claude Code, Codex, Pi or OpenCode.
 - Prompt: what the agent is told to do at a step.
@@ -173,6 +181,7 @@ _Definition: what the owner writes; data, verified before anything runs._
 _Execution: the core. The commission is the aggregate root._
 
 - Commission: one idea taken through one workflow, from the owner's request to a terminal state, with its whole history.
+- Child: a commission a parent's children step commissioned, which the parent waits on.
 - Attempt: one start of a step's program within a commission, through to its completion or escalation.
 - Claim: what an attempt wrote to its output, untrusted until it parses and its kind's verifier, if any, accepts it.
 - Artifact: an immutable record of an accepted claim, identified by its hash, naming the verifier that accepted it or that its kind has none.

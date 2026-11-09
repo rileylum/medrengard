@@ -170,6 +170,8 @@ export function linesOf(
 
     case "escalation":
       return [[`${index}`, `  ${at} escalated: ${entry.reason}`]];
+    case "withdrawal":
+      return [[`${index}`, `  ${at} withdrawn: ${entry.reason}`]];
     case "decision": {
       const feedback = entry.feedback === undefined ? "" : `: ${JSON.stringify(entry.feedback)}`;
 

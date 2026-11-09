@@ -526,6 +526,7 @@ function eventLine(event: Logged["event"]): string {
     case "noted":
       return `${event.type}: ${event.from === "engine" ? "engine: " : ""}${event.note}`;
     case "escalated":
+    case "withdrawn":
       return `${event.type}: ${event.reason}`;
   }
 }
