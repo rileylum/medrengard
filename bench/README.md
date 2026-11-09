@@ -51,7 +51,8 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   `pilot-review-hard.ts` the same and the baseline on eve_market_tools; `drift-check.ts` the baseline once more
   on datagate. `review-verify.ts`: the baseline, `code-review` and `verification` three times each on eleven of
   the twelve, without test_translator. `tdd-design.ts`: the baseline, `test-driven-development` and
-  `codebase-design` three times each on `screen`. `dry-easy.ts` is free.
+  `codebase-design` three times each on `screen`; `pilot-tdd-design.ts`, the two once on datagate. `dry-easy.ts`
+  is free.
 - `driver/study.ts`: runs a study, `--concurrency` problem runs at a time (2 by default), every
   configuration's and problem's first repeat before any second. `--repeats n` runs only up to repeat
   n, so a study is paid for in stages: `--repeats 1`, then `--repeats 3` runs the second and third.
