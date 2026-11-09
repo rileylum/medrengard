@@ -1,4 +1,4 @@
-**Goal.** Medrengard is a framework for building a personal software factory: workflows that take an idea to merged code. It provides the primitives. Its defaults are ordinary workflows and extensions built only from those primitives, and each can be replaced on its own.
+**Goal.** Medrengard is a framework for building a personal software factory: workflows that take an idea to merged code. It provides the primitives. Its defaults are extensions built only from those primitives, and each can be replaced on its own. Default workflows are planned: ordinary workflows built the same way, shipped once one is shown to earn its steps.
 
 **Scope.** One owner, on the owner's machine, running the owner's trusted code. Multiplayer is a non-goal: no accounts, tenants or shared control. The owner still works with others through the repositories and PRs the factory produces.
 
@@ -10,7 +10,7 @@
 **Adaptable**
 
 - Extensible: new artifact kinds, harness adapters, commands and observers plug in through extension points; the built-ins use the same points.
-- Configurable: every default (workflow, agents, access) can be replaced without touching the core.
+- Configurable: every default (harness adapter, access, kinds, limits, and workflows once shipped) can be replaced without touching the core.
 
 **Principles**
 
