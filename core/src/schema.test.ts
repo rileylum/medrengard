@@ -20,7 +20,9 @@ type Approval = Extract<Step, { kind: "approval" }>;
 
 type Path = Access["paths"][number];
 
-type Narrowing = Exclude<Query, string>;
+type Narrowing = Exclude<Query, string | { session: string }>;
+
+type Continuing = Extract<Exclude<Query, string>, { session: string }>;
 
 type Rule = Kind["fields"][string];
 
@@ -80,6 +82,7 @@ type Pinned = {
   >;
   query: Expect<Same<Extract<Query, string>, "subject" | "request">>;
   narrowing: Expect<Same<keyof Narrowing, "from" | "kind" | "about" | "take">>;
+  session: Expect<Same<keyof Continuing, "session">>;
   kind: Expect<
     Same<
       keyof Kind,

@@ -2599,7 +2599,7 @@ test("a workflow whose input queries a step it does not have cannot be commissio
     ),
     {
       message:
-        "Workflow build is invalid: step build's inputs must each be subject, request, or a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all.",
+        "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, or a session of one of its steps that runs a program.",
     },
   );
 });
@@ -2614,7 +2614,7 @@ test("a workflow whose input queries a kind there is not cannot be commissioned"
     ),
     {
       message:
-        "Workflow build is invalid: step build's inputs must each be subject, request, or a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all.",
+        "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, or a session of one of its steps that runs a program.",
     },
   );
 });
@@ -2640,7 +2640,7 @@ for (const [what, query] of [
       ),
       {
         message:
-          "Workflow build is invalid: step build's inputs must each be subject, request, or a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all.",
+          "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, or a session of one of its steps that runs a program.",
       },
     );
   });
@@ -4792,12 +4792,16 @@ test("the log's events are exactly the six types, each with its pinned fields", 
         build: stepRunning(
           `echo note >&3; echo warning >&2; printf 'Do it.' > "$MEDRENGARD_OUT/plan.md"
            echo '{"usd":0.5,"tokens":{"input":1,"output":2,"cacheRead":3,"cacheWrite":4}}' >&4
+           printf 'a conversation' > "$MEDRENGARD_OUT/session"
            echo '${JSON.stringify(planAt("plan.md"))}' > "$MEDRENGARD_OUT/output.json"`,
           "review",
         ),
         review: { kind: "approval", on: { approve: "fail" } },
         fail: {
-          ...stepRunning(`echo '{"usd":0.25}' >&4; echo broken >&2; exit 3`, "end"),
+          ...stepRunning(
+            `echo '{"usd":0.25}' >&4; printf 'another' > "$MEDRENGARD_OUT/session"; echo broken >&2; exit 3`,
+            "end",
+          ),
           inputs: { plan: "subject" },
         },
       },
@@ -4853,6 +4857,7 @@ test("the log's events are exactly the six types, each with its pinned fields", 
         usd: "number",
         tokens: { input: "number", output: "number", cacheRead: "number", cacheWrite: "number" },
       },
+      session: "string",
       next: "string",
       at: "number",
     },
@@ -4873,6 +4878,7 @@ test("the log's events are exactly the six types, each with its pinned fields", 
       transcript: "string",
       errors: "string",
       usage: { usd: "number" },
+      session: "string",
       at: "number",
     },
   ]);
@@ -5378,6 +5384,161 @@ for (const [what, workflow, problem] of [
 
     assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
       message: `Workflow build is invalid: ${problem}.`,
+    });
+  });
+}
+
+/**
+ * Starts an engine whose step `build` runs `script` with `$1` the test's directory, and declares
+ * its own latest session as the input `earlier`; done leads to the end. Its transcript limit is
+ * `transcript`.
+ */
+function engineResuming(t: TestContext, script: string, transcript = 65536) {
+  return engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          kind: "command",
+          claims,
+          workspace: "empty",
+          inputs: { earlier: { session: "build" } },
+          run: ["sh", "-c", script, "sh", directory],
+          on: { done: "end" },
+          access,
+          budget: 2,
+          limits: { idle: 10, attempt: 20, transcript, input: 65536 },
+        },
+      },
+    }),
+  );
+}
+
+// The step's script: its first attempt leaves a session and fails; its retry keeps what it was
+// given, its input.json and the session's body.
+const resuming = `if [ ! -e "$1/failed" ]; then
+    touch "$1/failed"
+    cp "$MEDRENGARD_IN/input.json" "$1/first.json"
+    printf 'the first conversation' > "$MEDRENGARD_OUT/session"
+    exit 3
+  fi
+  cp "$MEDRENGARD_IN/input.json" "$1/second.json"
+  cp "$MEDRENGARD_IN"/earlier/* "$1/session"
+  echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`;
+
+test("a session a failed attempt left is given to a later attempt that declares it", async (t) => {
+  const { engine, directory } = await engineResuming(t, resuming);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build exited with code 3.",
+  });
+
+  // Its first attempt had no session to continue: an empty list, not an error.
+  assert.deepEqual(
+    JSON.parse(await readFile(join(directory, "first.json"), "utf8")).inputs.earlier,
+    [],
+  );
+
+  engine.decide("first", { subject: subjectOf(engine), since: sinceOf(engine), outcome: "retry" });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const [given] = JSON.parse(await readFile(join(directory, "second.json"), "utf8")).inputs.earlier;
+  const hash = createHash("sha256").update("the first conversation").digest("hex");
+
+  assert.deepEqual(given, { hash, body: `earlier/${hash}` });
+  assert.equal(await readFile(join(directory, "session"), "utf8"), "the first conversation");
+
+  const escalated = engine.events(0).find(({ event }) => event.type === "escalated")?.event;
+
+  assert.partialDeepStrictEqual(escalated, { type: "escalated", attempt: 1, session: hash });
+});
+
+test("a session over the step's transcript limit escalates, and is not kept", async (t) => {
+  const { engine } = await engineResuming(
+    t,
+    `head -c 200 /dev/zero > "$MEDRENGARD_OUT/session"
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    100,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build left a session of 200 bytes, over its transcript limit of 100.",
+  });
+
+  const escalated = engine.events(0).find(({ event }) => event.type === "escalated")?.event;
+
+  assert.ok(escalated !== undefined && !("session" in escalated));
+});
+
+test(
+  "an interrupted attempt keeps the session its step left before its engine died",
+  { timeout: 10_000 },
+  async (t) => {
+    const { engine, directory, options } = await engineResuming(
+      t,
+      `printf 'cut short' > "$MEDRENGARD_OUT/session"; echo started >> "$1/started"; exec sleep 30`,
+    );
+
+    const crashing = join(directory, "crashing.ts");
+
+    await writeFile(
+      crashing,
+      `import { createEngine } from ${JSON.stringify(join(import.meta.dirname, "engine.ts"))};
+    await createEngine(${JSON.stringify(options)}).advance("first");`,
+    );
+
+    const child = spawn(process.execPath, [crashing], { stdio: "ignore" });
+
+    await untilStarted(directory);
+    child.kill("SIGKILL");
+    await once(child, "exit");
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      reason: "Step build was interrupted.",
+    });
+
+    const escalated = engine.events(0).find(({ event }) => event.type === "escalated")?.event;
+
+    assert.partialDeepStrictEqual(escalated, {
+      session: createHash("sha256").update("cut short").digest("hex"),
+    });
+  },
+);
+
+for (const [what, session, problem] of [
+  ["a step it lacks", "nowhere", "a query whose from names its steps"],
+  ["an approval step", "review", "a session of one of its steps that runs a program"],
+] as const) {
+  test(`a session input naming ${what} cannot be commissioned`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+    t.after(() => rm(directory, { recursive: true, force: true }));
+
+    const engine = createEngine({
+      log: join(directory, "log.sqlite"),
+      kinds: builtIn,
+      defaults: { limits: defaultLimits },
+      workflows: {
+        build: {
+          start: "build",
+          steps: {
+            build: {
+              ...stepRunning("true", "review"),
+              // As a factory written in JavaScript could name any step.
+              inputs: { earlier: { session: JSON.parse(JSON.stringify(session)) } },
+            },
+            review: { kind: "approval", on: { approve: "end" } },
+          },
+        },
+      },
+    });
+
+    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+      message: new RegExp(RegExp.escape(problem)),
     });
   });
 }

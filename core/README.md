@@ -254,6 +254,15 @@ claimed and each decision the owner made. Each field narrows it, and every field
 `{ kind: "verdict", about: "earlier" }`, for instance, gives a fix step the verdicts on the commits
 its earlier fixes replaced. A query that finds nothing gives an empty list, not an error.
 
+One more query is not over artifacts: `{ session: "implement" }` gives the latest session an attempt
+of the step `implement` left, however that attempt ended, or none before it has left one. A session
+is a harness's conversation, which the step's program leaves in its output as `session`; the
+engine keeps it by hash and gives it to a later step whose query names it, which its adapter
+continues. `input.json` lists it by its hash and body alone, with no kind or fields, and no
+workspace is built from it. Its bytes count toward the input limit. A step that continues its own
+session, `implement: { inputs: { earlier: { session: "implement" } } }`, picks up where its last
+attempt left off, a failed one included, once the owner retries it.
+
 A decision on an escalation is decided at the escalated step, so `from` keeps it too. Without a
 `kind`, `{ from: ["design"], take: "latest" }` gives the owner's retry, not the plan, once design
 has escalated and been retried.
@@ -487,6 +496,14 @@ const design = {
   (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`), so it runs on its own defaults rather than on flags
   that could change between attempts of one commission; features Anthropic gates by flag stay
   off. If `claude` says it still sends telemetry, the adapter records it as a leak.
+- The adapter keeps the conversation `claude` had as the attempt's session, however it ended, so a
+  later step can continue it: `inputs: { earlier: { session: "plan" } }`. When a step declares one,
+  `claude` continues it as a fork (`--resume`, `--fork-session`, under the attempt's own session
+  id), so the session kept never changes; the agent is told its workspace was rebuilt from the
+  latest commit, and is given this step's prompt, not the one its conversation began with. Before
+  the step's first session there is none, and the agent starts afresh. A session `claude` cannot
+  continue, such as another harness's, fails the attempt; it never starts afresh instead. An
+  attended step continues one the same way.
 - A run the account's usage limit refused, such as the five-hour or weekly window of a
   subscription, fails the attempt like any other, but its errors and a note say so, and when the
   window resets: `Claude Code's five-hour usage window is used up; it resets at
@@ -594,6 +611,11 @@ Every command and agent step is a program, started:
   The Claude Code adapter reports the tokens so far after each message, then the cost and tokens
   of its result. Claude Code's cost is its own estimate, even on a subscription, and an attended
   session reports nothing.
+- with the option to leave a file `session` in its output: its harness's conversation, which a
+  later step may continue (see [Inputs](#inputs)). It is kept however the attempt ends, an
+  interrupted one included, if it is a regular file of at most the step's transcript limit; one
+  over it is not kept, and the reason says so, and an attempt that would otherwise complete
+  escalates instead.
 
 `input.json` lists each input's artifacts, oldest first, always as a list. A body is a file at
 `<input>/<hash>`, and `body` holds that path. An agent's skills are directories under `.skills`,

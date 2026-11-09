@@ -10,7 +10,7 @@ import { createEngine } from "../src/engine.ts";
 import { claudeCode } from "../defaults/access.ts";
 import { builtIn } from "../defaults/kinds.ts";
 import { limits } from "../defaults/limits.ts";
-import { defineWorkflow } from "../src/replay.ts";
+import { defineWorkflow, type Workflow } from "../src/replay.ts";
 
 const adapter = join(import.meta.dirname, "claude-code.ts");
 
@@ -20,7 +20,11 @@ const adapter = join(import.meta.dirname, "claude-code.ts");
  * directory's `arguments` file, its input and output directories in `directories`, each ended by a
  * NUL, the variable that keeps CLAUDE.md out in `claude-mds`, and what it read on stdin, its
  * prompt, in `prompt`. The adapter reads the token from the directory's `token` file. The agent's
- * prompt is `prompt`, and it declares a skill for each of `skills`, its SKILL.md by name.
+ * prompt is `prompt`, and it declares a skill for each of `skills`, its SKILL.md by name. Its home
+ * is `/tmp`, fresh for each attempt.
+ *
+ * With `continuing`, a step `first` runs before `plan`, which declares first's session as its input
+ * `earlier`: the same agent, or a command step running a script.
  */
 async function engineWithClaude(
   t: TestContext,
@@ -28,6 +32,7 @@ async function engineWithClaude(
   args: readonly string[] = [],
   skills: Readonly<Record<string, string>> = {},
   prompt = "Plan the change.",
+  continuing?: { agent: true } | { command: string },
 ) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
@@ -61,60 +66,77 @@ ${script}
   // The log's directory is hidden from every step, so it is not the one the fake claude is in.
   await mkdir(join(directory, "record"));
 
+  const agent = {
+    kind: "agent",
+    claims: ["document"],
+    workspace: "empty",
+    agent: {
+      harness: {
+        run: [
+          "env",
+          `PATH=${directory}:${process.env.PATH}`,
+          "HOME=/tmp",
+          process.execPath,
+          adapter,
+          "--token",
+          join(directory, "token"),
+          ...args,
+        ],
+      },
+      model: "a-model",
+      prompt,
+      skills: paths,
+    },
+    inputs: {},
+    on: { done: "end" },
+    budget: 1,
+    // The system, Node and this repository to run the adapter, and the test's directory
+    // for the fake claude and what it records.
+    access: {
+      paths: [
+        ...["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
+          path,
+          mode: "read" as const,
+        })),
+        { path: "/tmp", mode: "empty", size: 16 * 1024 * 1024 },
+        { path: dirname(dirname(process.execPath)), mode: "read" },
+        { path: join(import.meta.dirname, ".."), mode: "read" },
+        { path: directory, mode: "write" },
+      ],
+      network: false,
+      environment: [],
+      workspace: "write",
+      sandboxes: true,
+    },
+    limits: { idle: 5, attempt: 10, transcript: 65536, input: 1024 * 1024 },
+  } as const;
+
+  const steps: Workflow["steps"] =
+    continuing === undefined
+      ? { plan: agent }
+      : {
+          first:
+            "agent" in continuing
+              ? { ...agent, on: { done: "plan" } }
+              : {
+                  kind: "command",
+                  claims: [],
+                  workspace: "empty",
+                  inputs: {},
+                  run: ["sh", "-c", continuing.command],
+                  on: { done: "plan" },
+                  budget: 1,
+                  access: agent.access,
+                  limits: agent.limits,
+                },
+          plan: { ...agent, inputs: { earlier: { session: "first" } } },
+        };
+
   const engine = createEngine({
     kinds: builtIn,
     defaults: { limits },
     log: join(directory, "record", "log.sqlite"),
-    workflows: {
-      build: defineWorkflow({
-        start: "plan",
-        steps: {
-          plan: {
-            kind: "agent",
-            claims: ["document"],
-            workspace: "empty",
-            agent: {
-              harness: {
-                run: [
-                  "env",
-                  `PATH=${directory}:${process.env.PATH}`,
-                  process.execPath,
-                  adapter,
-                  "--token",
-                  join(directory, "token"),
-                  ...args,
-                ],
-              },
-              model: "a-model",
-              prompt,
-              skills: paths,
-            },
-            inputs: {},
-            on: { done: "end" },
-            budget: 1,
-            // The system, Node and this repository to run the adapter, and the test's directory
-            // for the fake claude and what it records.
-            access: {
-              paths: [
-                ...["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
-                  path,
-                  mode: "read" as const,
-                })),
-                { path: "/tmp", mode: "empty", size: 16 * 1024 * 1024 },
-                { path: dirname(dirname(process.execPath)), mode: "read" },
-                { path: join(import.meta.dirname, ".."), mode: "read" },
-                { path: directory, mode: "write" },
-              ],
-              network: false,
-              environment: [],
-              workspace: "write",
-              sandboxes: true,
-            },
-            limits: { idle: 5, attempt: 10, transcript: 65536, input: 1024 * 1024 },
-          },
-        },
-      }),
-    },
+    workflows: { build: { start: continuing === undefined ? "plan" : "first", steps } },
   });
 
   engine.commission("build", "first", { title: "Greet", body: "Say hello." });
@@ -797,6 +819,95 @@ test("a Claude Code run warned of its usage window that succeeds says nothing of
   assert.doesNotMatch(engine.errors("first", 1).toString(), /usage window/);
 });
 
+// A fake claude that keeps a conversation, as the real one does, under its home's projects by
+// session id; on --resume, it keeps the conversation it was given in `restored`, and every session
+// id it was given in `ids`.
+const conversing = `id=; resumed=
+  for arg in "$@"; do
+    [ "$previous" = --session-id ] && id=$arg
+    [ "$previous" = --resume ] && resumed=$arg
+    previous=$arg
+  done
+  echo "$id" >> "\${0%/claude}/ids"
+  [ -n "$resumed" ] && cat "$HOME"/.claude/projects/*/"$resumed".jsonl > "\${0%/claude}/restored"
+  mkdir -p "$HOME/.claude/projects/-workspace"
+  echo "conversation of $id" > "$HOME/.claude/projects/-workspace/$id.jsonl"
+  ${succeeded}
+  echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`;
+
+test("the Claude Code adapter keeps claude's session, and a later step continues it as a fork", async (t) => {
+  const { engine, directory } = await engineWithClaude(t, conversing, [], {}, "Plan the change.", {
+    agent: true,
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const [first, second] = (await readFile(join(directory, "ids"), "utf8")).trim().split("\n");
+
+  // The conversation is the one the first attempt had, in a home that is fresh for each attempt.
+  assert.equal(await readFile(join(directory, "restored"), "utf8"), `conversation of ${first}\n`);
+  assert.notEqual(first, second);
+
+  const argv = await argumentsOf(directory);
+
+  assert.equal(valueOf(argv, "--resume"), first);
+  assert.equal(valueOf(argv, "--session-id"), second);
+  assert.ok(argv.includes("--fork-session"));
+  assert.equal(valueOf(argv, "--system-prompt-snapshot"), "off");
+  assert.match(
+    await readFile(join(directory, "prompt"), "utf8"),
+    /You are continuing your earlier conversation[^]*rebuilt from\s+the latest commit/,
+  );
+});
+
+test("the Claude Code adapter starts fresh when the step it continues left no session yet", async (t) => {
+  const { engine, directory } = await engineWithClaude(t, conversing, [], {}, "Plan.", {
+    command: `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.ok(!(await argumentsOf(directory)).includes("--resume"));
+});
+
+test("the Claude Code adapter refuses to continue another harness's session", async (t) => {
+  const { engine } = await engineWithClaude(t, conversing, [], {}, "Plan.", {
+    command: `echo '{"harness":"codex","id":"x","conversation":""}' > "$MEDRENGARD_OUT/session"
+      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step plan exited with code 1.",
+  });
+  assert.match(
+    engine.errors("first", 2).toString(),
+    /^The session to continue is codex's, not Claude Code's\.$/m,
+  );
+});
+
+test("the Claude Code adapter stops claude that did not continue the session as a fork", async (t) => {
+  // The second attempt says it runs a session other than the one it was given.
+  const { engine } = await engineWithClaude(
+    t,
+    `if [ -e "\${0%/claude}/once" ]; then
+       ${initOf({ tools: ["Bash", "Read", "Edit", "Write"], session_id: "not-the-fork" })}
+       sleep 5
+     fi
+     touch "\${0%/claude}/once"
+     ${conversing}`,
+    [],
+    {},
+    "Plan.",
+    { agent: true },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "escalated" });
+  assert.match(
+    engine.errors("first", 2).toString(),
+    /^Claude Code did not continue the session as a fork: it ran not-the-fork\.$/m,
+  );
+});
+
 test("the Claude Code adapter records that claude did not say what it loaded", async (t) => {
   const { engine, directory } = await engineWithClaude(
     t,
@@ -1107,6 +1218,86 @@ test(
     assert.equal(await ran({ attribution: false }), true);
     assert.equal(await ran({ attribution: "nonsense" }), false);
     assert.equal(await ran({ noSuchSetting: true }), true);
+  },
+);
+
+test(
+  "the installed Claude Code continues, as a fork, the session a refused attempt left",
+  { skip: !existsSync(installed) && "Claude Code is not installed", timeout: 120_000 },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+    t.after(() => rm(directory, { recursive: true, force: true }));
+
+    await writeFile(join(directory, "token"), "sk-ant-oat01-invalid-for-a-test");
+    await mkdir(join(directory, "record"));
+
+    const engine = createEngine({
+      kinds: builtIn,
+      defaults: { limits },
+      log: join(directory, "record", "log.sqlite"),
+      workflows: {
+        build: defineWorkflow({
+          start: "plan",
+          steps: {
+            plan: {
+              kind: "agent",
+              claims: ["document"],
+              workspace: "empty",
+              agent: {
+                harness: {
+                  run: [
+                    "env",
+                    "CLAUDE_CODE_MAX_RETRIES=0",
+                    "node",
+                    adapter,
+                    "--token",
+                    join(directory, "token"),
+                  ],
+                },
+                model: "sonnet",
+                prompt: "Plan the change.",
+              },
+              // Its own latest session: none at first, then the one its refused attempt left.
+              inputs: { earlier: { session: "plan" } },
+              on: { done: "end" },
+              budget: 2,
+              access: {
+                ...claudeCode,
+                paths: [...claudeCode.paths, { path: directory, mode: "read" }],
+              },
+              limits: { idle: 30, attempt: 60, transcript: 1024 * 1024, input: 1024 * 1024 },
+            },
+          },
+        }),
+      },
+    });
+
+    engine.commission("build", "first", { title: "Greet", body: "Say hello." });
+
+    // Refused at its first request, it still leaves the session claude wrote.
+    assert.equal((await engine.advance("first")).status, "escalated");
+
+    const state = engine.state("first");
+
+    assert.ok(state.status === "escalated");
+    engine.decide("first", { subject: state.subject, since: state.since, outcome: "retry" });
+
+    assert.equal((await engine.advance("first")).status, "escalated");
+
+    // The retry was given the session the refused attempt left: it did not start afresh.
+    const events = engine.events(0).map(({ event }) => event);
+    const left = events.find((event) => event.type === "escalated" && event.attempt === 1);
+    const retried = events.findLast((event) => event.type === "attempt-started");
+
+    assert.ok(left?.type === "escalated" && left.session !== undefined);
+    assert.ok(retried?.type === "attempt-started");
+    assert.deepEqual(retried.inputs, [{ name: "earlier", hashes: [left.session] }]);
+
+    const errors = engine.errors("first", 2).toString();
+
+    assert.doesNotMatch(errors, /did not continue the session|session to continue/);
+    assert.doesNotMatch(errors, /did not say what it loaded|did not apply|did not load/);
   },
 );
 

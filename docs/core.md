@@ -54,7 +54,7 @@ Every step except an approval step is a program. The engine starts it with:
 
 - its workspace as the working directory, at `/workspace`;
 - `MEDRENGARD_IN`: `/input`, a read-only directory holding `input.json` and the bodies of the step's declared inputs;
-- `MEDRENGARD_OUT`: `/output`, an empty directory where the step writes `output.json` and the files its artifacts refer to;
+- `MEDRENGARD_OUT`: `/output`, an empty directory where the step writes `output.json` and the files its artifacts refer to, and may leave `session`: its harness's conversation, opaque to the engine, which a later attempt may continue. The engine keeps it however the attempt ends, an interrupted one's included, if it is a regular file within the step's transcript limit; one over it is not kept, and a claim cannot complete the attempt;
 - file descriptor 3, where the step may write notes for the owner, one per line, each at most 4096 bytes and all counted with its transcript;
 - file descriptor 4, where the step may report what it has used so far, one JSON line per report: money in US dollars, `usd`, and tokens, `input`, `output`, `cacheRead` and `cacheWrite`, as its harness counts them. The latest report stands. Each is at most 4096 bytes and counted with its transcript; a line that is not a report escalates. A report is the step's claim: nothing verifies it;
 - only the environment its access declares, with `PWD` naming its workspace.
@@ -83,7 +83,8 @@ A step declares each input as a name and a query. The name is the input's direct
   - `from`: the steps that claimed or decided it; the request has none;
   - `kind`: one artifact kind;
   - `about`: judgements only, about the current subject (the evidence), earlier subjects (history), or any;
-  - `take`: the latest, or all, which is the default.
+  - `take`: the latest, or all, which is the default;
+- `session` and a step: the latest session an attempt of that step left, however it ended, or none. It is no artifact: `input.json` lists it by its hash and body alone, and no workspace is built from it. A harness adapter continues it as a fork, so the session kept never changes, and escalates rather than start afresh when it cannot.
 
 The commission is refused before it starts if a query names a step the workflow lacks, a kind there is not, or a field or value a query does not define. Passing new data between steps is a new query in the workflow, not a change to the core.
 
@@ -105,10 +106,10 @@ Six events are the whole log vocabulary. Each carries the time the engine wrote 
 
 - `commissioned`: the workflow, its definitions by hash and the request artifact.
 - `attempt-started`: the step and attempt, the subject and each input's artifacts by hash; spends one unit of the step's budget.
-- `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, its transcript and, when it wrote to stderr, its errors, its latest usage report when it made one, and the next step or end.
+- `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, its transcript and, when it wrote to stderr, its errors, its latest usage report when it made one, the session it left when it left one, and the next step or end.
 - `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, at most 1 MiB, and the next step or end.
 - `noted`: the attempt and one note for the owner, recorded as it arrives: one the attempt wrote, or the engine's, marked as such. It changes no state.
-- `escalated`: the reason, and the attempt if one was involved, with its transcript and errors when its program ran and its latest usage report when it made one. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it. A reason is at most 4096 bytes; a longer one is cut on a character boundary and says so.
+- `escalated`: the reason, and the attempt if one was involved, with its transcript and errors when its program ran, its latest usage report when it made one, and the session it left when it left one. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it. A reason is at most 4096 bytes; a longer one is cut on a character boundary and says so.
 
 Transitions:
 

@@ -18,6 +18,9 @@ import {
   watch,
   writeFileSync,
   writeSync,
+  fstatSync,
+  readSync,
+  realpathSync,
 } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import {
@@ -167,6 +170,23 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
   // What an attempt no engine finished had spooled, in the store, for the escalation that ends
   // it: nothing for one spooled before there were spools.
+  // What an attempt no engine finished left, for the escalation that ends it, with `reason`: its
+  // transcript, errors and usage as spooled, and its session if within its step's transcript
+  // limit, `limit`. One over it is not kept, and the reason says so.
+  function ended(spool: Spool, limit: number, reason: string) {
+    const left = sessionLeft(join(spool.work, "output"), limit);
+
+    if (left === undefined) {
+      return { reason, ...spooled(spool) };
+    }
+
+    if ("over" in left) {
+      return { reason: `${reason}${unkept(left.over, limit)}`, ...spooled(spool) };
+    }
+
+    return { reason, ...spooled(spool), session: store.keep(left.body) };
+  }
+
   function spooled(spool: Spool) {
     if (!existsSync(spool.transcript)) {
       return {};
@@ -789,9 +809,12 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
         write(commission, events, {
           type: "escalated",
-          reason: cancelledReason(started.step),
           attempt: started.attempt,
-          ...spooled(spool),
+          ...ended(
+            spool,
+            transcriptOf(definitionOf(events).workflow.steps[started.step]),
+            cancelledReason(started.step),
+          ),
         });
         unspool(spool);
 
@@ -861,9 +884,12 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
         write(commission, events, {
           type: "escalated",
-          reason: `Step ${state.step.name} was interrupted.`,
           attempt: started.attempt,
-          ...spooled(spool),
+          ...ended(
+            spool,
+            transcriptOf(workflow.steps[state.step.name]),
+            `Step ${state.step.name} was interrupted.`,
+          ),
         });
         unspool(spool);
 
@@ -919,10 +945,14 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       const prepared = (() => {
         try {
           return {
-            inputs: given.map(({ name, hashes }) => ({
-              name,
-              artifacts: hashes.map((hash) => ({ hash, artifact: store.get(hash) })),
-            })),
+            inputs: given.map(({ name, hashes }): Input => {
+              const query = step.inputs[name];
+
+              // A session is no artifact: its body is the bytes its program left.
+              return isRecord(query) && "session" in query
+                ? { name, sessions: hashes.map((hash) => ({ hash, body: store.read(hash) })) }
+                : { name, artifacts: hashes.map((hash) => ({ hash, artifact: store.get(hash) })) };
+            }),
             skills: (step.kind === "agent" ? (step.agent.skills ?? []) : []).map((path) => {
               const { name: skill, files } = definition.skills[path];
 
@@ -952,10 +982,9 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       const source = step.workspace;
       const named = source === "subject" || source === "empty" ? undefined : source.input;
 
-      const built =
-        named === undefined
-          ? undefined
-          : inputs.find((input) => input.name === named)?.artifacts[0];
+      // The definition refuses a workspace built from a session.
+      const from = inputs.find((input) => input.name === named);
+      const built = from !== undefined && "artifacts" in from ? from.artifacts[0] : undefined;
 
       if (named !== undefined && built === undefined) {
         write(commission, events, {
@@ -971,8 +1000,12 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
       const bytes =
         inputs
-          .flatMap(({ artifacts }) => artifacts)
-          .reduce((sum, { artifact }) => sum + Buffer.byteLength(artifact.body ?? ""), 0) +
+          .flatMap((input) =>
+            "artifacts" in input
+              ? input.artifacts.map(({ artifact }) => Buffer.byteLength(artifact.body ?? ""))
+              : input.sessions.map(({ body }) => body.length),
+          )
+          .reduce((sum, size) => sum + size, 0) +
         skills
           .flatMap(({ files }) => files)
           .reduce((sum, { bytes: file }) => sum + file.length, 0) +
@@ -1097,16 +1130,19 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
         // decides, with what the step's program wrote, if it ran and the store can keep it. If
         // this write fails too, the next advance finds the attempt interrupted, and keeps what
         // was spooled.
-        let reason = failedIn(name, error instanceof Error ? error.message : String(error));
-        let kept = {};
+        const failed = failedIn(name, error instanceof Error ? error.message : String(error));
 
-        try {
-          kept = spooled(spool);
-        } catch (keeping) {
-          reason += `; its transcript could not be kept: ${keeping instanceof Error ? keeping.message : String(keeping)}`;
-        }
+        const kept = (() => {
+          try {
+            return ended(spool, step.limits.transcript, failed);
+          } catch (keeping) {
+            return {
+              reason: `${failed}; its transcript could not be kept: ${keeping instanceof Error ? keeping.message : String(keeping)}`,
+            };
+          }
+        })();
 
-        write(commission, read(commission), { type: "escalated", reason, attempt, ...kept });
+        write(commission, read(commission), { type: "escalated", attempt, ...kept });
         unspool(spool);
       } finally {
         running.delete(key);
@@ -1221,6 +1257,10 @@ function resolve(
     case "request":
       return [events[0].request];
     default: {
+      if ("session" in query) {
+        return sessionsOf(events, query.session).slice(-1);
+      }
+
       const { from, kind, about, take } = query;
 
       const named = recorded(events, kinds).flatMap((artifact) =>
@@ -1236,6 +1276,25 @@ function resolve(
       return take === "latest" ? named.slice(-1) : named;
     }
   }
+}
+
+// The sessions attempts of `step` left, oldest first, by hash, however each attempt ended.
+function sessionsOf(events: Log, step: string): string[] {
+  const steps = new Map<number, string>();
+
+  return events.flatMap((event) => {
+    if (event.type === "attempt-started") {
+      steps.set(event.attempt, event.step);
+    }
+
+    const ended =
+      event.type === "attempt-completed" ||
+      (event.type === "escalated" && event.attempt !== undefined);
+
+    return ended && event.session !== undefined && steps.get(event.attempt!) === step
+      ? [event.session]
+      : [];
+  });
 }
 
 // Every artifact in the commission's record, oldest first, with the step that claimed or decided
@@ -1282,6 +1341,17 @@ function keptOf(events: Log, hash: string): Readonly<Record<string, string>> {
   }
 
   return {};
+}
+
+// The transcript limit of a step: none for an approval step, which runs no program to leave a
+// session.
+function transcriptOf(step: Definition["workflow"]["steps"][string]): number {
+  return step.kind === "approval" ? 0 : step.limits.transcript;
+}
+
+// What an escalation's reason adds when the attempt's session was over its limit.
+function unkept(size: number, limit: number): string {
+  return ` Its session of ${size} bytes, over its transcript limit of ${limit}, was not kept.`;
 }
 
 // What an attempt may cost: its step's money limit, and what its commission's leaves, if it has
@@ -1369,12 +1439,14 @@ type Given = {
   kinds: Kinds;
   subject: Subject;
   workspace: Subject | undefined;
-  inputs: readonly {
-    name: string;
-    artifacts: readonly { hash: string; artifact: Artifact }[];
-  }[];
+  inputs: readonly Input[];
   skills: readonly { name: string; files: readonly { file: string; bytes: Buffer }[] }[];
 };
+
+// A declared input as given: the artifacts its query names, or the session a session query names.
+type Input =
+  | { name: string; artifacts: readonly { hash: string; artifact: Artifact }[] }
+  | { name: string; sessions: readonly { hash: string; body: Buffer }[] };
 
 type Store = ReturnType<typeof createStore>;
 
@@ -1580,27 +1652,43 @@ function pin(
   return pinned;
 }
 
+// A session as input.json lists it.
+type Listed = { hash: string; body: string };
+
 // Writes input.json, listing each declared input's artifacts, and each body as <input>/<hash>.
 // The sandbox binds the input read-only.
-async function prepare(input: string, step: Runnable, given: Given): Promise<void> {
-  await mkdir(input);
+async function prepare(input_: string, step: Runnable, given: Given): Promise<void> {
+  await mkdir(input_);
 
   const inputs = new Map<
     string,
-    { hash: string; kind: string; fields: Artifact["fields"]; body?: string }[]
+    ({ hash: string; kind: string; fields: Artifact["fields"]; body?: string } | Listed)[]
   >();
 
-  for (const { name, artifacts } of given.inputs) {
+  for (const input of given.inputs) {
+    const { name } = input;
     const listed = [];
 
-    for (const { hash, artifact } of artifacts) {
+    // A session is listed by its hash and body alone: it has no kind or fields.
+    if ("sessions" in input) {
+      for (const { hash, body } of input.sessions) {
+        await mkdir(join(input_, name), { recursive: true });
+        await writeFile(join(input_, name, hash), body);
+        listed.push({ hash, body: `${name}/${hash}` });
+      }
+
+      inputs.set(name, listed);
+      continue;
+    }
+
+    for (const { hash, artifact } of input.artifacts) {
       const { kind, fields } = artifact;
 
       if (artifact.body === undefined) {
         listed.push({ hash, kind, fields });
       } else {
-        await mkdir(join(input, name), { recursive: true });
-        await writeFile(join(input, name, hash), artifact.body);
+        await mkdir(join(input_, name), { recursive: true });
+        await writeFile(join(input_, name, hash), artifact.body);
         listed.push({ hash, kind, fields, body: `${name}/${hash}` });
       }
     }
@@ -1611,8 +1699,8 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
   // Under .skills, which no input name can be.
   for (const { name, files } of given.skills) {
     for (const { file, bytes } of files) {
-      await mkdir(dirname(join(input, ".skills", name, file)), { recursive: true });
-      await writeFile(join(input, ".skills", name, file), bytes);
+      await mkdir(dirname(join(input_, ".skills", name, file)), { recursive: true });
+      await writeFile(join(input_, ".skills", name, file), bytes);
     }
   }
 
@@ -1643,7 +1731,7 @@ async function prepare(input: string, step: Runnable, given: Given): Promise<voi
         : undefined,
   };
 
-  await writeFile(join(input, "input.json"), JSON.stringify(encoded));
+  await writeFile(join(input_, "input.json"), JSON.stringify(encoded));
 }
 
 // The transcript and claimed artifacts go to the store before the event naming them is written.
@@ -1678,6 +1766,9 @@ async function run(
   // The step's latest usage report, which every ending carries.
   let usage: Usage | undefined;
 
+  // The session the program left, read once it has ended: kept with the ending, or over its limit.
+  let left: ReturnType<typeof sessionLeft>;
+
   // Stores the transcript, and the errors when there are any, on the event that ends the attempt.
   const recorded = <E extends Ending>(event: Omit<E, "transcript">): E => {
     // SAFETY: E is the event given, with the transcript every ending event can carry.
@@ -1691,12 +1782,24 @@ async function run(
       ended.usage = usage;
     }
 
+    if (left !== undefined && "body" in left) {
+      ended.session = store.keep(left.body);
+    }
+
     return ended;
   };
 
+  // A session over its limit is not kept, and the reason says so.
   const escalate = (reason: string): Ending =>
     spooling !== undefined
-      ? recorded<Extract<Ending, { type: "escalated" }>>({ type: "escalated", reason, attempt })
+      ? recorded<Extract<Ending, { type: "escalated" }>>({
+          type: "escalated",
+          reason:
+            left !== undefined && "over" in left
+              ? `${reason}${unkept(left.over, step.limits.transcript)}`
+              : reason,
+          attempt,
+        })
       : { type: "escalated", reason, attempt };
 
   const { disk } = step.limits;
@@ -2047,6 +2150,8 @@ async function run(
     noteLine(pending);
     usageLine(reporting);
 
+    left = sessionLeft(output, step.limits.transcript);
+
     if (closed instanceof Error) {
       return escalate(`Step ${name} could not start: ${closed.code}.`);
     }
@@ -2071,6 +2176,17 @@ async function run(
 
       return escalate(
         signal ? `Step ${name} was ended by ${signal}.` : `Step ${name} exited with code ${code}.`,
+      );
+    }
+
+    // A claim cannot complete an attempt whose session the record could not keep.
+    if (left !== undefined && "over" in left) {
+      const over = left.over;
+
+      left = undefined;
+
+      return escalate(
+        `Step ${name} left a session of ${over} bytes, over its transcript limit of ${step.limits.transcript}.`,
       );
     }
 
@@ -2461,6 +2577,54 @@ async function readBody(
   }
 
   return { text };
+}
+
+// The session a program left in its output, at `output/session`: its bytes within `limit`, its size
+// when over it, or nothing when it left no regular file there. Resolved first, as a claimed body
+// is, so a symbolic link cannot make the engine read outside the output; read at most one byte past
+// the limit, so a file still growing is never read whole.
+function sessionLeft(
+  output: string,
+  limit: number,
+): { body: Buffer } | { over: number } | undefined {
+  let real;
+
+  try {
+    real = realpathSync(join(output, "session"));
+
+    if (relative(realpathSync(output), real).split(sep)[0] === "..") {
+      return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+
+  let file;
+
+  try {
+    file = openSync(real, constants.O_RDONLY | constants.O_NONBLOCK);
+  } catch {
+    return undefined;
+  }
+
+  try {
+    const stats = fstatSync(file);
+
+    if (!stats.isFile()) {
+      return undefined;
+    }
+
+    if (stats.size > limit) {
+      return { over: stats.size };
+    }
+
+    const body = Buffer.alloc(limit + 1);
+    const read = readSync(file, body, 0, body.length, 0);
+
+    return read > limit ? { over: read } : { body: body.subarray(0, read) };
+  } finally {
+    closeSync(file);
+  }
 }
 
 // Reads the file `path` names under `root`, as readAtMost does. Resolved first, so neither .. nor a
