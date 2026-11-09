@@ -18,6 +18,7 @@ import { describe, full, line, linesOf, visible, waiting, where } from "./readab
 const usage = `Usage: medrengard <command> [--json] [--factory <path>]
 
   commission <workflow> <commission> --title <title> (--body <text> | --body-file <path>)
+  check      [<workflow>]
   advance    <commission>
   attend     <commission>
   state      <commission>
@@ -38,9 +39,11 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
 The factory is --factory <path>, or else MEDRENGARD_FACTORY: a module whose default export is the
 engine's options, { log, kinds, workflows, defaults }, with log relative to the module.`;
 
-// Each command's positional arguments and the options it takes besides --json and --factory.
-const commands = new Map([
+// Each command's positional arguments, `optional` of them at the end, and the options it takes
+// besides --json and --factory.
+const commands = new Map<string, { arguments: number; optional?: number; options: string[] }>([
   ["commission", { arguments: 2, options: ["title", "body", "body-file"] }],
+  ["check", { arguments: 1, optional: 1, options: [] }],
   ["advance", { arguments: 1, options: [] }],
   ["attend", { arguments: 1, options: [] }],
   ["state", { arguments: 1, options: [] }],
@@ -94,7 +97,8 @@ const given = Object.keys(values).filter((name) => name !== "json" && name !== "
 
 if (
   spec === undefined ||
-  args.length !== spec.arguments ||
+  args.length > spec.arguments ||
+  args.length < spec.arguments - (spec.optional ?? 0) ||
   !given.every((name) => spec.options.includes(name)) ||
   factory === undefined
 ) {
@@ -124,7 +128,7 @@ const textOf = (inline?: string, file?: string) =>
 try {
   const body = textOf(values.body, values["body-file"]);
   const feedback = textOf(values.feedback, values["feedback-file"]);
-  const { engine } = await openFactory(factory);
+  const { engine, workflows } = await openFactory(factory);
 
   const [first, second] = args;
 
@@ -151,6 +155,9 @@ try {
           feedback,
         }),
       );
+      break;
+    case "check":
+      check(engine, first === undefined ? workflows : [first], first !== undefined);
       break;
     case "cancel":
       engine.cancel(first);
@@ -233,6 +240,7 @@ type Printed =
   | null
   | ({ commission: string; state: CommissionState } | { commission: string; error: string })[]
   | { parallel: number }
+  | ({ workflow: string } | { workflow: string; error: string })[]
   | ReturnType<Engine["engines"]>
   | { stopping: { commission: string; step: string }[] }
   | { commission: string; state: CommissionState }
@@ -393,6 +401,40 @@ async function runner(engine: Engine, parallel: number): Promise<void> {
 
   await Promise.all(advancing.values());
   withdraw();
+}
+
+/**
+ * Checks each of `workflows` as commissioning would, printing whether it passed or why not; one
+ * named alone prints, with --json, the definition it would be commissioned with. Exits 1 if any
+ * failed, so a hook or CI can gate on it.
+ */
+function check(engine: Engine, workflows: readonly string[], named: boolean): void {
+  if (named && json) {
+    printDefinition(engine.check(workflows[0]!));
+
+    return;
+  }
+
+  const results = workflows.map((workflow) => {
+    try {
+      engine.check(workflow);
+
+      return { workflow };
+    } catch (error) {
+      return { workflow, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  print(
+    results,
+    results
+      .map((result) => `${result.workflow}: ${"error" in result ? result.error : "ok"}\n`)
+      .join(""),
+  );
+
+  if (results.some((result) => "error" in result)) {
+    process.exitCode = 1;
+  }
 }
 
 function printArtifact(artifact: Artifact): void {

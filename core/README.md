@@ -734,6 +734,7 @@ for (;;) {
 | Method                                                       | Returns                                                                                                                                                                                        |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `commission(workflow, commission, { title, body })`          | nothing; refuses an unknown workflow or an invalid one                                                                                                                                         |
+| `check(workflow)`                                            | the definition it would be commissioned with, as `definition` gives a commission's; refuses as `commission` would, recording nothing                                                           |
 | `advance(commission, { signal? })`                           | the state it stopped at, which may be ready at an attended step; once `signal` aborts, it starts no further attempt                                                                            |
 | `attend(commission)`                                         | the state once the attended step it is ready at ends, run in this process's terminal                                                                                                           |
 | `events(position)`                                           | `{ position, commission, event }[]`: every commission's events after the log position, oldest first                                                                                            |
@@ -768,6 +769,7 @@ the subject, if there is one.
 medrengard <command> [--json] [--factory <path>]
 
   commission <workflow> <commission> --title <title> (--body <text> | --body-file <path>)
+  check      [<workflow>]
   advance    <commission>
   attend     <commission>
   state      <commission>
@@ -824,6 +826,13 @@ medrengard <command> [--json] [--factory <path>]
   workflow, with each step's access, agent and harness command, and its limits made whole from the
   factory's defaults it recorded; its kinds; and its skills by file hash. It is what a step was
   allowed, whatever the factory says now. With `--json` it prints `engine.definition`.
+- `check` checks each of the factory's workflows, or the one named, as `commission` would, skills
+  included, and records nothing: `build: ok`, or `build:` and the refusal `commission` would give.
+  It exits 1 if any fails, so a hook or CI can run it on every change to a factory. With `--json`
+  it prints `{ workflow, error? }[]`; with a workflow named, the definition it would be
+  commissioned with, in the shape `definition` prints a commission's, so comparing a factory with
+  what a commission runs on is
+  `diff <(medrengard definition first --json) <(medrengard check build --json)`.
 - `engines` lists the engines registered on the log, oldest first, one line each:
   `alive    <host>  pid <pid>  since <time>`. `run` registers while it runs. On the log's own
   machine an engine is `alive` or `dead`, judged by its process, so a `run` killed without
