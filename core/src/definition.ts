@@ -417,6 +417,14 @@ function parseWorkflow(
     throw invalid("its start is not one of its steps");
   }
 
+  // Whether a session query names a step of the workflow whose attempts run a program.
+  const kindsOfSteps = new Map(
+    Object.entries(steps).map(([step, declared]) => [step, declared?.kind]),
+  );
+
+  const runsProgram = (step: string) =>
+    names.includes(step) && kindsOfSteps.get(step) !== "approval";
+
   for (const [name, step] of Object.entries(steps)) {
     const on = step?.on;
     const kind = step?.kind;
@@ -505,7 +513,9 @@ function parseWorkflow(
         (query) =>
           query === "subject" ||
           query === "request" ||
+          (hasExactly(query, ["session"]) && runsProgram(String(Object.values(query)[0]))) ||
           (isRecord(query) &&
+            !Object.hasOwn(query, "session") &&
             Object.entries(query).every(
               ([field, value]) =>
                 (field === "from" &&
@@ -519,7 +529,7 @@ function parseWorkflow(
       )
     ) {
       throw invalid(
-        `step ${name}'s inputs must each be subject, request, or a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all`,
+        `step ${name}'s inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, or a session of one of its steps that runs a program`,
       );
     }
 
@@ -662,16 +672,19 @@ function refuseUnbuildable(
 
     const query = step.workspace === "subject" ? "subject" : step.inputs[step.workspace.input];
 
+    // A workspace input that is a session was refused above, so it names no kind here.
     const possible =
       query === "subject"
         ? subjects
         : query === "request"
           ? ["document"]
-          : query.kind !== undefined
-            ? [query.kind]
-            : query.from !== undefined
-              ? claimedBy(query.from)
-              : [...Object.keys(kinds), "decision"];
+          : "session" in query
+            ? []
+            : query.kind !== undefined
+              ? [query.kind]
+              : query.from !== undefined
+                ? claimedBy(query.from)
+                : [...Object.keys(kinds), "decision"];
 
     const unbuildable = possible.find((kind) => kinds[kind]?.materialiser === undefined);
 

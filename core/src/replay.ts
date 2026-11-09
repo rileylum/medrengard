@@ -16,7 +16,10 @@ export type Query<N extends string = string> =
       kind?: string;
       about?: "subject" | "earlier" | "any";
       take?: "latest" | "all";
-    };
+    }
+  // The latest session an attempt of the step N left, if any: a harness's conversation, opaque to
+  // the engine, which a later attempt's adapter may continue.
+  | { session: N };
 
 /**
  * A reusable agent: the harness adapter program that runs it, the model and prompt it is given,
@@ -169,6 +172,8 @@ type AttemptCompleted<N extends string> = {
   transcript: string;
   errors?: string;
   usage?: Usage;
+  // The session its program left in its output, by hash, when it left one.
+  session?: string;
   next: N | "end";
 };
 
@@ -184,6 +189,7 @@ type Escalated = {
   transcript?: string;
   errors?: string;
   usage?: Usage;
+  session?: string;
 };
 
 // note is one line for the owner, recorded as it arrives: one the attempt's program wrote to fd 3,
