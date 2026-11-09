@@ -16,7 +16,8 @@ const repository = join(import.meta.dirname, "..");
  * claims `done` and awaits the owner at `review`; the workflow `failing`, whose step exits 3; and
  * the workflow `slow`, whose step appends start, then end half a second later, to the directory's
  * `steps` file and leads to `review`; the workflow `twice`, whose two such steps lead to `review`; and the workflow
- * `noting`, whose step writes two notes and leads to `review`. Its log is in the directory's `state`.
+ * `noting`, whose step writes two notes and leads to `review`; and `spending`, whose step reports
+ * what it used and leads to `review`. Its log is in the directory's `state`.
  */
 export async function factoryIn(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
@@ -281,6 +282,19 @@ export async function factoryIn(t: TestContext) {
          failing: defineWorkflow({
            start: "build",
            steps: { build: { ...step("echo broke >&2; exit 3"), on: { done: "end" } } },
+         }),
+         // Reports what it used on fd 4, as an adapter would. Last, so the workflows a test picks by
+         // position stay where they are.
+         spending: defineWorkflow({
+           start: "build",
+           steps: {
+             build: {
+               ...step(\`echo '{"usd":0.25,"tokens":{"input":1000,"output":100,"cacheRead":100,"cacheWrite":0}}' >&4
+                         echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"\`),
+               on: { done: "review" },
+             },
+             review: { kind: "approval", on: { approve: "end" } },
+           },
          }),
        },
      };`,

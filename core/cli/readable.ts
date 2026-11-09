@@ -3,7 +3,7 @@
  * step wrote passes through `visible` before it reaches the owner's terminal.
  */
 import type { Entry } from "../src/engine.ts";
-import type { CommissionState } from "../src/replay.ts";
+import type { CommissionState, Usage } from "../src/replay.ts";
 import type { Artifact } from "../src/store.ts";
 
 /**
@@ -97,6 +97,32 @@ export function full(hash: string, artifact: Artifact, verifier: readonly string
  * once: an attempt's start, each of its notes, and its ending; or an escalation or a decision. An
  * attempt that wrote to stderr says how to read it: `errors` of its number.
  */
+// What an attempt's step reported it used: dollars to the cent, or to a hundredth of one below a
+// cent, and every token counted, in thousands or millions.
+function spentOf({ usd, tokens }: Usage): string {
+  const dollars = usd === undefined ? [] : [`$${usd.toFixed(usd > 0 && usd < 0.01 ? 4 : 2)}`];
+
+  const total =
+    tokens === undefined
+      ? undefined
+      : tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite;
+
+  const counted =
+    total === undefined
+      ? []
+      : [
+          `${
+            total < 1000
+              ? total
+              : total < 1_000_000
+                ? `${(total / 1000).toFixed(1)}k`
+                : `${(total / 1_000_000).toFixed(1)}M`
+          } tokens`,
+        ];
+
+  return [...dollars, ...counted].join(", ");
+}
+
 export function linesOf(
   index: number,
   entry: Entry,
@@ -126,11 +152,13 @@ export function linesOf(
           ? ""
           : ` (${((entry.ended - entry.started) / 1000).toFixed(1)} s)`;
 
+      const spent = entry.usage === undefined ? "" : ` (${spentOf(entry.usage)})`;
+
       const ending =
         "escalated" in entry
-          ? `${number}${at} escalated${took}: ${entry.escalated}${read}`
+          ? `${number}${at} escalated${took}${spent}: ${entry.escalated}${read}`
           : [
-              `${number}${at} ${entry.outcome}${took}${read}`,
+              `${number}${at} ${entry.outcome}${took}${spent}${read}`,
               ...entry.artifacts.map(
                 ({ hash, artifact, verifier }) =>
                   `    ${line(artifact.kind, hash, artifact)}  ${verifier === null ? "(no verifier)" : "(verified)"}`,

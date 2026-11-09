@@ -568,7 +568,16 @@ Every command and agent step is a program, started:
   it at once. A note is at most 4096 bytes, and notes count toward the transcript limit. The
   Claude Code adapter notes what the agent says, each tool it uses and how it finished, each cut
   at 200 characters and marked `…`; the transcript keeps the whole. The record marks each note
-  `from` the step or the engine, which notes what an attended step's output holds.
+  `from` the step or the engine, which notes what an attended step's output holds;
+- with file descriptor 4 open for usage reports: what the step has used so far, one JSON line
+  each, `{"usd": 0.42, "tokens": {"input": 10, "output": 20, "cacheRead": 30, "cacheWrite": 40}}`,
+  either field optional, none below zero, token counts whole. The latest report stands, and is
+  recorded with the attempt however it ends, an interrupted one included; `show` prints it beside
+  the attempt, `($0.42, 100 tokens)`. A report is at most 4096 bytes and counts toward the
+  transcript limit; a line that is not one escalates. It is the step's claim: nothing checks it.
+  The Claude Code adapter reports the tokens so far after each message, then the cost and tokens
+  of its result. Claude Code's cost is its own estimate, even on a subscription, and an attended
+  session reports nothing.
 
 `input.json` lists each input's artifacts, oldest first, always as a list. A body is a file at
 `<input>/<hash>`, and `body` holds that path. An agent's skills are directories under `.skills`,

@@ -396,8 +396,13 @@ type StreamEvent = {
   mcp_servers?: { name: string }[];
   agents?: string[];
   message?: {
+    id?: string;
     content?: { type: string; text?: string; name?: string; input?: ToolInput }[];
+    // The tokens this message used, the same on each event claude splits it into.
+    usage?: Tokens;
   };
+  // Every message's tokens together, in its result event.
+  usage?: Tokens;
   is_error?: boolean;
   // The tools claude refused the agent, in its result event.
   permission_denials?: { tool_name: string; tool_input?: ToolInput }[];
@@ -405,6 +410,33 @@ type StreamEvent = {
   duration_ms?: number;
   total_cost_usd?: number;
 };
+
+// Tokens as the Anthropic API counts them.
+type Tokens = {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+};
+
+// Tokens as the step contract's usage report counts them.
+const counted = (tokens: Tokens) => ({
+  input: tokens.input_tokens ?? 0,
+  output: tokens.output_tokens ?? 0,
+  cacheRead: tokens.cache_read_input_tokens ?? 0,
+  cacheWrite: tokens.cache_creation_input_tokens ?? 0,
+});
+
+// A usage report, as the step contract defines it.
+type Report = { usd?: number; tokens: ReturnType<typeof counted> };
+
+// Writes the attempt's usage so far to fd 4, the step contract's usage reports: the latest stands.
+function reportUsage(usage: Report): void {
+  writeSync(4, `${JSON.stringify(usage)}\n`);
+}
+
+// Each message's tokens, by its id, so a message claude splits over several events counts once.
+const used = new Map<string, Tokens>();
 
 // Records on stderr and in a note what claude loaded that the agent did not declare, and lets it
 // run: a leak is for the owner to see and fix, not a reason to stop.
@@ -637,6 +669,35 @@ let result: StreamEvent | undefined;
 
 // What the agent says, each tool it calls, and how its run finished.
 function notesOf(event: StreamEvent): void {
+  // The tokens so far after each message, so the engine knows them while the agent works; the
+  // result's totals and cost replace them at the end.
+  const { id, usage } = event.message ?? {};
+
+  if (event.type === "assistant" && id !== undefined && usage !== undefined) {
+    used.set(id, usage);
+
+    const sum = [...used.values()].map(counted).reduce((total, each) => ({
+      input: total.input + each.input,
+      output: total.output + each.output,
+      cacheRead: total.cacheRead + each.cacheRead,
+      cacheWrite: total.cacheWrite + each.cacheWrite,
+    }));
+
+    reportUsage({ tokens: sum });
+  }
+
+  if (event.type === "result" && event.usage !== undefined) {
+    const final: Report = {
+      tokens: counted(event.usage),
+    };
+
+    if (event.total_cost_usd !== undefined) {
+      final.usd = event.total_cost_usd;
+    }
+
+    reportUsage(final);
+  }
+
   if (event.type === "assistant") {
     for (const block of event.message?.content ?? []) {
       if (block.type === "text" && block.text !== undefined) {

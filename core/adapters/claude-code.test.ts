@@ -696,6 +696,63 @@ test("the Claude Code adapter notes each tool claude denied the agent", async (t
   ]);
 });
 
+test("the Claude Code adapter reports the cost and tokens claude's result gives", async (t) => {
+  const result = {
+    type: "result",
+    is_error: false,
+    total_cost_usd: 0.42,
+    usage: {
+      input_tokens: 10,
+      output_tokens: 20,
+      cache_read_input_tokens: 30,
+      cache_creation_input_tokens: 40,
+    },
+  };
+
+  const { engine } = await engineWithClaude(
+    t,
+    `echo '${JSON.stringify(result)}'
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    {
+      usage: { usd: 0.42, tokens: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40 } },
+    },
+  ]);
+});
+
+test("the Claude Code adapter reports the tokens so far after each message, counting each once", async (t) => {
+  const message = (id: string, input: number) => ({
+    type: "assistant",
+    message: {
+      id,
+      content: [],
+      usage: {
+        input_tokens: input,
+        output_tokens: 1,
+        cache_read_input_tokens: 2,
+        cache_creation_input_tokens: 3,
+      },
+    },
+  });
+
+  // claude splits a message with several blocks into events that each carry its usage.
+  const events = [message("a", 10), message("a", 10), message("b", 5)];
+
+  const { engine } = await engineWithClaude(
+    t,
+    events.map((event) => `echo '${JSON.stringify(event)}'`).join("\n"),
+  );
+
+  // It never reported a result, so the attempt fails, with the tokens it used recorded.
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "escalated" });
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    { usage: { tokens: { input: 15, output: 2, cacheRead: 4, cacheWrite: 6 } } },
+  ]);
+});
+
 test("the Claude Code adapter records that claude did not say what it loaded", async (t) => {
   const { engine, directory } = await engineWithClaude(
     t,
@@ -939,7 +996,8 @@ test(
           MEDRENGARD_OUT: output,
           CLAUDE_CODE_MAX_RETRIES: "0",
         },
-        stdio: ["ignore", "ignore", "pipe", "pipe"],
+        // fd 4 is the step's usage reports, as the engine gives it.
+        stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
       },
     );
 

@@ -21,6 +21,7 @@ const exports = {
     "Limits",
     "Query",
     "Skill",
+    "Usage",
     "Workflow",
     "defineWorkflow",
     "replay",

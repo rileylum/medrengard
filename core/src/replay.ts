@@ -138,9 +138,19 @@ type AttemptStarted<N extends string> = {
   process: { pid: number; start: number; boot?: string };
 };
 
+/**
+ * What an attempt's step reported it used, its latest report on fd 4: money in US dollars and
+ * tokens, as its harness counts them. The step's claim; nothing verifies it.
+ */
+export type Usage = {
+  usd?: number;
+  tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+};
+
 // artifacts are the artifacts the attempt claimed, in the order claimed, each with its kind, so a
 // query can select by kind without the store, and the files its verifier kept, by name; transcript
-// is the hash of its stdout and stderr, and errors of its stderr alone, when it wrote any.
+// is the hash of its stdout and stderr, and errors of its stderr alone, when it wrote any; usage
+// is its step's latest report, when it made one.
 type AttemptCompleted<N extends string> = {
   type: "attempt-completed";
   step: N;
@@ -149,19 +159,22 @@ type AttemptCompleted<N extends string> = {
   artifacts: readonly { hash: string; kind: string; kept: Readonly<Record<string, string>> }[];
   transcript: string;
   errors?: string;
+  usage?: Usage;
   next: N | "end";
 };
 
 // lazy: reason is free text for the owner. When an observer needs to group escalations,
 // add a closed set of causes beside it; the text stays, as the why.
 // transcript and errors are there when the attempt's program ran, errors only when it wrote to
-// stderr; an interrupted attempt's are what it wrote before its engine died.
+// stderr; an interrupted attempt's are what it wrote before its engine died. usage is as on
+// attempt-completed.
 type Escalated = {
   type: "escalated";
   reason: string;
   attempt?: number;
   transcript?: string;
   errors?: string;
+  usage?: Usage;
 };
 
 // note is one line for the owner, recorded as it arrives: one the attempt's program wrote to fd 3,

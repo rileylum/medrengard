@@ -56,6 +56,7 @@ Every step except an approval step is a program. The engine starts it with:
 - `MEDRENGARD_IN`: `/input`, a read-only directory holding `input.json` and the bodies of the step's declared inputs;
 - `MEDRENGARD_OUT`: `/output`, an empty directory where the step writes `output.json` and the files its artifacts refer to;
 - file descriptor 3, where the step may write notes for the owner, one per line, each at most 4096 bytes and all counted with its transcript;
+- file descriptor 4, where the step may report what it has used so far, one JSON line per report: money in US dollars, `usd`, and tokens, `input`, `output`, `cacheRead` and `cacheWrite`, as its harness counts them. The latest report stands. Each is at most 4096 bytes and counted with its transcript; a line that is not a report escalates. A report is the step's claim: nothing verifies it;
 - only the environment its access declares, with `PWD` naming its workspace.
 
 An attended step has the owner's terminal, recorded through a pseudo-terminal: it starts only when the owner attends it, in their terminal, and ends when its program does, so the owner can go back and forth with its agent until they leave. Their typing counts as activity, though what they type is not kept. While it runs, the engine notes for the owner what each `output.json` it writes would amount to: its outcome and artifacts, or why it would escalate. An unattended step gets empty stdin, and its stdout and stderr are its transcript.
@@ -104,10 +105,10 @@ Six events are the whole log vocabulary. Each carries the time the engine wrote 
 
 - `commissioned`: the workflow, its definitions by hash and the request artifact.
 - `attempt-started`: the step and attempt, the subject and each input's artifacts by hash; spends one unit of the step's budget.
-- `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, its transcript and, when it wrote to stderr, its errors, and the next step or end.
+- `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, its transcript and, when it wrote to stderr, its errors, its latest usage report when it made one, and the next step or end.
 - `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, at most 1 MiB, and the next step or end.
 - `noted`: the attempt and one note for the owner, recorded as it arrives: one the attempt wrote, or the engine's, marked as such. It changes no state.
-- `escalated`: the reason, and the attempt if one was involved, with its transcript and errors when its program ran. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it. A reason is at most 4096 bytes; a longer one is cut on a character boundary and says so.
+- `escalated`: the reason, and the attempt if one was involved, with its transcript and errors when its program ran and its latest usage report when it made one. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it. A reason is at most 4096 bytes; a longer one is cut on a character boundary and says so.
 
 Transitions:
 
