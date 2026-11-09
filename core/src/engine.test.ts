@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { mkdirSync, readlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -4784,11 +4784,15 @@ test("the log's events are exactly the six types, each with its pinned fields", 
       steps: {
         build: stepRunning(
           `echo note >&3; echo warning >&2; printf 'Do it.' > "$MEDRENGARD_OUT/plan.md"
+           echo '{"usd":0.5,"tokens":{"input":1,"output":2,"cacheRead":3,"cacheWrite":4}}' >&4
            echo '${JSON.stringify(planAt("plan.md"))}' > "$MEDRENGARD_OUT/output.json"`,
           "review",
         ),
         review: { kind: "approval", on: { approve: "fail" } },
-        fail: { ...stepRunning("echo broken >&2; exit 3", "end"), inputs: { plan: "subject" } },
+        fail: {
+          ...stepRunning(`echo '{"usd":0.25}' >&4; echo broken >&2; exit 3`, "end"),
+          inputs: { plan: "subject" },
+        },
       },
     }),
   );
@@ -4838,6 +4842,10 @@ test("the log's events are exactly the six types, each with its pinned fields", 
       artifacts: [{ hash: "string", kind: "string", kept: {} }],
       transcript: "string",
       errors: "string",
+      usage: {
+        usd: "number",
+        tokens: { input: "number", output: "number", cacheRead: "number", cacheWrite: "number" },
+      },
       next: "string",
       at: "number",
     },
@@ -4857,6 +4865,7 @@ test("the log's events are exactly the six types, each with its pinned fields", 
       attempt: "number",
       transcript: "string",
       errors: "string",
+      usage: { usd: "number" },
       at: "number",
     },
   ]);
@@ -4907,7 +4916,7 @@ test("an agent step is started with exactly the pinned environment, descriptors 
 
   // The step's access names no variables; PWD is bwrap's --chdir.
   assert.equal(await read("environment"), "MEDRENGARD_IN\nMEDRENGARD_OUT\nPWD\n");
-  assert.equal(await read("descriptors"), "0\n1\n2\n3\n");
+  assert.equal(await read("descriptors"), "0\n1\n2\n3\n4\n");
   assert.equal(await read("listing"), ".skills\ninput.json\nrequest\n");
 
   // A kind's rules are its schema, defined by the kind, so only the keys of each are pinned here.
@@ -5061,3 +5070,111 @@ test("a command step's input.json has no agent", async (t) => {
     "claims",
   ]);
 });
+
+// A usage report, as a step writes it to fd 4.
+const usageOf = (usd: number, input: number) =>
+  JSON.stringify({ usd, tokens: { input, output: 2, cacheRead: 3, cacheWrite: 4 } });
+
+test("a step's latest usage report on fd 4 is recorded with its attempt", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `echo '${usageOf(0.1, 10)}' >&4; echo '${usageOf(0.25, 30)}' >&4
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    { entry: "attempt", outcome: "done", usage: JSON.parse(usageOf(0.25, 30)) },
+  ]);
+});
+
+test("a failed step's usage is recorded with its escalation, and a step that reports none has none", async (t) => {
+  const reporting = await engineRunning(t, `echo '{"usd":0.5}' >&4; exit 3`);
+
+  await reporting.engine.advance("first");
+
+  assert.partialDeepStrictEqual(reporting.engine.record("first").entries, [
+    { entry: "attempt", escalated: "Step build exited with code 3.", usage: { usd: 0.5 } },
+  ]);
+
+  const silent = await engineRunning(t, `exit 3`);
+
+  await silent.engine.advance("first");
+
+  const [entry] = silent.engine.record("first").entries;
+
+  assert.ok(entry !== undefined && !("usage" in entry));
+});
+
+// Neither money below zero, nor a field a report does not define, nor tokens without each count.
+const notReports = ["not json", '{"usd":-1}', '{"usd":1,"euros":1}', '{"tokens":{"input":1}}'];
+
+for (const [report, reason] of [
+  ...notReports.map((report) => [
+    report,
+    `Step build wrote a usage report that is not one: ${report}.`,
+  ]),
+  [
+    `{"usd":1,"pad":"${"x".repeat(5000)}"}`,
+    "Step build wrote a usage report over its limit of 4096 bytes.",
+  ],
+]) {
+  test(`a usage report ${report!.slice(0, 30)} escalates`, async (t) => {
+    const { engine } = await engineRunning(
+      t,
+      `echo '${report}' >&4; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    );
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      reason,
+    });
+  });
+}
+
+test(
+  "an interrupted attempt keeps the usage its step reported before its engine died",
+  { timeout: 10_000 },
+  async (t) => {
+    const { engine, directory, record, options } = await engineRunning(
+      t,
+      `echo '${usageOf(0.75, 50)}' >&4; echo started >> "$1"; exec sleep 30`,
+      { idle: 60, attempt: 60, transcript: 65536, input: 65536 },
+    );
+
+    const crashing = join(directory, "crashing.ts");
+
+    await writeFile(
+      crashing,
+      `import { createEngine } from ${JSON.stringify(join(import.meta.dirname, "engine.ts"))};
+    await createEngine(${JSON.stringify(options)}).advance("first");`,
+    );
+
+    const child = spawn(process.execPath, [crashing], { stdio: "ignore" });
+
+    // Killed only once the engine has spooled the report, as with the transcript.
+    await untilStarted(directory);
+
+    for (;;) {
+      const [attempt] = await readdir(join(record, "attempts"));
+
+      if (attempt !== undefined && existsSync(join(record, "attempts", attempt, "usage"))) {
+        break;
+      }
+
+      await sleep(20);
+    }
+
+    child.kill("SIGKILL");
+    await once(child, "exit");
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      reason: "Step build was interrupted.",
+    });
+    assert.partialDeepStrictEqual(engine.record("first").entries, [
+      { entry: "attempt", usage: JSON.parse(usageOf(0.75, 50)) },
+    ]);
+  },
+);

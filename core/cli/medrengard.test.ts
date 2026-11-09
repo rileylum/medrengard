@@ -798,6 +798,22 @@ test("check prints the definition a workflow would be commissioned with, as defi
   assert.equal(run(["check", "nothing"], factory).status, 1);
 });
 
+test("show says what each attempt's step reported it used", async (t) => {
+  const { factory } = await factoryIn(t);
+
+  run(["commission", "spending", "first", "--title", "Spend", "--body", "Spend."], factory);
+  run(["advance", "first"], factory);
+
+  assert.match(
+    run(["show", "first"], factory).stdout,
+    /^1 +build +done \(\d+\.\d s\) \(\$0\.25, 1\.2k tokens\)$/m,
+  );
+  assert.deepEqual(typesIn(run(["show", "first", "--json"], factory).stdout).entries[0].usage, {
+    usd: "number",
+    tokens: { input: "number", output: "number", cacheRead: "number", cacheWrite: "number" },
+  });
+});
+
 test("the runner is listed as a running engine until it stops", { timeout: 10_000 }, async (t) => {
   const { factory } = await factoryIn(t);
 

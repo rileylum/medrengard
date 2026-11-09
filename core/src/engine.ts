@@ -16,6 +16,7 @@ import {
   rmSync,
   statfsSync,
   watch,
+  writeFileSync,
   writeSync,
 } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rm, writeFile } from "node:fs/promises";
@@ -41,6 +42,7 @@ import {
   type Limits,
   type Query,
   type Skill,
+  type Usage,
   type Workflow,
 } from "./replay.ts";
 import { parseDefinition } from "./definition.ts";
@@ -86,6 +88,8 @@ export type Entry =
       // has none, as the commission's definition holds it.
       artifacts: { hash: string; artifact: Artifact; verifier: Program["run"] | null }[];
       errors: boolean;
+      // What its step reported it used, when it did.
+      usage?: Usage;
     }
   | {
       entry: "attempt";
@@ -96,6 +100,7 @@ export type Entry =
       ended?: number;
       escalated: string;
       errors: boolean;
+      usage?: Usage;
     }
   | { entry: "escalation"; step: string; reason: string; at?: number }
   | {
@@ -155,6 +160,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       record: dirname(log),
       work: join(directory, "work"),
       transcript: join(directory, "transcript"),
+      usage: join(directory, "usage"),
       errors: join(directory, "errors"),
     };
   }
@@ -168,9 +174,18 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
     const errors = readFileSync(spool.errors);
 
+    // SAFETY: the engine spools only a report it parsed as usage.
+    const usage = existsSync(spool.usage)
+      ? { usage: JSON.parse(readFileSync(spool.usage, "utf8")) as Usage }
+      : {};
+
     return errors.length === 0
-      ? { transcript: store.keep(readFileSync(spool.transcript)) }
-      : { transcript: store.keep(readFileSync(spool.transcript)), errors: store.keep(errors) };
+      ? { transcript: store.keep(readFileSync(spool.transcript)), ...usage }
+      : {
+          transcript: store.keep(readFileSync(spool.transcript)),
+          errors: store.keep(errors),
+          ...usage,
+        };
   }
 
   function unspool(spool: Spool): void {
@@ -555,6 +570,15 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
           return found?.entry === "attempt" ? found.started : undefined;
         };
 
+        // What an ended attempt's step reported it used, on its entry, when it reported any.
+        const withUsage = (index: number, usage: Usage | undefined) => {
+          const ended = entries[index];
+
+          if (usage !== undefined && ended?.entry === "attempt" && !("running" in ended)) {
+            ended.usage = usage;
+          }
+        };
+
         switch (event.type) {
           case "attempt-started":
             entries.push({
@@ -587,6 +611,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
               })),
               errors: event.errors !== undefined,
             };
+            withUsage(entryOf(event.attempt), event.usage);
             at = event.next;
             break;
           case "escalated":
@@ -603,6 +628,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
                 escalated: event.reason,
                 errors: event.errors !== undefined,
               };
+              withUsage(entryOf(event.attempt), event.usage);
             }
 
             break;
@@ -1094,6 +1120,8 @@ type Spool = {
   work: string;
   transcript: string;
   errors: string;
+  // The step's latest usage report, as it arrives.
+  usage: string;
 };
 
 // The attempts this process is running, across its engines: one it holds but is not running was
@@ -1570,6 +1598,9 @@ async function run(
   let erred = false;
   let written = 0;
 
+  // The step's latest usage report, which every ending carries.
+  let usage: Usage | undefined;
+
   // Stores the transcript, and the errors when there are any, on the event that ends the attempt.
   const recorded = <E extends Ending>(event: Omit<E, "transcript">): E => {
     // SAFETY: E is the event given, with the transcript every ending event can carry.
@@ -1577,6 +1608,10 @@ async function run(
 
     if (erred) {
       ended.errors = store.keep(readFileSync(spool.errors));
+    }
+
+    if (usage !== undefined) {
+      ended.usage = usage;
     }
 
     return ended;
@@ -1708,9 +1743,9 @@ async function run(
     const child = spawn(command, args, {
       cwd: workspace,
       env,
-      // fd 3 is the step's notes for the owner, one per line. An attended step's stdin is the
-      // owner's terminal, which only script reads.
-      stdio: [attended ? "inherit" : "ignore", "pipe", "pipe", "pipe"],
+      // fd 3 is the step's notes for the owner, one per line, and fd 4 its usage reports. An
+      // attended step's stdin is the owner's terminal, which only script reads.
+      stdio: [attended ? "inherit" : "ignore", "pipe", "pipe", "pipe", "pipe"],
       detached: true,
     });
 
@@ -1846,6 +1881,66 @@ async function run(
 
     child.stdio[3]!.on("data", guarded(noteFrom));
 
+    // The part of a usage report whose line has not ended yet.
+    let reporting = Buffer.alloc(0);
+
+    // Keeps each complete line as the step's latest usage, spooled so an engine that finds the
+    // attempt interrupted records it too. Bounded like notes, and counted with them.
+    const usageFrom = (chunk: Buffer) => {
+      idle?.refresh();
+      written += chunk.length;
+
+      if (written > step.limits.transcript) {
+        stopFor(
+          `Step ${name} wrote more than its transcript limit of ${step.limits.transcript} bytes.`,
+        );
+
+        return;
+      }
+
+      reporting = Buffer.concat([reporting, chunk]);
+
+      for (let end = reporting.indexOf(10); end !== -1; end = reporting.indexOf(10)) {
+        usageLine(reporting.subarray(0, end));
+        reporting = reporting.subarray(end + 1);
+      }
+
+      if (reporting.length > noteLimit) {
+        usageLine(reporting);
+      }
+    };
+
+    const usageLine = (line: Buffer) => {
+      if (stopped !== undefined) {
+        return;
+      }
+
+      if (line.length > noteLimit) {
+        stopFor(`Step ${name} wrote a usage report over its limit of ${noteLimit} bytes.`);
+
+        return;
+      }
+
+      const text = line.toString().trim();
+
+      if (text === "") {
+        return;
+      }
+
+      const report = usageIn(text);
+
+      if (report === undefined) {
+        stopFor(`Step ${name} wrote a usage report that is not one: ${text}.`);
+
+        return;
+      }
+
+      usage = report;
+      writeFileSync(spool.usage, JSON.stringify(report));
+    };
+
+    child.stdio[4]!.on("data", guarded(usageFrom));
+
     // While the owner and an attended step's agent go back and forth, the engine reads each
     // output.json the agent writes and notes what it holds, so the owner knows when the result
     // is in and whether it would be accepted; it is judged as any claim once the session ends.
@@ -1865,8 +1960,9 @@ async function run(
     // A note after the attempt's end would not replay, so the last reading finishes first.
     await reading?.close();
 
-    // A last note need not end its line.
+    // A last note or report need not end its line.
     noteLine(pending);
+    usageLine(reporting);
 
     if (closed instanceof Error) {
       return escalate(`Step ${name} could not start: ${closed.code}.`);
@@ -1957,6 +2053,36 @@ async function run(
 
     await removed(directory);
   }
+}
+
+// A usage report parsed from its line, or undefined if it is not one: an object of at most money,
+// a number of dollars, and tokens, each count a whole number; none below zero, nothing else.
+function usageIn(text: string): Usage | undefined {
+  let report: unknown;
+
+  try {
+    report = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+
+  if (!isRecord(report) || !Object.keys(report).every((key) => key === "usd" || key === "tokens")) {
+    return undefined;
+  }
+
+  const fields = new Map(Object.entries(report));
+  const usd = fields.get("usd");
+  const tokens = fields.get("tokens");
+
+  const dollars = usd === undefined || (Number.isFinite(usd) && Number(usd) >= 0);
+
+  const counted =
+    tokens === undefined ||
+    (hasExactly(tokens, ["input", "output", "cacheRead", "cacheWrite"]) &&
+      Object.values(tokens).every((count) => Number.isSafeInteger(count) && count >= 0));
+
+  // SAFETY: checked above to hold only the fields a Usage defines, each of its type.
+  return dollars && counted ? (report as Usage) : undefined;
 }
 
 type Claim = { outcome: string; artifacts: Artifact[] };
