@@ -26,7 +26,8 @@ export type Query<N extends string = string> =
  * and its skills: paths to skill directories, each holding a SKILL.md, named by the directory.
  */
 export type Agent = {
-  harness: { run: readonly [string, ...string[]] };
+  // costs: false says the harness reports no cost, so no money limit can be kept over its steps.
+  harness: { run: readonly [string, ...string[]]; costs?: false };
   model: string;
   prompt: string;
   skills?: readonly string[];

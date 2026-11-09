@@ -599,10 +599,22 @@ function parseWorkflow(
           "prompt",
           ...(skills === undefined ? [] : ["skills"]),
         ]) ||
-        !hasExactly(harness, ["run"]))
+        !hasExactly(harness, Object.hasOwn(harness ?? {}, "costs") ? ["run", "costs"] : ["run"]))
     ) {
       throw invalid(
         `step ${name}'s agent must be a harness, a model, a prompt and any skills, a list of paths`,
+      );
+    }
+
+    const costless = kind === "agent" && Object.hasOwn(harness, "costs");
+
+    if (costless && harness.costs !== false) {
+      throw invalid(`step ${name}'s harness may say only costs: false, when it reports no cost`);
+    }
+
+    if (costless && Object.hasOwn(definition, "usd")) {
+      throw invalid(
+        `its money limit cannot be kept: step ${name}'s agent's harness reports no cost`,
       );
     }
 
@@ -637,6 +649,12 @@ function parseWorkflow(
 
     if (money !== undefined && !(Number.isFinite(money) && Number(money) > 0)) {
       throw invalid(`step ${name}'s money limit must be a positive number of dollars`);
+    }
+
+    if (money !== undefined && costless) {
+      throw invalid(
+        `step ${name}'s money limit cannot be kept: its agent's harness reports no cost`,
+      );
     }
 
     // lazy: money only. Add a token limit once an adapter can report tokens but not cost.
