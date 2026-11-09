@@ -4832,6 +4832,7 @@ test("the log's events are exactly the six types, each with its pinned fields", 
     subject: "string",
     inputs,
     process: { pid: "number", start: "number", boot: "string" },
+    engine: "string",
     at: "number",
   });
 
@@ -4841,6 +4842,7 @@ test("the log's events are exactly the six types, each with its pinned fields", 
       workflow: "string",
       definition: "string",
       request: "string",
+      engine: "string",
       at: "number",
     },
     started([]),
@@ -5542,3 +5544,97 @@ for (const [what, session, problem] of [
     });
   });
 }
+
+/**
+ * Rewrites the log at `log` as an older engine would have left the commission `first`: its
+ * commissioned event recording the engine `engine`, or none when it is undefined.
+ */
+function commissionedBy(log: string, engine: string | undefined): void {
+  const database = new DatabaseSync(log);
+
+  database
+    .prepare(
+      engine === undefined
+        ? "UPDATE events SET event = json_remove(event, '$.engine') WHERE commission = 'first' AND position = 0"
+        : "UPDATE events SET event = json_set(event, '$.engine', ?) WHERE commission = 'first' AND position = 0",
+    )
+    .run(...(engine === undefined ? [] : [engine]));
+  database.close();
+}
+
+/** The engine this process runs, as it records it when commissioning. */
+function engineOf(engine: ReturnType<typeof createEngine>): string {
+  const [commissioned] = engine.events(0);
+
+  assert.ok(commissioned?.event.type === "commissioned" && commissioned.event.engine !== undefined);
+
+  return commissioned.event.engine;
+}
+
+test("a commission that last ran on another engine escalates once, and the owner's retry carries it on with this one", async (t) => {
+  const { engine, options } = await engineRunning(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const current = engineOf(engine);
+
+  commissionedBy(options.log, "0123456789abcdef");
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: `Commission first last ran on engine 01234567; this engine is ${current.slice(0, 8)}.`,
+  });
+  assert.deepEqual(engine.record("first").entries.length, 1);
+
+  engine.decide("first", { subject: subjectOf(engine), since: sinceOf(engine), outcome: "retry" });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+
+  const started = engine.events(0).find(({ event }) => event.type === "attempt-started")?.event;
+
+  assert.partialDeepStrictEqual(started, { type: "attempt-started", engine: current });
+});
+
+test("a decision at an approval step does not carry a commission on with another engine", async (t) => {
+  const { engine, options } = await engineAwaiting(t);
+
+  const current = engineOf(engine);
+
+  commissionedBy(options.log, "0123456789abcdef");
+  engine.decide("first", {
+    subject: subjectOf(engine),
+    since: sinceOf(engine),
+    outcome: "approve",
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: `Commission first last ran on engine 01234567; this engine is ${current.slice(0, 8)}.`,
+  });
+});
+
+test("a commission written before engines recorded their version escalates once", async (t) => {
+  const { engine, options } = await engineRunning(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const current = engineOf(engine);
+
+  commissionedBy(options.log, undefined);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: `Commission first last ran on an engine that recorded no version; this engine is ${current.slice(0, 8)}.`,
+  });
+});
+
+test("a commission run on by the engine it last ran on does not escalate", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+});

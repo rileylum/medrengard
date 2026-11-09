@@ -129,11 +129,13 @@ export type Workflow<N extends string = string, Bounded = Stated> = {
 // workflow is the definition's name; definition is the hash of the definition as it was when the
 // commission started, which the commission runs on. request is the hash of the owner's request,
 // the commission's first subject.
+// engine is the version of the engine that commissioned it, as attempt-started's.
 export type Commissioned = {
   type: "commissioned";
   workflow: string;
   definition: string;
   request: string;
+  engine?: string;
 };
 
 // subject and inputs name what the attempt was given, by hash: each input's artifacts, oldest
@@ -148,6 +150,9 @@ type AttemptStarted<N extends string> = {
   subject: string;
   inputs: readonly { name: string; hashes: readonly string[] }[];
   process: { pid: number; start: number; boot?: string };
+  // The version of the engine that ran it: a hash of its source, absent in events written before
+  // engines recorded it. A commission runs on the engine it last ran on, or escalates.
+  engine?: string;
 };
 
 /**
@@ -190,6 +195,9 @@ type Escalated = {
   errors?: string;
   usage?: Usage;
   session?: string;
+  // When it escalated because this engine is not the one the commission last ran on: this
+  // engine's version, which the owner's decision on it accepts.
+  engine?: string;
 };
 
 // note is one line for the owner, recorded as it arrives: one the attempt's program wrote to fd 3,

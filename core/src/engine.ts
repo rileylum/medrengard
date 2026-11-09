@@ -414,6 +414,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       const event: Commissioned = {
         type: "commissioned",
         workflow,
+        engine: engineVersion(),
         definition: store.keep(text),
         request: store.put({
           kind: "document",
@@ -912,6 +913,15 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
         throw new Error(`Step ${name} is an approval step, so it cannot be ready.`);
       }
 
+      // Upgrading Medrengard could change how the commission goes on: the owner decides first.
+      const upgraded = unacceptedEngine(commission, events);
+
+      if (upgraded !== undefined) {
+        write(commission, events, { type: "escalated", reason: upgraded, engine: engineVersion() });
+
+        continue;
+      }
+
       const attempts = sinceDecision(events).filter(
         (event) => event.type === "attempt-started" && event.step === name,
       );
@@ -1053,6 +1063,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
         subject: state.subject,
         inputs: given,
         process: self,
+        engine: engineVersion(),
       } as const;
 
       write(commission, events, started);
@@ -1417,6 +1428,65 @@ function moneyLeft(
   }
 
   return { limit, spent: spent.spent };
+}
+
+// The version of this engine: a hash of its own source, the modules beside this one but their
+// tests, so any change to the engine is a different engine. Read once per process.
+let version: string | undefined;
+
+function engineVersion(): string {
+  if (version === undefined) {
+    const hash = createHash("sha256");
+
+    for (const file of readdirSync(import.meta.dirname)
+      .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+      .sort()) {
+      hash
+        .update(file)
+        .update("\0")
+        .update(readFileSync(join(import.meta.dirname, file)));
+    }
+
+    version = hash.digest("hex");
+  }
+
+  return version;
+}
+
+// Why the commission must not go on with this engine, if it must not: it last ran on another,
+// by its latest attempt or its commissioning, and the owner has not decided on an escalation
+// that named this engine since.
+function unacceptedEngine(commission: string, events: Log): string | undefined {
+  const current = engineVersion();
+
+  const last = events.findLastIndex(
+    (event) => event.type === "attempt-started" || event.type === "commissioned",
+  );
+
+  // The commissioned event is first, so one is always found.
+  const latest = events[last]!;
+
+  const ran =
+    latest.type === "attempt-started" || latest.type === "commissioned" ? latest.engine : undefined;
+
+  if (ran === current) {
+    return undefined;
+  }
+
+  const since = events.slice(last + 1);
+
+  const named = since.findLastIndex(
+    (event) => event.type === "escalated" && event.engine === current,
+  );
+
+  if (named !== -1 && since.slice(named + 1).some((event) => event.type === "decided")) {
+    return undefined;
+  }
+
+  const was =
+    ran === undefined ? "an engine that recorded no version" : `engine ${ran.slice(0, 8)}`;
+
+  return `Commission ${commission} last ran on ${was}; this engine is ${current.slice(0, 8)}.`;
 }
 
 // Only the owner renews a budget or permits a repeat: both count from the latest decision.
