@@ -1,7 +1,7 @@
 # Testing published agent skills, part 3: reading the diffs
 
 [Part 2](02-review-and-verify.md) found that Matt Pocock's `code-review` skill lowered erosion by
-0.19 on every problem, left correctness unchanged, and cost about twice as much. A metric moving
+0.19 on every problem, changed correctness by too little to measure, and cost about twice as much. A metric moving
 isn't the same as code getting better, though. This post opens the commits to see what the
 reviews actually changed, and whether we'd call the result better.
 

@@ -180,7 +180,8 @@ reference's.
 ## The series in one paragraph
 
 On SlopCodeBench, with Claude Opus 5.5 in Claude Code, Matt Pocock's `code-review` skill makes
-code clearly cleaner at about twice the cost, and doesn't make it more correct. Most of the
+code clearly cleaner at about twice the cost, and at most slightly more correct: its reviews fix
+more tests than they break, but the gain is too small for three runs to confirm. Most of the
 cleanliness builds up across checkpoints rather than arriving in any one review. It can't show up
 in the solve rate, because within eight checkpoints the agent almost never breaks what it built.
 obra's `verification-before-completion` changes little. And the failures that remain are largely
