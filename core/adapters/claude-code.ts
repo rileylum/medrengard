@@ -30,6 +30,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
   writeSync,
@@ -53,6 +54,8 @@ type Given = {
   attended: boolean;
   claims: Record<string, Kind>;
   agent: { model: string; prompt: string; skills: { name: string; path: string }[] };
+  // An artifact has a kind; a session, which a session query names, has none.
+  inputs: Record<string, { hash: string; kind?: string; body?: string }[]>;
 };
 
 const input = process.env.MEDRENGARD_IN!;
@@ -173,7 +176,26 @@ When you are done, write ${join(output, "output.json")} as JSON:
 {"outcome": one of ${JSON.stringify(given.outcomes)}, "artifacts": [...]}.
 Leave out "artifacts" to claim none. ${claiming}${attended ? together : ""}`;
 
-const prompt = `${given.agent.prompt}\n\n${contract}`;
+// The session the step declared to continue, if an earlier attempt left one: listed without a kind.
+const continued = Object.values(given.inputs)
+  .flat()
+  .filter((listed) => listed.kind === undefined);
+
+if (continued.length > 1) {
+  refuse(`An agent continues at most one session; its inputs hold ${continued.length}.`);
+}
+
+// A resumed agent remembers files its workspace may no longer hold: the workspace and the
+// conversation are two continuities, and only the commit carries the first.
+const resumed =
+  continued.length === 0
+    ? ""
+    : `
+
+You are continuing your earlier conversation, now as this step. Your workspace was rebuilt from
+the latest commit, so anything you did not commit is gone: check a file before you rely on it.`;
+
+const prompt = `${given.agent.prompt}\n\n${contract}${resumed}`;
 
 // Where claude's InstructionsLoaded hook writes each CLAUDE.md or rules file it loads, one JSON
 // line each; the stream does not carry that hook's events.
@@ -428,6 +450,79 @@ const windows = new Map([
   ["overage", "extra usage"],
 ]);
 
+// How the adapter keeps a session for the record: the conversation claude wrote, with the harness
+// and session it belongs to, so a later attempt can continue it, and refuse another harness's.
+type Kept = { harness: string; version?: string; id: string; conversation: string };
+
+// claude keeps a conversation under its home's projects, in a directory named for the working
+// directory with every character but letters and digits as -.
+const conversations = join(homedir(), ".claude", "projects");
+const project = join(conversations, process.cwd().replace(/[^A-Za-z0-9]/g, "-"));
+
+// Restores the session the step continues where claude finds it, and returns the flags that
+// continue it as a fork: the stored session never changes. A session claude cannot continue, such
+// as another harness's, fails the attempt rather than start afresh.
+function restored(): string[] {
+  if (continued.length === 0) {
+    return [];
+  }
+
+  let kept: Kept;
+
+  try {
+    // SAFETY: an adapter's session is opaque to the engine; this one's is a Kept, checked below.
+    kept = JSON.parse(readFileSync(join(input, continued[0]!.body!), "utf8")) as Kept;
+  } catch (error) {
+    return failed(
+      `The session to continue cannot be read: ${error instanceof Error ? error.message : String(error)}.`,
+    );
+  }
+
+  if (kept.harness !== "claude-code") {
+    return failed(`The session to continue is ${kept.harness}'s, not Claude Code's.`);
+  }
+
+  mkdirSync(project, { recursive: true });
+  writeFileSync(join(project, `${kept.id}.jsonl`), kept.conversation);
+
+  // The step's own contract, not the one the conversation began with.
+  return ["--resume", kept.id, "--fork-session", "--system-prompt-snapshot", "off"];
+}
+
+// Says why the attempt cannot run, and ends it.
+function failed(why: string): never {
+  report(why);
+  process.exit(1);
+}
+
+// Keeps the conversation claude had in this attempt, if it wrote one, in the output, where the
+// engine records it as the attempt's session however the attempt ends.
+function keep(version: string | undefined): void {
+  if (!existsSync(conversations)) {
+    return;
+  }
+
+  const file = readdirSync(conversations, { withFileTypes: true, recursive: true }).find(
+    (entry) => entry.isFile() && entry.name === `${sessionId}.jsonl`,
+  );
+
+  if (file === undefined) {
+    return;
+  }
+
+  const kept: Kept = {
+    harness: "claude-code",
+    id: sessionId,
+    conversation: readFileSync(join(file.parentPath, file.name), "utf8"),
+  };
+
+  if (version !== undefined) {
+    kept.version = version;
+  }
+
+  writeFileSync(join(output, "session"), JSON.stringify(kept));
+}
+
 // The latest refusal by the account's usage limit, if claude reported one.
 let refused: RateLimit | undefined;
 
@@ -556,7 +651,13 @@ function startupOf(
 
     leaksOf(event);
 
-    const unfit = unfitOf(event, startup.applied);
+    // A resumed session must be the fork it was given, or claude did not continue it.
+    const forked =
+      then === undefined && continued.length > 0 && event.session_id !== sessionId
+        ? [`Claude Code did not continue the session as a fork: it ran ${event.session_id}.`]
+        : [];
+
+    const unfit = [...unfitOf(event, startup.applied), ...forked];
 
     unfit.forEach(report);
     startup.stopped = unfit.length > 0;
@@ -753,6 +854,12 @@ function notesOf(event: StreamEvent): void {
 
 const startup: Startup = { applied: false, initialised: false, stopped: false };
 
+// The dry run continues it too, so restoring is checked before the owner's session opens.
+configuration.push(...restored());
+
+// The version claude said it is, kept with its session.
+let version: string | undefined;
+
 let claude: ChildProcess;
 
 if (attended) {
@@ -767,6 +874,8 @@ if (attended) {
   if (dry.initialised) {
     note(identityOf(dry.version));
   }
+
+  version = dry.version;
 
   // The terminal is claude's.
   claude = start(["Begin your step.", ...session, "--session-id", sessionId], token, [
@@ -792,6 +901,9 @@ if (attended) {
 const closed = await once(claude, "close").catch((error: NodeJS.ErrnoException) => error);
 
 instructionsOf();
+
+// However it ended: a failed attempt's conversation may be continued too.
+keep(version ?? startup.version);
 
 if (!attended) {
   unsaid(startup);

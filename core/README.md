@@ -496,6 +496,14 @@ const design = {
   (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`), so it runs on its own defaults rather than on flags
   that could change between attempts of one commission; features Anthropic gates by flag stay
   off. If `claude` says it still sends telemetry, the adapter records it as a leak.
+- The adapter keeps the conversation `claude` had as the attempt's session, however it ended, so a
+  later step can continue it: `inputs: { earlier: { session: "plan" } }`. When a step declares one,
+  `claude` continues it as a fork (`--resume`, `--fork-session`, under the attempt's own session
+  id), so the session kept never changes; the agent is told its workspace was rebuilt from the
+  latest commit, and is given this step's prompt, not the one its conversation began with. Before
+  the step's first session there is none, and the agent starts afresh. A session `claude` cannot
+  continue, such as another harness's, fails the attempt; it never starts afresh instead. An
+  attended step continues one the same way.
 - A run the account's usage limit refused, such as the five-hour or weekly window of a
   subscription, fails the attempt like any other, but its errors and a note say so, and when the
   window resets: `Claude Code's five-hour usage window is used up; it resets at
