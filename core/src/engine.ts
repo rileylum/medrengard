@@ -1372,11 +1372,25 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
         continue;
       }
 
-      const { inputs, skills } = prepared;
+      const { skills } = prepared;
 
       // The artifact the workspace is built from, when it is an input's: one the record names.
       const source = step.workspace;
       const sourceInput = source === "subject" || source === "empty" ? undefined : source.input;
+      const branchInput = source === "subject" || source === "empty" ? undefined : source.branches;
+
+      // The artifacts the workspace adds as branches, each named for the step to find it.
+      const inputs = prepared.inputs.map((input) =>
+        input.name !== branchInput || !("artifacts" in input)
+          ? input
+          : {
+              ...input,
+              artifacts: input.artifacts.map((each, index) => ({
+                ...each,
+                branch: branchName(input.name, each.commission, index),
+              })),
+            },
+      );
 
       // The definition refuses a workspace built from a session.
       const from = inputs.find((input) => input.name === sourceInput);
@@ -1386,6 +1400,23 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
         write(commission, events, {
           type: "escalated",
           reason: `Step ${name}'s workspace input ${sourceInput} holds no artifact.`,
+        });
+
+        continue;
+      }
+
+      // None when the step adds no branches; possibly empty when it does.
+      const adding = inputs.find((input) => input.name === branchInput);
+      const branches = adding !== undefined && "artifacts" in adding ? adding.artifacts : undefined;
+
+      // lazy: the materialiser of the base's kind adds every branch, so all must be of that kind.
+      // Give each kind its own materialiser run once a workspace needs to mix them.
+      const foreign = branches?.find(({ artifact }) => artifact.kind !== built?.artifact.kind);
+
+      if (foreign !== undefined) {
+        write(commission, events, {
+          type: "escalated",
+          reason: `Step ${name}'s workspace cannot add the ${foreign.artifact.kind} ${foreign.branch} as a branch of a ${built?.artifact.kind}.`,
         });
 
         continue;
@@ -1503,6 +1534,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
             kinds: definition.kinds,
             subject,
             workspace: built !== undefined ? built : source === "subject" ? subject : undefined,
+            branches,
             inputs,
             skills,
           },
@@ -1721,6 +1753,12 @@ function finishOf(events: Log): { outcome?: string } | undefined {
 /** The name of the `n`th child, from 1, that the attempt `attempt` of the step `step` commissioned. */
 function childName(commission: string, step: string, attempt: number, n: number): string {
   return `${commission}.${step}.${attempt}.${n}`;
+}
+
+// The branch a workspace adds an artifact of the input `input` as: a child's by its number, any
+// other's by its position, from 1.
+function branchName(input: string, child: string | undefined, index: number): string {
+  return `${input}-${child === undefined ? index + 1 : child.slice(child.lastIndexOf(".") + 1)}`;
 }
 
 // The sessions attempts of `step` left, oldest first, by hash, however each attempt ended.
@@ -1956,22 +1994,20 @@ type Given = {
   kinds: Kinds;
   subject: Subject;
   workspace: Subject | undefined;
+  branches: readonly Supplied[] | undefined;
   inputs: readonly Input[];
   skills: readonly { name: string; files: readonly { file: string; bytes: Buffer }[] }[];
 };
 
-// A declared input as given: the artifacts its query names, each with the files its verifier kept
-// and, from a children query, the child that claimed it; or the session a session query names.
+// An artifact an input names, with the child that claimed it, if any, and the branch the workspace
+// adds it as, if it does.
+type Supplied = Subject & { commission?: string; branch?: string };
+
+// A declared input as given: the artifacts its query names, each with the files its verifier kept,
+// from a children query, the child that claimed it, and when the workspace adds them, its branch;
+// or the session a session query names.
 type Input =
-  | {
-      name: string;
-      artifacts: readonly {
-        hash: string;
-        artifact: Artifact;
-        kept: Readonly<Record<string, string>>;
-        commission?: string;
-      }[];
-    }
+  | { name: string; artifacts: readonly Supplied[] }
   | { name: string; sessions: readonly { hash: string; body: Buffer }[] };
 
 type Store = ReturnType<typeof createStore>;
@@ -2198,6 +2234,7 @@ async function prepare(input_: string, step: Runnable, given: Given): Promise<vo
           fields: Artifact["fields"];
           body?: string;
           commission?: string;
+          branch?: string;
         }
       | Listed
     )[]
@@ -2219,11 +2256,12 @@ async function prepare(input_: string, step: Runnable, given: Given): Promise<vo
       continue;
     }
 
-    for (const { hash, artifact, commission } of input.artifacts) {
+    for (const { hash, artifact, commission, branch } of input.artifacts) {
       const { kind, fields } = artifact;
 
-      // A child's artifact names the child, so a step can tell whose it is.
-      const from = commission === undefined ? {} : { commission };
+      // A child's artifact names the child, so a step can tell whose it is, and one the workspace
+      // adds names its branch.
+      const from = { commission, branch };
 
       if (artifact.body === undefined) {
         listed.push({ hash, kind, fields, ...from });
@@ -2407,6 +2445,7 @@ async function run(
         workspace,
         name,
         given.workspace,
+        given.branches,
         given.kinds,
         store,
         halted,
@@ -3744,13 +3783,15 @@ async function verify(
   return { kept: Object.fromEntries([...read].map(([file, bytes]) => [file, store.keep(bytes)])) };
 }
 
-// Builds the workspace from an artifact, the subject or an input's, with its kind's materialiser.
-// Returns why it failed, or undefined.
+// Builds the workspace from an artifact, the subject or an input's, with its kind's materialiser,
+// which adds `branches`, of the same kind, beside it, when the step adds any. Returns why it
+// failed, or undefined.
 async function materialise(
   spool: Spool,
   workspace: string,
   name: string,
   from: Subject,
+  branches: readonly Supplied[] | undefined,
   kinds: Kinds,
   store: Store,
   cancelled: () => boolean,
@@ -3765,26 +3806,44 @@ async function materialise(
 
   const { input, output, scratch } = await areaFor(spool.work, "materialiser");
 
-  await mkdir(join(input, "kept"));
+  // Writes `each` under `under` in the input, as artifact.json describes it, relative to the input.
+  const describe = async (each: Subject, under: string) => {
+    await mkdir(join(input, under, "kept"), { recursive: true });
 
-  for (const [file, hash] of Object.entries(from.kept)) {
-    await writeFile(join(input, "kept", file), store.read(hash));
+    for (const [file, hash] of Object.entries(each.kept)) {
+      await writeFile(join(input, under, "kept", file), store.read(hash));
+    }
+
+    if (each.artifact.body !== undefined) {
+      await writeFile(join(input, under, "body"), each.artifact.body);
+    }
+
+    return {
+      hash: each.hash,
+      kind: each.artifact.kind,
+      fields: each.artifact.fields,
+      body: each.artifact.body === undefined ? undefined : join(under, "body"),
+      kept: Object.fromEntries(
+        Object.keys(each.kept).map((file) => [file, join(under, "kept", file)]),
+      ),
+    };
+  };
+
+  await writeFile(join(input, "artifact.json"), JSON.stringify(await describe(from, "")));
+
+  // Only a step that adds branches gives its materialiser branches.json, even an empty one.
+  if (branches !== undefined) {
+    const described = [];
+
+    for (const each of branches) {
+      // SAFETY: the engine names every artifact a workspace adds as a branch.
+      const branch = each.branch as string;
+
+      described.push({ branch, ...(await describe(each, join("branches", branch))) });
+    }
+
+    await writeFile(join(input, "branches.json"), JSON.stringify(described));
   }
-
-  if (artifact.body !== undefined) {
-    await writeFile(join(input, "body"), artifact.body);
-  }
-
-  await writeFile(
-    join(input, "artifact.json"),
-    JSON.stringify({
-      hash: from.hash,
-      kind: artifact.kind,
-      fields: artifact.fields,
-      body: artifact.body === undefined ? undefined : "body",
-      kept: Object.fromEntries(Object.keys(from.kept).map((file) => [file, `kept/${file}`])),
-    }),
-  );
 
   const why = await runProgram(
     materialiser,

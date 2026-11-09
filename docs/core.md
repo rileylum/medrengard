@@ -89,6 +89,8 @@ A step declares each input as a name and a query. The name is the input's direct
 
 The commission is refused before it starts if a query names a step the workflow lacks, a kind there is not, or a field or value a query does not define. Passing new data between steps is a new query in the workflow, not a change to the core.
 
+A step's workspace starts empty, or is built from the current subject or from the one artifact an input names, its base. Built from an input, it may also add as branches the artifacts another input names, which may not be a session, nor take all of each child's: each is named `<input>-<n>`, `n` being a child's number or else the artifact's position, from 1, and `input.json` gives each its `branch`. Each branch must be of its base's kind, or the commission escalates when the step is reached.
+
 A step's input limit bounds the bytes of all its input bodies together, with an agent step's prompt and skills. Over it, the commission escalates before an attempt starts, so no budget is spent.
 
 The JSON files are a wire format. The engine encodes `input.json` from its domain types and parses `output.json` into them, or escalates; the domain model is never shaped by the JSON.
@@ -145,14 +147,14 @@ A verifier is a program run after a claim parses, under the step contract:
 
 Kept files go to the store, attached to the artifact. A rejected claim or a failed verifier escalates. The record names the verifier that accepted an artifact, or that its kind has none.
 
-A materialiser is a program that builds a later step's workspace from an artifact and its kept files, in an empty directory; a workflow whose workspace may be built from a kind without one is refused before it starts. A kind's outcome field must equal the outcome of the step that claims it, and a step that may claim it needs an edge for each of its values.
+A materialiser is a program that builds a later step's workspace from an artifact and its kept files, in an empty directory; a workflow whose workspace may be built from a kind without one is refused before it starts. `MEDRENGARD_IN` holds `artifact.json`, describing the artifact, and when the step adds branches, `branches.json`, describing each with its branch, its files under `branches/<branch>/`. A kind whose materialiser can add them says so; a workflow whose workspace may add branches of any other kind is refused before it starts. A kind's outcome field must equal the outcome of the step that claims it, and a step that may claim it needs an edge for each of its values.
 
 The latest subject artifact an attempt claims becomes the subject; a judgement leaves the subject where it was. A judgement a step claims is about the subject that attempt was given, so an attempt that claims a new subject cannot also claim a judgement whose outcome field routes it: the commission escalates.
 
 Built in:
 
 - Document: a subject with a title and a required text body, such as markdown. No verifier; its materialiser writes the body.
-- Commit: a subject with a SHA and an optional report. Its verifier accepts a SHA that is the workspace HEAD, not already the current subject, and whose tree differs from its parent's and the subject's, and keeps a Git bundle that holds its whole history, or refuses it; its materialiser clones the bundle at that SHA.
+- Commit: a subject with a SHA and an optional report. Its verifier accepts a SHA that is the workspace HEAD, not already the current subject, and whose tree differs from its parent's and the subject's, and keeps a Git bundle that holds its whole history, or refuses it; its materialiser clones the bundle at that SHA, then fetches each branch's commit from its bundle as that branch, leaving no remote.
 - Verdict: a judgement with pass or fail, an optional one-line summary and its findings as an optional text body. Its outcome field is the verdict. The step never names the subject; the engine records the one the attempt was given.
 - Decision: a judgement with the owner's outcome and optional feedback.
 
@@ -196,7 +198,7 @@ _Execution: the core. The commission is the aggregate root._
 
 _Step contract: the process boundary._
 
-- Workspace: the directory a step's process runs in: empty, or built from the current subject or from the one artifact an input names.
+- Workspace: the directory a step's process runs in: empty, or built from the current subject or from the one artifact an input names, with the artifacts another input names as branches.
 - Input: what a step declares by name and query, and receives as the artifacts the query names. Every input's bodies sit in `MEDRENGARD_IN`, beside `input.json`.
 - Output: the directory where a step writes its claim, `output.json`, and the files it refers to.
 - Sandbox: the confinement that enforces a step's access.

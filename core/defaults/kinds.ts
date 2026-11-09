@@ -48,7 +48,7 @@ export const builtIn = {
     body: { required: false, limit: mebibyte },
     // The bundle holds the commit's whole history.
     verifier: { ...program("verifiers/commit.ts", "read"), kept: 1024 * mebibyte },
-    materialiser: program("materialisers/commit.ts", "write"),
+    materialiser: { ...program("materialisers/commit.ts", "write"), branches: true },
   },
   verdict: {
     role: "judgement",

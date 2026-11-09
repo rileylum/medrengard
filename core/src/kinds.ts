@@ -18,7 +18,8 @@ export type Program = {
  * most `limit` bytes, optionally required or one of `values`; whether its UTF-8 body is required,
  * and its size; the field, if any, that must equal the outcome claimed with it; a one-line
  * `description` that tells a step what it is and how to claim it; and the programs that verify a
- * claim of it, keeping files of at most `kept` bytes in all, and build a workspace from it.
+ * claim of it, keeping files of at most `kept` bytes in all, and build a workspace from it, which
+ * with `branches` can also add other artifacts of the kind to the workspace as branches.
  */
 export type Kind = {
   role: "subject" | "judgement";
@@ -27,7 +28,7 @@ export type Kind = {
   body: { required: boolean; limit: number };
   outcome?: string;
   verifier?: Program & { kept: number };
-  materialiser?: Program;
+  materialiser?: Program & { branches?: true };
 };
 
 /**
