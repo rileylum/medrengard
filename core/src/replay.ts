@@ -106,13 +106,13 @@ export type Money = { usd?: number };
 type Stated = { limits?: Partial<Limits> & Money };
 
 // What every step that starts a program declares: its inputs, the artifact kinds it may claim,
-// whether its workspace is built from the subject, from the one artifact an input names, or starts
-// empty, its outcomes' edges, the attempts it may start between the owner's decisions, its access,
+// whether its workspace is built from the subject, from the one artifact an input names, with the
+// artifacts another input names added as branches, or starts empty, its outcomes' edges, the attempts it may start between the owner's decisions, its access,
 // and, as `Bounded` holds them, its limits.
 type Program<N extends string, Bounded> = {
   inputs: Readonly<Record<string, Query<N>>>;
   claims: readonly string[];
-  workspace: "subject" | "empty" | { input: string };
+  workspace: "subject" | "empty" | { input: string; branches?: string };
   on: Record<string, N | "end">;
   budget: number;
   access: Access;

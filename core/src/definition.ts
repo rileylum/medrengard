@@ -270,10 +270,11 @@ function parseKinds(text: string): Kinds {
       const verifying = program === "verifier";
       const before = verifying ? { ...programBefore, kept: keptBefore } : programBefore;
       const stated = defaults === undefined ? { ...before, ...given } : given;
-      const { run, access, limit, memory, processes, kept } = stated;
+      const { run, access, limit, memory, processes, kept, branches } = stated;
       const bounds = ["limit", "memory", "processes", ...(verifying ? ["kept"] : [])];
+      const adds = !verifying && Object.hasOwn(stated, "branches") ? ["branches"] : [];
 
-      if (!hasExactly(stated, ["run", "access", ...bounds])) {
+      if (!hasExactly(stated, ["run", "access", ...bounds, ...adds])) {
         throw refused(
           verifying
             ? `its verifier must be a program, its access, and its limit, memory, processes and kept`
@@ -301,6 +302,10 @@ function parseKinds(text: string): Kinds {
         if (!Number.isInteger(value) || value <= 0) {
           throw refused(`its ${program}'s ${bound} must be a positive integer`);
         }
+      }
+
+      if (adds.length > 0 && branches !== true) {
+        throw refused("its materialiser may only state branches: true");
       }
 
       // A verifier that only judges keeps nothing.
@@ -650,7 +655,10 @@ function parseWorkflow(
     // The query of the input the workspace is built from, which must name at most one artifact.
     const declared = new Map(isRecord(inputs) ? Object.entries(inputs) : []);
     const named = workspace?.input;
-    const source = hasExactly(workspace, ["input"]) ? declared.get(named) : undefined;
+    const branches = workspace?.branches;
+    const addsBranches = Object.hasOwn(workspace ?? {}, "branches");
+    const fromInput = addsBranches ? ["input", "branches"] : ["input"];
+    const source = hasExactly(workspace, fromInput) ? declared.get(named) : undefined;
     const take = source?.take;
 
     if (
@@ -662,6 +670,22 @@ function parseWorkflow(
     ) {
       throw invalid(
         `step ${name}'s workspace must be subject, empty, or one of its inputs that names at most one artifact: subject, request or a query that takes the latest`,
+      );
+    }
+
+    // Branches are any artifacts an input names, a session being none.
+    const added = addsBranches ? declared.get(branches) : undefined;
+
+    if (addsBranches && (added === undefined || Object.hasOwn(added, "session"))) {
+      throw invalid(
+        `step ${name}'s workspace branches must name one of its inputs that names artifacts`,
+      );
+    }
+
+    // A child's branch is named after the child, so it can hold only one of its artifacts.
+    if (Object.hasOwn(added ?? {}, "children") && added.take === "all") {
+      throw invalid(
+        `step ${name}'s workspace branches cannot take all of each child's artifacts, since a child's branch holds one`,
       );
     }
 
@@ -986,32 +1010,47 @@ function refuseUnbuildable(
       return step.kind === "approval" ? ["decision"] : step.kind === "children" ? [] : step.claims;
     });
 
+  // The kinds the artifacts `query` names may be; a session is no artifact.
+  const possible = (query: Query) =>
+    query === "subject"
+      ? subjects
+      : query === "request"
+        ? ["document"]
+        : "session" in query
+          ? []
+          : query.kind !== undefined
+            ? [query.kind]
+            : "from" in query && query.from !== undefined
+              ? claimedBy(query.from)
+              : [...Object.keys(kinds), "decision"];
+
   for (const [name, step] of Object.entries(workflow.steps)) {
     if (step.kind === "approval" || step.kind === "children" || step.workspace === "empty") {
       continue;
     }
 
-    const query = step.workspace === "subject" ? "subject" : step.inputs[step.workspace.input];
-
-    // A workspace input that is a session was refused above, so it names no kind here.
-    const possible =
-      query === "subject"
-        ? subjects
-        : query === "request"
-          ? ["document"]
-          : "session" in query || "children" in query
-            ? []
-            : query.kind !== undefined
-              ? [query.kind]
-              : query.from !== undefined
-                ? claimedBy(query.from)
-                : [...Object.keys(kinds), "decision"];
-
-    const unbuildable = possible.find((kind) => kinds[kind]?.materialiser === undefined);
+    const { workspace } = step;
+    const base = possible(workspace === "subject" ? "subject" : step.inputs[workspace.input]);
+    const unbuildable = base.find((kind) => kinds[kind]?.materialiser === undefined);
 
     if (unbuildable !== undefined) {
       throw invalid(
         `step ${name}'s workspace may be built from a ${unbuildable}, whose kind has no materialiser`,
+      );
+    }
+
+    // lazy: a branch of another kind than the base's escalates only once the step is reached.
+    // Refuse it here once a workflow is found to mix them.
+    const added =
+      workspace === "subject" || workspace.branches === undefined
+        ? []
+        : possible(step.inputs[workspace.branches]);
+
+    const unbranchable = added.find((kind) => kinds[kind]?.materialiser?.branches !== true);
+
+    if (unbranchable !== undefined) {
+      throw invalid(
+        `step ${name}'s workspace may add branches of a ${unbranchable}, whose kind's materialiser cannot add them`,
       );
     }
   }
