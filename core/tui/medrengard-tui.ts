@@ -121,11 +121,29 @@ function attendable(state: CommissionState): boolean {
   return state.status === "ready" && state.step.kind === "agent" && state.step.attended === true;
 }
 
+// Whether a run is advancing work, as the engines registered on the log say: an idle one writes
+// no events, so the commissions alone cannot tell. A dead one is no run.
+function runRows(): Row[] {
+  const running = engine.engines().filter(({ status }) => status !== "dead");
+
+  const rows = running.map(({ host, pid, since, status }) => ({
+    text:
+      status === "alive"
+        ? `run: alive on ${host}, pid ${pid}, since ${new Date(since).toLocaleString()}`
+        : `run: on ${host}, pid ${pid}, since ${new Date(since).toLocaleString()}, unknown from this machine`,
+  }));
+
+  return [
+    ...(rows.length === 0 ? [{ text: "run: not running, so nothing ready advances" }] : rows),
+    { text: "" },
+  ];
+}
+
 function homeRows(finished: boolean): Row[] {
   const listed = engine.commissions();
 
   if (listed.length === 0) {
-    return [{ text: "Nothing has been commissioned. n to commission a request." }];
+    return [...runRows(), { text: "Nothing has been commissioned. n to commission a request." }];
   }
 
   const needs: Row[] = [];
@@ -165,6 +183,7 @@ function homeRows(finished: boolean): Row[] {
     rows.length === 0 ? [] : [{ text: title }, ...rows, { text: "" }];
 
   return [
+    ...runRows(),
     ...group("Needs you", needs),
     ...group("Running", running),
     ...group("Waiting for run", queued),

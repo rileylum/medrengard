@@ -4,7 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isRecord, isText } from "../src/json.ts";
@@ -342,6 +342,7 @@ test("the CLI's commands are exactly the pinned ones", () => {
     "watch",
     "events",
     "commissions",
+    "engines",
     "run",
     "decide",
     "cancel",
@@ -685,6 +686,47 @@ function commissionAll(factory: string, workflow: string, commissions: readonly 
     run(["commission", workflow, commission, "--title", "Greet", "--body", "Say hello."], factory);
   }
 }
+
+test("the runner is listed as a running engine until it stops", { timeout: 10_000 }, async (t) => {
+  const { factory } = await factoryIn(t);
+
+  const { child, until, exited } = runner(t, factory);
+
+  await until({ parallel: 1 });
+
+  const engines = () => JSON.parse(run(["engines", "--json"], factory).stdout);
+
+  assert.deepEqual(typesIn(run(["engines", "--json"], factory).stdout), [
+    { host: "string", pid: "number", since: "number", status: "alive" },
+  ]);
+  assert.partialDeepStrictEqual(engines(), [{ host: hostname(), pid: child.pid, status: "alive" }]);
+  assert.match(
+    run(["engines"], factory).stdout,
+    new RegExp(
+      `^alive +${RegExp.escape(hostname())} +pid ${child.pid} +since \\d{4}-\\d\\d-\\d\\dT`,
+    ),
+  );
+
+  child.kill("SIGTERM");
+  await exited;
+
+  assert.deepEqual(engines(), []);
+  assert.equal(run(["engines"], factory).stdout, "no engine is running\n");
+});
+
+test("a runner that was killed is listed as dead", { timeout: 10_000 }, async (t) => {
+  const { factory } = await factoryIn(t);
+
+  const { child, until, exited } = runner(t, factory);
+
+  await until({ parallel: 1 });
+  child.kill("SIGKILL");
+  await exited;
+
+  assert.partialDeepStrictEqual(JSON.parse(run(["engines", "--json"], factory).stdout), [
+    { pid: child.pid, status: "dead" },
+  ]);
+});
 
 test(
   "the runner advances every ready commission, which the commissions command lists",

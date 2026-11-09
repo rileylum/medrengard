@@ -86,10 +86,12 @@ test("the engine has exactly the pinned methods", async (t) => {
     "commissions",
     "decide",
     "definition",
+    "engines",
     "errors",
     "events",
     "next",
     "record",
+    "register",
     "state",
     "transcript",
   ]);

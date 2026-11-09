@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { writeFile, chmod } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { factoryIn, run } from "../cli/fixture.ts";
 
 const tui = join(import.meta.dirname, "medrengard-tui.ts");
+const cli = join(import.meta.dirname, "..", "cli", "medrengard.ts");
 
 /**
  * Opens the TUI on `factory` in a terminal of 30 rows and 90 columns, as the owner would, with
@@ -99,6 +100,29 @@ test("the TUI refuses to start without the owner's terminal", async (t) => {
 
   assert.equal(status, 1);
   assert.equal(stderr, "The TUI needs the owner's terminal as stdin and stdout.\n");
+});
+
+test("home says whether run is running, and where", { timeout: 20_000 }, async (t) => {
+  const { factory } = await factoryIn(t);
+
+  const screen = open(t, factory);
+
+  await screen.until("run: not running");
+
+  const runner = spawn(process.execPath, [cli, "run"], {
+    cwd: tmpdir(),
+    env: { ...process.env, MEDRENGARD_FACTORY: factory },
+    stdio: "ignore",
+  });
+
+  t.after(() => runner.kill("SIGKILL"));
+
+  // Home is drawn again every few seconds, and a run's registration is no event to wake it.
+  await screen.until(`run: alive on ${hostname()}, pid ${runner.pid}`, { within: 10_000 });
+
+  runner.kill("SIGTERM");
+  await once(runner, "exit");
+  await screen.until("run: not running", { within: 10_000 });
 });
 
 test(
