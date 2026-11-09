@@ -4,7 +4,7 @@
  * real one in its place. Outside the step's sandbox, so the credential never enters it; what the
  * step runs can use it through the broker while the attempt runs, but never read it.
  */
-import { createServer, request as plainRequest, type IncomingHttpHeaders } from "node:http";
+import { createServer, request as plainRequest, type OutgoingHttpHeaders } from "node:http";
 import { request as tlsRequest } from "node:https";
 
 /** The credential a harness is given in place of the real one, which its broker replaces. */
@@ -17,11 +17,23 @@ export function refuse(problem: string): never {
 }
 
 /**
- * Serves as a broker: each request whose Authorization is the placeholder as a bearer token is
- * forwarded to `upstream` with `authorization` in its place; any other is refused as
- * unauthenticated and forwarded nowhere.
+ * What a broker does with a request: answers it itself, or forwards it to `path` upstream with
+ * `headers` set over the request's own. `unauthorised`, when given, is told of an upstream 401,
+ * which the harness then sees as 403, so it does not try to refresh a credential it does not hold.
  */
-export function serve(upstream: URL, authorization: string): void {
+export type Route =
+  | { status: number; body: string }
+  | { path: string; headers: OutgoingHttpHeaders; unauthorised?: () => void };
+
+/**
+ * Serves as a broker: each request whose Authorization is the placeholder as a bearer token goes
+ * where `route` says, given its method and path; any other is refused as unauthenticated and
+ * forwarded nowhere. A request to upgrade, as to a WebSocket, is told none is offered.
+ */
+export function serve(
+  upstream: URL,
+  route: (method: string, path: string) => Promise<Route>,
+): void {
   const socket = process.env.MEDRENGARD_SOCKET;
 
   if (socket === undefined) {
@@ -30,11 +42,16 @@ export function serve(upstream: URL, authorization: string): void {
 
   const send = upstream.protocol === "https:" ? tlsRequest : plainRequest;
 
-  const server = createServer((request, response) => {
+  const server = createServer(async (request, response) => {
+    const answer = (status: number, body: string) => {
+      response.writeHead(status, { "content-type": "application/json" });
+      response.end(body);
+    };
+
     if (request.headers.authorization !== `Bearer ${placeholder}`) {
       request.resume();
-      response.writeHead(401, { "content-type": "application/json" });
-      response.end(
+      answer(
+        401,
         JSON.stringify({
           type: "error",
           error: { type: "authentication_error", message: "Refused by Medrengard's broker." },
@@ -44,24 +61,48 @@ export function serve(upstream: URL, authorization: string): void {
       return;
     }
 
-    const headers: IncomingHttpHeaders = {
-      ...request.headers,
-      host: upstream.host,
-      authorization,
-    };
+    let routed: Route;
+
+    try {
+      routed = await route(request.method!, request.url!);
+    } catch (error) {
+      request.resume();
+      answer(
+        502,
+        JSON.stringify({
+          error: { message: error instanceof Error ? error.message : String(error) },
+        }),
+      );
+
+      return;
+    }
+
+    if ("status" in routed) {
+      request.resume();
+      answer(routed.status, routed.body);
+
+      return;
+    }
 
     const forwarded = send(
       {
         protocol: upstream.protocol,
         host: upstream.hostname,
         port: upstream.port,
-        path: request.url,
+        path: routed.path,
         method: request.method,
-        headers,
+        headers: { ...request.headers, host: upstream.host, ...routed.headers },
       },
-      (answer) => {
-        response.writeHead(answer.statusCode ?? 502, answer.headers);
-        answer.pipe(response);
+      (upstreamResponse) => {
+        let status = upstreamResponse.statusCode ?? 502;
+
+        if (status === 401 && routed.unauthorised !== undefined) {
+          routed.unauthorised();
+          status = 403;
+        }
+
+        response.writeHead(status, upstreamResponse.headers);
+        upstreamResponse.pipe(response);
       },
     );
 
@@ -78,7 +119,6 @@ export function serve(upstream: URL, authorization: string): void {
     request.pipe(forwarded);
   });
 
-  // A harness that asks to upgrade, as to a WebSocket, is told the server requires none.
   server.on("upgrade", (_, client) => {
     client.end("HTTP/1.1 426 Upgrade Required\r\ncontent-length: 0\r\n\r\n");
   });

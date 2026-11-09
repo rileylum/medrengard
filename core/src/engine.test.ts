@@ -5368,6 +5368,48 @@ for (const [what, workflow, problem] of [
     "step build's money limit must be a positive number of dollars",
   ],
   [
+    "a money limit at a step whose agent's harness reports no cost",
+    {
+      start: "build",
+      steps: {
+        build: {
+          ...planning,
+          agent: { ...planning.agent, harness: { run: ["true"], costs: false } },
+          limits: { usd: 1 },
+        },
+      },
+    },
+    "step build's money limit cannot be kept: its agent's harness reports no cost",
+  ],
+  [
+    "a commission money limit over a step whose agent's harness reports no cost",
+    {
+      start: "build",
+      usd: 5,
+      steps: {
+        build: {
+          ...planning,
+          agent: { ...planning.agent, harness: { run: ["true"], costs: false } },
+        },
+      },
+    },
+    "its money limit cannot be kept: step build's agent's harness reports no cost",
+  ],
+  [
+    "a harness that says it costs, which every harness is unless it says not",
+    {
+      start: "build",
+      steps: {
+        // As a factory written in JavaScript could give it.
+        build: {
+          ...planning,
+          agent: { ...planning.agent, harness: JSON.parse('{"run":["true"],"costs":true}') },
+        },
+      },
+    },
+    "step build's harness may say only costs: false, when it reports no cost",
+  ],
+  [
     "a commission money limit that is no number",
     // As a factory written in JavaScript could give it.
     { start: "build", usd: JSON.parse('"lots"'), steps: { build: planning } },

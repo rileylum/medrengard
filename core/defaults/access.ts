@@ -81,3 +81,38 @@ export const claudeCode = {
   // The adapter runs claude in a sandbox of its own, which refuses them to what the agent runs.
   sandboxes: true,
 } satisfies Access;
+
+// Codex's npm package, beside npm's, where npm installs it globally; it holds the native codex.
+const codexPackage = join(installed, "lib", "node_modules", "@openai", "codex");
+
+/**
+ * What headless Codex needs through the adapter in `adapters/`: Node to run the adapter and npm,
+ * Codex's package, which `codex` in Node's bin directory runs, its broker, the only way to the
+ * model, which holds Medrengard's Codex login from its default directory outside the sandbox, and
+ * a Git identity to commit with, Medrengard's unless a factory sets its own with gitIdentity. It
+ * reaches no host itself. Its home is empty, and the adapter makes Codex a home of its own, so the
+ * owner's configuration, skills and sessions never load.
+ */
+export const codex = {
+  paths: [
+    ...system,
+    tmp,
+    { path: ownerHome, mode: "empty", size: 256 * 1024 * 1024 },
+    ...node,
+    { path: join(import.meta.dirname, "..", "adapters"), mode: "read" },
+    ...(existsSync(codexPackage) ? [{ path: codexPackage, mode: "read" as const }] : []),
+  ],
+  // Only the broker, so nothing the agent runs can reach anywhere else. A factory lists hosts, as
+  // `{ ...codex, network: { ...codex.network, hosts: ["registry.npmjs.org"] } }`.
+  network: {
+    hosts: [],
+    brokers: {
+      openai: [process.execPath, join(import.meta.dirname, "..", "adapters", "codex-broker.ts")],
+    },
+  },
+  environment: ["PATH", "HOME", "LANG"],
+  values: gitIdentity("Medrengard", "medrengard@localhost"),
+  workspace: "write",
+  // Codex runs with no sandbox of its own: the step's is its boundary.
+  sandboxes: false,
+} satisfies Access;

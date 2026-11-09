@@ -32,34 +32,27 @@ import {
   readdirSync,
   readFileSync,
   writeFileSync,
-  writeSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { placeholder } from "./broker.ts";
-
-// The part of a kind the adapter explains to the agent.
-type Kind = {
-  description: string;
-  fields: Record<string, { limit: number; required?: true; values?: string[] }>;
-  body: { required: boolean; limit: number };
-  outcome?: string;
-};
-
-// What the adapter reads from input.json; the engine writes the rest for the agent to read.
-type Given = {
-  outcomes: string[];
-  attended: boolean;
-  claims: Record<string, Kind>;
-  agent: { model: string; prompt: string; skills: { name: string; path: string }[] };
-  // An artifact has a kind; a session, which a session query names, has none.
-  inputs: Record<string, { hash: string; kind?: string; body?: string }[]>;
-};
-
-const input = process.env.MEDRENGARD_IN!;
-const output = process.env.MEDRENGARD_OUT!;
+import {
+  continuedOf,
+  input,
+  keptOf,
+  note,
+  output,
+  promptOf,
+  readGiven,
+  report,
+  reportUsage,
+  type Counted,
+  type Given,
+  type Kept,
+  type Usage,
+} from "./contract.ts";
 
 const usage = `Usage: claude-code.ts [--permission-mode acceptEdits|bypassPermissions] [--tools <names>]
                       [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]`;
@@ -118,39 +111,13 @@ if (broker === undefined) {
   );
 }
 
-// SAFETY: the engine encodes input.json for an agent step with these fields.
-const given = JSON.parse(readFileSync(join(input, "input.json"), "utf8")) as Given;
+const given = readGiven();
 
 const { attended } = given;
 
 if (attended && budget !== undefined) {
   refuse("A budget bounds only an unattended agent: claude keeps --max-budget-usd only with -p.");
 }
-
-// One line per field, saying what the claim's fields must hold.
-const fieldsOf = (kind: Kind) =>
-  Object.entries(kind.fields).map(
-    ([field, { limit, required, values }]) =>
-      `  - "${field}": ${required ? "required" : "optional"}, ${values ? `one of ${JSON.stringify(values)}` : `text of at most ${limit} bytes`}.`,
-  );
-
-const bodyOf = (kind: Kind) =>
-  `  - "body": ${kind.body.required ? "required" : "optional"}, the path of a UTF-8 file you wrote in ${output}, relative to it, of at most ${kind.body.limit} bytes.`;
-
-// Only the kinds the step may claim, so the agent is not told how to claim what it must not.
-const kinds = Object.entries(given.claims).map(([name, kind]) =>
-  [
-    `- ${JSON.stringify(name)}: ${kind.description}`,
-    ...fieldsOf(kind),
-    bodyOf(kind),
-    ...(kind.outcome === undefined ? [] : [`  Its "${kind.outcome}" must equal your outcome.`]),
-  ].join("\n"),
-);
-
-const claiming =
-  kinds.length === 0
-    ? "Claim no artifacts."
-    : `Each artifact is {"kind": ..., "fields": {...}, "body": ...}, of one of these kinds:\n${kinds.join("\n")}`;
 
 // How an attended agent works with the owner, and when its claim is made.
 const together = `
@@ -160,35 +127,8 @@ they agree it is done. If they then want changes, make them and write it again; 
 time you write it. They end the session with /exit, and the last output.json you wrote is your
 claim.`;
 
-// lazy: the step contract as prompt text, here only. Share it between adapters once a second one
-// needs it.
-const contract = `You are a step in a workflow. Your inputs are in ${input}: input.json lists each
-input's artifacts, and each body is the file its "body" names, relative to ${input}.
-
-When you are done, write ${join(output, "output.json")} as JSON:
-{"outcome": one of ${JSON.stringify(given.outcomes)}, "artifacts": [...]}.
-Leave out "artifacts" to claim none. ${claiming}${attended ? together : ""}`;
-
-// The session the step declared to continue, if an earlier attempt left one: listed without a kind.
-const continued = Object.values(given.inputs)
-  .flat()
-  .filter((listed) => listed.kind === undefined);
-
-if (continued.length > 1) {
-  refuse(`An agent continues at most one session; its inputs hold ${continued.length}.`);
-}
-
-// A resumed agent remembers files its workspace may no longer hold: the workspace and the
-// conversation are two continuities, and only the commit carries the first.
-const resumed =
-  continued.length === 0
-    ? ""
-    : `
-
-You are continuing your earlier conversation, now as this step. Your workspace was rebuilt from
-the latest commit, so anything you did not commit is gone: check a file before you rely on it.`;
-
-const prompt = `${given.agent.prompt}\n\n${contract}${resumed}`;
+const continued = continuedOf(given);
+const prompt = promptOf(given, attended ? together : "");
 
 // Where claude's InstructionsLoaded hook writes each CLAUDE.md or rules file it loads, one JSON
 // line each; the stream does not carry that hook's events.
@@ -346,24 +286,6 @@ function start(
   return claude;
 }
 
-// The longest note the adapter writes; a longer message is cut, and says so with "…".
-const noteLength = 200;
-
-// Writes one note for the owner to fd 3, the step contract's notes.
-function note(text: string): void {
-  const line = text.replace(/\s+/g, " ").trim();
-
-  if (line !== "") {
-    writeSync(3, `${line.length > noteLength ? `${line.slice(0, noteLength - 1)}…` : line}\n`);
-  }
-}
-
-// Records a problem on stderr, as the attempt's errors, and in a note for the owner.
-function report(problem: string): void {
-  console.error(problem);
-  note(problem);
-}
-
 // The parts of a tool's input that say what it did, as Claude Code's tools name them.
 type ToolInput = {
   command?: string;
@@ -433,10 +355,6 @@ const windows = new Map([
   ["overage", "extra usage"],
 ]);
 
-// How the adapter keeps a session for the record: the conversation claude wrote, with the harness
-// and session it belongs to, so a later attempt can continue it, and refuse another harness's.
-type Kept = { harness: string; version?: string; id: string; conversation: string };
-
 // claude keeps a conversation under its home's projects, in a directory named for the working
 // directory with every character but letters and digits as -.
 const conversations = join(homedir(), ".claude", "projects");
@@ -446,36 +364,17 @@ const project = join(conversations, process.cwd().replace(/[^A-Za-z0-9]/g, "-"))
 // continue it as a fork: the stored session never changes. A session claude cannot continue, such
 // as another harness's, fails the attempt rather than start afresh.
 function restored(): string[] {
-  if (continued.length === 0) {
+  if (continued === undefined) {
     return [];
   }
 
-  let kept: Kept;
-
-  try {
-    // SAFETY: an adapter's session is opaque to the engine; this one's is a Kept, checked below.
-    kept = JSON.parse(readFileSync(join(input, continued[0]!.body!), "utf8")) as Kept;
-  } catch (error) {
-    return failed(
-      `The session to continue cannot be read: ${error instanceof Error ? error.message : String(error)}.`,
-    );
-  }
-
-  if (kept.harness !== "claude-code") {
-    return failed(`The session to continue is ${kept.harness}'s, not Claude Code's.`);
-  }
+  const kept = keptOf(continued, "claude-code", "Claude Code");
 
   mkdirSync(project, { recursive: true });
   writeFileSync(join(project, `${kept.id}.jsonl`), kept.conversation);
 
   // The step's own contract, not the one the conversation began with.
   return ["--resume", kept.id, "--fork-session", "--system-prompt-snapshot", "off"];
-}
-
-// Says why the attempt cannot run, and ends it.
-function failed(why: string): never {
-  report(why);
-  process.exit(1);
 }
 
 // Keeps the conversation claude had in this attempt, if it wrote one, in the output, where the
@@ -518,20 +417,12 @@ type Tokens = {
 };
 
 // Tokens as the step contract's usage report counts them.
-const counted = (tokens: Tokens) => ({
+const counted = (tokens: Tokens): Counted => ({
   input: tokens.input_tokens ?? 0,
   output: tokens.output_tokens ?? 0,
   cacheRead: tokens.cache_read_input_tokens ?? 0,
   cacheWrite: tokens.cache_creation_input_tokens ?? 0,
 });
-
-// A usage report, as the step contract defines it.
-type Report = { usd?: number; tokens: ReturnType<typeof counted> };
-
-// Writes the attempt's usage so far to fd 4, the step contract's usage reports: the latest stands.
-function reportUsage(usage: Report): void {
-  writeSync(4, `${JSON.stringify(usage)}\n`);
-}
 
 // Each message's tokens, by its id, so a message claude splits over several events counts once.
 const used = new Map<string, Tokens>();
@@ -636,7 +527,7 @@ function startupOf(
 
     // A resumed session must be the fork it was given, or claude did not continue it.
     const forked =
-      then === undefined && continued.length > 0 && event.session_id !== sessionId
+      then === undefined && continued !== undefined && event.session_id !== sessionId
         ? [`Claude Code did not continue the session as a fork: it ran ${event.session_id}.`]
         : [];
 
@@ -797,7 +688,7 @@ function notesOf(event: StreamEvent): void {
   }
 
   if (event.type === "result" && event.usage !== undefined) {
-    const final: Report = {
+    const final: Usage = {
       tokens: counted(event.usage),
     };
 
