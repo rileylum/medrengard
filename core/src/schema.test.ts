@@ -84,7 +84,9 @@ type Pinned = {
     >
   >;
   approvalStep: Expect<Same<keyof Approval, "kind" | "on">>;
-  workspace: Expect<Same<Command["workspace"], "subject" | "empty" | { input: string }>>;
+  workspace: Expect<
+    Same<Command["workspace"], "subject" | "empty" | { input: string; branches?: string }>
+  >;
   stated: Expect<Same<Command["limits"], (Partial<Limits> & Money) | undefined>>;
   limits: Expect<
     Same<
@@ -130,6 +132,9 @@ type Pinned = {
   body: Expect<Same<keyof Kind["body"], "required" | "limit">>;
   program: Expect<Same<keyof Program, "run" | "access" | "limit" | "memory" | "processes">>;
   verifier: Expect<Same<Exclude<keyof NonNullable<Kind["verifier"]>, keyof Program>, "kept">>;
+  materialiser: Expect<
+    Same<Exclude<keyof NonNullable<Kind["materialiser"]>, keyof Program>, "branches">
+  >;
 };
 
 test("the definition's schema is pinned at compile time", () => {

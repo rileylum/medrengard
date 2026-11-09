@@ -2668,6 +2668,130 @@ for (const [what, inputs] of [
   });
 }
 
+test("a workspace adds the artifacts of an input over the record as branches named by position", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "develop",
+      steps: {
+        develop: stepRunning(committing, "read"),
+        read: {
+          ...stepRunning(
+            `git for-each-ref --format='%(refname)' > "$1/refs"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "review",
+            [directory],
+          ),
+          inputs: { base: "subject", commits: { kind: "commit" } },
+          workspace: { input: "base", branches: "commits" },
+        },
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+  assert.equal(await readFile(join(directory, "refs"), "utf8"), "refs/heads/commits-1\n");
+});
+
+test("a workflow whose workspace adds branches without a base cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        steps: {
+          build: {
+            ...stepRunning("true", "end"),
+            inputs: { built: { kind: "commit" } },
+            workspace: JSON.parse('{"branches":"built"}'),
+          },
+        },
+      }),
+    ),
+    {
+      message:
+        "Workflow build is invalid: step build's workspace must be subject, empty, or one of its inputs that names at most one artifact: subject, request or a query that takes the latest.",
+    },
+  );
+});
+
+for (const [what, inputs] of [
+  ["it does not declare", { base: "subject" }],
+  ["that is a session", { base: "subject", built: { session: "build" } }],
+] as const) {
+  test(`a workflow whose workspace adds branches from an input ${what} cannot be commissioned`, async (t) => {
+    await assert.rejects(
+      engineWith(t, () =>
+        defineWorkflow({
+          start: "build",
+          steps: {
+            build: {
+              ...stepRunning("true", "end"),
+              inputs,
+              workspace: { input: "base", branches: "built" },
+            },
+          },
+        }),
+      ),
+      {
+        message:
+          "Workflow build is invalid: step build's workspace branches must name one of its inputs that names artifacts.",
+      },
+    );
+  });
+}
+
+test("a workflow whose workspace adds every commit of each child as branches cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "fan",
+        steps: {
+          fan: {
+            kind: "children",
+            workflow: "build",
+            count: 1,
+            width: 1,
+            concurrent: 1,
+            wait: "all",
+            on: { done: "build" },
+            budget: 1,
+            limits: { wait: 60 },
+          },
+          build: {
+            ...stepRunning("true", "end"),
+            inputs: { base: "subject", built: { children: "fan", kind: "commit", take: "all" } },
+            workspace: { input: "base", branches: "built" },
+          },
+        },
+      }),
+    ),
+    {
+      message:
+        "Workflow build is invalid: step build's workspace branches cannot take all of each child's artifacts, since a child's branch holds one.",
+    },
+  );
+});
+
+test("a workflow whose workspace may add branches of a kind whose materialiser cannot add them cannot be commissioned", async (t) => {
+  await assert.rejects(
+    engineWith(t, () =>
+      defineWorkflow({
+        start: "build",
+        steps: {
+          build: {
+            ...stepRunning("true", "end"),
+            inputs: { base: "subject", built: { kind: "document" } },
+            workspace: { input: "base", branches: "built" },
+          },
+        },
+      }),
+    ),
+    {
+      message:
+        "Workflow build is invalid: step build's workspace may add branches of a document, whose kind's materialiser cannot add them.",
+    },
+  );
+});
+
 test("a workflow with a step that has no outcomes cannot be commissioned", async (t) => {
   await assert.rejects(
     engineWith(t, () =>
@@ -4174,6 +4298,16 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
         memo: { ...memo, materialiser: { run: ["true"], access, limit: 1, ...bounded, kept: 1 } },
       },
       "Kind memo is invalid: its materialiser must be a program, its access, and its limit, memory and processes.",
+    ],
+    [
+      {
+        document,
+        memo: {
+          ...memo,
+          materialiser: { run: ["true"], access, limit: 1, ...bounded, branches: false },
+        },
+      },
+      "Kind memo is invalid: its materialiser may only state branches: true.",
     ],
     [
       {

@@ -564,6 +564,116 @@ test("a step cannot adopt an artifact it was not given", async (t) => {
   });
 });
 
+// Git with an identity, and no signing or hooks a developer's configuration could add.
+const git = "git -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false";
+
+// A claim of the outcome done with the workspace's HEAD as a commit.
+const claimHead = `printf '{"outcome":"done","artifacts":[{"kind":"commit","fields":{"sha":"%s"}}]}' "$(git rev-parse HEAD)" > "$MEDRENGARD_OUT/output.json"`;
+
+// A setup step that commits base.txt, writing its SHA to `base`; two children that each commit
+// child-<n>.txt on it; and an integrate step whose workspace is built from `base`, one of its
+// inputs, with the children's commits as branches. It writes what it sees, merges them and claims
+// the merge.
+const integrating = (directory: string, base: "request" | "commit"): Workflows => ({
+  build: {
+    start: "setup",
+    steps: {
+      setup: command(
+        `git init -q; echo base > base.txt; git add base.txt; ${git} commit -q --no-verify -m base
+         git rev-parse HEAD > "$1/base"; ${claimHead}`,
+        { done: "fanOut" },
+        directory,
+        ["commit"],
+      ),
+      fanOut: {
+        kind: "children",
+        workflow: "change",
+        count: 2,
+        given: { base: "subject" },
+        width: 2,
+        concurrent: 2,
+        wait: "all",
+        on: { done: "integrate" },
+        budget: 1,
+        limits: { wait: 60 },
+      },
+      integrate: {
+        ...command(
+          `git rev-parse HEAD > "$1/head"
+           git for-each-ref --format='%(refname)' refs/heads/built-* > "$1/refs"
+           git remote > "$1/remotes"
+           cp "$MEDRENGARD_IN/input.json" "$1/integrated"
+           ${git} merge -q --no-edit built-1 built-2
+           ls > "$1/merged"; ${claimHead}`,
+          { done: "end" },
+          directory,
+          ["commit"],
+        ),
+        inputs: {
+          base:
+            base === "request" ? "request" : { from: ["setup"], kind: "commit", take: "latest" },
+          built: { children: "fanOut", kind: "commit" },
+        },
+        workspace: { input: "base", branches: "built" },
+      },
+    },
+  },
+  change: {
+    start: "edit",
+    steps: {
+      edit: {
+        ...command(
+          `n=$(sed -n 's/.*"commission":"[^"]*\\.\\([0-9]*\\)".*/\\1/p' "$MEDRENGARD_IN/input.json")
+           echo "child $n" > "child-$n.txt"; git add .; ${git} commit -q --no-verify -m "child $n"
+           ${claimHead}`,
+          { done: "end" },
+          directory,
+          ["commit"],
+        ),
+        workspace: "subject",
+      },
+    },
+  },
+});
+
+test("a step's workspace holds its base checked out and each child's commit as a branch, which it can merge", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    integrating(directory, "commit"),
+  );
+
+  assert.partialDeepStrictEqual(await settle(engine), { status: "finished", by: "end" });
+
+  const seen = (file: string) => readFile(join(directory, file), "utf8");
+
+  assert.equal(await seen("head"), await seen("base"));
+  assert.equal(await seen("refs"), "refs/heads/built-1\nrefs/heads/built-2\n");
+  assert.equal(await seen("remotes"), "");
+  assert.equal(await seen("merged"), "base.txt\nchild-1.txt\nchild-2.txt\n");
+
+  // The step is told which branch holds which child's commit.
+  const { built } = JSON.parse(await seen("integrated")).inputs;
+
+  assert.deepEqual(
+    built.map(({ branch, commission }: { branch: string; commission: string }) => [
+      branch,
+      commission,
+    ]),
+    [
+      ["built-1", "first.fanOut.2.1"],
+      ["built-2", "first.fanOut.2.2"],
+    ],
+  );
+});
+
+test("a workspace cannot add branches of a kind other than its base's", async (t) => {
+  const { engine } = await engineWith(t, (directory) => integrating(directory, "request"));
+
+  assert.partialDeepStrictEqual(await settle(engine), {
+    status: "escalated",
+    reason: "Step integrate's workspace cannot add the commit built-1 as a branch of a document.",
+  });
+});
+
 test("a child runs on the workflow as its parent was commissioned, not as the factory says later", async (t) => {
   const { engine, factory, directory } = await engineWith(t, (directory) => mapping(directory));
 
