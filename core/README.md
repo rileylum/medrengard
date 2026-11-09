@@ -201,9 +201,14 @@ any step claims; for an input, its `kind`, or else every kind its `from` steps m
 editing the factory affects only new commissions. The definition holds `run` as argv, not the program it names, so editing a script that
 `run` points at changes every commission that runs it next. To pin a prompt, put its text in the
 definition, not a path to it. An agent's skills are read when the commission starts and kept with
-its definition, so editing a skill affects only new commissions. The engine itself is not pinned:
-upgrading Medrengard can change how an unfinished commission runs from then on, so finish or
-abandon commissions before upgrading. A test keeps a log written on 2026-11-03 readable.
+its definition, so editing a skill affects only new commissions. The engine is pinned as well:
+commissioning and every attempt record the engine's version, a hash of its source, and an
+upgraded engine never quietly changes how an unfinished commission goes on. Before its next
+attempt, such a commission escalates, `Commission first last ran on engine 3f9a2c1d; this engine
+is 7b01e4aa.`; the owner's retry carries it on with this engine, and abandoning ends it. Only a
+decision on that escalation accepts the engine, not one at an approval step. A commission written
+before engines recorded their version escalates the same way, once. A test keeps a log written on
+2026-11-03 readable.
 
 `src/replay.ts` exports the types `Workflow`, `Agent`, `Access` and `Query`. A `run` is a non-empty
 argv, `readonly [string, ...string[]]`: a function that builds steps from a `string[]` must declare
