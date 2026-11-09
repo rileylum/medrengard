@@ -14,9 +14,11 @@ Code adapter run, and the engine and CLI let an observer follow the log.
 - [Inputs](#inputs)
 - [Access](#access)
   - [Reaching only some hosts](#reaching-only-some-hosts)
+  - [Brokers](#brokers)
 - [Preparing a workspace](#preparing-a-workspace)
 - [Kinds](#kinds)
 - [Agents and the Claude Code adapter](#agents-and-the-claude-code-adapter)
+- [The Codex adapter](#the-codex-adapter)
 - [Attended steps](#attended-steps)
 - [The step contract](#the-step-contract)
 - [The engine in TypeScript](#the-engine-in-typescript)
@@ -140,7 +142,7 @@ commission's attempts may cost between the owner's decisions, in US dollars, as 
 it. Before each attempt, and as each report arrives, the engine adds what the commission's attempts
 have cost since its latest decision; past the limit, or with an attempt since then that reported no
 cost, the commission escalates, and the owner's retry starts the count again, as it renews a
-budget. `defineWorkflow` returns the workflow unchanged; it
+budget. A workflow with an agent whose harness says `costs: false` cannot have one. `defineWorkflow` returns the workflow unchanged; it
 exists so the compiler checks every step name an edge or query uses. Each step's `on` maps an
 outcome to the next step or to `end`.
 
@@ -190,7 +192,7 @@ The fields of a command or agent step:
   [the step contract](#the-step-contract)). The attempt is stopped as soon as a report goes over it,
   and the commission escalates naming it. Unknown cost is not zero: an attempt that ends without
   reporting any cost escalates too, even with a valid claim. An attended step reports nothing, so
-  it cannot state one.
+  it cannot state one, nor can a step whose agent's harness says `costs: false`.
 
 A kind's verifier and materialiser have bounds of their own; see [Kinds](#kinds).
 
@@ -328,7 +330,7 @@ kind program whatever its access: it is empty and read-only, but for the attempt
 input and output and any path the access names under it. So no access can let a step write a
 decision without naming the log's directory itself.
 
-`@medrengard/core/defaults/access.ts` holds two values to use as they are or to change one dial of, and
+`@medrengard/core/defaults/access.ts` holds three values to use as they are or to change one dial of, and
 `gitIdentity(name, email)`, the `values` that make Git author and commit as that identity.
 "The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they
 exist.
@@ -345,6 +347,12 @@ exist.
   the agent runs cannot make namespaces. Its home is empty, so the owner's settings, skills, hooks
   and MCP servers never load. A path under the home, such as a repository,
   stays invisible until you add it: the deeper entry wins.
+- `codex`: what the Codex adapter needs: the system, a fresh `/tmp`, an empty home of 256 MiB,
+  Node and npm as for `claudeCode`, the `adapters` directory, Codex's npm package
+  (`@openai/codex`, beside npm's), no host of its own and the broker `openai`, the adapter's, which
+  holds Medrengard's Codex login outside the sandbox, `PATH`, `HOME` and `LANG`, the same Git
+  identity, and no `sandboxes`: Codex runs with no sandbox of its own, the step's being its
+  boundary.
 
 ```ts
 import { contract } from "@medrengard/core/defaults/access.ts";
@@ -601,6 +609,58 @@ const design = {
   symlink, pass the adapter's real path (`fs.realpathSync`), or the sandbox cannot see it.
 - A file path in `run`, such as the adapter's, must be absolute: every step's program starts in its
   workspace.
+- An agent's `harness` may say `costs: false`: its adapter reports tokens but never what they
+  cost, so a money limit over its steps, the step's own or the workflow's, could never be kept,
+  and commissioning refuses one.
+
+## The Codex adapter
+
+`adapters/codex.ts` runs the agent through `codex exec`, Codex 0.167.0 alone: its login, routing
+and session files change between releases, so the adapter refuses any other version, saying which
+it found. Unattended only; an attended step is refused.
+
+```ts
+import { codex } from "@medrengard/core/defaults/access.ts";
+
+const implement = {
+  kind: "agent",
+  agent: {
+    harness: { run: ["node", "/path/to/medrengard/core/adapters/codex.ts"], costs: false },
+    model: "gpt-6.1-sol",
+    prompt: "Implement the plan.",
+  },
+  // ...as any agent step.
+  access: codex,
+};
+```
+
+- Log in once, apart from your own Codex, with a ChatGPT subscription:
+  `CODEX_HOME=~/.config/medrengard/codex codex login --device-auth`. The step's broker `openai`,
+  `codex-broker.ts [--login <directory>]`, holds that login outside the sandbox and refreshes it
+  when it is about to expire, one broker at a time, under a lock, so steps in parallel share it.
+  Codex runs on a fake login whose access token is the placeholder; the broker forwards its model
+  requests to ChatGPT's Codex backend with the real one, answers its routing discovery itself, and
+  finds nothing else it asks for. A login the backend refuses is refreshed, and Codex sees 403, not
+  401, so it never tries to refresh the fake one.
+- Each attempt has a Codex home of its own, made under the step's home and removed at the end, so
+  none of your Codex configuration, skills, rules or sessions loads. Its configuration loads no
+  `AGENTS.md` (`project_doc_max_bytes = 0`: Codex has no switch for it), no bundled skills,
+  plugins, ChatGPT apps, other agents or MCP servers, and sends no analytics or metrics; Codex runs
+  with `--strict-config`, so a key a release renames fails the attempt rather than being ignored.
+- Codex records what it loaded before its first request to the model. The broker holds that
+  request until the adapter has read it: if Codex loaded `AGENTS.md` or plugins, or not a declared
+  skill, the adapter stops it before anything reaches the model and the attempt fails, saying why.
+  A skill it loaded that the agent did not declare, such as a repository's `.agents/skills`, is
+  recorded in the errors and a note, and the attempt runs on.
+- Declared `skills` are copied where Codex finds a user's, under the home.
+- Codex runs with `--dangerously-bypass-approvals-and-sandbox`: no approvals and no sandbox of its
+  own; the step's sandbox is the boundary, as for Claude Code's `bypassPermissions`.
+- `--effort low|medium|high|xhigh` passes on to Codex as its reasoning effort.
+- Notes: `Codex 0.167.0, session <id>.`, what the agent says, each command it runs, `Codex ran:
+  npm test`, and each file it changes. Each turn's tokens are reported on fd 4, with no cost.
+- A session is kept as the attempt's `session`, and a later attempt that declares it continues it
+  with `codex exec fork`, never `resume`, which starts afresh on an id it cannot find. Another
+  harness's session fails the attempt.
 
 ## Attended steps
 

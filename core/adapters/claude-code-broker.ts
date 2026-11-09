@@ -42,4 +42,6 @@ if (token === "") {
   refuse(`The token file ${tokenFile} is empty.`);
 }
 
-serve(new URL(options.upstream), `Bearer ${token}`);
+const authorization = `Bearer ${token}`;
+
+serve(new URL(options.upstream), async (_, path) => ({ path, headers: { authorization } }));

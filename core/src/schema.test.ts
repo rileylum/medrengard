@@ -69,7 +69,8 @@ type Pinned = {
   attended: Expect<Same<Agentic["attended"], boolean | undefined>>;
   time: Expect<Same<Limits["idle"] | Limits["attempt"], number | "unbounded">>;
   agent: Expect<Same<keyof Agent, "harness" | "model" | "prompt" | "skills">>;
-  harness: Expect<Same<keyof Agent["harness"], "run">>;
+  harness: Expect<Same<keyof Agent["harness"], "run" | "costs">>;
+  costs: Expect<Same<Agent["harness"]["costs"], false | undefined>>;
   access: Expect<
     Same<keyof Access, "paths" | "network" | "environment" | "values" | "workspace" | "sandboxes">
   >;
