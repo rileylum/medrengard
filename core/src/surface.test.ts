@@ -19,6 +19,7 @@ const exports = {
     "Commissioned",
     "Definition",
     "Limits",
+    "Money",
     "Query",
     "Skill",
     "Usage",

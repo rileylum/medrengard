@@ -1,7 +1,7 @@
 import { normalize } from "node:path";
 import { hasExactly, isRecord, isText } from "./json.ts";
 import type { Kinds } from "./kinds.ts";
-import type { Access, Definition, Limits, Skill, Workflow } from "./replay.ts";
+import type { Access, Definition, Limits, Money, Skill, Workflow } from "./replay.ts";
 
 // An input name, which is also a directory in the step's input, so it cannot leave that directory
 // or collide with input.json.
@@ -385,7 +385,7 @@ function parseWorkflow(
   text: string,
   defined: Kinds,
   defaults: Partial<Limits>,
-): Workflow<string, { limits: Limits }> {
+): Workflow<string, { limits: Limits & Money }> {
   const invalid = (problem: string) => new Error(`Workflow ${name} is invalid: ${problem}.`);
   const definition = JSON.parse(text).workflow;
   const claimable = Object.keys(defined);
@@ -394,9 +394,17 @@ function parseWorkflow(
   const kinds = [...claimable, "decision"];
   const start = definition?.start;
   const steps = definition?.steps;
+  const usd = definition?.usd;
 
-  if (!hasExactly(definition, ["start", "steps"]) || !isRecord(steps)) {
-    throw invalid("it is not a start and its steps");
+  const fields = ["start", "steps", ...(Object.hasOwn(definition ?? {}, "usd") ? ["usd"] : [])];
+
+  if (!hasExactly(definition, fields) || !isRecord(steps)) {
+    throw invalid("it is not a start and its steps, and a money limit if it has one");
+  }
+
+  // A money limit is a positive, finite number of US dollars.
+  if (fields.includes("usd") && !(Number.isFinite(usd) && usd > 0)) {
+    throw invalid("its money limit must be a positive number of dollars");
   }
 
   const names = Object.keys(steps);
@@ -562,15 +570,37 @@ function parseWorkflow(
       throw invalid(`step ${name}'s ${problem}`);
     }
 
-    const whole = { ...defaults, ...limits };
+    // The money limit apart: it is the step's alone, never a default.
+    const stated = new Map(Object.entries(isRecord(limits) ? limits : {}));
+    const money = stated.get("usd");
+
+    stated.delete("usd");
+
+    const bounds = Object.fromEntries(stated);
+    const whole = { ...defaults, ...bounds };
 
     if (!(limits === undefined || isRecord(limits)) || !hasExactly(whole, limitNames)) {
       throw invalid(
-        `step ${name}'s limits may be only idle, attempt, transcript, input, memory, processes and disk`,
+        `step ${name}'s limits may be only idle, attempt, transcript, input, memory, processes, disk and usd`,
       );
     }
 
-    const unbounded = limitProblem(Object.entries(limits ?? {}), attended === true);
+    if (money !== undefined && !(Number.isFinite(money) && Number(money) > 0)) {
+      throw invalid(`step ${name}'s money limit must be a positive number of dollars`);
+    }
+
+    // lazy: money only. Add a token limit once an adapter can report tokens but not cost.
+    if (money !== undefined && attended === true) {
+      throw invalid(
+        `step ${name}'s money limit cannot be kept at an attended step, which reports no cost`,
+      );
+    }
+
+    if (money !== undefined) {
+      Object.assign(whole, { usd: money });
+    }
+
+    const unbounded = limitProblem(Object.entries(bounds), attended === true);
 
     if (unbounded !== undefined) {
       throw invalid(`step ${name}'s ${unbounded}`);
@@ -593,7 +623,7 @@ function parseWorkflow(
   }
 
   // SAFETY: every field the engine reads was checked above, and each step's limits made whole.
-  const parsed = definition as Workflow<string, { limits: Limits }>;
+  const parsed = definition as Workflow<string, { limits: Limits & Money }>;
 
   refuseUnbuildable(parsed, defined, invalid);
 
@@ -604,7 +634,7 @@ function parseWorkflow(
 // the commission does not find out only once the earlier steps have run. Every kind that could be
 // the subject counts, wherever in the workflow it is claimed.
 function refuseUnbuildable(
-  workflow: Workflow<string, { limits: Limits }>,
+  workflow: Workflow<string, { limits: Limits & Money }>,
   kinds: Kinds,
   invalid: (problem: string) => Error,
 ): void {

@@ -134,7 +134,12 @@ escalation, `abandon` finishes the commission as abandoned, so an approval step 
 
 ## Workflows
 
-A workflow is a start step and its steps by name. `defineWorkflow` returns the workflow unchanged; it
+A workflow is a start step and its steps by name, and, optionally, `usd`: the most its
+commission's attempts may cost between the owner's decisions, in US dollars, as their steps report
+it. Before each attempt, and as each report arrives, the engine adds what the commission's attempts
+have cost since its latest decision; past the limit, or with an attempt since then that reported no
+cost, the commission escalates, and the owner's retry starts the count again, as it renews a
+budget. `defineWorkflow` returns the workflow unchanged; it
 exists so the compiler checks every step name an edge or query uses. Each step's `on` maps an
 outcome to the next step or to `end`.
 
@@ -178,6 +183,13 @@ The fields of a command or agent step:
     its kind's programs. The engine measures it once a second while any of them runs and after each
     ends; over it, the program is stopped and the commission escalates. It can overshoot by a
     second of writes.
+
+  Besides these, a step may state `usd`, optional and never one of the factory's defaults: the most
+  an attempt may cost, in US dollars, as its step reports it on file descriptor 4 (see
+  [the step contract](#the-step-contract)). The attempt is stopped as soon as a report goes over it,
+  and the commission escalates naming it. Unknown cost is not zero: an attempt that ends without
+  reporting any cost escalates too, even with a valid claim. An attended step reports nothing, so
+  it cannot state one.
 
 A kind's verifier and materialiser have bounds of their own; see [Kinds](#kinds).
 

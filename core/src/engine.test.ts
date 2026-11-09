@@ -14,7 +14,14 @@ import { limits as defaultLimits } from "../defaults/limits.ts";
 import { createEngine } from "./engine.ts";
 import { isRecord, isText } from "./json.ts";
 import type { Kind, Kinds } from "./kinds.ts";
-import { defineWorkflow, type Access, type Limits, type Query, type Workflow } from "./replay.ts";
+import {
+  defineWorkflow,
+  type Access,
+  type Limits,
+  type Money,
+  type Query,
+  type Workflow,
+} from "./replay.ts";
 
 // The system's programs, read-only.
 const system = ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
@@ -2565,7 +2572,7 @@ test("a step that names a limit there is not cannot be commissioned", async (t) 
     ),
     {
       message:
-        "Workflow build is invalid: step build's limits may be only idle, attempt, transcript, input, memory, processes and disk.",
+        "Workflow build is invalid: step build's limits may be only idle, attempt, transcript, input, memory, processes, disk and usd.",
     },
   );
 });
@@ -5178,3 +5185,199 @@ test(
     ]);
   },
 );
+
+/**
+ * Starts an engine whose one command step, `build`, runs `script` with `$1` its `started` file,
+ * repeats on `again` with a budget of 5, and has the money limit `step`, in a workflow with the
+ * money limit `commission`; either may be left out.
+ */
+function engineSpending(
+  t: TestContext,
+  script: string,
+  { step, commission }: { step?: number; commission?: number },
+) {
+  return engineWith(t, (directory) => {
+    const limits: Partial<Limits> & Money = {
+      idle: 5,
+      attempt: 10,
+      transcript: 65536,
+      input: 65536,
+    };
+
+    if (step !== undefined) {
+      limits.usd = step;
+    }
+
+    const workflow: Workflow<"build"> = {
+      start: "build",
+      steps: {
+        build: {
+          kind: "command",
+          claims,
+          workspace: "empty",
+          inputs: {},
+          run: ["sh", "-c", script, "sh", join(directory, "started")],
+          on: { done: "end", again: "build" },
+          access,
+          budget: 5,
+          limits,
+        },
+      },
+    };
+
+    if (commission !== undefined) {
+      workflow.usd = commission;
+    }
+
+    return workflow;
+  });
+}
+
+test("an attempt whose reported cost goes over its step's money limit is stopped as it reports it", async (t) => {
+  const { engine } = await engineSpending(
+    t,
+    `echo '{"usd":0.5}' >&4; echo '{"usd":1.5}' >&4; exec sleep 30`,
+    { step: 1 },
+  );
+
+  const started = Date.now();
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build reached its money limit of $1.",
+  });
+  assert.ok(Date.now() - started < 5000);
+  assert.partialDeepStrictEqual(engine.record("first").entries, [{ usage: { usd: 1.5 } }]);
+});
+
+test("an attempt within its step's money limit completes", async (t) => {
+  const { engine } = await engineSpending(
+    t,
+    `echo '{"usd":0.5}' >&4; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    { step: 1 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+});
+
+test("an attempt with a money limit that reports no cost escalates, its claim unrecorded", async (t) => {
+  const { engine } = await engineSpending(
+    t,
+    `echo '{"tokens":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0}}' >&4
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    { step: 1 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build reported no cost, so it counts as over its money limit of $1.",
+  });
+});
+
+test("a commission is stopped once its attempts' cost since the owner's last decision goes over its money limit, and a retry renews it", async (t) => {
+  const { engine } = await engineSpending(t, `echo '{"usd":0.6}' >&4; ${claimingAgain}`, {
+    commission: 1,
+  });
+
+  // 0.6, then 1.2 during the second attempt.
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "The commission reached its money limit of $1.",
+  });
+  assert.equal(engine.record("first").entries.length, 2);
+
+  engine.decide("first", { subject: subjectOf(engine), since: sinceOf(engine), outcome: "retry" });
+
+  // Renewed: the next attempt runs, and the one after goes over again.
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "The commission reached its money limit of $1.",
+  });
+  assert.equal(
+    engine.record("first").entries.filter((entry) => entry.entry === "attempt").length,
+    4,
+  );
+});
+
+test("a commission that has spent its whole money limit escalates before another attempt starts", async (t) => {
+  const { engine } = await engineSpending(t, `echo '{"usd":1}' >&4; ${claimingAgain}`, {
+    commission: 1,
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "The commission has spent $1.00 of its money limit of $1.",
+  });
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    { entry: "attempt", outcome: "again" },
+    { entry: "escalation" },
+  ]);
+});
+
+test("a commission with a money limit whose attempt reported no cost escalates before the next starts", async (t) => {
+  const { engine } = await engineSpending(t, claimingAgain, { commission: 1 });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason:
+      "The commission's spend is unknown: attempt 1 reported no cost, so it counts as over its money limit of $1.",
+  });
+});
+
+test("a commission without a money limit spends what it reports, unbounded", async (t) => {
+  const { engine } = await engineSpending(
+    t,
+    `echo '{"usd":100}' >&4; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    {},
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+});
+
+// An agent step of the workflow `build`, which commissioning would accept as it is.
+const planning = {
+  kind: "agent",
+  agent: { harness: { run: ["true"] }, model: "a-model", prompt: "Plan." },
+  claims: [],
+  workspace: "empty",
+  inputs: {},
+  on: { done: "end" },
+  access,
+  budget: 1,
+} as const;
+
+for (const [what, workflow, problem] of [
+  [
+    "a money limit at an attended step",
+    { start: "build", steps: { build: { ...planning, attended: true, limits: { usd: 1 } } } },
+    "step build's money limit cannot be kept at an attended step, which reports no cost",
+  ],
+  [
+    "a step money limit of zero",
+    { start: "build", steps: { build: { ...planning, limits: { usd: 0 } } } },
+    "step build's money limit must be a positive number of dollars",
+  ],
+  [
+    "a commission money limit that is no number",
+    // As a factory written in JavaScript could give it.
+    { start: "build", usd: JSON.parse('"lots"'), steps: { build: planning } },
+    "its money limit must be a positive number of dollars",
+  ],
+] satisfies [string, Workflow<"build">, string][]) {
+  test(`commissioning refuses ${what}`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+    t.after(() => rm(directory, { recursive: true, force: true }));
+
+    const engine = createEngine({
+      log: join(directory, "log.sqlite"),
+      kinds: builtIn,
+      defaults: { limits: defaultLimits },
+      workflows: { build: workflow },
+    });
+
+    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+      message: `Workflow build is invalid: ${problem}.`,
+    });
+  });
+}

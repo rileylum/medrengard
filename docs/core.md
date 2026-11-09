@@ -38,7 +38,7 @@
 **Constraints**
 
 1. No extension code in the engine. Commands, harness adapters, verifiers, materialisers and observers are programs. Workflow definitions are TypeScript that evaluates to data.
-2. Everything has a declared limit. Every attempt, output stream, artifact, transcript and disk area has an explicit bound; only an attended step's time may be declared unbounded. Exceeding a bound escalates; nothing is silently truncated or allowed to grow without limit. A wait has no bound: nothing runs while the commission waits for the owner.
+2. Everything has a declared limit. Every attempt, output stream, artifact, transcript and disk area has an explicit bound; only an attended step's time may be declared unbounded. Money is bounded where the owner declares it, per step and per commission: an attempt that reports no cost counts as over a money limit, since unknown cost is not zero. Exceeding a bound escalates; nothing is silently truncated or allowed to grow without limit. A wait has no bound: nothing runs while the commission waits for the owner.
 3. A commission runs on the definitions it started with. Commissioning records its workflow, agent and kind definitions and the factory's defaults by hash. Editing a definition affects only new commissions.
 4. Hermetic steps. A step sees only its declared inputs, workspace, environment and tools. A harness adapter loads only declared skills and configuration, or records the leak on every attempt.
 5. Commissions are independent. Commissions share no state, and each has one writer at a time. Any number of commissions, across repositories and workflows, can advance at once.
@@ -114,7 +114,7 @@ Transitions:
 
 - Commissioned, the commission is ready or awaiting, by its start step's kind.
 - Ready, with budget left, inputs within the input limit and the step not yet attempted on the same subject and inputs, an attempt starts; at an attended step, once the owner attends it.
-- Ready, with the budget spent, inputs over the input limit, the step already attempted on the same subject and inputs, or a failure of the engine's own while preparing its inputs, the commission escalates.
+- Ready, with the budget spent, the commission's money limit spent since the latest decision or its spend unknown, inputs over the input limit, the step already attempted on the same subject and inputs, or a failure of the engine's own while preparing its inputs, the commission escalates.
 - Attempting, a valid claim completes the attempt and follows the outcome's edge. An invalid claim, a non-zero exit, a reached limit, the owner cancelling, a failure of the engine's own or an interruption found on replay escalates. An attempt is interrupted once no engine is running it, even if the process that started it lives on.
 - Awaiting, a decision naming the current subject, the wait and a declared outcome follows its edge; a decision to abandon finishes the commission, so an approval step cannot declare abandon. A stale or undeclared decision is refused and records nothing: a decision made in an earlier wait, at an approval step or escalation, is stale, even about the same subject.
 - Escalated, a decision to retry makes the step ready again; a decision to abandon finishes the commission. It too names the current subject and the wait.
@@ -167,7 +167,7 @@ _Definition: what the owner writes; data, verified before anything runs._
 - Access: what a step's process may read, write and reach, and its scratch areas: fresh directories on disk at the paths it names, which its disk limit bounds.
 - Query: what a step declares to name the artifacts one of its inputs holds.
 - Budget: the attempts a step may spend between the owner's decisions.
-- Limit: any other declared bound, such as time, size or disk.
+- Limit: any other declared bound, such as time, size, disk or money.
 
 _Execution: the core. The commission is the aggregate root._
 

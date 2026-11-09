@@ -899,6 +899,16 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
         continue;
       }
 
+      // What the commission's money limit leaves for this attempt, when it has one.
+      const spent = workflow.usd === undefined ? undefined : spentSince(events);
+      const overspent = spent === undefined ? undefined : moneyLeft(spent, workflow.usd!);
+
+      if (overspent !== undefined && "reason" in overspent) {
+        write(commission, events, { type: "escalated", reason: overspent.reason });
+
+        continue;
+      }
+
       const given = Object.entries(step.inputs).map(([input, query]) => ({
         name: input,
         hashes: resolve(query, state, events, definition.kinds),
@@ -1071,6 +1081,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
           note,
           store,
           spool,
+          { step: step.limits.usd, commission: overspent },
         );
 
         // A cancel that arrives before the attempt's end is written wins: nothing it claimed is
@@ -1271,6 +1282,71 @@ function keptOf(events: Log, hash: string): Readonly<Record<string, string>> {
   }
 
   return {};
+}
+
+// What an attempt may cost: its step's money limit, and what its commission's leaves, if it has
+// each.
+type Allowance = { step?: number; commission?: { limit: number; spent: number } };
+
+// Why an attempt that has reported costing `usd` must stop, if it must: over its step's money
+// limit, or with what its commission spent before it, over the commission's.
+function overMoney(name: string, usd: number, money: Allowance): string | undefined {
+  if (money.step !== undefined && usd > money.step) {
+    return `Step ${name} reached its money limit of $${money.step}.`;
+  }
+
+  if (money.commission !== undefined && money.commission.spent + usd > money.commission.limit) {
+    return `The commission reached its money limit of $${money.commission.limit}.`;
+  }
+
+  return undefined;
+}
+
+// What the commission has spent since the owner's latest decision, as its attempts' steps
+// reported it; unknown, naming the attempt, once one whose program ran reported no cost.
+function spentSince(events: Log): { spent: number } | { unknown: number } {
+  let spent = 0;
+
+  for (const event of sinceDecision(events)) {
+    const ran =
+      event.type === "attempt-completed" ||
+      (event.type === "escalated" && event.attempt !== undefined && event.transcript !== undefined);
+
+    if (!ran) {
+      continue;
+    }
+
+    const usd = event.usage?.usd;
+
+    if (usd === undefined) {
+      return { unknown: event.attempt! };
+    }
+
+    spent += usd;
+  }
+
+  return { spent };
+}
+
+// What the commission's money limit leaves its next attempt, or why it may start none: its spend
+// unknown, or the limit spent. Renewed, like a budget, by the owner's decision.
+function moneyLeft(
+  spent: ReturnType<typeof spentSince>,
+  limit: number,
+): { limit: number; spent: number } | { reason: string } {
+  if ("unknown" in spent) {
+    return {
+      reason: `The commission's spend is unknown: attempt ${spent.unknown} reported no cost, so it counts as over its money limit of $${limit}.`,
+    };
+  }
+
+  if (spent.spent >= limit) {
+    return {
+      reason: `The commission has spent $${spent.spent.toFixed(2)} of its money limit of $${limit}.`,
+    };
+  }
+
+  return { limit, spent: spent.spent };
 }
 
 // Only the owner renews a budget or permits a repeat: both count from the latest decision.
@@ -1578,6 +1654,7 @@ async function run(
   note: (text: string, from: "step" | "engine") => void,
   store: Store,
   spool: Spool,
+  money: Allowance,
 ): Promise<Ending> {
   const { step: name, attempt } = given;
   const directory = spool.work;
@@ -1937,6 +2014,12 @@ async function run(
 
       usage = report;
       writeFileSync(spool.usage, JSON.stringify(report));
+
+      const over = report.usd === undefined ? undefined : overMoney(name, report.usd, money);
+
+      if (over !== undefined) {
+        stopFor(over);
+      }
     };
 
     child.stdio[4]!.on("data", guarded(usageFrom));
@@ -1988,6 +2071,13 @@ async function run(
 
       return escalate(
         signal ? `Step ${name} was ended by ${signal}.` : `Step ${name} exited with code ${code}.`,
+      );
+    }
+
+    // Unknown cost is not zero.
+    if (money.step !== undefined && usage?.usd === undefined) {
+      return escalate(
+        `Step ${name} reported no cost, so it counts as over its money limit of $${money.step}.`,
       );
     }
 
