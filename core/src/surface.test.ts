@@ -31,6 +31,7 @@ const exports = {
   "defaults/access.ts": ["claudeCode", "contract", "gitIdentity"],
   "defaults/kinds.ts": ["builtIn"],
   "defaults/limits.ts": ["limits"],
+  "defaults/prepare.ts": ["prepare"],
 };
 
 for (const [module, names] of Object.entries(exports)) {

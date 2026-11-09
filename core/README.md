@@ -13,6 +13,7 @@ Code adapter run, and the engine and CLI let an observer follow the log.
 - [Workflows](#workflows)
 - [Inputs](#inputs)
 - [Access](#access)
+- [Preparing a workspace](#preparing-a-workspace)
 - [Kinds](#kinds)
 - [Agents and the Claude Code adapter](#agents-and-the-claude-code-adapter)
 - [Attended steps](#attended-steps)
@@ -324,6 +325,35 @@ const cloning = {
   paths: [...contract.paths, { path: "/home/owner/dev/app", mode: "read" as const }],
 };
 ```
+
+## Preparing a workspace
+
+A step whose program needs its workspace prepared first, such as dependencies installed, wraps its
+`run` with `prepare` from `@medrengard/core/defaults/prepare.ts`:
+
+```ts
+import { prepare } from "@medrengard/core/defaults/prepare.ts";
+
+const implement = {
+  kind: "agent",
+  agent: {
+    harness: {
+      run: prepare("npm ci", ["node", "/path/to/medrengard/core/adapters/claude-code.ts"]),
+    },
+    // ...
+  },
+  // ...
+};
+```
+
+The command runs with `sh -c` in the step's workspace, before the step's program and in the same
+attempt: a step of its own could not hand the workspace on, since steps share state only through
+artifacts. If it fails, the step exits with its code before the program starts, so the commission
+escalates without the agent spending anything, and a note says
+`Preparation failed: npm ci exited with 1.`; its stderr is the attempt's errors. If it succeeds, a
+note says how long it took. It has the step's access, network included, and counts toward the
+step's limits and transcript like anything else the step runs. Nothing is cached: every attempt
+prepares again.
 
 ## Kinds
 

@@ -10,7 +10,8 @@
     "./src/store.ts": "./src/store.ts",
     "./defaults/access.ts": "./defaults/access.ts",
     "./defaults/kinds.ts": "./defaults/kinds.ts",
-    "./defaults/limits.ts": "./defaults/limits.ts"
+    "./defaults/limits.ts": "./defaults/limits.ts",
+    "./defaults/prepare.ts": "./defaults/prepare.ts"
   },
   "scripts": {
     "test": "tsc -p . && mkdir -p /var/tmp/medrengard && TMPDIR=/var/tmp/medrengard node --test"
