@@ -55,7 +55,9 @@ export type Access = {
     | { path: string; mode: "read" | "write" | "scratch" }
     | { path: string; mode: "empty"; size: number }
   )[];
-  network: boolean;
+  // All of it, none, or only these hosts, through a proxy the engine runs: `host` on port 443,
+  // `host:port`, or `*.domain` for its subdomains.
+  network: boolean | { hosts: readonly string[] };
   environment: readonly string[] | "all";
   values?: Readonly<Record<string, string>>;
   workspace: "read" | "write";

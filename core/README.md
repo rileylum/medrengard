@@ -13,6 +13,7 @@ Code adapter run, and the engine and CLI let an observer follow the log.
 - [Workflows](#workflows)
 - [Inputs](#inputs)
 - [Access](#access)
+  - [Reaching only some hosts](#reaching-only-some-hosts)
 - [Preparing a workspace](#preparing-a-workspace)
 - [Kinds](#kinds)
 - [Agents and the Claude Code adapter](#agents-and-the-claude-code-adapter)
@@ -293,6 +294,7 @@ const access: Access = {
     // A fresh directory of at most 256 MiB over whatever is there.
     { path: "/tmp", mode: "empty", size: 256 * 1024 * 1024 },
   ],
+  // true, false, or only some hosts: { hosts: ["api.anthropic.com", "registry.npmjs.org"] }.
   network: false,
   // Variable names passed through from the engine's environment, or "all".
   environment: ["LANG"],
@@ -336,7 +338,8 @@ exist.
 - `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
   256 MiB, Node and npm (Node's `bin` directory and npm's package, or the `node` executable
   alone when npm is not beside it; never other global packages), the `adapters` directory, the `claude` executable and the token
-  file `~/.config/medrengard/claude-token` to read, the network, `PATH`, `HOME` and `LANG`, the
+  file `~/.config/medrengard/claude-token` to read, only the model API, `api.anthropic.com`, as
+  network, `PATH`, `HOME` and `LANG`, the
   Git identity `Medrengard <medrengard@localhost>` as `values`, and `sandboxes`: the adapter runs `claude` in a sandbox of its own, in which what
   the agent runs cannot make namespaces. Its home is empty, so the owner's settings, skills, hooks
   and MCP servers never load. A path under the home, such as a repository,
@@ -351,6 +354,32 @@ const cloning = {
   paths: [...contract.paths, { path: "/home/owner/dev/app", mode: "read" as const }],
 };
 ```
+
+### Reaching only some hosts
+
+`network: { hosts: [...] }` lets a step reach those hosts and nothing else: `host` on port 443,
+`host:port` on another, `*.example.com` any subdomain of it. The step has no network of its own,
+only loopback. The engine runs a proxy outside the sandbox that tunnels a CONNECT to a listed host
+and refuses anything else, and a forwarder inside, on loopback, relays to it; `HTTPS_PROXY` and
+`HTTP_PROXY`, in both cases, point there. `curl`, `git`, `npm`, `pip` and `claude` follow them; a
+program that does not has no network at all, so it fails rather than leaks. Only HTTPS, as
+CONNECT, gets through. Each host refused is noted once, from the engine,
+`Step implement was refused network access to pastebin.com:443.`, so an agent that could not
+fetch says why, and one that tried to send something somewhere shows it.
+
+`claudeCode` lists only the model API, so nothing the agent runs reaches anywhere else. List more
+for an agent that must, readably in the definition:
+
+```ts
+const access = {
+  ...claudeCode,
+  network: { hosts: [...claudeCode.network.hosts, "registry.npmjs.org", "github.com"] },
+};
+```
+
+Workspace preparation runs in the same step, so it reaches the same hosts. The paths may not name
+`/network`, where the forwarder goes, nor grant `/` itself with a list of hosts, which leaves no
+place for it. A kind's verifier or materialiser has all of the network or none.
 
 ## Preparing a workspace
 

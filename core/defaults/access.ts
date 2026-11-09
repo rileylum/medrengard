@@ -48,11 +48,11 @@ export function gitIdentity(name: string, email: string) {
 
 /**
  * What headless Claude Code needs through the adapter in `adapters/`: Node to run the adapter and npm,
- * the `claude` executable, the network, the subscription token in the adapter's default token file
+ * the `claude` executable, the model API, the only host it reaches, the subscription token in the adapter's default token file
  * and a Git identity to commit with, Medrengard's unless a factory sets its own with gitIdentity. Its home is empty, so the owner's settings, skills, hooks and
  * MCP servers never load.
  */
-export const claudeCode: Access = {
+export const claudeCode = {
   paths: [
     ...system,
     tmp,
@@ -65,10 +65,12 @@ export const claudeCode: Access = {
     // Read by the adapter, which hides it from the agent; never in the environment.
     { path: join(ownerHome, ".config", "medrengard", "claude-token"), mode: "read" },
   ],
-  network: true,
+  // Only the model API, so nothing the agent runs can reach anywhere else. A factory lists more, as
+  // `{ ...claudeCode, network: { hosts: [...claudeCode.network.hosts, "registry.npmjs.org"] } }`.
+  network: { hosts: ["api.anthropic.com"] },
   environment: ["PATH", "HOME", "LANG"],
   values: gitIdentity("Medrengard", "medrengard@localhost"),
   workspace: "write",
   // The adapter runs claude in a sandbox of its own, which refuses them to what the agent runs.
   sandboxes: true,
-};
+} satisfies Access;

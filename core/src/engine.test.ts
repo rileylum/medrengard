@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { existsSync, mkdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -511,8 +513,8 @@ test("an access that names /workspace, /input or /output, or a path under one, i
       ),
       {
         message:
-          "Workflow build is invalid: step build's paths cannot name /workspace, /input or /output, " +
-          "where the step contract's directories are.",
+          "Workflow build is invalid: step build's paths cannot name /workspace, /input, /output or /network, " +
+          "where the step contract's directories and its network's proxy are.",
       },
       path,
     );
@@ -5637,4 +5639,126 @@ test("a commission run on by the engine it last ran on does not escalate", async
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+});
+
+/** A server on loopback, outside any sandbox, answering every request with `answer`; its port. */
+async function serving(t: TestContext, answer: string): Promise<number> {
+  const server = createServer((_, response) => response.end(answer));
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  // SAFETY: a TCP server listening on a port has an address of that kind.
+  return (server.address() as AddressInfo).port;
+}
+
+test("a step whose access lists hosts reaches them through the engine's proxy, and nothing else", async (t) => {
+  const allowed = await serving(t, "reached");
+  const other = await serving(t, "should not be reached");
+
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          ...stepRunning(
+            `printenv HTTPS_PROXY > "$1/proxy"
+             curl -sS -p "http://127.0.0.1:${allowed}/" > "$1/allowed"
+             curl -sS -p "http://127.0.0.1:${other}/" > "$1/refused" 2>&1
+             curl -sS --noproxy '*' "http://127.0.0.1:${allowed}/" > "$1/direct" 2>&1
+             echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+            [directory],
+          ),
+          access: { ...access, network: { hosts: [`127.0.0.1:${allowed}`] } },
+        },
+      },
+    }),
+  );
+
+  const ended = await engine.advance("first");
+
+  assert.partialDeepStrictEqual(
+    ended,
+    { status: "finished" },
+    engine.errors("first", 1).toString(),
+  );
+
+  const read = (name: string) => readFile(join(directory, name), "utf8");
+
+  assert.match(await read("proxy"), /^http:\/\/127\.0\.0\.1:\d+\n$/);
+  assert.equal(await read("allowed"), "reached");
+  assert.doesNotMatch(await read("refused"), /should not be reached/);
+  assert.doesNotMatch(await read("direct"), /reached/);
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    {
+      notes: [
+        { note: `Step build was refused network access to 127.0.0.1:${other}.`, from: "engine" },
+      ],
+    },
+  ]);
+});
+
+for (const [what, network, problem] of [
+  ["no hosts", { hosts: [] }, "network access must be true, false, or hosts it may reach"],
+  [
+    "a host that is no host",
+    { hosts: ["not a host"] },
+    "network access must be true, false, or hosts it may reach",
+  ],
+] as const) {
+  test(`access whose network lists ${what} cannot be commissioned`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+    t.after(() => rm(directory, { recursive: true, force: true }));
+
+    const engine = createEngine({
+      log: join(directory, "log.sqlite"),
+      kinds: builtIn,
+      defaults: { limits: defaultLimits },
+      workflows: {
+        build: {
+          start: "build",
+          steps: {
+            build: {
+              ...stepRunning("true", "end"),
+              // As a factory written in JavaScript could give it.
+              access: { ...access, network: JSON.parse(JSON.stringify(network)) },
+            },
+          },
+        },
+      },
+    });
+
+    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+      message: `Workflow build is invalid: step build's ${problem}.`,
+    });
+  });
+}
+
+test("access whose paths name /network, where the step's proxy goes, cannot be commissioned", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const engine = createEngine({
+    log: join(directory, "log.sqlite"),
+    kinds: builtIn,
+    defaults: { limits: defaultLimits },
+    workflows: {
+      build: {
+        start: "build",
+        steps: {
+          build: {
+            ...stepRunning("true", "end"),
+            access: { ...access, paths: [...access.paths, { path: "/network", mode: "read" }] },
+          },
+        },
+      },
+    },
+  });
+
+  assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+    message: /paths cannot name \/workspace, \/input, \/output or \/network/,
+  });
 });

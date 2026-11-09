@@ -213,7 +213,7 @@ function parseKinds(text: string): Kinds {
         throw refused(`its ${program}'s program must be a command and its arguments`);
       }
 
-      const problem = accessProblem(access);
+      const problem = accessProblem(access, false);
 
       if (problem !== undefined) {
         throw refused(`its ${program}'s ${problem}`);
@@ -269,7 +269,12 @@ function parseKinds(text: string): Kinds {
 }
 
 // What is wrong with `access`, said of whatever it belongs to, or undefined when nothing is.
-function accessProblem(access: Access): string | undefined {
+// A host a step's access may list: a name or address, any of its subdomains as *.name, and a port.
+const host = /^(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*(:[0-9]{1,5})?$/;
+
+// Why `access` cannot confine a program, if it cannot. `hosts`, whether its network may list the
+// hosts it reaches: a step's may, a kind program's not.
+function accessProblem(access: Access, hosts = true): string | undefined {
   const keys = ["paths", "network", "environment", "workspace", "sandboxes"];
 
   if (!hasExactly(access, Object.hasOwn(access, "values") ? [...keys, "values"] : keys)) {
@@ -300,16 +305,31 @@ function accessProblem(access: Access): string | undefined {
 
   if (
     paths.some(({ path }) =>
-      ["/workspace", "/input", "/output"].some(
+      ["/workspace", "/input", "/output", "/network"].some(
         (area) => path === area || path.startsWith(`${area}/`),
       ),
     )
   ) {
-    return "paths cannot name /workspace, /input or /output, where the step contract's directories are";
+    return "paths cannot name /workspace, /input, /output or /network, where the step contract's directories and its network's proxy are";
   }
 
-  if (network !== true && network !== false) {
-    return "network access must be true or false";
+  // lazy: a kind program's network is all or none. Let it list hosts once a verifier needs some.
+  const named = hasExactly(network, ["hosts"]) ? Object.values(network)[0] : undefined;
+
+  const listed =
+    hosts &&
+    Array.isArray(named) &&
+    named.length > 0 &&
+    named.every((each) => isText(each) && host.test(each));
+
+  if (network !== true && network !== false && !listed) {
+    return hosts
+      ? "network access must be true, false, or hosts it may reach"
+      : "network access must be true or false";
+  }
+
+  if (listed && paths.some(({ path }) => path === "/")) {
+    return "network access cannot list hosts when its paths grant /, which leaves no place for its proxy";
   }
 
   if (

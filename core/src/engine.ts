@@ -32,7 +32,8 @@ import {
   resolve as resolvePath,
   sep,
 } from "node:path";
-import { hostname } from "node:os";
+import { hostname, tmpdir } from "node:os";
+import { connect as connectTo, createServer as createNetServer, type Socket } from "node:net";
 import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -1836,6 +1837,9 @@ async function run(
   // The step's latest usage report, which every ending carries.
   let usage: Usage | undefined;
 
+  // The proxy its network goes through, while it runs, when its access lists hosts.
+  let proxy: Proxy | undefined;
+
   // The session the program left, read once it has ended: kept with the ending, or over its limit.
   let left: ReturnType<typeof sessionLeft>;
 
@@ -1952,11 +1956,22 @@ async function run(
     // An agent step's program is its harness adapter, under the same contract.
     const bounds = { memory: step.limits.memory, processes: step.limits.processes };
 
+    // The hosts it may reach, through a proxy of the engine's, when its access lists them.
+    const { network } = step.access;
+
+    proxy =
+      network !== true && network !== false
+        ? await openProxy(network.hosts, (target) =>
+            note(`Step ${name} was refused network access to ${target}.`, "engine"),
+          )
+        : undefined;
+
     const confined = confine(
       step.access,
       { workspace, input, output, record: spool.record, scratch: join(directory, "scratch") },
       step.kind === "agent" ? step.agent.harness.run : step.run,
       bounds,
+      proxy?.socket,
     );
 
     const { unit } = confined;
@@ -2321,6 +2336,7 @@ async function run(
     });
   } finally {
     clearInterval(watching);
+    await proxy?.close();
 
     if (spooling !== undefined) {
       closeSync(spooling.transcript);
@@ -2359,6 +2375,124 @@ function usageIn(text: string): Usage | undefined {
 
   // SAFETY: checked above to hold only the fields a Usage defines, each of its type.
   return dollars && counted ? (report as Usage) : undefined;
+}
+
+// The engine's proxy for a step that may reach only some hosts: where its socket is, and how to
+// close it.
+type Proxy = { socket: string; close: () => Promise<void> };
+
+// The most a request's head may hold before the proxy refuses it.
+const headLimit = 8192;
+
+// Opens a proxy that tunnels a CONNECT to one of `hosts`, and refuses anything else, calling
+// `refused` once for each target it refuses. It listens on a socket in a short directory of its
+// own: a socket's path is bounded, and an attempt's directory is deep. It runs in the engine, so
+// it reaches the network the engine reaches; the step reaches only it.
+async function openProxy(
+  hosts: readonly string[],
+  refused: (target: string) => void,
+): Promise<Proxy> {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-proxy-"));
+  const socket = join(directory, "socket");
+  const told = new Set<string>();
+  const open = new Set<Socket>();
+
+  const server = createNetServer((client) => {
+    open.add(client);
+    client.on("close", () => open.delete(client));
+    client.on("error", () => client.destroy());
+
+    let head = Buffer.alloc(0);
+
+    const reading = (chunk: Buffer) => {
+      head = Buffer.concat([head, chunk]);
+
+      const end = head.indexOf("\r\n\r\n");
+
+      if (end === -1) {
+        if (head.length > headLimit) {
+          client.end("HTTP/1.1 431 Request Header Fields Too Large\r\n\r\n");
+        }
+
+        return;
+      }
+
+      client.off("data", reading);
+
+      const [method, target] = head.subarray(0, end).toString("latin1").split(" ");
+      const rest = head.subarray(end + 4);
+
+      if (method !== "CONNECT" || target === undefined || !reachable(target, hosts)) {
+        const named = method === "CONNECT" && target !== undefined ? target : `${method} ${target}`;
+
+        if (!told.has(named)) {
+          told.add(named);
+          refused(named);
+        }
+
+        client.end("HTTP/1.1 403 Forbidden\r\n\r\nRefused by the step's access.\n");
+
+        return;
+      }
+
+      const separator = target.lastIndexOf(":");
+      const upstream = connectTo(Number(target.slice(separator + 1)), target.slice(0, separator));
+
+      open.add(upstream);
+      upstream.on("close", () => open.delete(upstream));
+
+      upstream.on("connect", () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        upstream.write(rest);
+        upstream.pipe(client);
+        client.pipe(upstream);
+      });
+
+      upstream.on("error", () => {
+        client.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+        upstream.destroy();
+      });
+
+      client.on("close", () => upstream.destroy());
+    };
+
+    client.on("data", reading);
+  });
+
+  await new Promise<void>((resolve) => server.listen(socket, resolve));
+
+  return {
+    socket,
+    async close() {
+      for (const each of open) {
+        each.destroy();
+      }
+
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+// Whether a CONNECT target, host:port, is one of `hosts`: `host` is port 443, `host:port` that
+// port, and `*.domain` any of its subdomains.
+function reachable(target: string, hosts: readonly string[]): boolean {
+  const separator = target.lastIndexOf(":");
+  const name = target.slice(0, separator).toLowerCase();
+  const port = target.slice(separator + 1);
+
+  return (
+    separator > 0 &&
+    /^[0-9]+$/.test(port) &&
+    hosts.some((entry) => {
+      const [listed, listedPort = "443"] = entry.toLowerCase().split(":");
+
+      return (
+        port === listedPort &&
+        (listed!.startsWith("*.") ? name.endsWith(listed!.slice(1)) : name === listed)
+      );
+    })
+  );
 }
 
 type Claim = { outcome: string; artifacts: Artifact[] };
