@@ -82,6 +82,7 @@ test("the engine has exactly the pinned methods", async (t) => {
     "artifact",
     "attend",
     "cancel",
+    "check",
     "commission",
     "commissions",
     "decide",

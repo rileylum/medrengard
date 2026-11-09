@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -335,6 +335,7 @@ test("the CLI's commands are exactly the pinned ones", () => {
 
   assert.deepEqual(commands, [
     "commission",
+    "check",
     "advance",
     "attend",
     "state",
@@ -686,6 +687,116 @@ function commissionAll(factory: string, workflow: string, commissions: readonly 
     run(["commission", workflow, commission, "--title", "Greet", "--body", "Say hello."], factory);
   }
 }
+
+const repository = join(import.meta.dirname, "..");
+
+/**
+ * Writes a factory whose workflows are `good`, one command step; `skilled`, an agent step with the
+ * skill `tdd`; `broken`, whose step's edge leads to a step it lacks; and `unskilled`, whose
+ * agent's skill has no SKILL.md. Returns its path and its store's directory.
+ */
+async function checkedFactory(t: TestContext) {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  await mkdir(join(directory, "skills", "tdd"), { recursive: true });
+  await writeFile(join(directory, "skills", "tdd", "SKILL.md"), "Test first.\n");
+  await mkdir(join(directory, "skills", "empty"));
+
+  const factory = join(directory, "factory.ts");
+
+  await writeFile(
+    factory,
+    `import { contract } from ${JSON.stringify(join(repository, "defaults/access.ts"))};
+     import { builtIn } from ${JSON.stringify(join(repository, "defaults/kinds.ts"))};
+     import { limits } from ${JSON.stringify(join(repository, "defaults/limits.ts"))};
+
+     const command = {
+       kind: "command", workspace: "empty", inputs: {}, claims: [], access: contract,
+       run: ["true"], budget: 1, on: { done: "end" },
+     } as const;
+
+     const { run: _, ...shared } = command;
+
+     const agent = (skill: string) => ({
+       ...shared,
+       kind: "agent",
+       agent: { harness: { run: ["true"] }, model: "a-model", prompt: "Plan.", skills: [${JSON.stringify(join(directory, "skills"))} + "/" + skill] },
+     }) as const;
+
+     export default {
+       log: "state/log.sqlite",
+       kinds: builtIn,
+       defaults: { limits },
+       workflows: {
+         good: { start: "only", steps: { only: command } },
+         skilled: { start: "only", steps: { only: agent("tdd") } },
+         broken: { start: "only", steps: { only: { ...command, on: { done: "nowhere" } } } },
+         unskilled: { start: "only", steps: { only: agent("empty") } },
+       },
+     };`,
+  );
+
+  return { factory, store: join(directory, "state", "store") };
+}
+
+/** The files in the store, wherever it is not yet. */
+async function storedIn(store: string): Promise<string[]> {
+  return readdir(store, { recursive: true }).catch(() => []);
+}
+
+test("check checks every workflow as commissioning would, recording nothing", async (t) => {
+  const { factory, store } = await checkedFactory(t);
+
+  const refusal = (workflow: string) =>
+    JSON.parse(
+      run(["commission", workflow, "x", "--title", "T", "--body", "B", "--json"], factory).stderr,
+    ).error;
+
+  const broken = refusal("broken");
+  const unskilled = refusal("unskilled");
+
+  assert.match(broken, /edges must each lead to a step or the end/);
+  assert.match(unskilled, /has no SKILL\.md/);
+
+  const stored = await storedIn(store);
+  const all = run(["check"], factory);
+
+  assert.equal(all.status, 1);
+  assert.equal(all.stdout, `good: ok\nskilled: ok\nbroken: ${broken}\nunskilled: ${unskilled}\n`);
+  assert.deepEqual(run(["check", "good"], factory), {
+    status: 0,
+    stdout: "good: ok\n",
+    stderr: "",
+  });
+  assert.equal(run(["check", "broken"], factory).status, 1);
+  assert.deepEqual(JSON.parse(run(["check", "--json"], factory).stdout), [
+    { workflow: "good" },
+    { workflow: "skilled" },
+    { workflow: "broken", error: broken },
+    { workflow: "unskilled", error: unskilled },
+  ]);
+  assert.deepEqual(await storedIn(store), stored);
+});
+
+test("check prints the definition a workflow would be commissioned with, as definition prints a commission's", async (t) => {
+  const { factory, store } = await checkedFactory(t);
+
+  const checked = run(["check", "skilled", "--json"], factory);
+  const stored = await storedIn(store);
+
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.deepEqual(await storedIn(store), stored);
+
+  run(["commission", "skilled", "first", "--title", "Plan", "--body", "Plan it."], factory);
+
+  assert.deepEqual(
+    JSON.parse(checked.stdout),
+    JSON.parse(run(["definition", "first", "--json"], factory).stdout),
+  );
+  assert.equal(run(["check", "nothing"], factory).status, 1);
+});
 
 test("the runner is listed as a running engine until it stops", { timeout: 10_000 }, async (t) => {
   const { factory } = await factoryIn(t);

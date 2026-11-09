@@ -329,28 +329,51 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
     insert.run(commission, events.length, JSON.stringify({ ...event, at: Date.now() }));
   }
 
+  // The factory's workflow named `workflow`, parsed as it will be read back, so a definition that
+  // could not run is refused before anything is recorded.
+  function checked(workflow: string): Definition {
+    if (!Object.hasOwn(workflows, workflow)) {
+      throw new Error(`There is no workflow named ${workflow}.`);
+    }
+
+    return parseDefinition(
+      workflow,
+      JSON.stringify({ workflow: workflows[workflow], kinds, defaults }),
+    );
+  }
+
+  // The definition's text as a commission records it, its skills read now, so editing one later
+  // changes no commission; `keep` names each skill file by hash, storing it or not.
+  function pinned(workflow: string, definition: Definition, keep: (bytes: Buffer) => string) {
+    const skills = pin(workflow, definition.workflow, keep);
+
+    return JSON.stringify({ workflow: workflows[workflow], kinds, skills, defaults });
+  }
+
   return {
+    /**
+     * The definition the workflow named `workflow` would be commissioned with, as `definition`
+     * gives a commission's; refused as commissioning would refuse it. Records nothing.
+     */
+    check(workflow: string): Definition {
+      const text = pinned(workflow, checked(workflow), (bytes) =>
+        createHash("sha256").update(bytes).digest("hex"),
+      );
+
+      return parseDefinition(workflow, text);
+    },
+
     /** Starts a commission under the workflow named `workflow`, about the owner's request. */
     commission(
       workflow: string,
       commission: string,
       request: { title: string; body: string },
     ): void {
-      if (!Object.hasOwn(workflows, workflow)) {
-        throw new Error(`There is no workflow named ${workflow}.`);
-      }
+      const definition = checked(workflow);
 
-      // Parsed as it will be read back, so a definition that could not run is refused now; its
-      // skills are read once it has passed, so editing one later changes no commission.
-      const checked = parseDefinition(
-        workflow,
-        JSON.stringify({ workflow: workflows[workflow], kinds, defaults }),
-      );
+      refuseRequest(definition.kinds.document, request);
 
-      refuseRequest(checked.kinds.document, request);
-
-      const skills = pin(workflow, checked.workflow, store);
-      const text = JSON.stringify({ workflow: workflows[workflow], kinds, skills, defaults });
+      const text = pinned(workflow, definition, (bytes) => store.keep(bytes));
       const parsed = parseDefinition(workflow, text);
 
       const event: Commissioned = {
@@ -1418,7 +1441,11 @@ function membersOf(group: number): number[] {
 
 // Keeps every file of each skill the workflow's agents declare, refusing a skill without a SKILL.md
 // or an agent with two skills of one name, and returns the skills by path.
-function pin(name: string, workflow: Workflow, store: Store): Definition["skills"] {
+function pin(
+  name: string,
+  workflow: Workflow,
+  keep: (bytes: Buffer) => string,
+): Definition["skills"] {
   const invalid = (problem: string) => new Error(`Workflow ${name} is invalid: ${problem}.`);
   const pinned: Record<string, Skill> = {};
 
@@ -1439,7 +1466,7 @@ function pin(name: string, workflow: Workflow, store: Store): Definition["skills
       const files = readdirSync(path, { recursive: true, withFileTypes: true }).flatMap((entry) => {
         const file = join(entry.parentPath, entry.name);
 
-        return entry.isDirectory() ? [] : [[relative(path, file), store.keep(readFileSync(file))]];
+        return entry.isDirectory() ? [] : [[relative(path, file), keep(readFileSync(file))]];
       });
 
       pinned[path] = { name: basename(path), files: Object.fromEntries(files) };
