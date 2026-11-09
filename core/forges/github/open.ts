@@ -33,21 +33,30 @@ const bodyOf = (listed: Listed) =>
 const branch = `medrengard/${commission}`;
 
 // The placeholder, which the broker replaces with the token; no proxy, the broker being on loopback.
-execFileSync(
-  "git",
-  [
-    "-c",
-    "http.extraHeader=Authorization: Bearer medrengard-broker",
-    "-c",
-    "http.proxy=",
-    "push",
-    "--quiet",
-    "--force",
-    `${broker}/git/${repository}.git`,
-    `HEAD:refs/heads/${branch}`,
-  ],
-  { stdio: ["ignore", "ignore", "inherit"] },
-);
+// Git's stderr is kept for a failure alone: GitHub always answers a push with a hint there.
+try {
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "http.extraHeader=Authorization: Bearer medrengard-broker",
+      "-c",
+      "http.proxy=",
+      "push",
+      "--quiet",
+      "--force",
+      `${broker}/git/${repository}.git`,
+      `HEAD:refs/heads/${branch}`,
+    ],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+} catch (error) {
+  // SAFETY: execFileSync throws an error carrying the child's piped stderr.
+  const { stderr } = error as { stderr: Buffer };
+
+  console.error(`The push to ${repository} failed: ${stderr}`);
+  process.exit(1);
+}
 
 const report = bodyOf(subject);
 
