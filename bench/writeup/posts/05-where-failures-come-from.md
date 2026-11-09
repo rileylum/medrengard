@@ -12,7 +12,9 @@ making random mistakes, different runs would fail different tests. They don't:
 
 - Of all 1,772 failed checkpoint tests in the study, 59% are tests that **all nine runs** fail.
 - 81% are tests that at least seven of the nine fail.
-- 117 distinct tests are failed by every run, whatever the configuration.
+- 117 distinct tests are failed by every run, whatever the configuration. Counted by test family
+  instead, the unit the study's standard report uses (a parametrized test's cases together), that's
+  65 families failed in every run.
 
 A review skill, a verification skill and the plain baseline make the same mistakes in the same
 places. Something about those places is hard for this model, or something about them is wrong.
@@ -20,8 +22,8 @@ places. Something about those places is hard for this model, or something about 
 ## What we checked
 
 The tests that decide whether a checkpoint is solved are the **Core** tests. 39 of the 117 shared
-failures are Core tests, and all 39 are on four problems: datagate, file_merger, eve_market_tools
-and layered_config_synthesizer. We read every one, along with test_translator's collapse at
+failures are Core tests (11 of the 65 families), and all of them are on four problems: datagate,
+file_merger, eve_market_tools and layered_config_synthesizer. We read every one, along with test_translator's collapse at
 checkpoint 5 from part 4.
 
 For each, we compared three things: what the spec says, what the test asserts (and what the

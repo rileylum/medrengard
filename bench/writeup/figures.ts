@@ -29,6 +29,7 @@ const measured = [
   ["core", "Core"],
   ["erosion", "erosion"],
   ["verbosity", "verbosity"],
+  ["breakage", "breakage"],
 ] as const;
 
 writeFileSync(
@@ -282,21 +283,33 @@ const runsAt = (key: string) => gradedRuns.get(key.split("|").slice(0, 2).join("
 const failures = [...failedBy.values()].reduce((sum, count) => sum + count, 0);
 const sharedBy = (least: (key: string) => number) =>
   [...failedBy].filter(([key, count]) => count >= least(key)).reduce((sum, [, count]) => sum + count, 0);
-const everyRun = [...failedBy].filter(([key, count]) => count === runsAt(key));
+const sharedFamilies = summary.shared;
 
 sections.push(
   "## review-verify: failures shared across runs",
   "",
   `A checkpoint's own test failures (not Regression), counted once per run: ${failures}. ` +
     `In tests every run fails: ${sharedBy(runsAt)} (${percent(sharedBy(runsAt) / failures)}); ` +
-    `in tests at least seven of nine runs fail: ${sharedBy(() => 7)} (${percent(sharedBy(() => 7) / failures)}). ` +
-    `Distinct tests every run fails: ${everyRun.length} of ${failedBy.size}.`,
+    `in tests at least seven of nine runs fail: ${sharedBy(() => 7)} (${percent(sharedBy(() => 7) / failures)}).`,
+  "",
+  `Test families every run fails, from the report: ${sharedFamilies.length} ` +
+    `(${sharedFamilies.reduce((sum, row) => sum + row.cases, 0)} cases), ` +
+    `of them Core: ${sharedFamilies.filter((row) => row.family.includes("-Core::")).length} ` +
+    `(${sharedFamilies.filter((row) => row.family.includes("-Core::")).reduce((sum, row) => sum + row.cases, 0)} cases).`,
   "",
   table(
-    ["problem", "checkpoint", "tests every run fails", "of them Core"],
-    [...Map.groupBy(everyRun, ([key]) => key.split("|").slice(0, 2).join("|"))]
+    ["problem", "checkpoint", "families every run fails (cases)", "of them Core"],
+    [...Map.groupBy(sharedFamilies, (row) => `${row.problem}|${row.checkpoint}`)]
       .toSorted(([a], [b]) => a.localeCompare(b, "en", { numeric: true }))
-      .map(([at, rows]) => [...at.split("|"), String(rows.length), String(rows.filter(([key]) => key.includes("-Core::")).length)]),
+      .map(([at, rows]) => {
+        const core = rows.filter((row) => row.family.includes("-Core::"));
+
+        return [
+          ...at.split("|"),
+          `${rows.length} (${rows.reduce((sum, row) => sum + row.cases, 0)})`,
+          `${core.length} (${core.reduce((sum, row) => sum + row.cases, 0)})`,
+        ];
+      }),
   ),
   "",
 );
