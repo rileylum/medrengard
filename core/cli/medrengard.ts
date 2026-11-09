@@ -25,6 +25,7 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
   watch      <commission>
   events     [--after <position>] [--follow]
   commissions
+  engines
   run        [--parallel <n>]
   decide     <commission> <outcome> --subject <hash> --since <event>
              [--feedback <text> | --feedback-file <path>]
@@ -48,6 +49,7 @@ const commands = new Map([
   ["events", { arguments: 0, options: ["after", "follow"] }],
   ["errors", { arguments: 2, options: [] }],
   ["commissions", { arguments: 0, options: [] }],
+  ["engines", { arguments: 0, options: [] }],
   ["run", { arguments: 0, options: ["parallel"] }],
   ["decide", { arguments: 2, options: ["subject", "since", "feedback", "feedback-file"] }],
   ["cancel", { arguments: 1, options: [] }],
@@ -188,6 +190,24 @@ try {
           .join(""),
       );
       break;
+    case "engines": {
+      const engines = engine.engines();
+
+      print(
+        engines,
+        engines.length === 0
+          ? "no engine is running\n"
+          : engines
+              .map(
+                ({ host, pid, since, status }) =>
+                  `${status.padEnd(8)}${host}  pid ${pid}  since ${new Date(since).toISOString()}\n`,
+              )
+              .join(""),
+      );
+
+      break;
+    }
+
     case "run":
       await runner(engine, Number(values.parallel ?? "1"));
       break;
@@ -213,6 +233,7 @@ type Printed =
   | null
   | ({ commission: string; state: CommissionState } | { commission: string; error: string })[]
   | { parallel: number }
+  | ReturnType<Engine["engines"]>
   | { stopping: { commission: string; step: string }[] }
   | { commission: string; state: CommissionState }
   | Logged
@@ -254,10 +275,14 @@ async function runner(engine: Engine, parallel: number): Promise<void> {
   // Aborted by the first stop, so each advance returns once its running step ends.
   const stopping = new AbortController();
 
+  // Listed by engines while it runs; a runner that dies without withdrawing is listed as dead.
+  const withdraw = engine.register();
+
   print({ parallel }, `running at most ${parallel} steps in parallel\n`);
 
   const stop = () => {
     if (stopping.signal.aborted) {
+      withdraw();
       process.exit(130);
     }
 
@@ -367,6 +392,7 @@ async function runner(engine: Engine, parallel: number): Promise<void> {
   }
 
   await Promise.all(advancing.values());
+  withdraw();
 }
 
 function printArtifact(artifact: Artifact): void {

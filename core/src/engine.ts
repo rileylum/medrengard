@@ -28,6 +28,7 @@ import {
   resolve as resolvePath,
   sep,
 } from "node:path";
+import { hostname } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -188,6 +189,50 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
   const requested = database.prepare(
     "SELECT 1 FROM cancellations WHERE commission = ? AND attempt = ?",
   );
+
+  // The engines registered as running on this log, such as the CLI's run. A registration is no
+  // fact about a commission, and judging it reads /proc, so it stays out of the events and the fold.
+  database.exec(`CREATE TABLE IF NOT EXISTS engines (
+    machine TEXT NOT NULL, host TEXT NOT NULL, boot TEXT NOT NULL, pid INTEGER NOT NULL,
+    start INTEGER NOT NULL, since INTEGER NOT NULL,
+    PRIMARY KEY (machine, boot, pid, start)) STRICT`);
+
+  const registered = database.prepare("SELECT * FROM engines ORDER BY since, rowid");
+
+  const enrol = database.prepare("INSERT OR REPLACE INTO engines VALUES (?, ?, ?, ?, ?, ?)");
+
+  const unenrol = database.prepare(
+    "DELETE FROM engines WHERE machine = ? AND boot = ? AND pid = ? AND start = ?",
+  );
+
+  const machine = machineOf();
+
+  // Each registration, as the table holds it.
+  const registrations = () =>
+    registered.all().map((row) => ({
+      machine: String(row.machine),
+      host: String(row.host),
+      boot: String(row.boot),
+      pid: Number(row.pid),
+      start: Number(row.start),
+      since: Number(row.since),
+    }));
+
+  // Whether a registered engine is running: judged exactly by its process on this machine; not at
+  // all on another, which can only be asked there.
+  // lazy: no heartbeat, as every engine writing a log runs on the log's machine. Add one, with a
+  // bound past which an engine counts as dead, once an engine on another machine writes this log.
+  function liveness(row: ReturnType<typeof registrations>[number]): "alive" | "dead" | "unknown" {
+    if (row.machine !== machine) {
+      return "unknown";
+    }
+
+    if (row.boot !== self.boot) {
+      return "dead";
+    }
+
+    return startOf(row.pid) === row.start ? "alive" : "dead";
+  }
 
   const insert = database.prepare("INSERT INTO events VALUES (?, ?, ?)");
 
@@ -369,6 +414,42 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       } finally {
         changes.close();
       }
+    },
+
+    /**
+     * Records that this engine is running on the log, so `engines` lists it, until the function it
+     * returns withdraws it. Registrations of this machine's engines that have ended are removed.
+     */
+    register(): () => void {
+      for (const row of registrations()) {
+        if (liveness(row) === "dead") {
+          unenrol.run(row.machine, row.boot, row.pid, row.start);
+        }
+      }
+
+      enrol.run(machine, hostname(), self.boot, self.pid, self.start, Date.now());
+
+      return () => {
+        unenrol.run(machine, self.boot, self.pid, self.start);
+      };
+    },
+
+    /**
+     * The engines registered on the log, oldest first: on which host, as which process, since
+     * when, and whether it is alive or dead, or unknown when it runs on another machine.
+     */
+    engines(): {
+      host: string;
+      pid: number;
+      since: number;
+      status: "alive" | "dead" | "unknown";
+    }[] {
+      return registrations().map((row) => ({
+        host: row.host,
+        pid: row.pid,
+        since: row.since,
+        status: liveness(row),
+      }));
     },
 
     /** Replays the commission's state from the log. */
@@ -1039,6 +1120,16 @@ function identity() {
   }
 
   return { pid: process.pid, start, boot };
+}
+
+// The machine the engine runs on, by systemd's machine id, which outlives a change of host name;
+// the host name where there is none.
+function machineOf(): string {
+  try {
+    return readFileSync("/etc/machine-id", "utf8").trim();
+  } catch {
+    return hostname();
+  }
 }
 
 function startOf(pid: number): number | undefined {

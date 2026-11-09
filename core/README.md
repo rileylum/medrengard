@@ -746,6 +746,8 @@ for (;;) {
 | `errors(commission, attempt)`                                | what the attempt wrote to stderr, as a `Buffer`; empty for none                                                                                                                                |
 | `transcript(commission, attempt)`                            | the attempt's stdout and stderr as a `Buffer`                                                                                                                                                  |
 | `artifact(hash)`                                             | `{ kind, fields, body? }`; refuses a hash the log does not name as an artifact                                                                                                                 |
+| `register()`                                                 | a function that withdraws it; records this engine as running on the log, removing this machine's engines that ended                                                                            |
+| `engines()`                                                  | `{ host, pid, since, status }[]`, oldest first: `alive` or `dead`, judged on this machine, or `unknown` on another                                                                             |
 
 A state has a `status`:
 
@@ -773,6 +775,7 @@ medrengard <command> [--json] [--factory <path>]
   watch      <commission>
   events     [--after <position>] [--follow]
   commissions
+  engines
   run        [--parallel <n>]
   decide     <commission> <outcome> --subject <hash> --since <event>
              [--feedback <text> | --feedback-file <path>]
@@ -821,6 +824,11 @@ medrengard <command> [--json] [--factory <path>]
   workflow, with each step's access, agent and harness command, and its limits made whole from the
   factory's defaults it recorded; its kinds; and its skills by file hash. It is what a step was
   allowed, whatever the factory says now. With `--json` it prints `engine.definition`.
+- `engines` lists the engines registered on the log, oldest first, one line each:
+  `alive    <host>  pid <pid>  since <time>`. `run` registers while it runs. On the log's own
+  machine an engine is `alive` or `dead`, judged by its process, so a `run` killed without
+  stopping shows as `dead` until the next one registers; one on another machine is `unknown`,
+  since it can only be asked there.
 - `run` advances every ready commission, at most `--parallel` steps at once (1 by default), oldest
   commission first. It prints one line per result, and keeps looking for ready commissions until it
   is stopped. A first Ctrl-C starts nothing new and waits for the running steps, leaving each
@@ -852,8 +860,9 @@ does, and needs the owner's terminal as stdin and stdout. The factory is found a
   `n` commissions a request (workflow, name, title, then the body in the editor), `?` lists the
   keys, `q` quits.
 - The TUI never runs steps but the one the owner attends: keep `medrengard run` going beside it.
-  An idle `run` writes nothing, so the TUI cannot show whether one is running; a ready commission
-  says it waits for `run`, and how long it has.
+  Home's first line says whether one is: `run: alive on <host>, pid <pid>, since <time>`, or
+  `run: not running`, from the engines registered on the log, looked at every few seconds. A ready
+  commission says it waits for `run`, and how long it has.
 
 ## Development
 
