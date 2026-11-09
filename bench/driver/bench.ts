@@ -8,12 +8,11 @@
 // abandon ends it, as the configuration's failure.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createEngine } from "@medrengard/core/src/engine.ts";
-import { data } from "../data.ts";
+import { data, scratch } from "../data.ts";
 
 const { values } = parseArgs({
   options: {
@@ -106,7 +105,7 @@ const recorded = new Map<number, { status: string }>(
 // nothing at the first, with the problem's assets put back as they are, as SlopCodeBench's
 // harness does before each checkpoint.
 function start(commission: string, previous: string | undefined) {
-  const work = mkdtempSync(join(tmpdir(), "medrengard-bench-start-"));
+  const work = scratch("medrengard-bench-start-");
 
   try {
     git(work, "init", "--quiet");
@@ -239,7 +238,7 @@ const definitionOf = (commission: string) =>
   createHash("sha256").update(JSON.stringify(engine.definition(commission))).digest("hex");
 
 function grade(commit: string, n: number, output = join(out, name, `checkpoint_${n}`)) {
-  const snapshot = mkdtempSync(join(tmpdir(), "medrengard-bench-snapshot-"));
+  const snapshot = scratch("medrengard-bench-snapshot-");
 
   try {
     execFileSync("sh", ["-c", 'git -C "$1" archive "$2" | tar -x -C "$3"', "sh", trajectories, commit, snapshot]);

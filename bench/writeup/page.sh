@@ -5,7 +5,8 @@ set -eu
 here=$(dirname "$(realpath "$0")")
 out=${1:?usage: page.sh <output.html>}
 repo=https://github.com/rileylum/medrengard
-work=$(mktemp -d "${TMPDIR:-/tmp}/writeup-page-XXXXXX")
+mkdir -p "${TMPDIR:=/var/tmp/medrengard}"
+work=$(mktemp -d "$TMPDIR/writeup-page-XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 for post in "$here"/posts/0*.md; do

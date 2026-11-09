@@ -3,7 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createEngine } from "@medrengard/core/src/engine.ts";
 import { toy } from "./toy.ts";
 
@@ -254,5 +255,25 @@ test(
 
     // One commit per checkpoint, the one claimed: nothing earlier to grade.
     for (const line of read("s1")) assert.deepEqual(line.commits, []);
+  },
+);
+
+test(
+  "the driver unpacks commits for grading under TMPDIR, or under /var/tmp/medrengard when it is unset",
+  { timeout: 120_000 },
+  async (t) => {
+    const { directory, bench } = toy(t, ["Do one.\n"]);
+    const { TMPDIR: _, ...unset } = process.env;
+    const chosen = join(directory, "chosen");
+
+    for (const [run, env] of [["u1", unset], ["c1", { ...process.env, TMPDIR: chosen }]] as const) {
+      const ran = bench(run, "stub", env);
+
+      assert.equal(ran.status, 0, ran.stderr);
+    }
+
+    const snapshots = readFileSync(join(directory, "snapshots"), "utf8").trim().split("\n");
+
+    assert.deepEqual(snapshots.map(dirname), ["/var/tmp/medrengard", chosen]);
   },
 );

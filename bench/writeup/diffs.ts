@@ -9,12 +9,11 @@
 //   diffs.ts show <commission>      the review's diff, as git prints it
 //   diffs.ts findings <commission>  what each reviewer handed back, from the implement step's transcript
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
-import { data } from "../data.ts";
+import { data, scratch } from "../data.ts";
 import { git, quality, runsOf, type Line } from "./record.ts";
 
 const study = "review-verify";
@@ -55,16 +54,16 @@ async function grade(commit: string, problem: string, checkpoint: number) {
 
   if (existsSync(cache)) return;
 
-  const scratch = mkdtempSync(join(tmpdir(), "writeup-grade-"));
+  const work = scratch("writeup-grade-");
   const run = promisify(execFile);
 
   try {
-    mkdirSync(join(scratch, "code"));
-    await run("sh", ["-c", 'git -C "$1" archive "$2" | tar -x -C "$3"', "sh", join(data, "state", "trajectories.git"), commit, join(scratch, "code")]);
+    mkdirSync(join(work, "code"));
+    await run("sh", ["-c", 'git -C "$1" archive "$2" | tar -x -C "$3"', "sh", join(data, "state", "trajectories.git"), commit, join(work, "code")]);
 
     const { stdout } = await run(
       join(import.meta.dirname, "..", "bin", "runner.sh"),
-      ["grade", join(scratch, "code"), problem, String(checkpoint), join(scratch, "out")],
+      ["grade", join(work, "code"), problem, String(checkpoint), join(work, "out")],
       { maxBuffer: 1 << 28 },
     );
     // SAFETY: the runner's grade command prints SlopCodeBench's eval-snapshot report.
@@ -73,7 +72,7 @@ async function grade(commit: string, problem: string, checkpoint: number) {
     mkdirSync(join(cache, ".."), { recursive: true });
     writeFileSync(cache, JSON.stringify({ tests, pass_counts, total_counts }));
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
   }
 }
 
