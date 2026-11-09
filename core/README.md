@@ -20,6 +20,7 @@ Code adapter run, and the engine and CLI let an observer follow the log.
 - [Kinds](#kinds)
 - [Agents and the Claude Code adapter](#agents-and-the-claude-code-adapter)
 - [The Codex adapter](#the-codex-adapter)
+- [Landing on GitHub](#landing-on-github)
 - [Attended steps](#attended-steps)
 - [The step contract](#the-step-contract)
 - [The engine in TypeScript](#the-engine-in-typescript)
@@ -769,6 +770,46 @@ const implement = {
 - A session is kept as the attempt's `session`, and a later attempt that declares it continues it
   with `codex exec fork`, never `resume`, which starts afresh on an id it cannot find. Another
   harness's session fails the attempt.
+
+## Landing on GitHub
+
+`@medrengard/core/forges/github/steps.ts` takes a commission's commit to a merged pull request in
+three steps: `open` pushes the subject commit and opens a pull request of it, an approval step
+records the owner's decision, and `land` merges it. Nothing merges without that decision.
+
+```ts
+import { builtIn } from "@medrengard/core/defaults/kinds.ts";
+import { github, pullRequest } from "@medrengard/core/forges/github/steps.ts";
+
+const app = github({ repository: "owner/app", base: "main" });
+
+const kinds = { ...builtIn, "pull-request": pullRequest };
+
+const steps = {
+  // …steps that end with a commit as the subject, then:
+  open: app.open({ on: { done: "approve" } }),
+  approve: { kind: "approval", on: { approve: "land" } },
+  land: app.land({ on: { done: "end" } }),
+} as const;
+```
+
+- **The credential:** a fine-grained personal access token in `~/.config/medrengard/github-token`,
+  or the file `token` names, for the repositories you choose, with _Contents_ and _Pull requests_
+  read and write. Keep it apart from your own `gh` login. The steps reach GitHub only through a
+  broker, which holds the token, so it never enters a sandbox.
+- **What the broker forwards:** only Git fetches and pushes for `repository`, and the calls to open,
+  read and merge one of its pull requests. Anything else is refused with a 403 naming it.
+- **`open`** pushes the subject to `medrengard/<commission>` and opens a pull request against
+  `base`. Its title is the request's title, and its body is the request's body, then the commit's
+  report if it has one. It claims a `pull-request`: a judgement about the commit, which stays the
+  subject, so verdicts on it stay current. The kind has no verifier.
+- **`land`** merges the latest `pull-request` about the subject, with a merge commit unless
+  `method` says `squash` or `rebase`. It passes the subject's SHA, and GitHub refuses the merge if
+  the pull request's head is no longer that commit. A refused merge, such as a moved head, a
+  conflict or failing required checks, fails the step, with GitHub's answer in its errors, and the
+  commission escalates.
+- Both are plain steps: spread one to change a field, such as its limits or budget. `git` and
+  `api` point the broker elsewhere, such as at GitHub Enterprise Server's `https://host/api/v3`.
 
 ## Attended steps
 

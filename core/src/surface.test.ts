@@ -37,6 +37,7 @@ const exports = {
   "defaults/kinds.ts": ["builtIn"],
   "defaults/limits.ts": ["limits"],
   "defaults/prepare.ts": ["prepare"],
+  "forges/github/steps.ts": ["Options", "github", "pullRequest"],
 };
 
 for (const [module, names] of Object.entries(exports)) {
