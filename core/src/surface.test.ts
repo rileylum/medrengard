@@ -33,6 +33,7 @@ const exports = {
   "src/engine.ts": ["CommissionRecord", "Entry", "createEngine"],
   "src/store.ts": ["Artifact", "createStore"],
   "defaults/access.ts": ["claudeCode", "codex", "contract", "gitIdentity"],
+  "defaults/agents.ts": ["agent"],
   "defaults/kinds.ts": ["builtIn"],
   "defaults/limits.ts": ["limits"],
   "defaults/prepare.ts": ["prepare"],

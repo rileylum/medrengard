@@ -610,6 +610,39 @@ const design = {
 } as const;
 ```
 
+An agent can also live in a markdown file, its frontmatter naming the harness, model and skills
+and its body the prompt. `agent` from `@medrengard/core/defaults/agents.ts` reads it when the factory
+loads, so the commission's definition holds the text, and editing the file changes only new
+commissions:
+
+```markdown
+---
+harness: claude-code
+model: sonnet
+skills:
+  - ../skills/tdd
+---
+
+Read the request and write a plan for it.
+```
+
+```ts
+import { agent } from "@medrengard/core/defaults/agents.ts";
+
+const harnesses = {
+  "claude-code": { run: ["node", "/path/to/medrengard/core/adapters/claude-code.ts"] },
+};
+const planner = agent("/path/to/agents/planner.md", harnesses);
+```
+
+- The frontmatter states exactly `harness`, one of the names `harnesses` gives, `model`, and
+  optionally `skills`, as `- path` lines relative to the file. Each value is plain text: `1.10` is
+  text, not a number.
+- Anything else throws when the factory loads, naming the file and line: comments, blank lines,
+  quotes, brackets, nesting, and unknown or repeated keys.
+- The prompt is everything after the closing `---`. A prompt alone needs no loader:
+  `readFileSync(path, "utf8")` is pinned the same way.
+
 - `skills` are paths to skill directories, each holding a `SKILL.md`: the Agent Skills format,
   which harnesses other than Claude Code read too. A skill is named by its
   directory; an agent cannot have two of one name. Leave `skills` out for none.
