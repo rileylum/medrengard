@@ -3,6 +3,8 @@
   runner.py problem <name>                         its checkpoints, assets and rendered prompts
   runner.py grade <snapshot> <name> <n> <out>      eval-snapshot's report for checkpoint n, with
                                                    scb-check's scores (verbosity, erosion) as quality
+  runner.py quality <snapshot> <name>              scb-check's whole report on the files grading keeps,
+                                                   for a commit no checkpoint graded
   runner.py pins                                   the checked-out commits and Python, and whether
                                                    they match pins.json
 
@@ -22,7 +24,7 @@ from slop_code.evaluation import ProblemConfig
 from slop_code.execution.assets import resolve_static_assets
 from slop_code.entrypoints.config.loader import resolve_environment
 from slop_code.execution.snapshot import _walk_candidates
-from slop_code.metrics.checkpoint.driver import _get_scb_check_metrics
+from slop_code.metrics.checkpoint.driver import SCB_CHECK_VERSION, _get_scb_check_metrics
 
 BENCH = Path(__file__).resolve().parent.parent
 # runner.sh names the data directory holding the pinned checkouts.
@@ -67,24 +69,39 @@ def problem(name):
     }
 
 
-def grade(snapshot, name, n, out):
+def keep(snapshot, name, graded):
+    """Copies into graded the files of snapshot their harness's snapshot keeps."""
     snapshot = Path(snapshot)
     spec = resolve_environment(ENVIRONMENT)
     kept, _ = _walk_candidates(
         snapshot, spec.get_ignore_globs(assets(problem_config(name))), spec.snapshot.keep_globs
     )
+    for path in kept:
+        (graded / path).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(snapshot / path, graded / path)
+
+
+def grade(snapshot, name, n, out):
     with tempfile.TemporaryDirectory() as checkpoint:
         # Their scb-check call scores <checkpoint>/snapshot, at the version their runner pins.
         graded = Path(checkpoint) / "snapshot"
-        for path in kept:
-            (graded / path).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(snapshot / path, graded / path)
+        keep(snapshot, name, graded)
         shutil.rmtree(out, ignore_errors=True)
         report = json.loads(
             slop_code("eval-snapshot", str(graded), "-o", out, "-p", name, "-c", n, "-e", str(GRADING), "--json")
         )
         report["quality"] = _get_scb_check_metrics(Path(checkpoint))
         return report
+
+
+def quality(snapshot, name):
+    # The same scb-check, version and flags as grading's, reading its whole report rather than the
+    # two scores grading keeps.
+    with tempfile.TemporaryDirectory() as checkpoint:
+        graded = Path(checkpoint) / "snapshot"
+        keep(snapshot, name, graded)
+        command = ["uvx", f"scb-check=={SCB_CHECK_VERSION}", "check", "--report", "--include-all", str(graded)]
+        return json.loads(subprocess.run(command, check=True, capture_output=True, text=True).stdout)
 
 
 def git(checkout, *args):
@@ -120,4 +137,4 @@ def pins():
 
 if __name__ == "__main__":
     command, *args = sys.argv[1:]
-    print(json.dumps({"problem": problem, "grade": grade, "pins": pins}[command](*args)))
+    print(json.dumps({"problem": problem, "grade": grade, "quality": quality, "pins": pins}[command](*args)))

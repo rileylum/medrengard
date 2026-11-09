@@ -1,7 +1,7 @@
 // A study's summary, from result lines whose figures are worked out by hand below.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { representative, summarise, type Run } from "../driver/report.ts";
+import { breakage, representative, summarise, type Run } from "../driver/report.ts";
 
 const graded = (checkpoint: number, passed: number, total: number, erosion: number, verbosity: number, usd: number) => ({
   checkpoint,
@@ -116,4 +116,63 @@ test("a problem's representative run is its median: solved, then erosion, neares
 
   // No complete run: none.
   assert.equal(representative([waiting]), undefined);
+});
+
+// A graded checkpoint whose tests are given by group, as the grader's report lists them.
+const tested = (checkpoint: number, tests: Record<string, { passed?: string[]; failed?: string[] }>) => ({
+  checkpoint,
+  checkpoints: 3,
+  status: "finished",
+  cost: null,
+  grade: {
+    pass_counts: {},
+    total_counts: {},
+    tests: Object.fromEntries(
+      Object.entries(tests).map(([group, { passed = [], failed = [] }]) => [group, { passed, failed, skipped: [] }]),
+    ),
+  },
+});
+
+test("breakage is, at each later checkpoint, the share of tests passed in their own checkpoint that now fail", () => {
+  const run: Run = {
+    configuration: "base",
+    problem: "p",
+    repeat: 1,
+    lines: [
+      // Checkpoint 1 passes a and b in its own groups and fails c, which never counts.
+      tested(1, { "checkpoint_1-Core": { passed: ["a"], failed: ["c"] }, "checkpoint_1-Error": { passed: ["b"] } }),
+      // A first grade of checkpoint 2, replaced by the next line.
+      tested(2, { "checkpoint_1-Regression": { failed: ["a", "b", "c"] }, "checkpoint_2-Core": { passed: ["d"] } }),
+      // Checkpoint 2 breaks b of checkpoint 1's two: 1/2. Some problems also grade a checkpoint's own
+      // Regression group, which is neither its own tests nor a later breakage.
+      tested(2, {
+        "checkpoint_1-Regression": { passed: ["a"], failed: ["b", "c"] },
+        "checkpoint_2-Core": { passed: ["d", "e"] },
+        "checkpoint_2-Regression": { passed: ["x"], failed: ["d"] },
+      }),
+      // Checkpoint 3 breaks a and d of the four passed before it: 2/4.
+      tested(3, {
+        "checkpoint_1-Regression": { passed: ["b"], failed: ["a", "c"] },
+        "checkpoint_2-Regression": { passed: ["e"], failed: ["d"] },
+        "checkpoint_3-Core": { passed: ["f"] },
+      }),
+    ],
+  };
+
+  assert.deepEqual(breakage(run), [
+    { checkpoint: 2, broken: 1, passed: 2 },
+    { checkpoint: 3, broken: 2, passed: 4 },
+  ]);
+});
+
+test("breakage leaves out checkpoints with no tests listed, as their harness's calibration runs", () => {
+  const untested = { checkpoint: 2, checkpoints: 2, status: "finished", cost: null, grade: { pass_counts: {}, total_counts: {} } };
+  const run: Run = {
+    configuration: "slopcodebench",
+    problem: "p",
+    repeat: 1,
+    lines: [tested(1, { "checkpoint_1-Core": { passed: ["a"] } }), untested],
+  };
+
+  assert.deepEqual(breakage(run), []);
 });

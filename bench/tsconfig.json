@@ -9,5 +9,5 @@
     "verbatimModuleSyntax": true,
     "types": ["node"]
   },
-  "include": ["*.ts", "bin/*.ts", "dry/*.ts", "driver/*.ts", "test/*.ts"]
+  "include": ["*.ts", "bin/*.ts", "dry/*.ts", "driver/*.ts", "test/*.ts", "writeup/*.ts"]
 }
