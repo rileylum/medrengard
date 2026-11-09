@@ -704,6 +704,12 @@ or a limit, stops the step as any other. If the owner's terminal closes, the att
 interrupted and escalates when next advanced. `attend` refuses a commission not ready at an
 attended step, and stdin or stdout that is not a terminal.
 
+To keep an attended step through a dropped connection or a closed window, attend from a terminal
+that outlives its client, on the machine whose log it is: a herdr pane (`herdr --remote <host>` to
+reach it from another machine), tmux or dtach. Disconnecting then only detaches you; `attend`, and
+the agent with it, runs on, and you reattach to the same session. The idle limit still stops one
+nobody returns to.
+
 ## The step contract
 
 Every command and agent step is a program, started:
