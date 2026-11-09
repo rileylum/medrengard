@@ -4,3 +4,8 @@ verification-before-completion/
   repository: https://github.com/obra/superpowers
   commit: 22f0b463e7a5e579904dd6211a520321035526f7
   path: skills/verification-before-completion
+
+test-driven-development/ (copied 2026-11-09)
+  repository: https://github.com/obra/superpowers
+  commit: 22f0b463e7a5e579904dd6211a520321035526f7
+  path: skills/test-driven-development
