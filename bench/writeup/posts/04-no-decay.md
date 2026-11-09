@@ -1,7 +1,7 @@
 # Testing published agent skills, part 4: why cleaner code doesn't raise the solve rate
 
-[Part 2](02-review-and-verify.md) found that a review skill made the code much cleaner and left
-correctness exactly where it was. [Part 3](03-reading-the-diffs.md) found the cleaner code is real:
+[Part 2](02-review-and-verify.md) found that a review skill made the code much cleaner and moved
+correctness by a point or two at most. [Part 3](03-reading-the-diffs.md) found the cleaner code is real:
 shorter, with a third fewer tangled functions. So why doesn't it get more right?
 
 The usual argument for clean code is about change. Tangled code is harder to modify without

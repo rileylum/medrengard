@@ -4,8 +4,8 @@
 three to eight checkpoints, run through Medrengard with Claude Opus 5.5 at medium effort. This
 post covers the first two skills we tested, and what each one changed.
 
-The short version: a review skill made the code clearly cleaner on every problem, didn't change
-how much of it was correct, and cost about twice as much. A verification skill changed very
+The short version: a review skill made the code clearly cleaner on every problem, made it at most
+slightly more correct, by too little for three runs to confirm, and cost about twice as much. A verification skill changed very
 little.
 
 ## The two skills
@@ -81,7 +81,7 @@ Paired by problem against the baseline, n=3, eleven problems, bootstrap 95% inte
 | code-review − baseline | +0.001 [−0.059, 0.059] | +0.016 [−0.007, 0.046] | **−0.190 [−0.246, −0.134]** | **−0.098 [−0.135, −0.059]** | +0.011 [−0.003, 0.039] | +3.69 (2.2×) |
 | verification − baseline | −0.012 [−0.065, 0.036] | −0.008 [−0.034, 0.014] | −0.050 [−0.097, −0.001] | −0.049 [−0.091, −0.008] | +0.003 [−0.003, 0.016] | +0.80 (1.25×) |
 
-### code-review: much cleaner code, no change in correctness
+### code-review: much cleaner code, a small gain in correctness at most
 
 Erosion fell by 0.19, from 0.71 to 0.52. In rough terms: in the baseline, about seven tenths of the
 code's complexity, weighted by function size, sits in functions too tangled to follow easily (cyclomatic complexity above 10).
@@ -95,11 +95,14 @@ This wasn't a few problems pulling the average. Erosion was lower on every one o
 The size varied a lot: from −0.05 on eve_market_tools and −0.07 on file_query_tool to −0.30 on
 textdrop and −0.34 on eve_industry.
 
-Correctness didn't move. Solved changed by +0.001, and its interval rules out any change bigger
-than about six points either way. Per problem, the differences were small and went both ways
-(mvvault −0.11, eve_jump_planner +0.11), within what three runs can tell apart.
+Correctness moved little, if at all. The share of Core tests passing rose by +0.016, but its
+interval, [−0.007, 0.046], includes zero; solved changed by +0.001, and its interval rules out any
+change bigger than about six points either way. Per problem, the differences were small and went
+both ways (mvvault −0.11, eve_jump_planner +0.11), within what three runs can tell apart. The
+estimates lean code-review's way, and part 3 shows its reviews fix more tests than they break, but
+the gain is a point or two at most.
 
-Test by test, it looks the same. Across every checkpoint of every problem, only two test families
+Test by test, it looks the same: a small lean, no more. Across every checkpoint of every problem, only two test families
 separate code-review from the baseline consistently, meaning every code-review run passes them and
 every baseline run fails them, or the other way round. Both are textdrop's input-validation tests
 (rejecting a JSON submission with a missing or wrong key, and rejecting invalid render payloads),
@@ -128,8 +131,8 @@ Costs are Claude Code's own estimate at API prices, for a whole problem run (eve
 and include the reviewer subagents. Times are wall time on a machine doing other work at the same
 time, so treat them as rough.
 
-So code-review roughly doubles both spend and time, and what it buys is structure, not
-correctness. Whether that's worth it depends on whether cleaner code pays off later. Within
+So code-review roughly doubles both spend and time, and what it buys is mostly structure, with a
+point or two of correctness at most. Whether that's worth it depends on whether cleaner code pays off later. Within
 SlopCodeBench's horizon, part 4 shows it doesn't get the chance.
 
 ## What neither skill fixed
