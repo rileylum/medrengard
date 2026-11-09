@@ -403,6 +403,9 @@ type StreamEvent = {
   };
   // Every message's tokens together, in its result event.
   usage?: Tokens;
+  // The account's usage limit, in a rate_limit_event; on an API error, in its parameters.
+  rate_limit_info?: RateLimit;
+  api_error_params?: { rate_limit_info?: RateLimit };
   is_error?: boolean;
   // The tools claude refused the agent, in its result event.
   permission_denials?: { tool_name: string; tool_input?: ToolInput }[];
@@ -410,6 +413,23 @@ type StreamEvent = {
   duration_ms?: number;
   total_cost_usd?: number;
 };
+
+// The account's usage limit as claude reports it: whether requests are refused, the window that
+// refuses them and when it resets, in epoch seconds.
+type RateLimit = { status?: string; rateLimitType?: string; resetsAt?: number };
+
+// What the owner calls each window claude names.
+const windows = new Map([
+  ["five_hour", "five-hour"],
+  ["seven_day", "weekly"],
+  ["seven_day_opus", "weekly Opus"],
+  ["seven_day_sonnet", "weekly Sonnet"],
+  ["seven_day_overage_included", "weekly extra usage"],
+  ["overage", "extra usage"],
+]);
+
+// The latest refusal by the account's usage limit, if claude reported one.
+let refused: RateLimit | undefined;
 
 // Tokens as the Anthropic API counts them.
 type Tokens = {
@@ -669,6 +689,12 @@ let result: StreamEvent | undefined;
 
 // What the agent says, each tool it calls, and how its run finished.
 function notesOf(event: StreamEvent): void {
+  const limit = event.rate_limit_info ?? event.api_error_params?.rate_limit_info;
+
+  if (limit?.status === "rejected") {
+    refused = limit;
+  }
+
   // The tokens so far after each message, so the engine knows them while the agent works; the
   // result's totals and cost replace them at the end.
   const { id, usage } = event.message ?? {};
@@ -794,6 +820,20 @@ if (closed instanceof Error) {
 
   if (failure !== undefined) {
     console.error(failure);
+  }
+
+  // A run the account's usage limit refused failed for no fault of the agent's: say which window,
+  // and when it resets, so the owner retries then.
+  if ((code !== 0 || failure !== undefined) && refused !== undefined) {
+    const type = refused.rateLimitType;
+    const window = type === undefined ? "usage limit" : `${windows.get(type) ?? type} usage window`;
+
+    const when =
+      refused.resetsAt === undefined
+        ? ""
+        : `; it resets at ${new Date(refused.resetsAt * 1000).toISOString()}`;
+
+    report(`Claude Code's ${window} is used up${when}.`);
   }
 
   // A claude ended by a signal has no exit code; the attempt failed all the same.

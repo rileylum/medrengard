@@ -487,6 +487,10 @@ const design = {
   (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`), so it runs on its own defaults rather than on flags
   that could change between attempts of one commission; features Anthropic gates by flag stay
   off. If `claude` says it still sends telemetry, the adapter records it as a leak.
+- A run the account's usage limit refused, such as the five-hour or weekly window of a
+  subscription, fails the attempt like any other, but its errors and a note say so, and when the
+  window resets: `Claude Code's five-hour usage window is used up; it resets at
+  2026-11-09T14:00:00.000Z.` Retry once it has.
 - A tool `claude` refused the agent, such as `Bash` under `acceptEdits`, is noted:
   `Claude Code denied Bash: npm test`. An attended session shows its refusals on screen.
 - Claude Code's managed settings in `/etc/claude-code`, which no flag turns off, are hidden from

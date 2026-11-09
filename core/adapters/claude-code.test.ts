@@ -753,6 +753,50 @@ test("the Claude Code adapter reports the tokens so far after each message, coun
   ]);
 });
 
+// 2026-11-09T14:00:00Z, as epoch seconds.
+const reset = Date.UTC(2026, 10, 9, 14) / 1000;
+
+/** A rate limit event as claude prints it, its window `type` in the state `status`. */
+const rateLimit = (status: string, type: string) =>
+  `echo '${JSON.stringify({
+    type: "rate_limit_event",
+    rate_limit_info: { status, rateLimitType: type, resetsAt: reset, utilization: 1 },
+  })}'`;
+
+for (const [type, window] of [
+  ["five_hour", "five-hour"],
+  ["seven_day", "weekly"],
+  ["seven_day_opus", "weekly Opus"],
+] as const) {
+  test(`a Claude Code run refused by its ${window} usage window says when the window resets`, async (t) => {
+    const { engine } = await engineWithClaude(
+      t,
+      `${rateLimit("rejected", type)}
+       echo '{"type":"result","subtype":"error_during_execution","is_error":true}'`,
+    );
+
+    const said = `Claude Code's ${window} usage window is used up; it resets at 2026-11-09T14:00:00.000Z.`;
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), { status: "escalated" });
+    assert.match(engine.errors("first", 1).toString(), new RegExp(`^${RegExp.escape(said)}$`, "m"));
+    assert.partialDeepStrictEqual(engine.record("first").entries, [
+      { notes: [{ note: said, from: "step" }] },
+    ]);
+  });
+}
+
+test("a Claude Code run warned of its usage window that succeeds says nothing of it", async (t) => {
+  const { engine } = await engineWithClaude(
+    t,
+    `${rateLimit("allowed_warning", "five_hour")}
+     ${succeeded}
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+  assert.doesNotMatch(engine.errors("first", 1).toString(), /usage window/);
+});
+
 test("the Claude Code adapter records that claude did not say what it loaded", async (t) => {
   const { engine, directory } = await engineWithClaude(
     t,
