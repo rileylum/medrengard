@@ -5,7 +5,6 @@
  *
  * Usage: claude-code.ts [--permission-mode acceptEdits|bypassPermissions] [--tools <names>]
  *                       [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]
- *                       [--token <file>]
  *
  * --max-budget-usd bounds only an unattended agent, so an attended one with it is refused.
  *
@@ -17,10 +16,10 @@
  * commits. A claude that did not apply these settings or load a declared skill is stopped before
  * its first turn, and the attempt fails; one that loaded more is recorded and runs on.
  *
- * --token is the file holding the subscription token, ~/.config/medrengard/claude-token unless
- * given. claude runs in a nested sandbox of its own, with the token on a descriptor: nothing the
- * agent runs can see this adapter or the outer sandbox, whose environments and files are where the
- * token would otherwise be found.
+ * claude reaches the model only through the step's broker `anthropic`, claude-code-broker.ts,
+ * which holds the subscription token outside the step's sandbox: claude has a placeholder in its
+ * place, so the token is nowhere the agent could read it. claude runs in a nested sandbox of its
+ * own, where what the agent runs sees only claude and itself.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -36,9 +35,10 @@ import {
   writeSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type { Writable } from "node:stream";
 import { parseArgs } from "node:util";
+import { placeholder } from "./broker.ts";
 
 // The part of a kind the adapter explains to the agent.
 type Kind = {
@@ -62,8 +62,7 @@ const input = process.env.MEDRENGARD_IN!;
 const output = process.env.MEDRENGARD_OUT!;
 
 const usage = `Usage: claude-code.ts [--permission-mode acceptEdits|bypassPermissions] [--tools <names>]
-                      [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]
-                      [--token <file>]`;
+                      [--effort low|medium|high|xhigh|max] [--max-budget-usd <dollars>]`;
 
 // Exits as a usage error, which the engine records as the attempt's errors.
 function refuse(problem: string): never {
@@ -80,7 +79,6 @@ try {
       tools: { type: "string", default: "Bash,Read,Edit,Write" },
       effort: { type: "string" },
       "max-budget-usd": { type: "string" },
-      token: { type: "string", default: join(homedir(), ".config", "medrengard", "claude-token") },
     },
   }));
 } catch (error) {
@@ -111,18 +109,13 @@ if (budget !== undefined && !(Number(budget) > 0)) {
   refuse(`The budget must be a positive number of dollars, not ${budget}.`);
 }
 
-const tokenFile = resolve(options.token);
+// Where the step reaches its broker, which the forwarder in its sandbox names.
+const broker = process.env.MEDRENGARD_BROKER_ANTHROPIC;
 
-let token;
-
-try {
-  token = readFileSync(tokenFile, "utf8").trim();
-} catch (error) {
-  refuse(`Cannot read the token file: ${error instanceof Error ? error.message : String(error)}.`);
-}
-
-if (token === "") {
-  refuse(`The token file ${tokenFile} is empty.`);
+if (broker === undefined) {
+  refuse(
+    "claude reaches the model only through the broker anthropic, which this step's access does not name: give it claudeCode's network.",
+  );
 }
 
 // SAFETY: the engine encodes input.json for an agent step with these fields.
@@ -251,9 +244,8 @@ const declared = [...tools, ...(skills.length === 0 ? [] : ["Skill"])];
 const managed = "/etc/claude-code";
 
 // claude's own sandbox: a PID namespace and /proc of its own, so what the agent runs sees only
-// claude and itself, and the token file and managed settings hidden; and no namespaces of the
-// agent's own, which the step's access grants only for this one. Every other mount stays as the
-// step's access made it.
+// claude and itself, and the managed settings hidden; and no namespaces of the agent's own, which
+// the step's access grants only for this one. Every other mount stays as the step's access made it.
 const nested = [
   "--die-with-parent",
   "--unshare-user",
@@ -264,27 +256,23 @@ const nested = [
   "/",
   "--proc",
   "/proc",
-  "--ro-bind",
-  "/dev/null",
-  tokenFile,
   // An empty directory needs a place to mount: only one that exists can be hidden, and one that
   // does not cannot load.
   ...(existsSync(managed) ? ["--size", "4096", "--tmpfs", managed, "--remount-ro", managed] : []),
   "--",
 ];
 
-// The token goes only on fd 3, which claude reads once. In claude's environment the agent's
-// commands could read it through /proc, so one the step was given is dropped.
-const { CLAUDE_CODE_OAUTH_TOKEN: _, ...environment } = process.env;
-
 // CLAUDE.md loads as Claude Code's own, not through a plugin, so only this variable keeps it out.
 // No telemetry, error reports or feature flags: flags fetched from Anthropic could change how
 // claude behaves between attempts of one commission, so it runs on its own defaults.
+// claude speaks plain HTTP to its broker on loopback, not through the step's proxy.
 const claudeEnvironment: NodeJS.ProcessEnv = {
-  ...environment,
+  ...process.env,
   CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-  CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: "3",
+  ANTHROPIC_BASE_URL: broker,
+  NO_PROXY: "127.0.0.1",
+  no_proxy: "127.0.0.1",
 };
 
 // An interactive claude would try to update itself, which its sandbox refuses, and say so on the
@@ -325,17 +313,18 @@ const headless = ["-p", "--output-format", "stream-json", "--verbose", "--includ
 // attended session does not. Random, as a commission's name is unique only within its log.
 const sessionId = randomUUID();
 
-// Starts claude in its sandbox, with `session` before its configuration and `secret` on fd 3.
-// stdin, when piped, is given `prompt`: Linux refuses one argument over 128 KiB.
+// Starts claude in its sandbox, with `session` before its configuration and `credential` as its
+// token: the placeholder its broker replaces, or another, which the broker refuses. stdin, when
+// piped, is given `prompt`: Linux refuses one argument over 128 KiB.
 function start(
   session: string[],
-  secret: string,
+  credential: string,
   stdio: ("inherit" | "pipe" | "ignore")[],
   prompt?: string,
 ): ChildProcess {
   const claude = spawn("bwrap", [...nested, "claude", ...session, ...configuration], {
-    env: claudeEnvironment,
-    stdio: [...stdio, "pipe"],
+    env: { ...claudeEnvironment, CLAUDE_CODE_OAUTH_TOKEN: credential },
+    stdio,
   });
 
   // A claude that ends before reading what it is given says why in its exit; the write has
@@ -353,12 +342,6 @@ function start(
     promptPipe.on("error", ignoreEnded);
     promptPipe.end(prompt);
   }
-
-  // SAFETY: stdio[3] is the "pipe" given above, which Node opens for the parent to write.
-  const tokenPipe = claude.stdio[3] as Writable;
-
-  tokenPipe.on("error", ignoreEnded);
-  tokenPipe.end(secret);
 
   return claude;
 }
@@ -764,8 +747,8 @@ function attendedSession(): string[] {
 }
 
 // An interactive session draws on the terminal and says nothing of what it loaded. So first the
-// same claude runs headless with a token that cannot authenticate: it says what it loaded before
-// its first request, which it would fail, and is stopped there. A start unfit to run opens no
+// same claude runs headless with a token the broker refuses: it says what it loaded before its
+// first request, which it would fail, and is stopped there. A start unfit to run opens no
 // session. The assumption, which nothing here checks: claude loads the same either way.
 async function dryRun(session: string[]): Promise<Startup> {
   const dryStartup: Startup = { applied: false, initialised: false, stopped: false };
@@ -878,7 +861,7 @@ if (attended) {
   version = dry.version;
 
   // The terminal is claude's.
-  claude = start(["Begin your step.", ...session, "--session-id", sessionId], token, [
+  claude = start(["Begin your step.", ...session, "--session-id", sessionId], placeholder, [
     "inherit",
     "inherit",
     "inherit",
@@ -887,7 +870,7 @@ if (attended) {
   // stdout is read, to note what the agent does, and passed on unchanged as the transcript.
   claude = start(
     [...headless, "--session-id", sessionId],
-    token,
+    placeholder,
     ["pipe", "pipe", "inherit"],
     prompt,
   );

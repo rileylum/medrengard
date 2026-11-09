@@ -1,8 +1,10 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,15 +15,38 @@ import { limits } from "../defaults/limits.ts";
 import { defineWorkflow, type Workflow } from "../src/replay.ts";
 
 const adapter = join(import.meta.dirname, "claude-code.ts");
+const broker = join(import.meta.dirname, "claude-code-broker.ts");
+
+/**
+ * A model API for a test, on loopback: it answers every request with 401, as the real one answers
+ * an invalid token, and appends the Authorization each carried to `received`. Its URL.
+ */
+async function upstreamRecording(t: TestContext, received: string): Promise<string> {
+  const server = createServer((request, response) => {
+    appendFileSync(received, `${request.headers.authorization ?? "none"}\n`);
+    request.resume();
+    response.writeHead(401, { "content-type": "application/json" });
+    response.end('{"type":"error","error":{"type":"authentication_error","message":"invalid"}}');
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  // SAFETY: a TCP server listening on a port has an address of that kind.
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
 
 /**
  * Starts an engine whose one agent step, `plan`, runs the Claude Code adapter with a fake `claude`
  * on its PATH, and commissions `first`. The fake runs `script`; its arguments are in the returned
  * directory's `arguments` file, its input and output directories in `directories`, each ended by a
  * NUL, the variable that keeps CLAUDE.md out in `claude-mds`, and what it read on stdin, its
- * prompt, in `prompt`. The adapter reads the token from the directory's `token` file. The agent's
+ * prompt, in `prompt`. Its broker reads the token from a file outside the sandbox, and forwards to a
+ * model API that records the Authorization of each request in the directory's `upstream`. The agent's
  * prompt is `prompt`, and it declares a skill for each of `skills`, its SKILL.md by name. Its home
  * is `/tmp`, fresh for each attempt.
+ *
+ * Without `brokered`, its access names no broker.
  *
  * With `continuing`, a step `first` runs before `plan`, which declares first's session as its input
  * `earlier`: the same agent, or a command step running a script.
@@ -33,6 +58,7 @@ async function engineWithClaude(
   skills: Readonly<Record<string, string>> = {},
   prompt = "Plan the change.",
   continuing?: { agent: true } | { command: string },
+  brokered = true,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
@@ -40,7 +66,13 @@ async function engineWithClaude(
 
   const claude = join(directory, "claude");
 
-  await writeFile(join(directory, "token"), "sk-ant-oat01-test-token");
+  // Apart from the test's directory, which the step sees.
+  const secrets = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(secrets, { recursive: true, force: true }));
+  await writeFile(join(secrets, "token"), "sk-ant-oat01-test-token");
+
+  const upstream = await upstreamRecording(t, join(directory, "upstream"));
 
   await writeFile(
     claude,
@@ -78,8 +110,6 @@ ${script}
           "HOME=/tmp",
           process.execPath,
           adapter,
-          "--token",
-          join(directory, "token"),
           ...args,
         ],
       },
@@ -103,7 +133,19 @@ ${script}
         { path: join(import.meta.dirname, ".."), mode: "read" },
         { path: directory, mode: "write" },
       ],
-      network: false,
+      network: brokered && {
+        hosts: [],
+        brokers: {
+          anthropic: [
+            process.execPath,
+            broker,
+            "--token",
+            join(secrets, "token"),
+            "--upstream",
+            upstream,
+          ] as const,
+        },
+      },
       environment: [],
       workspace: "write",
       sandboxes: true,
@@ -262,22 +304,48 @@ test("the Claude Code adapter runs claude headless with the agent, whose claim c
   assert.ok(!prompt.includes("CLAUDE.md"));
 });
 
-test("the Claude Code adapter gives claude the token only on a descriptor, out of reach of what the agent runs", async (t) => {
-  // As anything the agent runs could: the token in any process's environment or command line, or
-  // in the token file. The token to look for is the one claude was given.
+test("the Claude Code adapter gives claude only a placeholder, which its broker swaps for the token outside the sandbox", async (t) => {
+  // As claude would, a request to the model API; then, as anything the agent runs could, the token
+  // looked for in every process's environment and command line, given on stdin so the search
+  // itself does not carry it.
   const { engine, directory } = await engineWithClaude(
     t,
     `${succeeded}
-     eval "cat <&$CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" > "${"$"}{0%/claude}/received"
-     for file in /proc/[0-9]*/environ /proc/[0-9]*/cmdline "${"$"}{0%/claude}/token"; do
-       grep -qaF -f "${"$"}{0%/claude}/received" "$file" 2>/dev/null && echo "$file"
+     printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" > "${"$"}{0%/claude}/given"
+     printf '%s' "$ANTHROPIC_BASE_URL" > "${"$"}{0%/claude}/base"
+     curl -sS -H "Authorization: Bearer $CLAUDE_CODE_OAUTH_TOKEN" "$ANTHROPIC_BASE_URL/v1/messages" > /dev/null
+     for file in /proc/[0-9]*/environ /proc/[0-9]*/cmdline; do
+       printf '%s\\n' "sk-ant-oat01-test""-token" | grep -qaF -f - "$file" 2>/dev/null && echo "$file"
      done > "${"$"}{0%/claude}/exposed"
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
-  assert.equal(await readFile(join(directory, "received"), "utf8"), "sk-ant-oat01-test-token");
+  assert.equal(await readFile(join(directory, "given"), "utf8"), "medrengard-broker");
+  assert.match(await readFile(join(directory, "base"), "utf8"), /^http:\/\/127\.0\.0\.1:\d+$/);
+  assert.equal(
+    await readFile(join(directory, "upstream"), "utf8"),
+    "Bearer sk-ant-oat01-test-token\n",
+  );
   assert.equal(await readFile(join(directory, "exposed"), "utf8"), "");
+});
+
+test("the Claude Code adapter refuses a step whose access names no broker for it", async (t) => {
+  const { engine } = await engineWithClaude(
+    t,
+    "true",
+    ["--effort", "low"],
+    {},
+    "Plan the change.",
+    undefined,
+    false,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step plan exited with code 2.",
+  });
+  assert.match(engine.errors("first", 1).toString(), /through the broker anthropic/);
 });
 
 test("what the agent runs under the Claude Code adapter cannot make namespaces of its own", async (t) => {
@@ -436,7 +504,7 @@ for (const args of [
   ["--tools", "Bash,,Read"],
   ["--colour", "red"],
   ["--effort"],
-  ["--token", "/nonexistent/token"],
+  ["--token", "/a/token"],
 ]) {
   test(`the Claude Code adapter refuses ${JSON.stringify(args)}`, async (t) => {
     const { engine } = await engineWithClaude(t, "true", args);
@@ -939,6 +1007,16 @@ test("the Claude Code adapter records that claude did not say what it loaded", a
 // Claude Code that loads something more, such as a built-in plugin, fails this test, not a paid run.
 const installed = join(homedir(), ".local", "bin", "claude");
 
+/** claudeCode's access, its broker reading the token from `token`. */
+function withToken(token: string) {
+  const { anthropic } = claudeCode.network.brokers;
+
+  return {
+    ...claudeCode,
+    network: { hosts: [], brokers: { anthropic: [...anthropic, "--token", token] } },
+  } as const;
+}
+
 test(
   "the installed Claude Code loads nothing the agent did not declare",
   { skip: !existsSync(installed) && "Claude Code is not installed", timeout: 60_000 },
@@ -964,14 +1042,7 @@ test(
               workspace: "empty",
               agent: {
                 harness: {
-                  run: [
-                    "node",
-                    adapter,
-                    "--token",
-                    join(directory, "token"),
-                    "--permission-mode",
-                    "bypassPermissions",
-                  ],
+                  run: ["node", adapter, "--permission-mode", "bypassPermissions"],
                 },
                 model: "sonnet",
                 prompt: "Plan the change.",
@@ -979,10 +1050,7 @@ test(
               inputs: {},
               on: { done: "end" },
               budget: 1,
-              access: {
-                ...claudeCode,
-                paths: [...claudeCode.paths, { path: directory, mode: "read" }],
-              },
+              access: withToken(join(directory, "token")),
               limits: { idle: 30, attempt: 60, transcript: 1024 * 1024, input: 1024 * 1024 },
             },
           },
@@ -997,8 +1065,8 @@ test(
 
     const errors = engine.errors("first", 1).toString();
 
-    // claudeCode's network is the model API alone, through the engine's proxy: the API refused
-    // the token, so the request reached it, and nothing was refused on the way.
+    // claudeCode reaches the model API only through its broker: the API refused the token the
+    // broker added, so the request reached it, and nothing was refused on the way.
     assert.match(engine.transcript("first", 1).toString(), /"error_status":401/);
     assert.deepEqual(
       engine
@@ -1134,7 +1202,6 @@ test(
     await rm(join(directory, "mcp-ran"));
     await rm(join(directory, "hook-ran"));
 
-    await writeFile(join(directory, "token"), "sk-ant-oat01-invalid-for-a-test");
     await writeFile(
       join(input, "input.json"),
       JSON.stringify({
@@ -1149,23 +1216,21 @@ test(
       }),
     );
 
-    const adapted = spawn(
-      process.execPath,
-      [adapter, "--token", join(directory, "token"), "--permission-mode", "bypassPermissions"],
-      {
-        cwd: workspace,
-        env: {
-          PATH: process.env.PATH,
-          HOME: home,
-          TMPDIR: directory,
-          MEDRENGARD_IN: input,
-          MEDRENGARD_OUT: output,
-          CLAUDE_CODE_MAX_RETRIES: "0",
-        },
-        // fd 4 is the step's usage reports, as the engine gives it.
-        stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
+    const adapted = spawn(process.execPath, [adapter, "--permission-mode", "bypassPermissions"], {
+      cwd: workspace,
+      env: {
+        PATH: process.env.PATH,
+        HOME: home,
+        TMPDIR: directory,
+        MEDRENGARD_IN: input,
+        MEDRENGARD_OUT: output,
+        // In its broker's place, a model API that refuses every request.
+        MEDRENGARD_BROKER_ANTHROPIC: await upstreamRecording(t, join(directory, "upstream")),
+        CLAUDE_CODE_MAX_RETRIES: "0",
       },
-    );
+      // fd 4 is the step's usage reports, as the engine gives it.
+      stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
+    });
 
     let said = "";
 
@@ -1257,14 +1322,7 @@ test(
               workspace: "empty",
               agent: {
                 harness: {
-                  run: [
-                    "env",
-                    "CLAUDE_CODE_MAX_RETRIES=0",
-                    "node",
-                    adapter,
-                    "--token",
-                    join(directory, "token"),
-                  ],
+                  run: ["env", "CLAUDE_CODE_MAX_RETRIES=0", "node", adapter],
                 },
                 model: "sonnet",
                 prompt: "Plan the change.",
@@ -1273,10 +1331,7 @@ test(
               inputs: { earlier: { session: "plan" } },
               on: { done: "end" },
               budget: 2,
-              access: {
-                ...claudeCode,
-                paths: [...claudeCode.paths, { path: directory, mode: "read" }],
-              },
+              access: withToken(join(directory, "token")),
               limits: { idle: 30, attempt: 60, transcript: 1024 * 1024, input: 1024 * 1024 },
             },
           },
@@ -1376,7 +1431,6 @@ async function attendedAdapter(
     await writeFile(join(home, ".claude.json"), claudeJson);
   }
 
-  await writeFile(join(directory, "token"), "sk-ant-oat01-test-token");
   await writeFile(
     join(input, "input.json"),
     JSON.stringify({
@@ -1398,11 +1452,12 @@ async function attendedAdapter(
     `#!/bin/sh
 if [ "$1" = -p ]; then
   printf '%s\\0' "$@" > "${join(directory, "dry-arguments")}"
-  eval "cat <&$CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR" > "${join(directory, "dry-token")}"
+  printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" > "${join(directory, "dry-token")}"
   ${dry}
   exit 1
 fi
 printf '%s\\0' "$@" > "${join(directory, "arguments")}"
+printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" > "${join(directory, "token")}"
 [ -t 0 ] && echo yes > "${join(directory, "terminal")}"
 printf '%s' "$DISABLE_AUTOUPDATER" > "${join(directory, "updater")}"
 printf '%s' "$CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" > "${join(directory, "traffic")}"
@@ -1424,10 +1479,10 @@ ${session}
     `TMPDIR=${directory}`,
     `MEDRENGARD_IN=${input}`,
     `MEDRENGARD_OUT=${output}`,
+    // As the forwarder names it; the fake claude never reaches it.
+    "MEDRENGARD_BROKER_ANTHROPIC=http://127.0.0.1:9",
     process.execPath,
     adapter,
-    "--token",
-    join(directory, "token"),
     ...args,
   ].map((arg) => `'${arg}'`);
 
@@ -1454,6 +1509,7 @@ ${session}
     arguments: (await recorded("arguments")).split("\0").slice(0, -1),
     dryArguments: (await recorded("dry-arguments")).split("\0").slice(0, -1),
     dryToken: await recorded("dry-token"),
+    token: await recorded("token"),
     terminal: await recorded("terminal"),
     system: await recorded("system"),
     claudeJson: await recorded("claude.json"),
@@ -1517,8 +1573,8 @@ test("the Claude Code adapter first runs an attended agent's claude headless, to
 
   assert.equal(run.code, 0);
 
-  // The session's own flags, headless and streamed, with a token that cannot authenticate, so the
-  // dry run stops at its first request and costs nothing.
+  // The session's own flags, headless and streamed, with a token its broker refuses, so the dry
+  // run stops at its first request and costs nothing; the session has the placeholder.
   const flags = (argv: string[]) => argv.slice(argv.indexOf("--permission-mode"));
 
   assert.deepEqual(run.dryArguments.slice(0, 5), [
@@ -1532,7 +1588,8 @@ test("the Claude Code adapter first runs an attended agent's claude headless, to
   assert.ok(run.arguments.includes("--strict-mcp-config"));
   assert.deepEqual(flags(run.dryArguments), flags(run.arguments));
   assert.notEqual(run.dryToken, "");
-  assert.notEqual(run.dryToken, "sk-ant-oat01-test-token");
+  assert.notEqual(run.dryToken, "medrengard-broker");
+  assert.equal(run.token, "medrengard-broker");
 });
 
 for (const { what, dry, stopped } of [

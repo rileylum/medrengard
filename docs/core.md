@@ -57,7 +57,7 @@ Every step except an approval step is a program. The engine starts it with:
 - `MEDRENGARD_OUT`: `/output`, an empty directory where the step writes `output.json` and the files its artifacts refer to, and may leave `session`: its harness's conversation, opaque to the engine, which a later attempt may continue. The engine keeps it however the attempt ends, an interrupted one's included, if it is a regular file within the step's transcript limit; one over it is not kept, and a claim cannot complete the attempt;
 - file descriptor 3, where the step may write notes for the owner, one per line, each at most 4096 bytes and all counted with its transcript;
 - file descriptor 4, where the step may report what it has used so far, one JSON line per report: money in US dollars, `usd`, and tokens, `input`, `output`, `cacheRead` and `cacheWrite`, as its harness counts them. The latest report stands. Each is at most 4096 bytes and counted with its transcript; a line that is not a report escalates. A report is the step's claim: nothing verifies it;
-- only the environment its access declares, with `PWD` naming its workspace; when its access lists the hosts it may reach, also the proxy variables, pointing at the engine's proxy for them.
+- only the environment its access declares, with `PWD` naming its workspace; when its access lists the hosts it may reach, also the proxy variables, pointing at the engine's proxy for them, and for each broker it names, `MEDRENGARD_BROKER_<NAME>`, the broker's address on loopback.
 
 An attended step has the owner's terminal, recorded through a pseudo-terminal: it starts only when the owner attends it, in their terminal, and ends when its program does, so the owner can go back and forth with its agent until they leave. Their typing counts as activity, though what they type is not kept. While it runs, the engine notes for the owner what each `output.json` it writes would amount to: its outcome and artifacts, or why it would escalate. An unattended step gets empty stdin, and its stdout and stderr are its transcript.
 
@@ -191,6 +191,7 @@ _Step contract: the process boundary._
 - Input: what a step declares by name and query, and receives as the artifacts the query names. Every input's bodies sit in `MEDRENGARD_IN`, beside `input.json`.
 - Output: the directory where a step writes its claim, `output.json`, and the files it refers to.
 - Sandbox: the confinement that enforces a step's access.
+- Broker: a program a step's access names, which the engine runs outside its sandbox while an attempt runs and the step reaches on loopback: it holds a credential and adds it to what it forwards, so the credential never enters the sandbox. What the step runs can use it through the broker, but never read it.
 - Harness adapter: the program that translates the step contract into a harness's own interface; vendor concepts stop there.
 - Verifier: the program a kind runs to accept or reject a claim, and to name the files the store keeps.
 - Materialiser: the program a kind runs to build a later step's workspace from an artifact.

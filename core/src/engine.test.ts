@@ -5699,12 +5699,129 @@ test("a step whose access lists hosts reaches them through the engine's proxy, a
   ]);
 });
 
+/**
+ * A broker for a test: a program that listens on MEDRENGARD_SOCKET and answers every request with
+ * `answer` and the Authorization it was given, and records its process id in `pid` and its
+ * environment's MEDRENGARD_SOCKET in `socket`, in `directory`. Its argv.
+ */
+async function brokerIn(directory: string, answer: string): Promise<[string, ...string[]]> {
+  const program = join(directory, "broker.mjs");
+
+  await writeFile(
+    program,
+    `import { createServer } from "node:http";
+     import { writeFileSync } from "node:fs";
+     writeFileSync(${JSON.stringify(join(directory, "pid"))}, String(process.pid));
+     writeFileSync(${JSON.stringify(join(directory, "socket"))}, process.env.MEDRENGARD_SOCKET);
+     createServer((request, response) =>
+       response.end(${JSON.stringify(answer)} + " " + (request.headers.authorization ?? "none")),
+     ).listen(process.env.MEDRENGARD_SOCKET);`,
+  );
+
+  return [process.execPath, program];
+}
+
+/** Whether the process `pid` still runs. */
+function running(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test("a step whose access names a broker reaches it on loopback, and the broker stops with the attempt", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          ...stepRunning(
+            `printenv MEDRENGARD_BROKER_MODEL > "$1/url"
+             curl -sS --noproxy '*' -H 'Authorization: Bearer placeholder' "$MEDRENGARD_BROKER_MODEL/v1" > "$1/brokered"
+             echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+            [directory],
+          ),
+          access: {
+            ...access,
+            network: {
+              hosts: [],
+              brokers: { model: [process.execPath, join(directory, "broker.mjs")] },
+            },
+          },
+        },
+      },
+    }),
+  );
+
+  await brokerIn(directory, "brokered");
+
+  const ended = await engine.advance("first");
+
+  assert.partialDeepStrictEqual(
+    ended,
+    { status: "finished" },
+    engine.errors("first", 1).toString(),
+  );
+
+  const read = (name: string) => readFile(join(directory, name), "utf8");
+
+  assert.match(await read("url"), /^http:\/\/127\.0\.0\.1:\d+\n$/);
+  assert.equal(await read("brokered"), "brokered Bearer placeholder");
+  // Outside the sandbox, on a socket of the engine's, not the step's.
+  assert.doesNotMatch(await read("socket"), /^\/network\//);
+  assert.equal(running(Number(await read("pid"))), false);
+});
+
+test("a broker that ends before it listens escalates its attempt, which never starts its program", async (t) => {
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          ...stepRunning(`touch "$1/ran"`, "end", [directory]),
+          access: {
+            ...access,
+            network: {
+              hosts: [],
+              brokers: { model: ["sh", "-c", "echo 'no credential' >&2; exit 1"] },
+            },
+          },
+        },
+      },
+    }),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step build's broker model ended before it listened: no credential",
+  });
+  assert.equal(existsSync(join(directory, "ran")), false);
+});
+
 for (const [what, network, problem] of [
-  ["no hosts", { hosts: [] }, "network access must be true, false, or hosts it may reach"],
+  [
+    "no hosts",
+    { hosts: [] },
+    "network access must be true, false, or hosts it may reach and any brokers, each a name of lowercase letters and digits and a program",
+  ],
+  [
+    "a broker with no program",
+    { hosts: [], brokers: { model: [] } },
+    "network access must be true, false, or hosts it may reach and any brokers, each a name of lowercase letters and digits and a program",
+  ],
+  [
+    "a broker whose name is not lowercase letters and digits",
+    { hosts: [], brokers: { "Model-API": ["broker"] } },
+    "network access must be true, false, or hosts it may reach and any brokers, each a name of lowercase letters and digits and a program",
+  ],
   [
     "a host that is no host",
     { hosts: ["not a host"] },
-    "network access must be true, false, or hosts it may reach",
+    "network access must be true, false, or hosts it may reach and any brokers, each a name of lowercase letters and digits and a program",
   ],
 ] as const) {
   test(`access whose network lists ${what} cannot be commissioned`, async (t) => {

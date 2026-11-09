@@ -14,11 +14,56 @@ const order = { write: 0, empty: 1, scratch: 1, read: 2, hidden: 3 };
 /** What a program may use at once: bytes of memory, and processes and threads. */
 export type Bounds = { memory: number; processes: number };
 
+/**
+ * Where a step that may reach only some hosts finds the engine's: its proxy's socket, and each of
+ * its brokers' by name.
+ */
+export type Network = { proxy: string; brokers: ReadonlyMap<string, string> };
+
 // What systemd-run needs to reach the owner's systemd, and what the scope adds; a step has them
 // only when its access names them.
 const scoped = ["XDG_RUNTIME_DIR", "INVOCATION_ID"];
 
 const runtime = process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid!()}`;
+
+/**
+ * systemd-run's arguments, before the command they run, that put it in a scope of the owner's
+ * systemd named `unit`, which holds its memory and processes within `bounds`.
+ */
+export function scope(unit: string, bounds: Bounds): string[] {
+  return [
+    "--user",
+    "--scope",
+    "--quiet",
+    // Otherwise systemd-run replaces $NAME in the command's own arguments, and $$ with $.
+    "--expand-environment=no",
+    "--unit",
+    unit,
+    "-p",
+    `MemoryMax=${bounds.memory}`,
+    // Swap would let a program past its memory limit by slowing the machine instead.
+    "-p",
+    "MemorySwapMax=0",
+    "-p",
+    `TasksMax=${bounds.processes}`,
+    "--",
+  ];
+}
+
+/**
+ * The command that runs `argv` outside any sandbox, with `env`, in a scope of the owner's systemd
+ * that holds it within `bounds`, and the scope's unit.
+ */
+export function inScope(argv: readonly string[], bounds: Bounds, env: NodeJS.ProcessEnv) {
+  const unit = `medrengard-${randomUUID()}`;
+
+  return {
+    unit,
+    command: "systemd-run",
+    args: [...scope(unit, bounds), ...argv],
+    env: { XDG_RUNTIME_DIR: runtime, ...env },
+  };
+}
 
 /**
  * The command that runs `argv` in `areas.workspace`, which it sees as /workspace, under `access`, within `bounds`, the
@@ -30,7 +75,7 @@ export function confine(
   areas: Areas,
   argv: readonly [string, ...string[]],
   bounds: Bounds,
-  proxy?: string,
+  network?: Network,
 ) {
   // The step contract's directories, where the program sees them: fixed paths that name nothing of
   // the owner's machine, the same for every step. A step given / sees the machine as it is, its
@@ -94,9 +139,12 @@ export function confine(
   const unit = `medrengard-${randomUUID()}`;
 
   // A step that may reach only some hosts has loopback alone: the forwarder there relays to the
-  // engine's proxy, at `proxy`, which decides. This Node and the forwarder are bound in to run it.
+  // engine's proxy, which decides, and to each broker. This Node and the forwarder are bound in to
+  // run it.
+  const brokers = [...(network?.brokers ?? [])];
+
   const forwarding =
-    proxy === undefined
+    network === undefined
       ? []
       : [
           "--ro-bind",
@@ -106,8 +154,9 @@ export function confine(
           join(import.meta.dirname, "forward.ts"),
           "/network/forward.mts",
           "--bind",
-          proxy,
+          network.proxy,
           "/network/socket",
+          ...brokers.flatMap(([name, socket]) => ["--bind", socket, `/network/brokers/${name}`]),
         ];
 
   const unset =
@@ -119,21 +168,7 @@ export function confine(
     unit,
     command: "systemd-run",
     args: [
-      "--user",
-      "--scope",
-      "--quiet",
-      // Otherwise systemd-run replaces $NAME in the step's own arguments, and $$ with $.
-      "--expand-environment=no",
-      "--unit",
-      unit,
-      "-p",
-      `MemoryMax=${bounds.memory}`,
-      // Swap would let a step past its memory limit by slowing the machine instead.
-      "-p",
-      "MemorySwapMax=0",
-      "-p",
-      `TasksMax=${bounds.processes}`,
-      "--",
+      ...scope(unit, bounds),
       "bwrap",
       ...unset.flatMap((name) => ["--unsetenv", name]),
       // Each namespace by name: --unshare-all only tries for the user and cgroup ones, and carries
@@ -167,9 +202,16 @@ export function confine(
       "--chdir",
       seen.workspace,
       "--",
-      ...(proxy === undefined
+      ...(network === undefined
         ? argv
-        : ["/network/node", "/network/forward.mts", "/network/socket", "--", ...argv]),
+        : [
+            "/network/node",
+            "/network/forward.mts",
+            "/network/socket",
+            ...brokers.map(([name]) => `${name}=/network/brokers/${name}`),
+            "--",
+            ...argv,
+          ]),
     ],
     env: {
       XDG_RUNTIME_DIR: runtime,

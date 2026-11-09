@@ -56,8 +56,15 @@ export type Access = {
     | { path: string; mode: "empty"; size: number }
   )[];
   // All of it, none, or only these hosts, through a proxy the engine runs: `host` on port 443,
-  // `host:port`, or `*.domain` for its subdomains.
-  network: boolean | { hosts: readonly string[] };
+  // `host:port`, or `*.domain` for its subdomains. Each broker is a program the engine runs outside
+  // the sandbox while an attempt runs, which the step reaches on loopback: one that holds a
+  // credential and adds it to what it forwards, so the credential never enters the sandbox.
+  network:
+    | boolean
+    | {
+        hosts: readonly string[];
+        brokers?: Readonly<Record<string, readonly [string, ...string[]]>>;
+      };
   environment: readonly string[] | "all";
   values?: Readonly<Record<string, string>>;
   workspace: "read" | "write";

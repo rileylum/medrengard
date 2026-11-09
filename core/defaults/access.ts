@@ -47,10 +47,11 @@ export function gitIdentity(name: string, email: string) {
 }
 
 /**
- * What headless Claude Code needs through the adapter in `adapters/`: Node to run the adapter and npm,
- * the `claude` executable, the model API, the only host it reaches, the subscription token in the adapter's default token file
- * and a Git identity to commit with, Medrengard's unless a factory sets its own with gitIdentity. Its home is empty, so the owner's settings, skills, hooks and
- * MCP servers never load.
+ * What headless Claude Code needs through the adapter in `adapters/`: Node to run the adapter and
+ * npm, the `claude` executable, its broker, the only way to the model API, which holds the
+ * subscription token from its default token file outside the sandbox, and a Git identity to commit
+ * with, Medrengard's unless a factory sets its own with gitIdentity. It reaches no host itself.
+ * Its home is empty, so the owner's settings, skills, hooks and MCP servers never load.
  */
 export const claudeCode = {
   paths: [
@@ -62,12 +63,18 @@ export const claudeCode = {
     { path: join(import.meta.dirname, "..", "adapters"), mode: "read" },
     // A symlink to the current version; bwrap binds the version it points to when the step starts.
     { path: join(ownerHome, ".local", "bin", "claude"), mode: "read" },
-    // Read by the adapter, which hides it from the agent; never in the environment.
-    { path: join(ownerHome, ".config", "medrengard", "claude-token"), mode: "read" },
   ],
-  // Only the model API, so nothing the agent runs can reach anywhere else. A factory lists more, as
-  // `{ ...claudeCode, network: { hosts: [...claudeCode.network.hosts, "registry.npmjs.org"] } }`.
-  network: { hosts: ["api.anthropic.com"] },
+  // Only the broker, so nothing the agent runs can reach anywhere else. A factory lists hosts, as
+  // `{ ...claudeCode, network: { ...claudeCode.network, hosts: ["registry.npmjs.org"] } }`.
+  network: {
+    hosts: [],
+    brokers: {
+      anthropic: [
+        process.execPath,
+        join(import.meta.dirname, "..", "adapters", "claude-code-broker.ts"),
+      ],
+    },
+  },
   environment: ["PATH", "HOME", "LANG"],
   values: gitIdentity("Medrengard", "medrengard@localhost"),
   workspace: "write",
