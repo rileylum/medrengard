@@ -71,15 +71,15 @@ cleanup couldn't remove.
 
 ## What changed
 
-![Each configuration against the baseline, paired by problem: differences in solved, Core, erosion and verbosity with 95% intervals.](../figures/differences.svg)
+![Each configuration against the baseline, paired by problem: differences in solved, Core, erosion, verbosity and breakage with 95% intervals.](../figures/differences.svg)
 
 Paired by problem against the baseline, n=3, eleven problems, bootstrap 95% intervals:
 
-| | solved | Core | erosion | verbosity | $ per problem |
-|---|---|---|---|---|---|
-| baseline | 0.697 | 0.855 | 0.707 | 0.358 | 3.20 |
-| code-review − baseline | +0.001 [−0.059, 0.059] | +0.016 [−0.007, 0.046] | **−0.190 [−0.246, −0.134]** | **−0.098 [−0.135, −0.059]** | +3.69 (2.2×) |
-| verification − baseline | −0.012 [−0.065, 0.036] | −0.008 [−0.034, 0.014] | −0.050 [−0.097, −0.001] | −0.049 [−0.091, −0.008] | +0.80 (1.25×) |
+| | solved | Core | erosion | verbosity | breakage | $ per problem |
+|---|---|---|---|---|---|---|
+| baseline | 0.697 | 0.855 | 0.707 | 0.358 | 0.002 | 3.20 |
+| code-review − baseline | +0.001 [−0.059, 0.059] | +0.016 [−0.007, 0.046] | **−0.190 [−0.246, −0.134]** | **−0.098 [−0.135, −0.059]** | +0.011 [−0.003, 0.039] | +3.69 (2.2×) |
+| verification − baseline | −0.012 [−0.065, 0.036] | −0.008 [−0.034, 0.014] | −0.050 [−0.097, −0.001] | −0.049 [−0.091, −0.008] | +0.003 [−0.003, 0.016] | +0.80 (1.25×) |
 
 ### code-review: much cleaner code, no change in correctness
 
@@ -98,6 +98,16 @@ textdrop and −0.34 on eve_industry.
 Correctness didn't move. Solved changed by +0.001, and its interval rules out any change bigger
 than about six points either way. Per problem, the differences were small and went both ways
 (mvvault −0.11, eve_jump_planner +0.11), within what three runs can tell apart.
+
+Test by test, it looks the same. Across every checkpoint of every problem, only two test families
+separate code-review from the baseline consistently, meaning every code-review run passes them and
+every baseline run fails them, or the other way round. Both are textdrop's input-validation tests
+(rejecting a JSON submission with a missing or wrong key, and rejecting invalid render payloads),
+and code-review passes both. Nothing goes the other way.
+
+Nor did cleaner code protect against regressions. **Breakage**, the share of tests that passed at
+their own checkpoint and fail at a later one, is tiny for every configuration and doesn't differ
+from the baseline's (+0.011 [−0.003, 0.039]). Part 4 shows why: there's almost nothing to break.
 
 ### verification: little change
 

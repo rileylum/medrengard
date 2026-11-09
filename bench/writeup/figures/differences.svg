@@ -1,21 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 236" width="620" height="236" role="img" font-family="system-ui, sans-serif" font-size="12">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 270" width="620" height="270" role="img" font-family="system-ui, sans-serif" font-size="12">
 <title>Against the baseline, paired by problem (n=3, 11 problems)</title>
-<desc>Mean difference from the baseline with bootstrap 95% intervals. code-review: solved 0.001, Core 0.016, erosion -0.190, verbosity -0.098; verification: solved -0.012, Core -0.008, erosion -0.050, verbosity -0.049</desc>
-<rect width="620" height="236" fill="white"/>
+<desc>Mean difference from the baseline with bootstrap 95% intervals. code-review: solved 0.001, Core 0.016, erosion -0.190, verbosity -0.098, breakage 0.011; verification: solved -0.012, Core -0.008, erosion -0.050, verbosity -0.049, breakage 0.003</desc>
+<rect width="620" height="270" fill="white"/>
 <text x="12" y="20" font-size="14" font-weight="600">Against the baseline, paired by problem (n=3, 11 problems)</text>
 <circle cx="170" cy="36" r="4" fill="#0072B2"/><text x="178" y="40">code-review</text>
 <circle cx="320" cy="36" r="4" fill="#E69F00"/><text x="328" y="40">verification</text>
-<line x1="170" x2="170" y1="50" y2="196" stroke="#e5e5e5"/>
-<text x="170" y="210" text-anchor="middle">-0.3</text>
-<line x1="275" x2="275" y1="50" y2="196" stroke="#e5e5e5"/>
-<text x="275" y="210" text-anchor="middle">-0.2</text>
-<line x1="380" x2="380" y1="50" y2="196" stroke="#e5e5e5"/>
-<text x="380" y="210" text-anchor="middle">-0.1</text>
-<line x1="485" x2="485" y1="50" y2="196" stroke="#e5e5e5"/>
-<text x="485" y="210" text-anchor="middle">0</text>
-<line x1="590" x2="590" y1="50" y2="196" stroke="#e5e5e5"/>
-<text x="590" y="210" text-anchor="middle">0.1</text>
-<text x="380" y="228" text-anchor="middle">difference from the baseline</text>
+<line x1="170" x2="170" y1="50" y2="230" stroke="#e5e5e5"/>
+<text x="170" y="244" text-anchor="middle">-0.3</text>
+<line x1="275" x2="275" y1="50" y2="230" stroke="#e5e5e5"/>
+<text x="275" y="244" text-anchor="middle">-0.2</text>
+<line x1="380" x2="380" y1="50" y2="230" stroke="#e5e5e5"/>
+<text x="380" y="244" text-anchor="middle">-0.1</text>
+<line x1="485" x2="485" y1="50" y2="230" stroke="#e5e5e5"/>
+<text x="485" y="244" text-anchor="middle">0</text>
+<line x1="590" x2="590" y1="50" y2="230" stroke="#e5e5e5"/>
+<text x="590" y="244" text-anchor="middle">0.1</text>
+<text x="380" y="262" text-anchor="middle">difference from the baseline</text>
 <text x="162" y="71" text-anchor="end">solved</text>
 <line x1="423" x2="546.6" y1="62" y2="62" stroke="#0072B2" stroke-width="2"/>
 <circle cx="486.1" cy="62" r="4" fill="#0072B2"/>
@@ -36,4 +36,9 @@
 <circle cx="382.3" cy="164" r="4" fill="#0072B2"/>
 <line x1="389.7" x2="477" y1="174" y2="174" stroke="#E69F00" stroke-width="2"/>
 <circle cx="433.9" cy="174" r="4" fill="#E69F00"/>
+<text x="162" y="207" text-anchor="end">breakage</text>
+<line x1="481.6" x2="525.7" y1="198" y2="198" stroke="#0072B2" stroke-width="2"/>
+<circle cx="496.4" cy="198" r="4" fill="#0072B2"/>
+<line x1="481.4" x2="501.9" y1="208" y2="208" stroke="#E69F00" stroke-width="2"/>
+<circle cx="488.2" cy="208" r="4" fill="#E69F00"/>
 </svg>

@@ -46,6 +46,8 @@ Lower is better for both. From the tests we derive:
 
 - **Solved**: the share of a problem's checkpoints where every Core test passes.
 - **Core**: the mean share of Core tests passing per checkpoint.
+- **Breakage**: at each checkpoint after the first, the share of tests that passed at their own
+  checkpoint and now fail in its Regression group (part 4).
 
 ## The harness: Medrengard
 

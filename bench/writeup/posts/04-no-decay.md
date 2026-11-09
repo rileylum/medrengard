@@ -43,9 +43,14 @@ It doesn't grow with the horizon, either:
 There's a slight rise through checkpoint 5 and none after. Checkpoints 7 and 8 come from only a
 few problems, but they're the longest-lived code in the benchmark, and nothing broke there.
 
-The baseline breaks a little more than code-review in the study (12 test results against 8), in
-the direction the clean-code argument predicts. But it's a difference of four tests in ten
-thousand, too small to move any checkpoint from solved to unsolved.
+Without those two problems, the baseline breaks a little more than code-review in the study (12
+test results against 8), in the direction the clean-code argument predicts. But it's a difference
+of four tests in ten thousand, too small to move any checkpoint from solved to unsolved. With them,
+as the study's standard report pairs all eleven problems, it tips the other way: code-review's
+mean breakage is 0.013 against the baseline's 0.002, a difference of +0.011 [−0.003, 0.039] that
+the interval can't tell from zero. It comes almost entirely from layered_config_synthesizer, where
+following one checkpoint's spec breaks the last one's tests (below). Either way, cleaner code
+doesn't measurably protect against breakage here.
 
 ## "Regression" scores fall anyway, and it isn't regression
 
