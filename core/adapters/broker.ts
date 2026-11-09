@@ -17,13 +17,19 @@ export function refuse(problem: string): never {
 }
 
 /**
- * What a broker does with a request: answers it itself, or forwards it to `path` upstream with
- * `headers` set over the request's own. `unauthorised`, when given, is told of an upstream 401,
- * which the harness then sees as 403, so it does not try to refresh a credential it does not hold.
+ * What a broker does with a request: answers it itself, or forwards it to `path` upstream, or to
+ * `upstream` when given, with `headers` set over the request's own. `unauthorised`, when given, is
+ * told of an upstream 401, which the harness then sees as 403, so it does not try to refresh a
+ * credential it does not hold.
  */
 export type Route =
   | { status: number; body: string }
-  | { path: string; headers: OutgoingHttpHeaders; unauthorised?: () => void };
+  | {
+      path: string;
+      headers: OutgoingHttpHeaders;
+      upstream?: URL;
+      unauthorised?: () => void;
+    };
 
 /**
  * Serves as a broker: each request whose Authorization is the placeholder as a bearer token goes
@@ -39,8 +45,6 @@ export function serve(
   if (socket === undefined) {
     refuse("A broker listens on the socket MEDRENGARD_SOCKET names, which is not set.");
   }
-
-  const send = upstream.protocol === "https:" ? tlsRequest : plainRequest;
 
   const server = createServer(async (request, response) => {
     const answer = (status: number, body: string) => {
@@ -84,14 +88,17 @@ export function serve(
       return;
     }
 
+    const target = routed.upstream ?? upstream;
+    const send = target.protocol === "https:" ? tlsRequest : plainRequest;
+
     const forwarded = send(
       {
-        protocol: upstream.protocol,
-        host: upstream.hostname,
-        port: upstream.port,
+        protocol: target.protocol,
+        host: target.hostname,
+        port: target.port,
         path: routed.path,
         method: request.method,
-        headers: { ...request.headers, host: upstream.host, ...routed.headers },
+        headers: { ...request.headers, host: target.host, ...routed.headers },
       },
       (upstreamResponse) => {
         let status = upstreamResponse.statusCode ?? 502;
@@ -112,7 +119,7 @@ export function serve(
       }
 
       response.end(
-        `Medrengard's broker could not reach ${upstream.host}: ${error.code ?? error.message}\n`,
+        `Medrengard's broker could not reach ${target.host}: ${error.code ?? error.message}\n`,
       );
     });
 
