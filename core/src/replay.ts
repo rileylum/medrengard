@@ -78,8 +78,15 @@ export type Limits = {
   disk: number;
 };
 
-// The limits a step states: those it changes from the factory's defaults, or none.
-type Stated = { limits?: Partial<Limits> };
+/**
+ * A step's money limit: the most an attempt may cost, in US dollars, as its step reports it on
+ * fd 4. Optional, and never a factory default: an attempt that reports no cost counts as over it.
+ */
+export type Money = { usd?: number };
+
+// The limits a step states: those it changes from the factory's defaults, or none, and any money
+// limit.
+type Stated = { limits?: Partial<Limits> & Money };
 
 // What every step that starts a program declares: its inputs, the artifact kinds it may claim,
 // whether its workspace is built from the subject, from the one artifact an input names, or starts
@@ -107,10 +114,12 @@ type Step<N extends string, Bounded> =
 /**
  * A workflow over its step names `N`; `start` must name one of its steps, and `end` is reserved.
  * Each step states the limits it changes from the factory's defaults; a commission's definition
- * holds every step's limits whole.
+ * holds every step's limits whole. `usd`, optional, is the most its commission's attempts may cost
+ * between the owner's decisions, in US dollars, as their steps report it.
  */
 export type Workflow<N extends string = string, Bounded = Stated> = {
   start: NoInfer<N>;
+  usd?: number;
   steps: { [K in N]: K extends "end" ? never : Step<NoInfer<N>, Bounded> };
 };
 
@@ -247,7 +256,7 @@ export type Skill = { name: string; files: Readonly<Record<string, string>> };
  * the factory defined, and the skills its agents declare, by path.
  */
 export type Definition<N extends string = string> = {
-  workflow: Workflow<N, { limits: Limits }>;
+  workflow: Workflow<N, { limits: Limits & Money }>;
   kinds: Kinds;
   skills: Readonly<Record<string, Skill>>;
 };
