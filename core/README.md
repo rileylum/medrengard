@@ -437,16 +437,38 @@ const design = {
   without reporting at all, fails the attempt whatever `claude`'s exit code, saying why in its
   errors: a claim the agent wrote before is not recorded.
 - Nothing else of Claude Code's own loads: no bundled skills or built-in plugins, no settings
-  files, no memory, no `CLAUDE.md` or `AGENTS.md`, and no `Co-Authored-By` in the agent's
-  commits. Some of the settings that do this are undocumented, as of Claude Code
-  2.1.318.
+  files, no MCP servers, no memory, no `CLAUDE.md` or `AGENTS.md`, and no `Co-Authored-By` in the
+  agent's commits. Nothing the workspace holds configures `claude` either: not its `.mcp.json`,
+  `.claude/` settings, hooks, skills or subagents, nor its `CLAUDE.md`. Some of the settings that
+  do this are undocumented, as of Claude Code 2.1.318.
+- `claude` sends no telemetry, error reports or feedback, and fetches no feature flags
+  (`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`), so it runs on its own defaults rather than on flags
+  that could change between attempts of one commission; features Anthropic gates by flag stay
+  off. If `claude` says it still sends telemetry, the adapter records it as a leak.
+- A tool `claude` refused the agent, such as `Bash` under `acceptEdits`, is noted:
+  `Claude Code denied Bash: npm test`. An attended session shows its refusals on screen.
 - Claude Code's managed settings in `/etc/claude-code`, which no flag turns off, are hidden from
-  `claude` when they exist.
+  `claude` when they exist. Managed settings an organisation's token brings from the server are
+  not; a personal subscription has none.
+- `claude` silently ignores settings with an invalid value, all of them at once, so the adapter's
+  carry a canary hook. If it has not run by the time `claude` says what it loaded, the adapter
+  stops `claude` before its first turn and the attempt fails, saying why in its errors and a note.
+  A setting a release renames is ignored on its own, which the canary cannot see.
+- So too if `claude` did not load a skill the agent declares, such as one whose `SKILL.md` it
+  cannot read, which it drops without an error, or reports a plugin it could not load.
 - If `claude` loads tools, skills, plugins or MCP servers the agent did not declare, the adapter
   records them as the attempt's errors and as a note, and the attempt carries on. If it never says
   what it loaded, the adapter records that instead. Its subagents
-  count only when it has the `Task` tool. `CLAUDE.md` is not listed by `claude`, so this check
-  cannot see it.
+  count only when it has the `Task` tool.
+- A `CLAUDE.md` or rules file `claude` loads, at its start or later, when the agent reads a
+  directory holding one, is recorded the same way, through Claude Code's `InstructionsLoaded`
+  hook. `AGENTS.md` fires no such hook, so its loading cannot be seen; it is kept out by turning
+  off the built-in plugin that loads it.
+- Each attempt notes which Claude Code ran it and in what session:
+  `Claude Code 2.1.319, session <uuid>.` The version is the one `claude` says it is; the session is
+  a random id the adapter gives it with `--session-id`, so the note is there for an attempt that
+  fails too. If `claude` never says what it is, the version is unknown; if it ran another session,
+  the note names both. The session's files are still discarded with the attempt's home.
 - The adapter tells the agent where its inputs are, and how to claim each kind its step's `claims`
   lists, from the kinds' rules in `input.json`.
 - `--token <file>` is the file holding the subscription token, `~/.config/medrengard/claude-token`
@@ -483,8 +505,14 @@ carries on from there. With the Claude Code adapter:
   output is ready: outcome done, with 1 artifact: document.`, or why it would escalate. The note
   cannot be drawn inside Claude Code's screen, so it is in the record for `watch`, `events` or a
   pane beside the session;
-- Claude Code's first-run questions are answered in a home that has not run it. Its own report of
-  what it loaded is not made in a session, so an attended attempt notes that it is not checked;
+- Claude Code's first-run questions are answered in a home that has not run it;
+- a session does not say what it loaded, so before it opens, the same `claude`, with the same
+  flags, home and workspace, runs headless with a token that cannot authenticate, and is stopped
+  once it has said, before its first request: it costs nothing. What it loaded is checked as an
+  unattended attempt's is, and one unfit to run opens no session: the attempt fails. This assumes
+  `claude` loads the same in a session as headless, which nothing checks. Instruction files the
+  session loads are recorded as an unattended attempt's are, and the version noted is the dry
+  run's; the dry run keeps no session, so the session's id is the session's own;
 - `--max-budget-usd`, which `claude` keeps only with `-p`, is refused: the attempt escalates.
 
 The step runs under `script(1)`, in a pseudo-terminal of its own: its window follows the owner's
