@@ -33,7 +33,7 @@ export type Result = {
 
 // A problem whose two reference solutions write a.py, the second the same as the first if `same`,
 // with one asset directory unless `assets` is false, and a fake runner that reports them and
-// grades a snapshot by listing it.
+// grades a snapshot by listing it, noting its path in `snapshots`.
 export function toy(t: TestContext, prompts: string[], assets = true, same = false) {
   const directory = mkdtempSync(join(tmpdir(), "medrengard-bench-test-"));
 
@@ -59,7 +59,7 @@ export function toy(t: TestContext, prompts: string[], assets = true, same = fal
 
   writeFileSync(
     runner,
-    `import { readdirSync, readFileSync, statSync } from "node:fs";
+    `import { appendFileSync, readdirSync, readFileSync, statSync } from "node:fs";
      import { join, relative } from "node:path";
      const [command, ...rest] = process.argv.slice(2);
      if (command === "problem") {
@@ -72,6 +72,7 @@ export function toy(t: TestContext, prompts: string[], assets = true, same = fal
        console.log(JSON.stringify({ runner: "fake", problems: "fake", python: "3.12.0", matches: true }));
      } else if (command === "grade") {
        const [snapshot] = rest;
+       appendFileSync(${JSON.stringify(join(directory, "snapshots"))}, snapshot + "\\n");
        const walk = (dir) => readdirSync(dir).flatMap((name) =>
          statSync(join(dir, name)).isDirectory() ? walk(join(dir, name)) : [join(dir, name)]);
        const files = walk(snapshot).map((file) => relative(snapshot, file)).sort();
@@ -97,7 +98,7 @@ export function toy(t: TestContext, prompts: string[], assets = true, same = fal
 
   const results = join(directory, "results");
 
-  const bench = (run: string, configuration = "stub") =>
+  const bench = (run: string, configuration = "stub", env: NodeJS.ProcessEnv = process.env) =>
     spawnSync(
       process.execPath,
       [
@@ -117,7 +118,7 @@ export function toy(t: TestContext, prompts: string[], assets = true, same = fal
         "--results",
         results,
       ],
-      { encoding: "utf8", cwd: directory },
+      { encoding: "utf8", cwd: directory, env },
     );
 
   const read = (run: string): Result[] =>

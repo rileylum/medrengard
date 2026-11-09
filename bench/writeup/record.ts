@@ -1,10 +1,9 @@
 // What the write-up reads from the data directory: a study's result lines and the commits behind
 // them. Read only; nothing here runs a model.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { data } from "../data.ts";
+import { data, scratch } from "../data.ts";
 import type { Run } from "../driver/report.ts";
 import type { Study } from "../study.ts";
 
@@ -54,7 +53,7 @@ export function quality(commit: string, problem: string): Record<string, number>
   const cache = join(data, "writeup", "quality", `${commit}-${problem}.json`);
 
   if (!existsSync(cache)) {
-    const snapshot = mkdtempSync(join(tmpdir(), "writeup-"));
+    const snapshot = scratch("writeup-");
 
     try {
       execFileSync("sh", ["-c", `git -C "$0" archive "$1" | tar -x -C "$2"`, trajectories, commit, snapshot]);
