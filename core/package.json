@@ -12,7 +12,8 @@
     "./defaults/agents.ts": "./defaults/agents.ts",
     "./defaults/kinds.ts": "./defaults/kinds.ts",
     "./defaults/limits.ts": "./defaults/limits.ts",
-    "./defaults/prepare.ts": "./defaults/prepare.ts"
+    "./defaults/prepare.ts": "./defaults/prepare.ts",
+    "./forges/github/steps.ts": "./forges/github/steps.ts"
   },
   "scripts": {
     "test": "tsc -p . && mkdir -p /var/tmp/medrengard && TMPDIR=/var/tmp/medrengard node --test"
