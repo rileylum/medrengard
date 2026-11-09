@@ -19,7 +19,11 @@ export type Query<N extends string = string> =
     }
   // The latest session an attempt of the step N left, if any: a harness's conversation, opaque to
   // the engine, which a later attempt's adapter may continue.
-  | { session: N };
+  | { session: N }
+  // The artifacts of `kind` the children of the children step N claimed, from its latest attempt:
+  // each child that reached its end, in the order they were commissioned, its latest artifact of
+  // the kind, or all of them.
+  | { children: N; kind: string; take?: "latest" | "all" };
 
 /**
  * A reusable agent: the harness adapter program that runs it, the model and prompt it is given,
@@ -115,14 +119,43 @@ type Program<N extends string, Bounded> = {
 } & Bounded;
 
 /**
+ * What a children step waits for: every child, the first, or at least some, to reach its end; or,
+ * naming an outcome, that every child, or at least some, ended on it.
+ */
+export type Wait = "all" | "first" | { atLeast: number; outcome?: string } | { all: string };
+
+/**
+ * A children step: it commissions child commissions of `workflow`, one per document `each` names,
+ * or `count` on the parent's request or the document `request` names, each starting with the
+ * artifacts `given` names; at most `width` in all and `concurrent` unfinished at once; and waits,
+ * at most `limits.wait` seconds, for what `wait` says. A wait without an outcome follows `done`
+ * once met; one with an outcome follows `met`, or `unmet` once it can no longer be met.
+ */
+export type Children<N extends string> = {
+  kind: "children";
+  workflow: string;
+  each?: Query<N>;
+  count?: number;
+  request?: Query<N>;
+  given?: Readonly<Record<string, Query<N>>>;
+  width: number;
+  concurrent: number;
+  wait: Wait;
+  on: Record<string, N | "end">;
+  budget: number;
+  limits: { wait: number };
+};
+
+/**
  * A step: an agent step runs its agent's harness adapter, with the owner in their terminal when
- * `attended`, a command step runs `run`, and an approval step waits for the owner's decision,
- * following the edge its outcome names in `on`.
+ * `attended`, a command step runs `run`, an approval step waits for the owner's decision,
+ * following the edge its outcome names in `on`, and a children step waits on child commissions.
  */
 type Step<N extends string, Bounded> =
   | ({ kind: "agent"; agent: Agent; attended?: boolean } & Program<N, Bounded>)
   | ({ kind: "command"; run: readonly [string, ...string[]] } & Program<N, Bounded>)
-  | { kind: "approval"; on: Record<string, N | "end"> };
+  | { kind: "approval"; on: Record<string, N | "end"> }
+  | Children<N>;
 
 /**
  * A workflow over its step names `N`; `start` must name one of its steps, and `end` is reserved.
@@ -140,12 +173,17 @@ export type Workflow<N extends string = string, Bounded = Stated> = {
 // commission started, which the commission runs on. request is the hash of the owner's request,
 // the commission's first subject.
 // engine is the version of the engine that commissioned it, as attempt-started's.
+// A child commission names its parent, the commission, step and attempt that commissioned it, and
+// the artifacts it was given, by hash with their kinds and kept files: the latest subject among
+// them is its first subject.
 export type Commissioned = {
   type: "commissioned";
   workflow: string;
   definition: string;
   request: string;
   engine?: string;
+  parent?: { commission: string; step: string; attempt: number };
+  given?: readonly { hash: string; kind: string; kept: Readonly<Record<string, string>> }[];
 };
 
 // subject and inputs name what the attempt was given, by hash: each input's artifacts, oldest
@@ -214,6 +252,9 @@ type Escalated = {
 // or, from the engine, what an attended step's output holds.
 type Noted = { type: "noted"; attempt: number; note: string; from?: "engine" };
 
+// A child commission its parent no longer waits for, finished by the engine, not the owner.
+type Withdrawn = { type: "withdrawn"; reason: string };
+
 // decision and subject are artifact hashes; any feedback lives in the decision artifact.
 type Decided<N extends string> = {
   type: "decided";
@@ -233,12 +274,14 @@ export type CommissionEvent<N extends string = string> = (
   | Escalated
   | Noted
   | Decided<N>
+  | Withdrawn
 ) & { at?: number };
 
 // The agent or command step a commission is at; an attended one waits for the owner to attend it.
 type At<N extends string> =
   | { name: N; kind: "command" }
-  | { name: N; kind: "agent"; attended?: true };
+  | { name: N; kind: "agent"; attended?: true }
+  | { name: N; kind: "children" };
 
 // decision is the owner's latest decision about the current subject; one about an earlier
 // subject is history.
@@ -270,7 +313,7 @@ export type CommissionState<N extends string = string> =
       reason: string;
       since: number;
     }
-  | { status: "finished"; by: "end" | "abandoned" };
+  | { status: "finished"; by: "end" | "abandoned" | "withdrawn" };
 
 /** A skill as the commission started with it: its name, and each file's hash by relative path. */
 export type Skill = { name: string; files: Readonly<Record<string, string>> };
@@ -295,8 +338,12 @@ export function replay<N extends string>(
   { workflow, kinds }: Definition<N>,
   events: readonly [Commissioned, ...Exclude<CommissionEvent<NoInfer<N>>, Commissioned>[]],
 ): CommissionState<N> {
-  const [{ request }, ...rest] = events;
-  let state = arrive(workflow, workflow.start, request, undefined, 0);
+  const [{ request, given = [] }, ...rest] = events;
+
+  // A child's first subject is the latest subject it was given, or its request.
+  const subject = given.findLast(({ kind }) => kinds[kind]?.role === "subject")?.hash ?? request;
+
+  let state = arrive(workflow, workflow.start, subject, undefined, 0);
 
   for (const [index, event] of rest.entries()) {
     state = apply(workflow, kinds, state, event, index + 1);
@@ -321,7 +368,11 @@ function arrive<N extends string>(
   }
 
   const at: At<N> =
-    kind === "agent" && step.attended === true ? { name, kind, attended: true } : { name, kind };
+    kind === "agent" && step.attended === true
+      ? { name, kind, attended: true }
+      : kind === "children"
+        ? { name, kind }
+        : { name, kind };
 
   return { status: "ready", step: at, subject, decision };
 }
@@ -383,6 +434,13 @@ function apply<N extends string>(
       }
 
       return arrive(workflow, event.next, state.subject, event.decision, position);
+    // An attempt in flight ends first, so its transcript is kept.
+    case "withdrawn":
+      if (state.status === "attempting" || state.status === "finished") {
+        throw new Error(`A commission cannot be withdrawn while it is ${state.status}.`);
+      }
+
+      return { status: "finished", by: "withdrawn" };
     default:
       return assertNever(event);
   }

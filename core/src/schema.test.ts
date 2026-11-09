@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import type { createEngine } from "./engine.ts";
 import type { Kind, Program } from "./kinds.ts";
-import type { Access, Agent, Limits, Money, Query, Workflow } from "./replay.ts";
+import type { Access, Agent, Limits, Money, Query, Wait, Workflow } from "./replay.ts";
 
 // Constraint 7: the definition's schema is pinned here, at compile time: a field added to or
 // removed from any type a factory writes fails the type check until this list changes on purpose.
@@ -20,7 +20,11 @@ type Approval = Extract<Step, { kind: "approval" }>;
 
 type Path = Access["paths"][number];
 
-type Narrowing = Exclude<Query, string | { session: string }>;
+type Narrowing = Exclude<Query, string | { session: string } | { children: string }>;
+
+type Waiting = Extract<Step, { kind: "children" }>;
+
+type Reading = Extract<Exclude<Query, string>, { children: string }>;
 
 type Continuing = Extract<Exclude<Query, string>, { session: string }>;
 
@@ -35,7 +39,29 @@ type Pinned = {
   factory: Expect<Same<keyof Factory, "log" | "workflows" | "kinds" | "defaults">>;
   defaults: Expect<Same<Factory["defaults"], { limits: Limits }>>;
   workflow: Expect<Same<keyof Workflow, "start" | "steps" | "usd">>;
-  stepKinds: Expect<Same<Step["kind"], "agent" | "command" | "approval">>;
+  stepKinds: Expect<Same<Step["kind"], "agent" | "command" | "approval" | "children">>;
+  childrenStep: Expect<
+    Same<
+      keyof Waiting,
+      | "kind"
+      | "workflow"
+      | "each"
+      | "count"
+      | "request"
+      | "given"
+      | "width"
+      | "concurrent"
+      | "wait"
+      | "on"
+      | "budget"
+      | "limits"
+    >
+  >;
+  childrenLimits: Expect<Same<keyof Waiting["limits"], "wait">>;
+  wait: Expect<
+    Same<Wait, "all" | "first" | { atLeast: number; outcome?: string } | { all: string }>
+  >;
+  children: Expect<Same<keyof Reading, "children" | "kind" | "take">>;
   agentStep: Expect<
     Same<
       keyof Agentic,

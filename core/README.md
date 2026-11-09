@@ -12,6 +12,7 @@ Code adapter run, and the engine and CLI let an observer follow the log.
 - [A first factory](#a-first-factory)
 - [Workflows](#workflows)
 - [Inputs](#inputs)
+- [Children](#children)
 - [Access](#access)
   - [Reaching only some hosts](#reaching-only-some-hosts)
   - [Brokers](#brokers)
@@ -280,6 +281,80 @@ at most 1 MiB.
 
 An input name is also a directory in the step's input, so it may hold only letters, digits, `-` and
 `_`, starting with a letter.
+
+## Children
+
+A children step fans out: it commissions child commissions of another workflow and waits on them,
+bounded. Each child is a commission of its own, with its own record, subject and budgets, named
+`<parent>.<step>.<attempt>.<n>`, so you see, decide, cancel or attend it by name like any other.
+
+```ts
+// One child per task document the plan claimed, three at a time; then gather their results.
+fanOut: {
+  kind: "children",
+  workflow: "implement",
+  each: { from: ["plan"], kind: "document" },
+  width: 8,
+  concurrent: 3,
+  wait: "all",
+  on: { done: "gather" },
+  budget: 1,
+  limits: { wait: 6 * 3600 },
+},
+gather: {
+  kind: "agent",
+  inputs: { results: { children: "fanOut", kind: "document" } },
+  // ...
+},
+```
+
+- **Which children.** `each: <query>` makes one child per document it names, which is that
+  child's request. `count: N` makes N, each on the parent's request, or on the document
+  `request: <query>` names, taking the latest. More than `width` escalates before any child
+  starts, spending no budget; at most `concurrent` are unfinished at once, the next commissioned as
+  one finishes.
+- **What they start with.** `given: { <name>: <query> }` names artifacts every child starts with,
+  after its request; its first subject is the latest subject among them, or its request. Given
+  the parent's `subject`, a child reviews or builds on the parent's work:
+  `given: { change: "subject" }`.
+- **What the parent waits for.** A child succeeds when its workflow reaches its end. `wait` is
+  `"all"`, `"first"` or `{ atLeast: N }`, following `done` once met and escalating once it can no
+  longer be met; or it counts children that ended on an outcome, `{ all: "pass" }` or
+  `{ atLeast: 2, outcome: "pass" }`, following `met` or `unmet`, as a review panel does:
+
+  ```ts
+  review: {
+    kind: "children",
+    workflow: "review",
+    count: 3,
+    given: { change: "subject" },
+    width: 3,
+    concurrent: 3,
+    wait: { atLeast: 2, outcome: "pass" },
+    on: { met: "merge", unmet: "fix" },
+    budget: 1,
+    limits: { wait: 3600 },
+  },
+  ```
+
+  A child that escalates waits for you as any commission does, and the parent waits on. Past
+  `limits.wait` seconds, or when you cancel the parent, it escalates. Once the wait is decided,
+  children still unfinished are withdrawn, one in flight stopped first and its transcript kept:
+  they finish, recorded as withdrawn, not as your decision. A retry starts a fresh set.
+
+- **Reading the results.** `{ children: <step>, kind, take? }` gives a later step each child's
+  latest artifact of that kind, or all of them with `take: "all"`, for every child that reached
+  its end, failed reviews included, in the order commissioned. `input.json` names each one's
+  child.
+- **Taking one as the parent's.** A step may adopt one of its inputs instead of writing a claim
+  out, `{ "outcome": "done", "artifacts": [{ "adopt": "<hash>" }] }`, of a kind it may claim: the
+  artifact is recorded as it is, kept files and all, and becomes the subject if it is one. So
+  best-of-N is children, then a pick step that adopts the best child's commit.
+- **Pinned.** The parent's commission records every workflow its children steps reach; children
+  run on those, whatever the factory says later. A children step may not lead back to a workflow
+  it is within, so nesting is bounded. Each child's spend is its own workflow's `usd`.
+- **Run them with `run`.** Children advance like any commission, so `run` carries a fan-out
+  through; `advance` on the parent returns while it waits.
 
 ## Access
 
