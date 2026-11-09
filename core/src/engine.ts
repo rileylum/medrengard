@@ -51,7 +51,7 @@ import {
 } from "./replay.ts";
 import { parseDefinition } from "./definition.ts";
 import { hasExactly, isRecord, isText } from "./json.ts";
-import { confine, overMemory } from "./sandbox.ts";
+import { confine, inScope, overMemory, type Bounds } from "./sandbox.ts";
 import type { Kind, Kinds, Program } from "./kinds.ts";
 import { createStore, type Artifact } from "./store.ts";
 
@@ -1837,8 +1837,10 @@ async function run(
   // The step's latest usage report, which every ending carries.
   let usage: Usage | undefined;
 
-  // The proxy its network goes through, while it runs, when its access lists hosts.
+  // The proxy its network goes through, while it runs, when its access lists hosts, and its
+  // brokers.
   let proxy: Proxy | undefined;
+  let brokers: Brokers | undefined;
 
   // The session the program left, read once it has ended: kept with the ending, or over its limit.
   let left: ReturnType<typeof sessionLeft>;
@@ -1966,12 +1968,22 @@ async function run(
           )
         : undefined;
 
+    if (network !== true && network !== false) {
+      const opened = await openBrokers(network.brokers ?? {}, bounds);
+
+      if ("failed" in opened) {
+        return escalate(`Step ${name}'s ${opened.failed}`);
+      }
+
+      brokers = opened;
+    }
+
     const confined = confine(
       step.access,
       { workspace, input, output, record: spool.record, scratch: join(directory, "scratch") },
       step.kind === "agent" ? step.agent.harness.run : step.run,
       bounds,
-      proxy?.socket,
+      proxy === undefined ? undefined : { proxy: proxy.socket, brokers: brokers!.sockets },
     );
 
     const { unit } = confined;
@@ -2336,6 +2348,7 @@ async function run(
     });
   } finally {
     clearInterval(watching);
+    await brokers?.close();
     await proxy?.close();
 
     if (spooling !== undefined) {
@@ -2472,6 +2485,125 @@ async function openProxy(
       await rm(directory, { recursive: true, force: true });
     },
   };
+}
+
+// A step's brokers while its attempt runs: each one's socket by name, and how to stop them.
+type Brokers = { sockets: ReadonlyMap<string, string>; close: () => Promise<void> };
+
+// How long a broker has to listen once started, in milliseconds, and how often it is looked for.
+const brokerStart = 10_000;
+const brokerLook = 20;
+
+// How long a broker has to end once told to, in milliseconds.
+const brokerGrace = 5000;
+
+// The most of a broker's stderr kept to say why it did not start.
+const brokerSaid = 1024;
+
+// Starts each broker outside the sandbox, in a scope of its own within the step's `bounds`, with
+// MEDRENGARD_SOCKET naming the socket it is to listen on, and waits until each listens. One that
+// ends or does not listen in time fails them all, and says why.
+async function openBrokers(
+  programs: Readonly<Record<string, readonly [string, ...string[]]>>,
+  bounds: Bounds,
+): Promise<Brokers | { failed: string }> {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-brokers-"));
+  const sockets = new Map<string, string>();
+  const started: ChildProcess[] = [];
+
+  const close = async () => {
+    await Promise.all(started.map((broker) => ended(broker)));
+    await rm(directory, { recursive: true, force: true });
+  };
+
+  for (const [name, run] of Object.entries(programs)) {
+    const socket = join(directory, name);
+
+    const { command, args, env } = inScope(run, bounds, {
+      ...process.env,
+      MEDRENGARD_SOCKET: socket,
+    });
+
+    const broker = spawn(command, args, {
+      env,
+      stdio: ["ignore", "ignore", "pipe"],
+      detached: true,
+    });
+
+    started.push(broker);
+
+    let said = "";
+
+    broker.stderr!.on("data", (chunk: Buffer) => {
+      said = (said + chunk.toString()).slice(0, brokerSaid);
+    });
+
+    const why = await listening(broker, socket, () => said.trim());
+
+    if (why !== undefined) {
+      await close();
+
+      return { failed: `broker ${name} ${why}` };
+    }
+
+    sockets.set(name, socket);
+  }
+
+  return { sockets, close };
+}
+
+// Why `broker` is not listening on `socket`, once it is or cannot be: undefined when it is.
+async function listening(
+  broker: ChildProcess,
+  socket: string,
+  said: () => string,
+): Promise<string | undefined> {
+  const deadline = Date.now() + brokerStart;
+
+  while (Date.now() < deadline) {
+    if (broker.exitCode !== null || broker.signalCode !== null) {
+      return `ended before it listened: ${said()}`;
+    }
+
+    if (await connects(socket)) {
+      return undefined;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, brokerLook));
+  }
+
+  return `did not listen within ${brokerStart / 1000} s: ${said()}`;
+}
+
+// Whether something listens on the unix socket `socket`.
+function connects(socket: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = connectTo(socket);
+
+    probe.on("connect", () => {
+      probe.destroy();
+      resolve(true);
+    });
+    probe.on("error", () => resolve(false));
+  });
+}
+
+// Stops `broker` and all it started, and waits until it has ended.
+async function ended(broker: ChildProcess): Promise<void> {
+  if (broker.exitCode !== null || broker.signalCode !== null) {
+    return;
+  }
+
+  const exited = once(broker, "exit");
+  const group = -broker.pid!;
+
+  process.kill(group, "SIGTERM");
+
+  // One that ignores the signal is killed.
+  const killing = setTimeout(() => process.kill(group, "SIGKILL"), brokerGrace);
+
+  await exited;
+  clearTimeout(killing);
 }
 
 // Whether a CONNECT target, host:port, is one of `hosts`: `host` is port 443, `host:port` that
