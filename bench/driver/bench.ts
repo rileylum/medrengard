@@ -8,7 +8,7 @@
 // abandon ends it, as the configuration's failure.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createEngine } from "@medrengard/core/src/engine.ts";
@@ -250,6 +250,42 @@ function grade(commit: string, n: number, output = join(out, name, `checkpoint_$
   }
 }
 
+// Python's test files, by pytest's names: what an agent's own tests add is left out of its code's
+// scores, as many simple test functions would otherwise dilute erosion and verbosity. lazy: Python's
+// names only, as every SlopCodeBench problem is Python; a problem in another language is the trigger.
+const isTest = (path: string) => {
+  const parts = path.split("/");
+  const file = parts.at(-1)!;
+
+  return (
+    parts.slice(0, -1).some((part) => part === "tests" || part === "test") ||
+    /^test_.*\.py$/.test(file) ||
+    file.endsWith("_test.py") ||
+    file === "conftest.py"
+  );
+};
+
+// The erosion and verbosity of the commit's code alone: scb-check, as grading runs it, on the commit
+// without its tests.
+function codeQuality(commit: string) {
+  const snapshot = scratch("medrengard-bench-code-");
+
+  try {
+    execFileSync("sh", ["-c", 'git -C "$1" archive "$2" | tar -x -C "$3"', "sh", trajectories, commit, snapshot]);
+
+    for (const path of readdirSync(snapshot, { recursive: true, encoding: "utf8" })) {
+      if (isTest(path)) rmSync(join(snapshot, path), { recursive: true, force: true });
+    }
+
+    // SAFETY: the runner's quality command prints scb-check's report.
+    const { erosion, verbosity } = runnerJson("quality", snapshot, name) as { erosion: number; verbosity: number };
+
+    return { erosion, verbosity };
+  } finally {
+    rmSync(snapshot, { recursive: true, force: true });
+  }
+}
+
 // The configuration's agent steps, whose attempts are its cost.
 const steps = loaded.default.workflows[configuration]!.steps as Record<string, { kind: string }>;
 const agents = new Set(Object.entries(steps).flatMap(([step, { kind }]) => (kind === "agent" ? [step] : [])));
@@ -321,8 +357,9 @@ for (let n = 1; n <= count; n += 1) {
   const solved = (graded.total_counts.Core ?? 0) > 0 && graded.pass_counts.Core === graded.total_counts.Core;
 
   const { verbosity, erosion } = graded.quality;
+  const code = codeQuality(commit);
 
-  record({ checkpoint: n, commission, status: "finished", commit, ...spent, solved, verbosity, erosion, grade: graded, commits });
+  record({ checkpoint: n, commission, status: "finished", commit, ...spent, solved, verbosity, erosion, code, grade: graded, commits });
   console.log(
     `${commission}: ${solved ? "solved" : "not solved"}, Core ${graded.pass_counts.Core ?? 0}/${graded.total_counts.Core ?? 0}` +
       `, verbosity ${verbosity}, erosion ${erosion}` +

@@ -27,14 +27,16 @@ export type Result = {
   solved?: boolean;
   verbosity?: number;
   erosion?: number;
+  code?: { erosion: number; verbosity: number };
   grade?: { files: string[]; contents: Record<string, string> };
   commits?: { commit: string; grade: { files: string[]; contents: Record<string, string> } }[];
 };
 
 // A problem whose two reference solutions write a.py, the second the same as the first if `same`,
-// with one asset directory unless `assets` is false, and a fake runner that reports them and
-// grades a snapshot by listing it, noting its path in `snapshots`.
-export function toy(t: TestContext, prompts: string[], assets = true, same = false) {
+// and tests beside it as an agent writing tests would if `tested`, with one asset directory unless
+// `assets` is false, and a fake runner that reports them, grades a snapshot by listing it, noting
+// its path in `snapshots`, and scores a snapshot's quality by counting its files.
+export function toy(t: TestContext, prompts: string[], assets = true, same = false, tested = false) {
   const directory = mkdtempSync(join(tmpdir(), "medrengard-bench-test-"));
 
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -47,6 +49,13 @@ export function toy(t: TestContext, prompts: string[], assets = true, same = fal
   ] as const) {
     mkdirSync(join(problems, "toy", "solutions", `checkpoint_${n}`), { recursive: true });
     writeFileSync(join(problems, "toy", "solutions", `checkpoint_${n}`, "a.py"), text);
+
+    if (tested) {
+      for (const file of ["tests/test_a.py", "tests/helpers.py", "test_b.py", "b_test.py", "conftest.py"]) {
+        mkdirSync(join(problems, "toy", "solutions", `checkpoint_${n}`, file, ".."), { recursive: true });
+        writeFileSync(join(problems, "toy", "solutions", `checkpoint_${n}`, file), "def test(): pass\n");
+      }
+    }
   }
 
   // A solution's dependencies, none, so recreating its virtual environment needs no network.
@@ -79,6 +88,12 @@ export function toy(t: TestContext, prompts: string[], assets = true, same = fal
        const contents = Object.fromEntries(files.map((file) => [file, readFileSync(join(snapshot, file), "utf8")]));
        const quality = { verbosity: 0.25, erosion: 0.5 };
        console.log(JSON.stringify({ pass_counts: { Core: 1 }, total_counts: { Core: 1 }, quality, files, contents }));
+     } else if (command === "quality") {
+       const [snapshot] = rest;
+       const walk = (dir) => readdirSync(dir).flatMap((name) =>
+         statSync(join(dir, name)).isDirectory() ? walk(join(dir, name)) : [join(dir, name)]);
+       const files = walk(snapshot).map((file) => relative(snapshot, file)).sort();
+       console.log(JSON.stringify({ erosion: files.length, verbosity: files.length / 100, files }));
      } else {
        process.exit(2);
      }

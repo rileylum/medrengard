@@ -277,3 +277,23 @@ test(
     assert.deepEqual(snapshots.map(dirname), ["/var/tmp/medrengard", chosen]);
   },
 );
+
+test(
+  "each graded checkpoint also records erosion and verbosity of its code alone, without the tests in it",
+  { timeout: 120_000 },
+  async (t) => {
+    const { bench, read } = toy(t, ["Do one.\n"], true, false, true);
+
+    const ran = bench("t1");
+
+    assert.equal(ran.status, 0, ran.stderr);
+
+    const [line] = read("t1");
+
+    // The fake runner's quality counts the files it scores: of the stub's commit, a.py, its
+    // requirements.txt and the problem's asset, without tests/, test_*.py, *_test.py or conftest.py.
+    assert.deepEqual(line?.code, { erosion: 3, verbosity: 0.03 });
+    // SlopCodeBench's own scores still cover every file grading keeps.
+    assert.ok(line?.grade?.files.includes("tests/test_a.py"));
+  },
+);

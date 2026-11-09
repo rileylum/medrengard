@@ -78,7 +78,9 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   `<results>/<run>/<problem>.jsonl`: the configuration and repeat, the commit, the definition's
   hash, the agent attempts' time, their cost, turns and session time summed from Claude Code's
   result lines, whether it solved the checkpoint (all Core tests pass), SlopCodeBench's verbosity
-  and erosion (its own `scb-check` call) and the grader's report; and under `commits`, each commit the
+  and erosion (its own `scb-check` call), the same two under `code` on the commit without its tests
+  (pytest's files by name: `tests/` and `test/` directories, `test_*.py`, `*_test.py`, `conftest.py`),
+  since an agent's many simple tests dilute both, and the grader's report; and under `commits`, each commit the
   configuration made in the checkpoint before the one it claimed, such as its work before a review,
   oldest first, graded the same way, so a study sees what each step changed.
 - `driver/select.ts`: the selection rule. Each problem is placed by one baseline run: ranked by
@@ -100,7 +102,8 @@ with their spread. Calibration against SlopCodeBench's own harness is a configur
   runs; per configuration, means over problems with bootstrap 95% intervals (problems resampled,
   then repeats); each configuration against the study's first, paired by problem. A checkpoint never
   reached after an abandon counts as unsolved. Seeded, so the same results give the same summary.
-  Breakage is a metric beside the others: at each checkpoint after the first, the share of the tests
+  Code erosion and code verbosity sit beside SlopCodeBench's, which stay for comparison with others'
+  results; lines graded before 2026-11-09 have none. Breakage is a metric beside the others: at each checkpoint after the first, the share of the tests
   earlier checkpoints passed that fail in their Regression group. Then, test by test, by family (a
   test's name without a parametrized case's parameters): within a run, what each checkpoint's claimed
   commit fixed and broke against its first commit; the families every run of a configuration passes

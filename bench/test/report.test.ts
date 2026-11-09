@@ -1,7 +1,7 @@
 // A study's summary, from result lines whose figures are worked out by hand below.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { breakage, representative, summarise, tests, type Run } from "../driver/report.ts";
+import { breakage, render, representative, summarise, tests, type Run } from "../driver/report.ts";
 
 const graded = (checkpoint: number, passed: number, total: number, erosion: number, verbosity: number, usd: number) => ({
   checkpoint,
@@ -281,4 +281,46 @@ test("a family every run of every configuration fails at a checkpoint is a share
   assert.deepEqual(tests(studied, { control: "base" }).shared, [
     { problem: "p", checkpoint: 1, family: "checkpoint_1-Error::e", cases: 1, runs: 4 },
   ]);
+});
+
+test("the code's erosion and verbosity without its tests are metrics beside SlopCodeBench's, and a run graded before them has none", () => {
+  const coded = (checkpoint: number, erosion: number, code: { erosion: number; verbosity: number }) => ({
+    ...graded(checkpoint, 1, 1, erosion, 0.2, 1),
+    code,
+  });
+  const both: Run[] = [
+    // Code erosion (.4 + .6) / 2 = .5, verbosity (.3 + .5) / 2 = .4, beside SlopCodeBench's erosion .2.
+    {
+      configuration: "base",
+      problem: "p",
+      repeat: 1,
+      lines: [coded(1, 0.1, { erosion: 0.4, verbosity: 0.3 }), coded(2, 0.3, { erosion: 0.6, verbosity: 0.5 })],
+    },
+    // Code erosion .2, verbosity .1: .3 and .3 below the control's.
+    {
+      configuration: "tdd",
+      problem: "p",
+      repeat: 1,
+      lines: [coded(1, 0.1, { erosion: 0.2, verbosity: 0.1 }), coded(2, 0.1, { erosion: 0.2, verbosity: 0.1 })],
+    },
+    // Graded before code scores were recorded.
+    { configuration: "old", problem: "p", repeat: 1, lines: [graded(1, 1, 1, 0.5, 0.2, 1), graded(2, 1, 1, 0.5, 0.2, 1)] },
+  ];
+  const summary = summarise(both, { control: "base" });
+  const row = (configuration: string) => summary.problems.find((one) => one.configuration === configuration)!;
+
+  assert.ok(Math.abs(row("base").erosion.mean! - 0.2) < 1e-9);
+  assert.ok(Math.abs(row("base").codeErosion.mean! - 0.5) < 1e-9);
+  assert.ok(Math.abs(row("base").codeVerbosity.mean! - 0.4) < 1e-9);
+  assert.equal(row("old").codeErosion.mean, undefined);
+
+  const versus = summary.versus.find((one) => one.configuration === "tdd")!;
+
+  assert.ok(Math.abs(versus.codeErosion!.difference - -0.3) < 1e-9);
+  assert.ok(Math.abs(versus.codeVerbosity!.difference - -0.3) < 1e-9);
+  assert.ok(Math.abs(summary.overall.find((one) => one.configuration === "tdd")!.codeErosion!.mean - 0.2) < 1e-9);
+
+  const rendered = render(summary);
+
+  for (const heading of ["| erosion | verbosity | code erosion | code verbosity |"]) assert.ok(rendered.includes(heading), heading);
 });

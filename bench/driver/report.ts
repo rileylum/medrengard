@@ -17,6 +17,9 @@ type Line = {
   solved?: boolean;
   erosion?: number;
   verbosity?: number;
+  // The same scores on the commit's code alone, without its tests; absent on lines graded before
+  // they were recorded.
+  code?: { erosion: number; verbosity: number };
   cost: { usd?: number } | null;
   seconds?: number;
   grade?: Grade;
@@ -27,7 +30,18 @@ type Line = {
 type Tests = Record<string, { passed: string[]; failed: string[] }>;
 type Grade = { pass_counts: Record<string, number>; total_counts: Record<string, number>; tests?: Tests };
 
-const metrics = ["solved", "core", "reliable", "erosion", "verbosity", "breakage", "usd", "seconds"] as const;
+const metrics = [
+  "solved",
+  "core",
+  "reliable",
+  "erosion",
+  "verbosity",
+  "codeErosion",
+  "codeVerbosity",
+  "breakage",
+  "usd",
+  "seconds",
+] as const;
 
 type Metric = (typeof metrics)[number];
 type Scores = Record<Metric, number | undefined>;
@@ -36,7 +50,8 @@ const mean = (values: readonly number[]) => values.reduce((a, b) => a + b, 0) / 
 
 // One complete run's scores, or undefined while it waits for the owner or is still running. A
 // checkpoint never graded, after an abandon, counts as unsolved with no Core test passing; erosion
-// and verbosity are means over the graded checkpoints.
+// and verbosity, SlopCodeBench's and the code's without its tests, are means over the graded
+// checkpoints.
 export function score(run: Run): Scores | undefined {
   const last = new Map(run.lines.map((line) => [line.checkpoint, line]));
   const lines = [...last.values()];
@@ -64,6 +79,8 @@ export function score(run: Run): Scores | undefined {
     reliable: solved === total ? 1 : 0,
     erosion: meanOf(defined(graded.map((line) => line.erosion))),
     verbosity: meanOf(defined(graded.map((line) => line.verbosity))),
+    codeErosion: meanOf(defined(graded.map((line) => line.code?.erosion))),
+    codeVerbosity: meanOf(defined(graded.map((line) => line.code?.verbosity))),
     breakage: meanOf(breakage(run).map((one) => one.broken / one.passed)),
     usd: sumOf(lines.map((line) => line.cost?.usd)),
     seconds: sumOf(lines.map((line) => line.seconds)),
@@ -363,6 +380,8 @@ export function summarise(runs: readonly Run[], { control, seed = 1 }: { control
       reliable: mean(valuesOf(runScores, "reliable")),
       erosion: range(valuesOf(runScores, "erosion")),
       verbosity: range(valuesOf(runScores, "verbosity")),
+      codeErosion: range(valuesOf(runScores, "codeErosion")),
+      codeVerbosity: range(valuesOf(runScores, "codeVerbosity")),
       breakage: range(valuesOf(runScores, "breakage")),
       usd: range(valuesOf(runScores, "usd")),
       seconds: range(valuesOf(runScores, "seconds")),
@@ -457,7 +476,21 @@ export function render(summary: ReturnType<typeof summarise>) {
     "## Per problem: mean (min–max) over complete runs",
     "",
     table(
-      ["configuration", "problem", "runs", "solved", "Core", "reliable", "erosion", "verbosity", "breakage", "$", "seconds"],
+      [
+        "configuration",
+        "problem",
+        "runs",
+        "solved",
+        "Core",
+        "reliable",
+        "erosion",
+        "verbosity",
+        "code erosion",
+        "code verbosity",
+        "breakage",
+        "$",
+        "seconds",
+      ],
       summary.problems.map((row) => [
         row.configuration,
         row.problem,
@@ -467,6 +500,8 @@ export function render(summary: ReturnType<typeof summarise>) {
         figure(row.reliable),
         spread(row.erosion),
         spread(row.verbosity),
+        spread(row.codeErosion),
+        spread(row.codeVerbosity),
         spread(row.breakage),
         spread(row.usd),
         spread(row.seconds),
@@ -476,7 +511,7 @@ export function render(summary: ReturnType<typeof summarise>) {
     "## Per configuration: mean over problems [bootstrap 95%]",
     "",
     table(
-      ["configuration", "solved", "Core", "reliable", "erosion", "verbosity", "breakage", "$ per problem"],
+      ["configuration", "solved", "Core", "reliable", "erosion", "verbosity", "code erosion", "code verbosity", "breakage", "$ per problem"],
       summary.overall.map((row) => [
         row.configuration,
         ci(row.solved),
@@ -484,6 +519,8 @@ export function render(summary: ReturnType<typeof summarise>) {
         ci(row.reliable),
         ci(row.erosion),
         ci(row.verbosity),
+        ci(row.codeErosion),
+        ci(row.codeVerbosity),
         ci(row.breakage),
         ci(row.usd),
       ]),
@@ -494,7 +531,19 @@ export function render(summary: ReturnType<typeof summarise>) {
     summary.versus.length === 0
       ? "No configuration to compare."
       : table(
-          ["configuration", "control", "solved", "Core", "reliable", "erosion", "verbosity", "breakage", "$ per problem"],
+          [
+            "configuration",
+            "control",
+            "solved",
+            "Core",
+            "reliable",
+            "erosion",
+            "verbosity",
+            "code erosion",
+            "code verbosity",
+            "breakage",
+            "$ per problem",
+          ],
           summary.versus.map((row) => [
             row.configuration,
             row.control,
@@ -503,6 +552,8 @@ export function render(summary: ReturnType<typeof summarise>) {
             diff(row.reliable),
             diff(row.erosion),
             diff(row.verbosity),
+            diff(row.codeErosion),
+            diff(row.codeVerbosity),
             diff(row.breakage),
             diff(row.usd),
           ]),
