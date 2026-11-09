@@ -69,7 +69,7 @@ test("contract hides the owner's home and the network, and gives only PATH", asy
 });
 
 test(
-  "claudeCode shows nothing of the owner's home but the token file, claude, Node with npm and the adapters",
+  "claudeCode shows nothing of the owner's home but claude, Node with npm and the adapters: not the token file",
   {
     skip:
       !existsSync(tokenFile) || !existsSync(claude) ? "no Claude token file or claude here" : false,
@@ -92,7 +92,6 @@ test(
     const npm = join(install, "lib", "node_modules", "npm");
 
     const granted = [
-      tokenFile,
       claude,
       join(import.meta.dirname, "..", "adapters"),
       ...(existsSync(npm) ? [dirname(process.execPath), npm] : [process.execPath]),
@@ -103,7 +102,7 @@ test(
     );
 
     assert.deepEqual(outside.slice(0, 10), []);
-    assert.ok(lines.includes(tokenFile));
+    assert.ok(!lines.includes(tokenFile));
     assert.equal(tokens, "0");
     assert.equal(npmRuns, "npm runs");
   },
@@ -135,11 +134,12 @@ test("the built-in kinds' programs see nothing of the owner's home but Node and 
   assert.equal(nodeRuns, "node runs");
 });
 
-test("claudeCode gives the adapter the token file to read, and no token in the environment", () => {
-  // In the environment, the token would be in reach of everything the agent runs.
+test("claudeCode leaves the token to its broker, outside the sandbox: not in its paths or environment", () => {
   assert.ok(Array.isArray(claudeCode.environment));
   assert.ok(!claudeCode.environment.includes("CLAUDE_CODE_OAUTH_TOKEN"));
-  assert.ok(claudeCode.paths.some(({ path, mode }) => path === tokenFile && mode === "read"));
+  assert.ok(!claudeCode.paths.some(({ path }) => path === tokenFile));
+  assert.deepEqual(claudeCode.network.hosts, []);
+  assert.match(claudeCode.network.brokers.anthropic.at(-1)!, /claude-code-broker\.ts$/);
 });
 
 test("claudeCode commits as Medrengard, whatever the engine's environment holds", async (t) => {
@@ -148,7 +148,8 @@ test("claudeCode commits as Medrengard, whatever the engine's environment holds"
 
   const identity = await seenUnder(
     t,
-    { ...claudeCode, sandboxes: false },
+    // Without its broker, which needs the owner's token file.
+    { ...claudeCode, network: false, sandboxes: false },
     `git var GIT_AUTHOR_IDENT | cut -d'>' -f1; git var GIT_COMMITTER_IDENT | cut -d'>' -f1`,
   );
 

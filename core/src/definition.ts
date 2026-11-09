@@ -272,6 +272,32 @@ function parseKinds(text: string): Kinds {
 // A host a step's access may list: a name or address, any of its subdomains as *.name, and a port.
 const host = /^(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*(:[0-9]{1,5})?$/;
 
+// A broker's name, which names the variable that gives the step its address.
+const brokerName = /^[a-z][a-z0-9]*$/;
+
+// Whether `network` lists what a step may reach: hosts, and any brokers, at least one of either.
+function networkListed(network: Exclude<Access["network"], boolean>): boolean {
+  if (!hasExactly(network, Object.hasOwn(network, "brokers") ? ["hosts", "brokers"] : ["hosts"])) {
+    return false;
+  }
+
+  const fields = new Map(Object.entries(network));
+  const named = fields.get("hosts");
+  const brokers = fields.get("brokers") ?? {};
+
+  const hostsListed =
+    Array.isArray(named) && named.every((each) => isText(each) && host.test(each));
+
+  const brokersListed =
+    isRecord(brokers) &&
+    Object.entries(brokers).every(
+      ([name, run]) =>
+        brokerName.test(name) && Array.isArray(run) && run.length > 0 && run.every(isText),
+    );
+
+  return hostsListed && brokersListed && (named.length > 0 || Object.keys(brokers).length > 0);
+}
+
 // Why `access` cannot confine a program, if it cannot. `hosts`, whether its network may list the
 // hosts it reaches: a step's may, a kind program's not.
 function accessProblem(access: Access, hosts = true): string | undefined {
@@ -314,17 +340,11 @@ function accessProblem(access: Access, hosts = true): string | undefined {
   }
 
   // lazy: a kind program's network is all or none. Let it list hosts once a verifier needs some.
-  const named = hasExactly(network, ["hosts"]) ? Object.values(network)[0] : undefined;
-
-  const listed =
-    hosts &&
-    Array.isArray(named) &&
-    named.length > 0 &&
-    named.every((each) => isText(each) && host.test(each));
+  const listed = hosts && network !== true && network !== false && networkListed(network);
 
   if (network !== true && network !== false && !listed) {
     return hosts
-      ? "network access must be true, false, or hosts it may reach"
+      ? "network access must be true, false, or hosts it may reach and any brokers, each a name of lowercase letters and digits and a program"
       : "network access must be true or false";
   }
 

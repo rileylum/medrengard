@@ -73,6 +73,16 @@ type Pinned = {
   access: Expect<
     Same<keyof Access, "paths" | "network" | "environment" | "values" | "workspace" | "sandboxes">
   >;
+  network: Expect<
+    Same<
+      Access["network"],
+      | boolean
+      | {
+          hosts: readonly string[];
+          brokers?: Readonly<Record<string, readonly [string, ...string[]]>>;
+        }
+    >
+  >;
   path: Expect<
     Same<
       Path,

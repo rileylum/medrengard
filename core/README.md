@@ -337,9 +337,10 @@ exist.
   program that needs a home or a cache, such as `npm`, must be pointed at `/tmp`.
 - `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
   256 MiB, Node and npm (Node's `bin` directory and npm's package, or the `node` executable
-  alone when npm is not beside it; never other global packages), the `adapters` directory, the `claude` executable and the token
-  file `~/.config/medrengard/claude-token` to read, only the model API, `api.anthropic.com`, as
-  network, `PATH`, `HOME` and `LANG`, the
+  alone when npm is not beside it; never other global packages), the `adapters` directory, the
+  `claude` executable, no host of its own and the broker `anthropic`, the adapter's, which holds
+  the subscription token from `~/.config/medrengard/claude-token` outside the sandbox and is the
+  only way to the model API, `PATH`, `HOME` and `LANG`, the
   Git identity `Medrengard <medrengard@localhost>` as `values`, and `sandboxes`: the adapter runs `claude` in a sandbox of its own, in which what
   the agent runs cannot make namespaces. Its home is empty, so the owner's settings, skills, hooks
   and MCP servers never load. A path under the home, such as a repository,
@@ -367,15 +368,34 @@ CONNECT, gets through. Each host refused is noted once, from the engine,
 `Step implement was refused network access to pastebin.com:443.`, so an agent that could not
 fetch says why, and one that tried to send something somewhere shows it.
 
-`claudeCode` lists only the model API, so nothing the agent runs reaches anywhere else. List more
-for an agent that must, readably in the definition:
+`claudeCode` lists no host, only its broker, so nothing the agent runs reaches anywhere but the
+model API through it. List hosts for an agent that must, readably in the definition:
 
 ```ts
 const access = {
   ...claudeCode,
-  network: { hosts: [...claudeCode.network.hosts, "registry.npmjs.org", "github.com"] },
+  network: { ...claudeCode.network, hosts: ["registry.npmjs.org", "github.com"] },
 };
 ```
+
+### Brokers
+
+A harness needs a credential to reach its model, and anything in the sandbox with it could read it
+there. So a step's network may name brokers, `network: { hosts: [], brokers: { anthropic: [program,
+...args] } }`, each a program the engine runs outside the sandbox while an attempt runs. The engine
+starts it, in a systemd scope within the step's memory and process limits, with
+`MEDRENGARD_SOCKET` naming a socket for it to listen on, waits up to 10 s for it to listen, binds
+that socket into the sandbox, and stops it when the attempt ends. Inside, the forwarder relays a
+loopback port to it and names that port in `MEDRENGARD_BROKER_<NAME>`, such as
+`MEDRENGARD_BROKER_ANTHROPIC=http://127.0.0.1:41231`. The harness speaks plain HTTP to it with a
+placeholder credential; the broker refuses any request without the placeholder, puts the real
+credential in its place, and makes the TLS connection upstream. A broker that ends or does not
+listen in time escalates the attempt before its program starts, with what it said on stderr:
+`Step plan's broker anthropic ended before it listened: Cannot read the token file: ENOENT…`.
+
+What the step runs can use the credential through its broker while the attempt runs, but never
+read it. A broker is a harness adapter's program: the vendor's headers, paths and token refresh are
+its, and `adapters/broker.ts` has what they share. A broker name is lowercase letters and digits.
 
 Workspace preparation runs in the same step, so it reaches the same hosts. The paths may not name
 `/network`, where the forwarder goes, nor grant `/` itself with a list of hosts, which leaves no
@@ -568,11 +588,13 @@ const design = {
   the note names both. The session's files are still discarded with the attempt's home.
 - The adapter tells the agent where its inputs are, and how to claim each kind its step's `claims`
   lists, from the kinds' rules in `input.json`.
-- `--token <file>` is the file holding the subscription token, `~/.config/medrengard/claude-token`
-  if left out; `claudeCode` grants that default. `claude` runs in a nested sandbox of its own and
-  reads the token from a file descriptor, so nothing the agent runs, such as a dependency's install
-  script, can read it from a process's environment or from the file. A
-  `CLAUDE_CODE_OAUTH_TOKEN` the step is given is not passed on.
+- The subscription token never enters the step's sandbox. `claude` reaches the model API only
+  through the step's broker `anthropic`, `claude-code-broker.ts [--token <file>]`, which reads the
+  token from `~/.config/medrengard/claude-token` unless given another file; `claudeCode` names it.
+  `claude` is given a placeholder in its place and the broker's address as `ANTHROPIC_BASE_URL`, so
+  nothing the agent runs, such as a dependency's install script, can read the token, from a
+  process or a file. A step whose access names no `anthropic` broker is refused. `claude` runs in a
+  nested sandbox of its own, where what the agent runs sees only `claude` and itself.
 - `claudeCode` commits as `Medrengard <medrengard@localhost>`, whatever the engine's environment
   holds. For another identity, `{ ...claudeCode, values: gitIdentity("Name", "email") }`.
 - `claudeCode` grants the adapter's real directory. If you reach this repository through a
@@ -604,7 +626,7 @@ carries on from there. With the Claude Code adapter:
   pane beside the session;
 - Claude Code's first-run questions are answered in a home that has not run it;
 - a session does not say what it loaded, so before it opens, the same `claude`, with the same
-  flags, home and workspace, runs headless with a token that cannot authenticate, and is stopped
+  flags, home and workspace, runs headless with a token its broker refuses, and is stopped
   once it has said, before its first request: it costs nothing. What it loaded is checked as an
   unattended attempt's is, and one unfit to run opens no session: the attempt fails. This assumes
   `claude` loads the same in a session as headless, which nothing checks. Instruction files the
