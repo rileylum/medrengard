@@ -39,6 +39,7 @@ import { isDeepStrictEqual } from "node:util";
 import {
   replay,
   type Access,
+  type Children,
   type Commissioned,
   type CommissionEvent,
   type CommissionState,
@@ -49,7 +50,7 @@ import {
   type Usage,
   type Workflow,
 } from "./replay.ts";
-import { parseDefinition } from "./definition.ts";
+import { parseDefinition, waitOutcome } from "./definition.ts";
 import { hasExactly, isRecord, isText } from "./json.ts";
 import { confine, inScope, overMemory, type Bounds } from "./sandbox.ts";
 import type { Kind, Kinds, Program } from "./kinds.ts";
@@ -107,6 +108,8 @@ export type Entry =
       usage?: Usage;
     }
   | { entry: "escalation"; step: string; reason: string; at?: number }
+  // A child its parent no longer waited for, finished by the engine.
+  | { entry: "withdrawal"; step: string; reason: string; at?: number }
   | {
       entry: "decision";
       step: string;
@@ -225,6 +228,20 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
   const requested = database.prepare(
     "SELECT 1 FROM cancellations WHERE commission = ? AND attempt = ?",
   );
+
+  // A child commission its parent no longer waits for, with why: its attempt in flight is stopped
+  // as a cancel stops it, and no other starts, until the parent records it withdrawn.
+  database.exec(`CREATE TABLE IF NOT EXISTS withdrawals (
+    commission TEXT NOT NULL PRIMARY KEY, reason TEXT NOT NULL) STRICT`);
+
+  const withdrawing = database.prepare("INSERT OR IGNORE INTO withdrawals VALUES (?, ?)");
+  const withdrawal = database.prepare("SELECT reason FROM withdrawals WHERE commission = ?");
+
+  const withdrawalOf = (commission: string): string | undefined => {
+    const row = withdrawal.get(commission);
+
+    return row === undefined ? undefined : String(row.reason);
+  };
 
   // The engines registered as running on this log, such as the CLI's run. A registration is no
   // fact about a commission, and judging it reads /proc, so it stays out of the events and the fold.
@@ -365,6 +382,26 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
     insert.run(commission, events.length, JSON.stringify({ ...event, at: Date.now() }));
   }
 
+  // The factory's workflows the workflow `workflow` reaches through its children steps, and
+  // their children's, itself first, so a child runs on the definition its parent started with.
+  function reached(workflow: string): Record<string, Workflow> {
+    const found = [workflow];
+
+    for (const name of found) {
+      for (const step of Object.values(workflows[name]?.steps ?? {})) {
+        if (
+          step.kind === "children" &&
+          Object.hasOwn(workflows, step.workflow) &&
+          !found.includes(step.workflow)
+        ) {
+          found.push(step.workflow);
+        }
+      }
+    }
+
+    return Object.fromEntries(found.map((name) => [name, workflows[name]!]));
+  }
+
   // The factory's workflow named `workflow`, parsed as it will be read back, so a definition that
   // could not run is refused before anything is recorded.
   function checked(workflow: string): Definition {
@@ -374,16 +411,269 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
     return parseDefinition(
       workflow,
-      JSON.stringify({ workflow: workflows[workflow], kinds, defaults }),
+      JSON.stringify({
+        workflow: workflows[workflow],
+        kinds,
+        defaults,
+        workflows: reached(workflow),
+      }),
     );
   }
 
   // The definition's text as a commission records it, its skills read now, so editing one later
-  // changes no commission; `keep` names each skill file by hash, storing it or not.
+  // changes no commission; `keep` names each skill file by hash, storing it or not. It holds every
+  // workflow its children steps reach, with their agents' skills.
   function pinned(workflow: string, definition: Definition, keep: (bytes: Buffer) => string) {
-    const skills = pin(workflow, definition.workflow, keep);
+    const held = reached(workflow);
 
-    return JSON.stringify({ workflow: workflows[workflow], kinds, skills, defaults });
+    const skills = Object.assign(
+      pin(workflow, definition.workflow, keep),
+      ...Object.entries(held).map(([name, each]) => pin(name, each, keep)),
+    );
+
+    return JSON.stringify({
+      workflow: workflows[workflow],
+      kinds,
+      skills,
+      defaults,
+      workflows: held,
+    });
+  }
+
+  // The children the attempt `attempt` of the children step `step` commissioned, in order: they
+  // are commissioned one after another, so the first name that is no commission ends them.
+  function childrenOfAttempt(commission: string, step: string, attempt: number): Child[] {
+    const found: Child[] = [];
+
+    for (let n = 1; ; n += 1) {
+      const name = childName(commission, step, attempt, n);
+
+      if (select.all(name).length === 0) {
+        return found;
+      }
+
+      found.push({ commission: name, events: read(name) });
+    }
+  }
+
+  // The children of the latest attempt of the children step `step`, which a children query reads.
+  function childrenOf(commission: string, events: Log, step: string): Child[] {
+    const started = events.findLast(
+      (event) => event.type === "attempt-started" && event.step === step,
+    );
+
+    return started?.type === "attempt-started"
+      ? childrenOfAttempt(commission, step, started.attempt)
+      : [];
+  }
+
+  // The files a verifier kept for the artifact `hash`: claimed by or given to the commission, or,
+  // such as a child's commit a children query named, by another in the log.
+  // lazy: scans the whole log for another's. Index artifact hashes once a log is large enough to
+  // notice.
+  function keptAnywhere(events: Log, hash: string): Readonly<Record<string, string>> {
+    const own = keptIn(events, hash);
+
+    if (own !== undefined) {
+      return own;
+    }
+
+    for (const { commission } of commissioned.all()) {
+      const found = keptIn(read(String(commission)), hash);
+
+      if (found !== undefined) {
+        return found;
+      }
+    }
+
+    return {};
+  }
+
+  // Commissions the `n`th child of the parent's children attempt `started`: of the step's workflow
+  // as the parent pinned it, about `request`, given `given`. Another engine that commissioned it
+  // first leaves it as it is.
+  function commissionChild(
+    parent: string,
+    events: Log,
+    step: Children<string>,
+    started: Extract<CommissionEvent, { type: "attempt-started" }>,
+    n: number,
+    request: string,
+    given: readonly string[],
+  ): void {
+    const stored = JSON.parse(store.read(events[0].definition).toString());
+    const text = JSON.stringify({ ...stored, workflow: stored.workflows[step.workflow] });
+    const parsed = parseDefinition(step.workflow, text);
+
+    const event: Commissioned = {
+      type: "commissioned",
+      workflow: step.workflow,
+      engine: engineVersion(),
+      definition: store.keep(text),
+      request,
+      parent: { commission: parent, step: started.step, attempt: started.attempt },
+      given: given.map((hash) => ({
+        hash,
+        kind: store.get(hash).kind,
+        kept: keptAnywhere(events, hash),
+      })),
+    };
+
+    replay(parsed, [event]);
+
+    try {
+      insert.run(
+        childName(parent, started.step, started.attempt, n),
+        0,
+        JSON.stringify({ ...event, at: Date.now() }),
+      );
+    } catch (error) {
+      if (select.all(childName(parent, started.step, started.attempt, n)).length === 0) {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Looks once at the children attempt `started` of the parent `commission`: commissions the
+   * children now due, judges its wait, and once the wait is decided, its limit reached or the
+   * owner cancelled it, withdraws the children still unfinished and ends the attempt. Whether the
+   * attempt has ended; until then any engine looking at the commission looks again.
+   */
+  function tick(
+    commission: string,
+    events: Log,
+    definition: Definition,
+    started: Extract<CommissionEvent, { type: "attempt-started" }>,
+  ): boolean {
+    // SAFETY: the caller found the attempt's step to be a children step.
+    const step = definition.workflow.steps[started.step] as Children<string>;
+    const [requests, ...givenInputs] = started.inputs;
+    const total = step.each === undefined ? step.count! : requests!.hashes.length;
+    const children = childrenOfAttempt(commission, started.step, started.attempt);
+    const outcome = waitOutcome(step.wait) ?? undefined;
+    const finishes = children.map(({ events: child }) => finishOf(child));
+
+    // A child succeeds by reaching its end, on the wait's outcome when it names one.
+    const succeeded = finishes.filter(
+      (finish) =>
+        finish?.outcome !== undefined && (outcome === undefined || finish.outcome === outcome),
+    ).length;
+
+    const failed = children.filter((_, index) => {
+      const finish = finishes[index];
+
+      return (
+        finish !== undefined &&
+        !(finish.outcome !== undefined && (outcome === undefined || finish.outcome === outcome))
+      );
+    });
+
+    const need =
+      step.wait === "first"
+        ? 1
+        : step.wait === "all" || "all" in step.wait
+          ? total
+          : step.wait.atLeast;
+
+    const met = succeeded >= need;
+    const unmet = !met && total - failed.length < need;
+    const late = Date.now() - (started.at ?? Date.now()) > step.limits.wait * 1000;
+    const cancelled = requested.get(commission, started.attempt) !== undefined;
+    const name = started.step;
+
+    const completed = (result: string): Ending => ({
+      type: "attempt-completed",
+      step: name,
+      attempt: started.attempt,
+      outcome: result,
+      artifacts: [],
+      transcript: store.keep(Buffer.alloc(0)),
+      next: step.on[result]!,
+    });
+
+    const escalated = (reason: string): Ending => ({
+      type: "escalated",
+      reason,
+      attempt: started.attempt,
+    });
+
+    const failedNames = failed.map((child) => child.commission).join(", ");
+
+    const ending = cancelled
+      ? escalated(cancelledReason(name))
+      : met
+        ? completed(outcome === undefined ? "done" : "met")
+        : unmet
+          ? outcome === undefined
+            ? escalated(
+                `Step ${name}'s wait can no longer be met: ${failedNames} did not reach the end.`,
+              )
+            : completed("unmet")
+          : late
+            ? escalated(
+                `Step ${name} waited ${step.limits.wait} s for its children, its wait limit.`,
+              )
+            : undefined;
+
+    if (ending === undefined) {
+      // At most `concurrent` unfinished at once, up to every child the attempt has.
+      let unfinished = finishes.filter((finish) => finish === undefined).length;
+
+      for (let n = children.length + 1; n <= total && unfinished < step.concurrent; n += 1) {
+        const request = step.each === undefined ? requests!.hashes[0]! : requests!.hashes[n - 1]!;
+
+        commissionChild(
+          commission,
+          events,
+          step,
+          started,
+          n,
+          request,
+          givenInputs.flatMap((input) => input.hashes),
+        );
+        unfinished += 1;
+      }
+
+      return false;
+    }
+
+    // Children still unfinished are withdrawn: one in flight is stopped first, and recorded
+    // withdrawn at a later look, so its transcript is kept.
+    const reason = `Commission ${commission}'s step ${name} no longer waits for it.`;
+    let settling = false;
+
+    for (const child of children) {
+      const state = replay(definitionOf(child.events), child.events);
+
+      if (state.status === "finished") {
+        continue;
+      }
+
+      withdrawing.run(child.commission, reason);
+
+      if (state.status === "attempting") {
+        const running = child.events.findLast((event) => event.type === "attempt-started");
+
+        if (running?.type === "attempt-started") {
+          request.run(child.commission, running.attempt);
+        }
+
+        settling = true;
+
+        continue;
+      }
+
+      write(child.commission, child.events, { type: "withdrawn", reason });
+    }
+
+    if (settling) {
+      return false;
+    }
+
+    write(commission, events, ending);
+
+    return true;
   }
 
   return {
@@ -654,6 +944,9 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
             }
 
             break;
+          case "withdrawn":
+            entries.push({ entry: "withdrawal", step: at, reason: event.reason, at: event.at });
+            break;
           case "decided": {
             const decision: Entry = {
               entry: "decision",
@@ -805,6 +1098,13 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
       const started = events.findLast((event) => event.type === "attempt-started")!;
 
+      // A children attempt runs no program: the next look withdraws its children and escalates.
+      if (definitionOf(events).workflow.steps[started.step]?.kind === "children") {
+        request.run(commission, started.attempt);
+
+        return;
+      }
+
       // With no engine to stop it, the attempt is over already: the cancel is its end.
       if (!held(commission, started)) {
         const spool = spoolOf(commission, started.attempt);
@@ -878,6 +1178,15 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       if (state.status === "attempting") {
         const started = events.findLast((event) => event.type === "attempt-started")!;
 
+        // A children attempt runs no program, so no engine holds it: each look carries it on.
+        if (workflow.steps[started.step]?.kind === "children") {
+          if (tick(commission, events, definition, started)) {
+            continue;
+          }
+
+          return replay(definition, read(commission));
+        }
+
         if (held(commission, started)) {
           return state;
         }
@@ -899,6 +1208,11 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       }
 
       if (state.status !== "ready") {
+        return state;
+      }
+
+      // A child its parent is withdrawing starts no attempt; its parent records it withdrawn.
+      if (withdrawalOf(commission) !== undefined) {
         return state;
       }
 
@@ -937,7 +1251,7 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       }
 
       // What the commission's money limit leaves for this attempt, when it has one.
-      const spent = workflow.usd === undefined ? undefined : spentSince(events);
+      const spent = workflow.usd === undefined ? undefined : spentSince(events, workflow);
       const overspent = spent === undefined ? undefined : moneyLeft(spent, workflow.usd!);
 
       if (overspent !== undefined && "reason" in overspent) {
@@ -946,9 +1260,66 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
         continue;
       }
 
-      const given = Object.entries(step.inputs).map(([input, query]) => ({
+      const named = (query: Query) =>
+        resolve(query, state, events, definition.kinds, (children) =>
+          childrenOf(commission, events, children),
+        );
+
+      if (step.kind === "children") {
+        const requests =
+          step.each === undefined
+            ? { name: "request", hashes: named(step.request ?? "request").map(({ hash }) => hash) }
+            : { name: "each", hashes: named(step.each).map(({ hash }) => hash) };
+
+        const inputs = [
+          requests,
+          ...Object.entries(step.given ?? {}).map(([input, query]) => ({
+            name: input,
+            hashes: named(query).map(({ hash }) => hash),
+          })),
+        ];
+
+        const problem =
+          step.each === undefined && requests.hashes.length === 0
+            ? `Step ${name}'s request names no document.`
+            : requests.hashes.length > step.width
+              ? `Step ${name} has ${requests.hashes.length} children to start, over its width of ${step.width}.`
+              : attempts.some(
+                    (event) =>
+                      event.type === "attempt-started" &&
+                      event.subject === state.subject &&
+                      isDeepStrictEqual(event.inputs, inputs),
+                  )
+                ? `Step ${name} was already attempted on this subject and these inputs.`
+                : undefined;
+
+        write(
+          commission,
+          events,
+          problem === undefined
+            ? {
+                type: "attempt-started",
+                step: name,
+                attempt: events.filter((event) => event.type === "attempt-started").length + 1,
+                subject: state.subject,
+                inputs,
+                process: self,
+                engine: engineVersion(),
+              }
+            : { type: "escalated", reason: problem },
+        );
+
+        continue;
+      }
+
+      const resolved = Object.entries(step.inputs).map(([input, query]) => ({
         name: input,
-        hashes: resolve(query, state, events, definition.kinds),
+        named: named(query),
+      }));
+
+      const given = resolved.map(({ name: input, named: each }) => ({
+        name: input,
+        hashes: each.map(({ hash }) => hash),
       }));
 
       // Read from the store before the attempt starts. The engine's failure here, such as a file
@@ -956,13 +1327,27 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
       const prepared = (() => {
         try {
           return {
-            inputs: given.map(({ name, hashes }): Input => {
-              const query = step.inputs[name];
+            inputs: resolved.map(({ name: input, named: each }): Input => {
+              const query = step.inputs[input];
 
               // A session is no artifact: its body is the bytes its program left.
               return isRecord(query) && "session" in query
-                ? { name, sessions: hashes.map((hash) => ({ hash, body: store.read(hash) })) }
-                : { name, artifacts: hashes.map((hash) => ({ hash, artifact: store.get(hash) })) };
+                ? {
+                    name: input,
+                    sessions: each.map(({ hash }) => ({ hash, body: store.read(hash) })),
+                  }
+                : {
+                    name: input,
+                    artifacts: each.map(({ hash, commission: child }) => {
+                      const artifact = {
+                        hash,
+                        artifact: store.get(hash),
+                        kept: keptAnywhere(events, hash),
+                      };
+
+                      return child === undefined ? artifact : { ...artifact, commission: child };
+                    }),
+                  };
             }),
             skills: (step.kind === "agent" ? (step.agent.skills ?? []) : []).map((path) => {
               const { name: skill, files } = definition.skills[path];
@@ -991,16 +1376,16 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
       // The artifact the workspace is built from, when it is an input's: one the record names.
       const source = step.workspace;
-      const named = source === "subject" || source === "empty" ? undefined : source.input;
+      const sourceInput = source === "subject" || source === "empty" ? undefined : source.input;
 
       // The definition refuses a workspace built from a session.
-      const from = inputs.find((input) => input.name === named);
+      const from = inputs.find((input) => input.name === sourceInput);
       const built = from !== undefined && "artifacts" in from ? from.artifacts[0] : undefined;
 
-      if (named !== undefined && built === undefined) {
+      if (sourceInput !== undefined && built === undefined) {
         write(commission, events, {
           type: "escalated",
-          reason: `Step ${name}'s workspace input ${named} holds no artifact.`,
+          reason: `Step ${name}'s workspace input ${sourceInput} holds no artifact.`,
         });
 
         continue;
@@ -1076,6 +1461,10 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
       const cancelled = () => requested.get(commission, attempt) !== undefined;
 
+      // Why it must stop: the owner cancelled it, or its parent withdrew the commission.
+      const stopping = () =>
+        cancelled() ? (withdrawalOf(commission) ?? cancelledReason(name)) : undefined;
+
       // Each note the attempt writes is an event of its own, after attempt-started. A note
       // changes no state and this attempt is the commission's one writer, so it is appended at
       // the next position without replaying the log; another writer's event there refuses it.
@@ -1113,16 +1502,11 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
             attempt,
             kinds: definition.kinds,
             subject,
-            workspace:
-              built !== undefined
-                ? { ...built, kept: keptOf(events, built.hash) }
-                : source === "subject"
-                  ? subject
-                  : undefined,
+            workspace: built !== undefined ? built : source === "subject" ? subject : undefined,
             inputs,
             skills,
           },
-          cancelled,
+          stopping,
           note,
           store,
           spool,
@@ -1134,7 +1518,9 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
         write(
           commission,
           read(commission),
-          ending.type === "attempt-completed" && cancelled() ? cancelledEnding(ending) : ending,
+          ending.type === "attempt-completed" && cancelled()
+            ? cancelledEnding(ending, stopping()!)
+            : ending,
         );
         unspool(spool);
       } catch (error) {
@@ -1262,15 +1648,33 @@ function resolve(
   state: Extract<CommissionState, { status: "ready" }>,
   events: Log,
   kinds: Kinds,
-): string[] {
+  childrenOf: (step: string) => readonly Child[],
+): Named[] {
   switch (query) {
     case "subject":
-      return [state.subject];
+      return [{ hash: state.subject }];
     case "request":
-      return [events[0].request];
+      return [{ hash: events[0].request }];
     default: {
       if ("session" in query) {
-        return sessionsOf(events, query.session).slice(-1);
+        return sessionsOf(events, query.session)
+          .slice(-1)
+          .map((hash) => ({ hash }));
+      }
+
+      // Each child that reached its end, its latest artifact of the kind or all of them.
+      if ("children" in query) {
+        return childrenOf(query.children).flatMap(({ commission, events: child }) => {
+          if (finishOf(child)?.outcome === undefined) {
+            return [];
+          }
+
+          const named = recorded(child, kinds)
+            .filter((artifact) => artifact.kind === query.kind)
+            .map(({ hash }) => ({ hash, commission }));
+
+          return query.take === "all" ? named : named.slice(-1);
+        });
       }
 
       const { from, kind, about, take } = query;
@@ -1281,13 +1685,42 @@ function resolve(
         (about === undefined ||
           (artifact.about !== undefined &&
             (about === "any" || (about === "subject") === (artifact.about === state.subject))))
-          ? [artifact.hash]
+          ? [{ hash: artifact.hash }]
           : [],
       );
 
       return take === "latest" ? named.slice(-1) : named;
     }
   }
+}
+
+// An artifact a query names, by hash, with the child that claimed it when a children query names it.
+type Named = { hash: string; commission?: string };
+
+// A child commission, by name, with its events.
+type Child = { commission: string; events: Log };
+
+/**
+ * How a commission finished, if it did: on the outcome that took its workflow to its end, or
+ * abandoned or withdrawn, with none.
+ */
+function finishOf(events: Log): { outcome?: string } | undefined {
+  const last = events.at(-1)!;
+
+  if (last.type === "attempt-completed" && last.next === "end") {
+    return { outcome: last.outcome };
+  }
+
+  if (last.type === "decided" && last.next === "end") {
+    return last.outcome === "abandon" ? {} : { outcome: last.outcome };
+  }
+
+  return last.type === "withdrawn" ? {} : undefined;
+}
+
+/** The name of the `n`th child, from 1, that the attempt `attempt` of the step `step` commissioned. */
+function childName(commission: string, step: string, attempt: number, n: number): string {
+  return `${commission}.${step}.${attempt}.${n}`;
 }
 
 // The sessions attempts of `step` left, oldest first, by hash, however each attempt ended.
@@ -1321,7 +1754,10 @@ function recorded(
   return events.flatMap((event) => {
     switch (event.type) {
       case "commissioned":
-        return [{ hash: event.request, kind: "document" }];
+        return [
+          { hash: event.request, kind: "document" },
+          ...(event.given ?? []).map(({ hash, kind }) => ({ hash, kind })),
+        ];
       case "attempt-started":
         judged = event.subject;
 
@@ -1342,23 +1778,29 @@ function recorded(
 
 // The files a verifier kept for the artifact `hash`; none for the request, which no verifier saw.
 function keptOf(events: Log, hash: string): Readonly<Record<string, string>> {
+  return keptIn(events, hash) ?? {};
+}
+
+// The files a verifier kept for the artifact `hash`, if the commission claimed or was given it.
+function keptIn(events: Log, hash: string): Readonly<Record<string, string>> | undefined {
   for (const event of events) {
     const found =
-      event.type === "attempt-completed" &&
-      event.artifacts.find((artifact) => artifact.hash === hash);
+      (event.type === "attempt-completed" &&
+        event.artifacts.find((artifact) => artifact.hash === hash)) ||
+      (event.type === "commissioned" && event.given?.find((artifact) => artifact.hash === hash));
 
     if (found) {
       return found.kept;
     }
   }
 
-  return {};
+  return undefined;
 }
 
-// The transcript limit of a step: none for an approval step, which runs no program to leave a
-// session.
+// The transcript limit of a step: none for an approval or children step, which runs no program to
+// leave a session.
 function transcriptOf(step: Definition["workflow"]["steps"][string]): number {
-  return step.kind === "approval" ? 0 : step.limits.transcript;
+  return step.kind === "approval" || step.kind === "children" ? 0 : step.limits.transcript;
 }
 
 // What an escalation's reason adds when the attempt's session was over its limit.
@@ -1386,12 +1828,16 @@ function overMoney(name: string, usd: number, money: Allowance): string | undefi
 
 // What the commission has spent since the owner's latest decision, as its attempts' steps
 // reported it; unknown, naming the attempt, once one whose program ran reported no cost.
-function spentSince(events: Log): { spent: number } | { unknown: number } {
+function spentSince(
+  events: Log,
+  workflow: Definition["workflow"],
+): { spent: number } | { unknown: number } {
   let spent = 0;
 
   for (const event of sinceDecision(events)) {
+    // A children step runs no program: it costs nothing itself.
     const ran =
-      event.type === "attempt-completed" ||
+      (event.type === "attempt-completed" && workflow.steps[event.step]?.kind !== "children") ||
       (event.type === "escalated" && event.attempt !== undefined && event.transcript !== undefined);
 
     if (!ran) {
@@ -1514,9 +1960,18 @@ type Given = {
   skills: readonly { name: string; files: readonly { file: string; bytes: Buffer }[] }[];
 };
 
-// A declared input as given: the artifacts its query names, or the session a session query names.
+// A declared input as given: the artifacts its query names, each with the files its verifier kept
+// and, from a children query, the child that claimed it; or the session a session query names.
 type Input =
-  | { name: string; artifacts: readonly { hash: string; artifact: Artifact }[] }
+  | {
+      name: string;
+      artifacts: readonly {
+        hash: string;
+        artifact: Artifact;
+        kept: Readonly<Record<string, string>>;
+        commission?: string;
+      }[];
+    }
   | { name: string; sessions: readonly { hash: string; body: Buffer }[] };
 
 type Store = ReturnType<typeof createStore>;
@@ -1629,12 +2084,15 @@ const cancelledReason = (step: string) => `Step ${step} was cancelled by the own
 // The engine's own failure during a step's attempt, such as a full disk.
 const failedIn = (step: string, message: string) => `Step ${step} failed in the engine: ${message}`;
 
-// The end of a completed attempt the owner cancelled before it was written: an escalation, with
+// The end of a completed attempt stopped, for `reason`, before it was written: an escalation, with
 // its transcript and errors.
-function cancelledEnding(completed: Extract<Ending, { type: "attempt-completed" }>): Ending {
+function cancelledEnding(
+  completed: Extract<Ending, { type: "attempt-completed" }>,
+  reason: string,
+): Ending {
   const ending: Ending = {
     type: "escalated",
-    reason: cancelledReason(completed.step),
+    reason,
     attempt: completed.attempt,
     transcript: completed.transcript,
   };
@@ -1733,7 +2191,16 @@ async function prepare(input_: string, step: Runnable, given: Given): Promise<vo
 
   const inputs = new Map<
     string,
-    ({ hash: string; kind: string; fields: Artifact["fields"]; body?: string } | Listed)[]
+    (
+      | {
+          hash: string;
+          kind: string;
+          fields: Artifact["fields"];
+          body?: string;
+          commission?: string;
+        }
+      | Listed
+    )[]
   >();
 
   for (const input of given.inputs) {
@@ -1752,15 +2219,18 @@ async function prepare(input_: string, step: Runnable, given: Given): Promise<vo
       continue;
     }
 
-    for (const { hash, artifact } of input.artifacts) {
+    for (const { hash, artifact, commission } of input.artifacts) {
       const { kind, fields } = artifact;
 
+      // A child's artifact names the child, so a step can tell whose it is.
+      const from = commission === undefined ? {} : { commission };
+
       if (artifact.body === undefined) {
-        listed.push({ hash, kind, fields });
+        listed.push({ hash, kind, fields, ...from });
       } else {
         await mkdir(join(input_, name), { recursive: true });
         await writeFile(join(input_, name, hash), artifact.body);
-        listed.push({ hash, kind, fields, body: `${name}/${hash}` });
+        listed.push({ hash, kind, fields, body: `${name}/${hash}`, ...from });
       }
     }
 
@@ -1809,7 +2279,7 @@ async function prepare(input_: string, step: Runnable, given: Given): Promise<vo
 async function run(
   step: Runnable,
   given: Given,
-  cancelled: () => boolean,
+  stopping: () => string | undefined,
   note: (text: string, from: "step" | "engine") => void,
   store: Store,
   spool: Spool,
@@ -1904,8 +2374,10 @@ async function run(
   const halt = () => {
     if (fault === undefined) {
       try {
-        if (cancelled()) {
-          return cancelledReason(name);
+        const why = stopping();
+
+        if (why !== undefined) {
+          return why;
         }
       } catch (error) {
         fault = failedIn(name, error instanceof Error ? error.message : String(error));
@@ -2294,16 +2766,27 @@ async function run(
       );
     }
 
-    const claim = await parse(step, name, output, given.subject.hash, given.kinds);
+    const claim = await parse(step, name, output, given);
 
     if ("reason" in claim) {
       return escalate(claim.reason);
     }
 
-    // Each artifact whose kind has a verifier is accepted by it, which may keep files.
-    const verified = [];
+    // Each artifact whose kind has a verifier is accepted by it, which may keep files. A new one
+    // goes to the store only once every one is accepted.
+    const verified: (
+      | { hash: string; kind: string; kept: Readonly<Record<string, string>> }
+      | { artifact: Artifact; kept: Readonly<Record<string, string>> }
+    )[] = [];
 
     for (const artifact of claim.artifacts) {
+      // An adopted artifact was verified when it was first claimed.
+      if ("adopt" in artifact) {
+        verified.push({ hash: artifact.adopt, kind: artifact.artifact.kind, kept: artifact.kept });
+
+        continue;
+      }
+
       const { verifier } = given.kinds[artifact.kind];
 
       if (verifier !== undefined) {
@@ -2339,11 +2822,11 @@ async function run(
       step: name,
       attempt,
       outcome: claim.outcome,
-      artifacts: verified.map(({ artifact, kept }) => ({
-        hash: store.put(artifact),
-        kind: artifact.kind,
-        kept,
-      })),
+      artifacts: verified.map((each) =>
+        "hash" in each
+          ? each
+          : { hash: store.put(each.artifact), kind: each.artifact.kind, kept: each.kept },
+      ),
       next: step.on[claim.outcome],
     });
   } finally {
@@ -2627,7 +3110,15 @@ function reachable(target: string, hosts: readonly string[]): boolean {
   );
 }
 
-type Claim = { outcome: string; artifacts: Artifact[] };
+// An artifact a claim adopted: one of the attempt's inputs, named by hash, recorded as it is with
+// the files its verifier kept.
+type Adopted = { adopt: string; artifact: Artifact; kept: Readonly<Record<string, string>> };
+
+type Claim = { outcome: string; artifacts: (Artifact | Adopted)[] };
+
+// The kind of a claimed or adopted artifact.
+const kindOf = (claimed: Artifact | Adopted) =>
+  "adopt" in claimed ? claimed.artifact.kind : claimed.kind;
 
 // How long output.json is left unread after a write, so a file written in parts is read whole.
 const settle = 100;
@@ -2649,9 +3140,9 @@ function readEachOutput(
   let reading = Promise.resolve();
 
   const read = async () => {
-    const claim = await parse(step, name, output, given.subject.hash, given.kinds);
+    const claim = await parse(step, name, output, given);
 
-    const kinds = "reason" in claim ? [] : claim.artifacts.map(({ kind }) => kind);
+    const kinds = "reason" in claim ? [] : claim.artifacts.map(kindOf);
 
     const holds =
       kinds.length === 0
@@ -2700,8 +3191,7 @@ async function parse(
   step: Runnable,
   name: string,
   output: string,
-  subject: string,
-  kinds: Kinds,
+  { subject: { hash: subject }, kinds, inputs }: Given,
 ): Promise<Claim | { reason: string }> {
   const bytes = await readAtMost(join(output, "output.json"), claimLimit);
 
@@ -2747,9 +3237,42 @@ async function parse(
     return { reason: `Step ${name} claimed artifacts that are not a list.` };
   }
 
-  const artifacts: Artifact[] = [];
+  const artifacts: (Artifact | Adopted)[] = [];
+
+  // The artifacts the attempt was given, which it may adopt by hash.
+  const offered = new Map(
+    inputs.flatMap((input) =>
+      "artifacts" in input ? input.artifacts.map((each) => [each.hash, each] as const) : [],
+    ),
+  );
 
   for (const artifact of claimed) {
+    // An artifact adopted, by its hash: one the attempt was given, of a kind it may claim.
+    if (isRecord(artifact) && Object.hasOwn(artifact, "adopt")) {
+      const hash = new Map<string, unknown>(Object.entries(artifact)).get("adopt");
+      const found = isText(hash) ? offered.get(hash) : undefined;
+
+      if (!hasExactly(artifact, ["adopt"]) || found === undefined) {
+        return {
+          reason: `Step ${name} adopted an artifact it was not given: ${JSON.stringify(hash)}.`,
+        };
+      }
+
+      if (!step.claims.includes(found.artifact.kind)) {
+        return {
+          reason: `Step ${name} adopted an artifact of undeclared kind: ${JSON.stringify(found.artifact.kind)}.`,
+        };
+      }
+
+      if (found.hash === subject) {
+        return { reason: `Step ${name} adopted the commission's subject, which it already is.` };
+      }
+
+      artifacts.push({ adopt: found.hash, artifact: found.artifact, kept: found.kept });
+
+      continue;
+    }
+
     // Every property read below is checked before it is used.
     const { kind, fields, body } = artifact ?? {};
 
@@ -2856,12 +3379,15 @@ async function parse(
 
   // A judgement that routes is about the subject the attempt was given, which a new subject in
   // the same claim would make history at once: the edge would follow a judgement of nothing current.
-  const routing = artifacts.find(
-    ({ kind }) => kinds[kind].role === "judgement" && kinds[kind].outcome !== undefined,
-  );
+  const routing = artifacts
+    .map(kindOf)
+    .find((kind) => kinds[kind].role === "judgement" && kinds[kind].outcome !== undefined);
 
-  if (routing !== undefined && artifacts.some(({ kind }) => kinds[kind].role === "subject")) {
-    const { kind } = routing;
+  if (
+    routing !== undefined &&
+    artifacts.map(kindOf).some((kind) => kinds[kind].role === "subject")
+  ) {
+    const kind = routing;
 
     return {
       reason: `Step ${name} claimed a ${kind}, whose ${kinds[kind].outcome} routes its outcome, with a new subject: the ${kind} would be about the subject its claim replaces.`,

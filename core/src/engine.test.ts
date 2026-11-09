@@ -2601,7 +2601,7 @@ test("a workflow whose input queries a step it does not have cannot be commissio
     ),
     {
       message:
-        "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, or a session of one of its steps that runs a program.",
+        "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, a session of one of its steps that runs a program, or a children step's children, a kind and any take.",
     },
   );
 });
@@ -2616,7 +2616,7 @@ test("a workflow whose input queries a kind there is not cannot be commissioned"
     ),
     {
       message:
-        "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, or a session of one of its steps that runs a program.",
+        "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, a session of one of its steps that runs a program, or a children step's children, a kind and any take.",
     },
   );
 });
@@ -2642,7 +2642,7 @@ for (const [what, query] of [
       ),
       {
         message:
-          "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, or a session of one of its steps that runs a program.",
+          "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, a session of one of its steps that runs a program, or a children step's children, a kind and any take.",
       },
     );
   });

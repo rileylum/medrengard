@@ -1,7 +1,17 @@
 import { normalize } from "node:path";
 import { hasExactly, isRecord, isText } from "./json.ts";
 import type { Kinds } from "./kinds.ts";
-import type { Access, Definition, Limits, Money, Skill, Workflow } from "./replay.ts";
+import type {
+  Access,
+  Children,
+  Definition,
+  Limits,
+  Money,
+  Query,
+  Skill,
+  Wait,
+  Workflow,
+} from "./replay.ts";
 
 // An input name, which is also a directory in the step's input, so it cannot leave that directory
 // or collide with input.json.
@@ -25,8 +35,70 @@ export function parseDefinition(name: string, stored: string): Definition {
   // has none.
   const skills: Record<string, Skill> = JSON.parse(text).skills ?? {};
   const limits = JSON.parse(text).defaults === undefined ? before : parseDefaults(text);
+  const workflow = parseWorkflow(name, text, kinds, limits);
 
-  return { workflow: parseWorkflow(name, text, kinds, limits), kinds, skills };
+  refuseChildren(name, workflow, text, kinds, limits);
+
+  return { workflow, kinds, skills };
+}
+
+// Refuses children steps whose workflow the definition does not hold, or that lead back to a
+// workflow they are within, so nesting is bounded; and a wait for an outcome that the child
+// workflow can never end on. The definition holds every workflow its children steps reach, as
+// commissioning pinned them.
+function refuseChildren(
+  name: string,
+  workflow: Workflow<string, { limits: Limits & Money }>,
+  text: string,
+  kinds: Kinds,
+  limits: Partial<Limits>,
+): void {
+  const held = JSON.parse(text).workflows ?? {};
+  const parsed = new Map([[name, workflow]]);
+
+  const visit = (at: string, within: readonly string[]) => {
+    for (const [step, declared] of Object.entries(parsed.get(at)!.steps)) {
+      if (declared.kind !== "children") {
+        continue;
+      }
+
+      const invalid = (problem: string) =>
+        new Error(`Workflow ${at} is invalid: step ${step}'s ${problem}.`);
+
+      const child = declared.workflow;
+
+      if (within.includes(child)) {
+        throw invalid(`children lead back to workflow ${child}, which they are within`);
+      }
+
+      if (!Object.hasOwn(held, child)) {
+        throw invalid(`workflow ${child} is not one of the factory's workflows`);
+      }
+
+      if (!parsed.has(child)) {
+        parsed.set(
+          child,
+          parseWorkflow(child, JSON.stringify({ workflow: held[child] }), kinds, limits),
+        );
+      }
+
+      const outcome = waitOutcome(declared.wait);
+
+      const ends = Object.values(parsed.get(child)!.steps).some(
+        (each) => outcome !== undefined && outcome !== null && each.on[outcome] === "end",
+      );
+
+      if (isText(outcome) && !ends) {
+        throw invalid(
+          `wait counts children ending on ${outcome}, which workflow ${child} never ends on`,
+        );
+      }
+
+      visit(child, [...within, child]);
+    }
+  };
+
+  visit(name, [name]);
 }
 
 const limitNames = ["idle", "attempt", "transcript", "input", "memory", "processes", "disk"];
@@ -463,7 +535,49 @@ function parseWorkflow(
   );
 
   const runsProgram = (step: string) =>
-    names.includes(step) && kindsOfSteps.get(step) !== "approval";
+    names.includes(step) &&
+    kindsOfSteps.get(step) !== "approval" &&
+    kindsOfSteps.get(step) !== "children";
+
+  // Whether `query` is one the engine can resolve: subject, request, a query over the record, a
+  // session of a step that runs a program, or the artifacts of one kind a children step's
+  // children claimed.
+  const validQuery = (query: Query) =>
+    query === "subject" ||
+    query === "request" ||
+    (hasExactly(query, ["session"]) && runsProgram(String(Object.values(query)[0]))) ||
+    childrenQuery(query) ||
+    (isRecord(query) &&
+      !Object.hasOwn(query, "session") &&
+      !Object.hasOwn(query, "children") &&
+      Object.entries(query).every(
+        ([field, value]) =>
+          (field === "from" &&
+            Array.isArray(value) &&
+            value.every((from) => names.includes(from))) ||
+          (field === "kind" && isText(value) && kinds.includes(value)) ||
+          (field === "about" && (value === "subject" || value === "earlier" || value === "any")) ||
+          (field === "take" && (value === "latest" || value === "all")),
+      ));
+
+  // Whether `query` reads a children step's children: names one, a kind, and any take.
+  function childrenQuery(query: Query): boolean {
+    if (!isRecord(query) || !Object.hasOwn(query, "children")) {
+      return false;
+    }
+
+    const fields = new Map<string, unknown>(Object.entries(query));
+    const take = fields.get("take");
+    const kind = fields.get("kind");
+
+    return (
+      hasExactly(query, take === undefined ? ["children", "kind"] : ["children", "kind", "take"]) &&
+      kindsOfSteps.get(String(fields.get("children"))) === "children" &&
+      isText(kind) &&
+      kinds.includes(kind) &&
+      (take === undefined || take === "latest" || take === "all")
+    );
+  }
 
   for (const [name, step] of Object.entries(steps)) {
     const on = step?.on;
@@ -491,6 +605,16 @@ function parseWorkflow(
         throw invalid(
           `step ${name} cannot declare abandon, which the owner may decide at every wait`,
         );
+      }
+
+      continue;
+    }
+
+    if (kind === "children") {
+      const problem = childrenProblem(step, validQuery);
+
+      if (problem !== undefined) {
+        throw invalid(`step ${name}'s ${problem}`);
       }
 
       continue;
@@ -534,7 +658,7 @@ function parseWorkflow(
       workspace !== "empty" &&
       source !== "subject" &&
       source !== "request" &&
-      !(isRecord(source) && take === "latest")
+      !(isRecord(source) && take === "latest" && !Object.hasOwn(source, "children"))
     ) {
       throw invalid(
         `step ${name}'s workspace must be subject, empty, or one of its inputs that names at most one artifact: subject, request or a query that takes the latest`,
@@ -547,29 +671,9 @@ function parseWorkflow(
       );
     }
 
-    if (
-      !isRecord(inputs) ||
-      !Object.values(inputs).every(
-        (query) =>
-          query === "subject" ||
-          query === "request" ||
-          (hasExactly(query, ["session"]) && runsProgram(String(Object.values(query)[0]))) ||
-          (isRecord(query) &&
-            !Object.hasOwn(query, "session") &&
-            Object.entries(query).every(
-              ([field, value]) =>
-                (field === "from" &&
-                  Array.isArray(value) &&
-                  value.every((from) => names.includes(from))) ||
-                (field === "kind" && kinds.includes(value)) ||
-                (field === "about" &&
-                  (value === "subject" || value === "earlier" || value === "any")) ||
-                (field === "take" && (value === "latest" || value === "all")),
-            )),
-      )
-    ) {
+    if (!isRecord(inputs) || !Object.values(inputs).every(validQuery)) {
       throw invalid(
-        `step ${name}'s inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, or a session of one of its steps that runs a program`,
+        `step ${name}'s inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, a session of one of its steps that runs a program, or a children step's children, a kind and any take`,
       );
     }
 
@@ -698,6 +802,165 @@ function parseWorkflow(
   return parsed;
 }
 
+// The fields a children step may have: each or count, a request only with count, and given only
+// when there are some.
+function childrenFields(step: Children<string>): string[] {
+  const has = (field: string) => Object.hasOwn(step, field);
+
+  return [
+    "kind",
+    "workflow",
+    ...(has("each") ? ["each"] : []),
+    ...(has("count") ? ["count"] : []),
+    ...(has("request") ? ["request"] : []),
+    ...(has("given") ? ["given"] : []),
+    "width",
+    "concurrent",
+    "wait",
+    "on",
+    "budget",
+    "limits",
+  ];
+}
+
+const positive = (value: number) => Number.isSafeInteger(value) && value > 0;
+
+// Why the children step `step` cannot run, if it cannot; `valid` says whether a query is one its
+// workflow can resolve. That the workflow it names is the factory's, and leads not back to its
+// own, is checked with the definition's workflows.
+function childrenProblem(
+  step: Children<string>,
+  valid: (query: Query) => boolean,
+): string | undefined {
+  const { workflow, each, count, request, given, width, concurrent, wait, on, budget, limits } =
+    step;
+
+  if (!hasExactly(step, childrenFields(step))) {
+    return "fields must be a children step's: its workflow, each or count, any request and given, width, concurrent, wait, on, budget and limits";
+  }
+
+  if (!isText(workflow)) {
+    return "workflow must name a workflow";
+  }
+
+  if ((each === undefined) === (count === undefined)) {
+    return "children must come from each, or count, not both";
+  }
+
+  // A child's request is a document.
+  const documents = (query: Query | undefined) =>
+    query !== undefined &&
+    valid(query) &&
+    isRecord(query) &&
+    new Map(Object.entries(query)).get("kind") === "document";
+
+  if (each !== undefined && !documents(each)) {
+    return "each must be a query of documents, which become the children's requests";
+  }
+
+  if (count !== undefined && !positive(count)) {
+    return "count must be a positive integer";
+  }
+
+  if (
+    request !== undefined &&
+    (count === undefined ||
+      !(
+        request === "request" ||
+        (documents(request) && new Map(Object.entries(request)).get("take") === "latest")
+      ))
+  ) {
+    return "request must be request, or a query of documents that takes the latest, and goes with count";
+  }
+
+  if (
+    given !== undefined &&
+    !(
+      isRecord(given) &&
+      Object.entries(given).every(
+        ([input, query]) =>
+          inputName.test(input) &&
+          input !== "each" &&
+          input !== "request" &&
+          valid(query) &&
+          !(isRecord(query) && Object.hasOwn(query, "session")),
+      )
+    )
+  ) {
+    return "given must name artifacts, each by an input name other than each or request and a query that is no session";
+  }
+
+  if (!positive(width) || !positive(concurrent) || concurrent > width) {
+    return "width and concurrent must be positive integers, concurrent at most width";
+  }
+
+  if (count !== undefined && count > width) {
+    return `count of ${count} is over its width of ${width}`;
+  }
+
+  const outcome = waitOutcome(wait);
+
+  if (outcome === null) {
+    return 'wait must be "all", "first", { atLeast: N } with any outcome, or { all: <outcome> }';
+  }
+
+  if (isRecord(wait) && "atLeast" in wait && wait.atLeast > (count ?? width)) {
+    return `wait for at least ${wait.atLeast} children is over the ${count ?? width} it may have`;
+  }
+
+  const outcomes = outcome === undefined ? ["done"] : ["met", "unmet"];
+
+  if (!hasExactly(on, outcomes)) {
+    return `edges must be ${outcomes.join(" and ")}, the outcomes of its wait`;
+  }
+
+  if (!positive(budget)) {
+    return "budget must be a positive integer";
+  }
+
+  if (
+    !hasExactly(limits, ["wait"]) ||
+    !positive(new Map(Object.entries(limits)).get("wait") ?? 0)
+  ) {
+    return "limits must be wait, a positive number of seconds";
+  }
+
+  return undefined;
+}
+
+/**
+ * The outcome a wait counts children ending on: undefined for one that counts any end, or null for
+ * a wait that is none.
+ */
+export function waitOutcome(wait: Wait): string | undefined | null {
+  if (wait === "all" || wait === "first") {
+    return undefined;
+  }
+
+  if (!isRecord(wait)) {
+    return null;
+  }
+
+  const fields = new Map<string, unknown>(Object.entries(wait));
+  const all = fields.get("all");
+  const atLeast = fields.get("atLeast");
+  const outcome = fields.get("outcome");
+
+  if (hasExactly(wait, ["all"])) {
+    return isText(all) ? all : null;
+  }
+
+  if (!Number.isSafeInteger(atLeast) || Number(atLeast) <= 0) {
+    return null;
+  }
+
+  if (hasExactly(wait, ["atLeast"])) {
+    return undefined;
+  }
+
+  return hasExactly(wait, ["atLeast", "outcome"]) && isText(outcome) ? outcome : null;
+}
+
 // Refuses a step whose workspace may be built from an artifact whose kind has no materialiser, so
 // the commission does not find out only once the earlier steps have run. Every kind that could be
 // the subject counts, wherever in the workflow it is claimed.
@@ -707,7 +970,7 @@ function refuseUnbuildable(
   invalid: (problem: string) => Error,
 ): void {
   const programs = Object.values(workflow.steps).flatMap((step) =>
-    step.kind === "approval" ? [] : [step],
+    step.kind === "approval" || step.kind === "children" ? [] : [step],
   );
 
   const subjects = [
@@ -720,11 +983,11 @@ function refuseUnbuildable(
     from.flatMap((name) => {
       const step = workflow.steps[name];
 
-      return step.kind === "approval" ? ["decision"] : step.claims;
+      return step.kind === "approval" ? ["decision"] : step.kind === "children" ? [] : step.claims;
     });
 
   for (const [name, step] of Object.entries(workflow.steps)) {
-    if (step.kind === "approval" || step.workspace === "empty") {
+    if (step.kind === "approval" || step.kind === "children" || step.workspace === "empty") {
       continue;
     }
 
@@ -736,7 +999,7 @@ function refuseUnbuildable(
         ? subjects
         : query === "request"
           ? ["document"]
-          : "session" in query
+          : "session" in query || "children" in query
             ? []
             : query.kind !== undefined
               ? [query.kind]

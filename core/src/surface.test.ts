@@ -14,6 +14,7 @@ const exports = {
   "src/replay.ts": [
     "Access",
     "Agent",
+    "Children",
     "CommissionEvent",
     "CommissionState",
     "Commissioned",
@@ -23,6 +24,7 @@ const exports = {
     "Query",
     "Skill",
     "Usage",
+    "Wait",
     "Workflow",
     "defineWorkflow",
     "replay",
