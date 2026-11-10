@@ -33,6 +33,7 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
              [--feedback <text> | --feedback-file <path>]
   cancel     <commission>
   renew      <trigger>
+  accept
   transcript <commission> <attempt>
   errors     <commission> <attempt>
   artifact   <hash or a prefix of at least 8 characters>
@@ -59,6 +60,7 @@ const commands = new Map<string, { arguments: number; optional?: number; options
   ["decide", { arguments: 2, options: ["subject", "since", "feedback", "feedback-file"] }],
   ["cancel", { arguments: 1, options: [] }],
   ["renew", { arguments: 1, options: [] }],
+  ["accept", { arguments: 0, options: [] }],
   ["transcript", { arguments: 2, options: [] }],
   ["artifact", { arguments: 1, options: [] }],
   ["definition", { arguments: 1, options: [] }],
@@ -178,6 +180,9 @@ try {
       engine.renew(first);
       print(null, "");
       break;
+    case "accept":
+      accept(engine);
+      break;
     case "show":
       printRecord(first, engine.record(first));
       break;
@@ -247,6 +252,30 @@ function refuseUsage(): never {
 }
 
 // Prints `result` as JSON, or `readable` for the owner.
+// Accepts this engine for every commission that escalated because it is not the one the
+// commission last ran on: the owner's retry on each, which carries it on.
+function accept(engine: Engine): void {
+  const accepted = engine.commissions().flatMap((entry) =>
+    "error" in entry || entry.state.status !== "escalated" || entry.state.cause !== "upgrade"
+      ? []
+      : [
+          {
+            commission: entry.commission,
+            state: engine.decide(entry.commission, {
+              subject: entry.state.subject,
+              since: entry.state.since,
+              outcome: "retry",
+            }),
+          },
+        ],
+  );
+
+  print(
+    accepted,
+    accepted.map(({ commission, state }) => `${commission}: ${where(state)}\n`).join(""),
+  );
+}
+
 // Every result the CLI prints, as JSON with --json.
 type Printed =
   | CommissionState

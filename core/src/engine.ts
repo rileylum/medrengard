@@ -2438,21 +2438,26 @@ function unkept(size: number, limit: number): string {
   return ` Its session of ${size} bytes, over its transcript limit of ${limit}, was not kept.`;
 }
 
-// The version of this engine: a hash of its own source, the modules beside this one but their
-// tests, so any change to the engine is a different engine. Read once per process.
+// The version of this engine: a hash of its package's source, every module and program it ships
+// but their tests, so any change to the engine, an adapter or a kind's program is a different
+// engine. Read once per process.
 let version: string | undefined;
 
 function engineVersion(): string {
   if (version === undefined) {
+    const package_ = join(import.meta.dirname, "..");
     const hash = createHash("sha256");
 
-    for (const file of readdirSync(import.meta.dirname)
-      .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+    for (const file of readdirSync(package_, { recursive: true, encoding: "utf8" })
+      .filter(
+        (name) =>
+          name.endsWith(".ts") && !name.endsWith(".test.ts") && !name.includes("node_modules"),
+      )
       .sort()) {
       hash
         .update(file)
         .update("\0")
-        .update(readFileSync(join(import.meta.dirname, file)));
+        .update(readFileSync(join(package_, file)));
     }
 
     version = hash.digest("hex");

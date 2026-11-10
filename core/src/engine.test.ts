@@ -5883,6 +5883,32 @@ function engineOf(engine: ReturnType<typeof createEngine>): string {
   return commissioned.event.engine;
 }
 
+// Constraint 3: the engine's version is a hash of the package's source, the programs it ships
+// among it, so a changed adapter, verifier or materialiser is another engine too.
+test("the engine's version is a hash of every source file of its package but the tests", async (t) => {
+  const { engine } = await engineRunning(t, "true");
+  const package_ = join(import.meta.dirname, "..");
+
+  const files = (await readdir(package_, { recursive: true }))
+    .filter(
+      (file) =>
+        file.endsWith(".ts") && !file.endsWith(".test.ts") && !file.includes("node_modules"),
+    )
+    .toSorted();
+
+  const hash = createHash("sha256");
+
+  for (const file of files) {
+    hash
+      .update(file)
+      .update("\0")
+      .update(await readFile(join(package_, file)));
+  }
+
+  assert.ok(files.includes("adapters/claude-code.ts") && files.includes("verifiers/commit.ts"));
+  assert.equal(engineOf(engine), hash.digest("hex"));
+});
+
 test("a commission that last ran on another engine escalates once, and the owner's retry carries it on with this one", async (t) => {
   const { engine, options } = await engineRunning(
     t,

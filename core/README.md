@@ -228,10 +228,12 @@ editing the factory affects only new commissions. The definition holds `run` as 
 `run` points at changes every commission that runs it next. To pin a prompt, put its text in the
 definition, not a path to it. An agent's skills are read when the commission starts and kept with
 its definition, so editing a skill affects only new commissions. The engine is pinned as well:
-commissioning and every attempt record the engine's version, a hash of its source, and an
+commissioning and every attempt record the engine's version, a hash of the package's source,
+its adapters and kinds' programs included, and an
 upgraded engine never quietly changes how an unfinished commission goes on. Before its next
 attempt, such a commission escalates, `Commission first last ran on engine 3f9a2c1d; this engine
-is 7b01e4aa.`; the owner's retry carries it on with this engine, and abandoning ends it. Only a
+is 7b01e4aa.`; the owner's retry carries it on with this engine, and abandoning ends it;
+`medrengard accept` retries every commission escalated so, at once. Only a
 decision on that escalation accepts the engine, not one at an approval step. A commission written
 before engines recorded their version escalates the same way, once. A test keeps a log written on
 2026-11-03 readable.
@@ -1340,6 +1342,7 @@ medrengard <command> [--json] [--factory <path>]
              [--feedback <text> | --feedback-file <path>]
   cancel     <commission>
   renew      <trigger>
+  accept
   transcript <commission> <attempt>
   errors     <commission> <attempt>
   artifact   <hash or a prefix of at least 8 characters>
@@ -1364,6 +1367,9 @@ medrengard <command> [--json] [--factory <path>]
   they arrive, its ending, and each escalation and decision. It stops once the commission awaits
   the owner, escalates or finishes; on one that already has, it prints the whole story. `show`
   leaves the notes out. It is woken by each new event, rather than looking every so often.
+- `accept` accepts this engine for every commission that escalated because it last ran on
+  another: the owner's `retry` on each, printed one per line, `first: ready at build`. Others are
+  left as they are.
 - `attend` starts the attended step a commission is ready at in the terminal it is run in. See
   [Attended steps](#attended-steps).
 - `events` prints every commission's events after `--after`, 0 if left out, one line each with its
