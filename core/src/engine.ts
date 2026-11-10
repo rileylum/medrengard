@@ -3131,99 +3131,73 @@ async function run(
     child.stdout!.on("data", guarded(record(false)));
     child.stderr!.on("data", guarded(record(true)));
 
-    // The part of a note whose line has not ended yet.
-    let pending = Buffer.alloc(0);
+    // What the step writes on a descriptor of its own, as lines: each complete line goes to
+    // `line`, as does one that has grown past a line's limit, which stops the step, naming
+    // `what` it wrote. Its bytes count toward the transcript limit with everything else the step
+    // writes.
+    const lines = (what: string, line: (text: string) => void) => {
+      let pending = Buffer.alloc(0);
 
-    // Records each complete line as a note, unless it is empty. A note's bytes count toward the
-    // transcript limit, so notes are bounded with everything else the step writes.
-    const noteFrom = (chunk: Buffer) => {
-      idle?.refresh();
-      written += chunk.length;
+      const one = (bytes: Buffer) => {
+        if (stopped !== undefined) {
+          return;
+        }
 
-      if (written > step.limits.transcript) {
-        stopFor(overTranscript);
+        if (bytes.length > noteLimit) {
+          stopFor(
+            because("limit", `Step ${name} wrote ${what} over its limit of ${noteLimit} bytes.`),
+          );
 
-        return;
-      }
+          return;
+        }
 
-      pending = Buffer.concat([pending, chunk]);
+        line(bytes.toString());
+      };
 
-      for (let end = pending.indexOf(10); end !== -1; end = pending.indexOf(10)) {
-        noteLine(pending.subarray(0, end));
-        pending = pending.subarray(end + 1);
-      }
+      return {
+        read(chunk: Buffer) {
+          idle?.refresh();
+          written += chunk.length;
 
-      if (pending.length > noteLimit) {
-        noteLine(pending);
-      }
+          if (written > step.limits.transcript) {
+            stopFor(overTranscript);
+
+            return;
+          }
+
+          pending = Buffer.concat([pending, chunk]);
+
+          for (let end = pending.indexOf(10); end !== -1; end = pending.indexOf(10)) {
+            one(pending.subarray(0, end));
+            pending = pending.subarray(end + 1);
+          }
+
+          if (pending.length > noteLimit) {
+            one(pending);
+          }
+        },
+        // A last line need not end.
+        end() {
+          one(pending);
+        },
+      };
     };
 
-    const noteLine = (line: Buffer) => {
-      if (stopped !== undefined) {
-        return;
-      }
-
-      if (line.length > noteLimit) {
-        stopFor(
-          because("limit", `Step ${name} wrote a note over its limit of ${noteLimit} bytes.`),
-        );
-
-        return;
-      }
-
-      const text = line.toString().trimEnd();
+    // Each line the step writes to fd 3 is a note, unless it is empty.
+    const notes = lines("a note", (line) => {
+      const text = line.trimEnd();
 
       if (text !== "") {
         note(text, "step");
       }
-    };
+    });
 
-    child.stdio[3]!.on("data", guarded(noteFrom));
+    child.stdio[3]!.on("data", guarded(notes.read));
 
-    // The part of a usage report whose line has not ended yet.
-    let reporting = Buffer.alloc(0);
-
-    // Keeps each complete line as the step's latest usage, spooled so an engine that finds the
-    // attempt interrupted records it too. Bounded like notes, and counted with them.
-    const usageFrom = (chunk: Buffer) => {
-      idle?.refresh();
-      written += chunk.length;
-
-      if (written > step.limits.transcript) {
-        stopFor(overTranscript);
-
-        return;
-      }
-
-      reporting = Buffer.concat([reporting, chunk]);
-
-      for (let end = reporting.indexOf(10); end !== -1; end = reporting.indexOf(10)) {
-        usageLine(reporting.subarray(0, end));
-        reporting = reporting.subarray(end + 1);
-      }
-
-      if (reporting.length > noteLimit) {
-        usageLine(reporting);
-      }
-    };
-
-    const usageLine = (line: Buffer) => {
-      if (stopped !== undefined) {
-        return;
-      }
-
-      if (line.length > noteLimit) {
-        stopFor(
-          because(
-            "limit",
-            `Step ${name} wrote a usage report over its limit of ${noteLimit} bytes.`,
-          ),
-        );
-
-        return;
-      }
-
-      const text = line.toString().trim();
+    // Each line it writes to fd 4 is its latest usage, spooled so an engine that finds the attempt
+    // interrupted records it too.
+    const reports = lines("a usage report", (line) => {
+      const text = line.trim();
 
       if (text === "") {
         return;
@@ -3245,9 +3219,9 @@ async function run(
       if (over !== undefined) {
         stopFor(over);
       }
-    };
+    });
 
-    child.stdio[4]!.on("data", guarded(usageFrom));
+    child.stdio[4]!.on("data", guarded(reports.read));
 
     // While the owner and an attended step's agent go back and forth, the engine reads each
     // output.json the agent writes and notes what it holds, so the owner knows when the result
@@ -3269,8 +3243,8 @@ async function run(
     await reading?.close();
 
     // A last note or report need not end its line.
-    noteLine(pending);
-    usageLine(reporting);
+    notes.end();
+    reports.end();
 
     left = sessionLeft(output, step.limits.transcript);
 
