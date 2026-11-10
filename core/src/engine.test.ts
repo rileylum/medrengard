@@ -3231,6 +3231,64 @@ test("a stopped step has its grace period between SIGTERM and SIGKILL", async (t
   assert.equal(await readFile(join(directory, "started"), "utf8"), "stopped gracefully\n");
 });
 
+test("a stopped step that ignores SIGTERM gets SIGKILL after its grace period", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `trap '' TERM; while true; do echo tick; sleep 0.1; done`,
+    { idle: 5, attempt: 1, transcript: 65536, input: 65536 },
+  );
+
+  const started = Date.now();
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    cause: "limit",
+    reason: "Step build reached its attempt limit of 1 s.",
+  });
+
+  // Its limit, then the grace period of 5 s: it ended only when killed.
+  const took = Date.now() - started;
+
+  assert.ok(took >= 6000 && took < 15_000, `${took} ms`);
+});
+
+test("an unattended step has empty stdin", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `if read -r line; then echo "read $line"; else echo nothing to read; fi
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  await engine.advance("first");
+
+  assert.equal(engine.transcript("first", 1).toString(), "nothing to read\n");
+});
+
+test("a finished commission accepts nothing", async (t) => {
+  const { engine } = await engineRunning(
+    t,
+    `echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+  );
+
+  const finished = { status: "finished", by: "end" } as const;
+
+  assert.deepEqual(await engine.advance("first"), finished);
+
+  const events = engine.events(0).length;
+  const { request } = engine.record("first");
+
+  assert.throws(
+    () => engine.decide("first", { subject: request.hash, since: 0, outcome: "retry" }),
+    /Commission first is finished, so no decision can be made\./,
+  );
+  assert.throws(
+    () => engine.cancel("first"),
+    /Commission first is finished, so no attempt can be cancelled\./,
+  );
+  assert.deepEqual(await engine.advance("first"), finished);
+  assert.equal(engine.events(0).length, events);
+});
+
 test("two engines advancing one ready commission at once run its step once", async (t) => {
   const { engine, directory, options } = await engineRunning(
     t,

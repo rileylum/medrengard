@@ -590,6 +590,119 @@ test("a step cannot adopt an artifact it was not given", async (t) => {
   });
 });
 
+// Principle 7: a false claim the engine must catch. A step given the request, the commission's
+// subject, claims it by adoption.
+const adoptRequest = `printf '{"outcome":"done","artifacts":[{"adopt":"%s"}]}' "$(sed -n 's/.*"hash":"\\([^"]*\\)".*/\\1/p' "$MEDRENGARD_IN/input.json")" > "$MEDRENGARD_OUT/output.json"`;
+
+test("a step cannot adopt the commission's subject, which it already is", async (t) => {
+  const { engine } = await engineWith(t, (directory) => ({
+    build: {
+      start: "pick",
+      steps: {
+        pick: {
+          ...command(adoptRequest, { done: "end" }, directory),
+          inputs: { request: "request" },
+        },
+      },
+    },
+  }));
+
+  assert.partialDeepStrictEqual(await settle(engine), {
+    status: "escalated",
+    cause: "claim",
+    reason: "Step pick adopted the commission's subject, which it already is.",
+  });
+});
+
+test("a step cannot adopt an artifact of a kind it may not claim", async (t) => {
+  const { engine } = await engineWith(t, (directory) => ({
+    build: {
+      start: "pick",
+      steps: {
+        pick: {
+          ...command(adoptRequest, { done: "end" }, directory, []),
+          inputs: { request: "request" },
+        },
+      },
+    },
+  }));
+
+  assert.partialDeepStrictEqual(await settle(engine), {
+    status: "escalated",
+    cause: "claim",
+    reason: 'Step pick adopted an artifact of undeclared kind: "document".',
+  });
+});
+
+/** A parent whose children step waits on every one of `count` children running `script`. */
+const waitingOnAll = (directory: string, count: number, script: string): Workflows => ({
+  build: {
+    start: "fan",
+    steps: {
+      fan: {
+        kind: "children",
+        workflow: "child",
+        count,
+        width: count,
+        concurrent: count,
+        wait: "all",
+        on: { done: "end" },
+        budget: 1,
+        limits: { wait: 60 },
+      },
+    },
+  },
+  child: { start: "work", steps: { work: command(script, { done: "end" }, directory, []) } },
+});
+
+test("a children wait without an outcome escalates once it can no longer be met", async (t) => {
+  const { engine } = await engineWith(t, (directory) => waitingOnAll(directory, 1, "exit 1"));
+
+  // The parent's attempt is the wait; its child escalates, and waits for the owner.
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "attempting" });
+
+  const child = await engine.advance("first.fan.1.1");
+
+  assert.ok(child.status === "escalated");
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "attempting" });
+
+  // Abandoned, the child has finished without reaching its end.
+  engine.decide("first.fan.1.1", {
+    subject: child.subject,
+    since: child.since,
+    outcome: "abandon",
+  });
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    cause: "unmet",
+    reason: "Step fan's wait can no longer be met: first.fan.1.1 did not reach the end.",
+  });
+});
+
+test("an engine stopping does not interrupt a children wait: the next to look carries it on", async (t) => {
+  const { engine, directory, factory } = await engineWith(t, (path) =>
+    waitingOnAll(path, 1, `printf '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`),
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "attempting" });
+
+  // Another engine on the same log, as after the first stopped.
+  const next = createEngine({
+    log: join(directory, "record", "log.sqlite"),
+    kinds: builtIn,
+    defaults: { limits },
+    workflows: factory,
+  });
+
+  assert.partialDeepStrictEqual(await next.advance("first.fan.1.1"), { status: "finished" });
+  assert.deepEqual(await next.advance("first"), { status: "finished", by: "end" });
+  assert.deepEqual(
+    next.record("first").entries.map(({ entry }) => entry),
+    ["attempt"],
+  );
+});
+
 // Git with an identity, and no signing or hooks a developer's configuration could add.
 const git = "git -c user.name=Test -c user.email=test@example.com -c commit.gpgsign=false";
 
