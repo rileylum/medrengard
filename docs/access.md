@@ -1,135 +1,227 @@
 # Access
 
-What a step's process may read, write and reach, the defaults to start from, and how a credential stays outside the sandbox.
+What a step's process may read, write and reach, the defaults to start from, and how a broker keeps a credential outside the sandbox.
 
-Every command and agent step runs in bubblewrap under its `access`:
+Every command and agent step states an `access`. The engine starts the step's program in a sandbox
+that enforces it: bubblewrap, in a systemd user scope that holds the step's `memory` and `processes`
+limits. Start from a default and change what you need, or write one whole:
 
 ```ts
 import type { Access } from "@medrengard/core/src/definition.ts";
 
-const access: Access = {
-  // In order of depth; on the same path, read wins. A path not listed is invisible.
+export const access: Access = {
   paths: [
     { path: "/usr", mode: "read" },
     { path: "/home/owner/dev/app", mode: "read" },
-    // A fresh directory on disk, in the attempt's own area, which the step's disk limit bounds.
     { path: "/var/cache/build", mode: "scratch" },
-    // A fresh directory of at most 256 MiB over whatever is there, held in memory.
     { path: "/tmp", mode: "empty", size: 256 * 1024 * 1024 },
   ],
-  // true, false, or only some hosts: { hosts: ["api.anthropic.com", "registry.npmjs.org"] }.
   network: false,
-  // Variable names passed through from the engine's environment, or "all".
-  environment: ["LANG"],
-  // Optional: variables set to text, over the engine's own. Recorded with the definition, so no secrets.
+  environment: ["PATH", "LANG"],
   values: { TZ: "UTC" },
-  // A reviewer can get "read".
   workspace: "write",
-  // Whether its processes may make namespaces of their own, as a sandbox inside it does.
   sandboxes: false,
 };
 ```
 
-The workspace, the input (read-only) and the output are always there, at `/workspace`, `/input`
-and `/output`, paths that name nothing of the machine, the same for every step; `MEDRENGARD_IN` and
-`MEDRENGARD_OUT` are always set to the last two. A path in `paths` cannot be one of them or under one.
-A step whose access grants `/` itself sees the machine as it is, its directories where the engine
-keeps them. `PATH` is passed like any other variable, only when `environment`
-names it; without it a step finds commands only in the system's default search path. A name in
-`values` cannot also be in `environment`, nor be `MEDRENGARD_IN` or `MEDRENGARD_OUT`; with
-`environment: "all"`, a value is set over the engine's. A step has
-namespaces of its own (user, cgroup, IPC, hostname, process and, without `network`, network): on a
-machine that cannot make one, the step fails rather than run without it. Without `sandboxes` it
-cannot make more: the kernel refuses user namespaces, which keeps more of it out of reach of what
-the step runs. It has its own `/proc` and a minimal `/dev`, read-only but for `/dev/shm`, a fresh
-area held in the step's memory and bounded by its memory limit. A step that fills an `empty` path of its access
-escalates, if it is still running when the engine next looks, once a second; a step that ends first
-only sees its writes fail.
+## Fields
 
-The log's directory, which holds the log, the store and the attempts, is hidden from every step and
-kind program whatever its access: it is empty and read-only, but for the attempt's own workspace,
-input and output and any path the access names under it. So no access can let a step write a
-decision without naming the log's directory itself.
+| Field         | Required | Meaning                                                                                             |
+| ------------- | -------- | --------------------------------------------------------------------------------------------------- |
+| `paths`       | yes      | The paths of the machine the step sees, each with a mode. See [Paths](#paths).                      |
+| `network`     | yes      | `true`: the engine's network. `false`: loopback only. `{ hosts, brokers? }`: only what it lists.    |
+| `environment` | yes      | Names of variables passed through from the engine's environment, or `"all"`.                        |
+| `values`      | no       | Variables set to text, over the engine's own. Recorded with the definition, so never a secret.      |
+| `workspace`   | yes      | `"write"` or `"read"`: the mode of the step's workspace. A reviewer can have `"read"`.              |
+| `sandboxes`   | yes      | Whether the step's processes may make namespaces of their own, as a sandbox inside the step's does. |
 
-`@medrengard/core/defaults/access.ts` holds four values to use as they are or to change one dial of, and
-`gitIdentity(name, email)`, the `values` that make Git author and commit as that identity.
-"The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they
-exist.
+A commission is refused before it starts if a step's access breaks a rule below, or holds a field
+this table lacks.
 
-- `contract`: the system, a fresh `/tmp` of 256 MiB and `PATH`, without `sandboxes`. No home, no network and no `HOME`, so a
-  program that needs a home or a cache, such as `npm`, must be pointed at `/tmp`.
-- `node`: `contract`, with the Node that runs the engine and the step contract's module, for a
-  step's program written in TypeScript. See [the step contract](step-contract.md#the-step-contract).
-- `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
-  256 MiB, Node and npm (Node's `bin` directory and npm's package, or the `node` executable
-  alone when npm is not beside it; never other global packages), the `adapters` directory, the
-  `claude` executable, no host of its own and the broker `anthropic`, the adapter's, which holds
-  the subscription token from `~/.config/medrengard/claude-token` outside the sandbox and is the
-  only way to the model API, `PATH`, `HOME` and `LANG`, the
-  Git identity `Medrengard <medrengard@localhost>` as `values`, and no `sandboxes`, so what the
-  agent runs cannot make namespaces. A step whose agent runs tools that sandbox themselves, such as
-  bubblewrap, Codex or Chromium, grants them: `{ ...claudeCode, sandboxes: true }`. A namespace it
-  makes still sees nothing the step's access hides and writes nothing it made read-only. Its home is empty, so the owner's settings, skills, hooks
-  and MCP servers never load. A path under the home, such as a repository,
-  stays invisible until you add it: the deeper entry wins.
-- `codex`: what the Codex adapter needs: the system, a fresh `/tmp`, an empty home of 256 MiB,
-  Node and npm as for `claudeCode`, the `adapters` directory, Codex's npm package
-  (`@openai/codex`, beside npm's), no host of its own and the broker `openai`, the adapter's, which
-  holds Medrengard's Codex login outside the sandbox, `PATH`, `HOME` and `LANG`, the same Git
-  identity, and no `sandboxes`: Codex runs with no sandbox of its own, the step's being its
-  boundary.
+## Paths
+
+| Mode      | What the step sees at the path                                                           | Bounded by                   |
+| --------- | ---------------------------------------------------------------------------------------- | ---------------------------- |
+| `read`    | What is there, read-only.                                                                |                              |
+| `write`   | What is there, writable.                                                                 |                              |
+| `scratch` | A fresh, empty directory on disk, in the attempt's own area. Gone when the attempt ends. | The step's `disk` limit      |
+| `empty`   | A fresh, empty directory held in memory, over whatever is there.                         | Its `size`, in bytes, over 0 |
+
+- A path is absolute and normalised: no `.`, `..` or doubled `/`.
+- A path no entry covers is invisible.
+- Where paths nest, the deeper entry decides. On the same path, `read` wins.
+- Only an `empty` entry has a `size`.
+- No path may be `/workspace`, `/input`, `/output` or `/network`, or under one.
+- A step that fills an `empty` path escalates, cause `limit`, if it is still running when the engine
+  next looks, once a second: `Step build filled /tmp, its area of 268435456 bytes.` A step that
+  ends first only sees its writes fail.
+- A step that grants `/` itself sees the machine as it is. Its workspace, input and output are then
+  where the engine keeps them, not at `/workspace`, `/input` and `/output`; `MEDRENGARD_IN` and
+  `MEDRENGARD_OUT` name them.
+
+## What every step has
+
+Whatever its access, a step has:
+
+- its workspace at `/workspace`, in the mode `workspace` gives, as its working directory;
+- its input at `/input`, read-only, and its output at `/output`, writable;
+- `MEDRENGARD_IN`, `MEDRENGARD_OUT` and `PWD`, set to those three paths;
+- its own `/proc`, and a minimal `/dev`, read-only but for `/dev/shm`. `/dev/shm` is a fresh area
+  held in memory, which the step's `memory` limit bounds;
+- a read-only root: nothing outside the paths above takes writes;
+- namespaces of its own: user, cgroup, IPC, hostname and process, and network unless `network` is
+  `true`. On a machine that cannot make one, the step fails;
+- no swap: memory over the step's limit stops it.
+
+And never has:
+
+- the log's directory, which holds the log, the store and the attempts. The step finds it empty and
+  read-only, whatever its access. Only the attempt's own workspace, input and output, and paths the
+  access names under it, show there. So no access lets a step write a decision.
+
+Without `sandboxes`, the kernel refuses the step's processes any user namespace. An agent that runs
+tools that sandbox themselves, such as bubblewrap, Codex or Chromium, needs `sandboxes: true`. A
+namespace the step makes still sees nothing the access hides and writes nothing it made read-only.
+
+## Environment
+
+- The step gets only the variables `environment` names, the ones `values` sets, and the three
+  above.
+- `PATH` is a variable like any other. Without it, a step finds commands only on the system's
+  default search path.
+- A name in `values` cannot also be in `environment`, and cannot be `MEDRENGARD_IN` or
+  `MEDRENGARD_OUT`.
+- With `environment: "all"`, a value still sets its variable over the engine's.
+
+## Defaults
+
+`@medrengard/core/defaults/access.ts` exports four accesses. Use one as it is, or spread it and
+change a field. "The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64`,
+read-only, where they exist.
+
+| Default      | For                            | Paths                                                                                                                                 | Network                     | Environment            |
+| ------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- | ---------------------- |
+| `contract`   | A command step                 | The system, and an `empty` `/tmp` of 256 MiB.                                                                                         | `false`                     | `PATH`                 |
+| `node`       | A step's program in TypeScript | `contract`'s, the `node` executable that runs the engine, the package's `step` directory and its `package.json`.                      | `false`                     | `PATH`                 |
+| `claudeCode` | The Claude Code adapter        | The system, `/tmp`, an `empty` home of 256 MiB, Node and npm, the package's `step` and `adapters` directories, `~/.local/bin/claude`. | Only the broker `anthropic` | `PATH`, `HOME`, `LANG` |
+| `codex`      | The Codex adapter              | As `claudeCode`, with Codex's npm package (`@openai/codex`, beside npm's, when it is installed) in place of `claude`.                 | Only the broker `openai`    | `PATH`, `HOME`, `LANG` |
+
+All four have `workspace: "write"` and `sandboxes: false`.
+
+- `contract` has no home and no `HOME`. Point a program that needs a home or a cache, such as `npm`,
+  at `/tmp`.
+- `node` does not grant your program or your factory's `node_modules`. Add both. See
+  [the step contract](step-contract.md).
+- "Node and npm" is Node's `bin` directory and npm's package, never other global packages. When npm
+  is not beside Node, it is the `node` executable alone.
+- `claudeCode` and `codex` have an empty home, so none of your own settings, skills, hooks or MCP
+  servers loads. A path under the home, such as a repository, stays invisible until you add it.
+- `claudeCode` and `codex` set `values` to the Git identity `Medrengard <medrengard@localhost>`.
+- The broker `anthropic` reads the subscription token from `~/.config/medrengard/claude-token`. The
+  broker `openai` reads Medrengard's Codex login from `~/.config/medrengard/codex`. Both read it
+  outside the sandbox, and each is the step's only way to its model. See [agents](agents.md).
+
+`gitIdentity(name, email)` gives the `values` that make Git author and commit as that identity.
 
 ```ts
-import { contract } from "@medrengard/core/defaults/access.ts";
+import { claudeCode, contract, gitIdentity } from "@medrengard/core/defaults/access.ts";
+import type { Access } from "@medrengard/core/src/definition.ts";
 
-// A step that clones the owner's repository into its empty workspace.
-const cloning = {
+// A command step that clones your repository into its empty workspace.
+export const cloning: Access = {
   ...contract,
-  paths: [...contract.paths, { path: "/home/owner/dev/app", mode: "read" as const }],
+  paths: [...contract.paths, { path: "/home/owner/dev/app", mode: "read" }],
 };
-```
 
-### Reaching only some hosts
-
-`network: { hosts: [...] }` lets a step reach those hosts and nothing else: `host` on port 443,
-`host:port` on another, `*.example.com` any subdomain of it. The step has no network of its own,
-only loopback. The engine runs a proxy outside the sandbox that tunnels a CONNECT to a listed host
-and refuses anything else, and a forwarder inside, on loopback, relays to it; `HTTPS_PROXY` and
-`HTTP_PROXY`, in both cases, point there. `curl`, `git`, `npm`, `pip` and `claude` follow them; a
-program that does not has no network at all, so it fails rather than leaks. Only HTTPS, as
-CONNECT, gets through. Each host refused is noted once, from the engine,
-`Step implement was refused network access to pastebin.com:443.`, so an agent that could not
-fetch says why, and one that tried to send something somewhere shows it.
-
-`claudeCode` lists no host, only its broker, so nothing the agent runs reaches anywhere but the
-model API through it. List hosts for an agent that must, readably in the definition:
-
-```ts
-const access = {
+// An agent that commits as you, runs a browser, and reaches npm and GitHub.
+export const implementing: Access = {
   ...claudeCode,
+  values: gitIdentity("Owner", "owner@example.com"),
+  sandboxes: true,
   network: { ...claudeCode.network, hosts: ["registry.npmjs.org", "github.com"] },
 };
 ```
 
-### Brokers
+## Reaching only some hosts
 
-A harness needs a credential to reach its model, and anything in the sandbox with it could read it
-there. So a step's network may name brokers, `network: { hosts: [], brokers: { anthropic: [program,
-...args] } }`, each a program the engine runs outside the sandbox while an attempt runs. The engine
-starts it, in a systemd scope within the step's memory and process limits, with
-`MEDRENGARD_SOCKET` naming a socket for it to listen on, waits up to 10 s for it to listen, binds
-that socket into the sandbox, and stops it when the attempt ends. Inside, the forwarder relays a
-loopback port to it and names that port in `MEDRENGARD_BROKER_<NAME>`, such as
-`MEDRENGARD_BROKER_ANTHROPIC=http://127.0.0.1:41231`. The harness speaks plain HTTP to it with a
-placeholder credential; the broker refuses any request without the placeholder, puts the real
-credential in its place, and makes the TLS connection upstream. A broker that ends or does not
-listen in time escalates the attempt before its program starts, with what it said on stderr:
-`Step plan's broker anthropic ended before it listened: Cannot read the token file: ENOENT…`.
+`network: { hosts: [...] }` lets a step reach the hosts it lists and nothing else. Use it when a
+step needs a registry or a forge but not the whole network. A host the step may reach is a way out
+for whatever the step can read.
 
-What the step runs can use the credential through its broker while the attempt runs, but never
-read it. A broker is a harness adapter's program: the vendor's headers, paths and token refresh are
-its, and `adapters/broker.ts` has what they share. A broker name is lowercase letters and digits.
+| Entry            | Reaches                                        |
+| ---------------- | ---------------------------------------------- |
+| `example.com`    | That host on port 443.                         |
+| `example.com:22` | That host on that port.                        |
+| `*.example.com`  | Any subdomain of it, not `example.com` itself. |
 
-Workspace preparation runs in the same step, so it reaches the same hosts. The paths may not name
-`/network`, where the forwarder goes, nor grant `/` itself with a list of hosts, which leaves no
-place for it. A kind's verifier or materialiser has all of the network or none.
+How it works:
+
+- The step has loopback only. The engine runs a proxy outside the sandbox, and a forwarder inside
+  the sandbox relays a loopback port to it.
+- `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY` and `http_proxy` name that port, as
+  `http://127.0.0.1:<port>`.
+- The proxy tunnels a `CONNECT` to a listed host and refuses everything else with `403`. So HTTPS
+  gets through, and plain HTTP does not.
+- `curl`, `git`, `npm`, `pip` and `claude` follow the proxy variables. A program that does not has
+  no network at all.
+- The engine notes each target refused, once:
+  `Step implement was refused network access to pastebin.com:443.`
+
+Rules:
+
+- The list holds at least one host or one broker. For no network, write `network: false`.
+- Matching ignores case.
+- The paths cannot grant `/` itself: that leaves no place for the forwarder, which goes at
+  `/network`.
+- [Workspace preparation](workflows.md) runs inside the step, so it reaches the same hosts.
+- A kind's verifier or materialiser has all of the network or none: `true` or `false`. See
+  [kinds](kinds.md).
+
+## Brokers
+
+A broker is a program the engine runs outside the sandbox while an attempt runs. It holds a
+credential and adds it to what it forwards, so the credential never enters the sandbox. What the
+step runs can use the credential through the broker, but never read it. Use one when a step's
+program needs a credential, as a harness does to reach its model.
+
+Name each broker and its program in the step's network:
+
+```ts
+import { contract } from "@medrengard/core/defaults/access.ts";
+import type { Access } from "@medrengard/core/src/definition.ts";
+
+export const brokered: Access = {
+  ...contract,
+  network: {
+    hosts: [],
+    brokers: { forge: [process.execPath, "/path/to/factory/brokers/forge.ts"] },
+  },
+};
+```
+
+What the engine does, for each broker, before the step's program starts:
+
+1. Starts the program outside the sandbox, with the engine's environment and `MEDRENGARD_SOCKET`,
+   the path of a Unix socket for it to listen on. It runs in a systemd scope within the step's
+   `memory` and `processes` limits.
+2. Waits up to 10 s for it to listen.
+3. Binds the socket into the sandbox. The forwarder relays a loopback port to it and names the port
+   in `MEDRENGARD_BROKER_<NAME>`, the name in capitals: `MEDRENGARD_BROKER_FORGE=http://127.0.0.1:41231`.
+
+When the attempt ends, the engine sends the broker `SIGTERM`, then `SIGKILL` after 5 s.
+
+Rules:
+
+- A broker's name is lowercase letters and digits, starting with a letter.
+- A broker that ends, or does not listen in time, escalates the attempt with cause `broker` before
+  the step's program starts. The reason ends with the start of the broker's stderr, at most 1024
+  characters:
+  `Step plan's broker anthropic ended before it listened: Cannot read the token file: ENOENT…`.
+- The proxy variables are set too, and the proxy refuses any host the access does not list,
+  loopback included. A program that follows them must reach its broker directly, as with
+  `NO_PROXY=127.0.0.1`.
+
+The adapters' brokers work this way: the harness speaks plain HTTP to the broker with the
+placeholder credential `medrengard-broker` as its bearer token. The broker refuses any request
+without the placeholder, puts the real credential in its place, and makes the TLS connection
+upstream. Each vendor's headers, paths and token refresh are its broker's.
