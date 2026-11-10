@@ -95,7 +95,7 @@ function workflows() {
           count: 1,
           width: 1,
           concurrent: 1,
-          wait: "all",
+          until: "all",
           on: { done: "end" },
           budget: 1,
           limits: { wait: 60 },
@@ -143,7 +143,7 @@ const request = { title: "Plan", body: "Plan the work." };
 test("a query across siblings reads what each has now, unfinished or not, naming whose it is", async (t) => {
   const engine = await engineWith(t);
 
-  engine.commission("plan", "first", request);
+  engine.commission("plan", request, { name: "first" });
   await engine.advance("first");
 
   // workers-2 has claimed nothing yet: its latest document is its request.
@@ -157,7 +157,7 @@ test("a query across siblings reads what each has now, unfinished or not, naming
 test("a query across the origin reads the commission that started this one", async (t) => {
   const engine = await engineWith(t);
 
-  engine.commission("plan", "first", request);
+  engine.commission("plan", request, { name: "first" });
   await engine.advance("first");
   await engine.advance("workers-1");
 
@@ -170,7 +170,7 @@ test("a query across the origin reads the commission that started this one", asy
 test("a query across the commissions this one started reads each, in the order started", async (t) => {
   const engine = await engineWith(t);
 
-  engine.commission("plan", "first", request);
+  engine.commission("plan", request, { name: "first" });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
   assert.deepEqual(given(engine, "first", 3, "started"), [
@@ -182,13 +182,13 @@ test("a query across the commissions this one started reads each, in the order s
 test("a child's origin is its parent, and a commission the owner started has none", async (t) => {
   const engine = await engineWith(t);
 
-  engine.commission("fan", "first", request);
+  engine.commission("fan", request, { name: "first" });
   await engine.advance("first");
   await engine.advance("first.fan.1.1");
 
   assert.deepEqual(given(engine, "first.fan.1.1", 1, "parent"), [["Plan", "first"]]);
 
-  engine.commission("child", "alone", request);
+  engine.commission("child", request, { name: "alone" });
   await engine.advance("alone");
 
   assert.deepEqual(given(engine, "alone", 1, "parent"), []);
@@ -210,7 +210,7 @@ for (const [what, query, problem] of [
     const changed = workflows();
 
     // SAFETY: the query is invalid on purpose, as a factory's untyped definition could hold it.
-    const bad = query as Query;
+    const bad = query as never;
 
     const work = {
       ...changed.work,

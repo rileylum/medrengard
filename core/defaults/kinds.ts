@@ -9,11 +9,12 @@ const repository = join(import.meta.dirname, "..");
 
 // The step contract and the system, with the Node executable, which may be under the owner's home,
 // and the programs below to run. Never Node's whole installation, which could be the home itself.
-const programs: Access = {
+const programs: Access & { network: boolean } = {
   ...contract,
   paths: [
     ...contract.paths,
     { path: process.execPath, mode: "read" },
+    { path: join(repository, "step"), mode: "read" },
     { path: join(repository, "verifiers"), mode: "read" },
     { path: join(repository, "materialisers"), mode: "read" },
   ],
@@ -23,9 +24,13 @@ const programs: Access = {
 const program = (path: string, workspace: Access["workspace"]) => ({
   run: [process.execPath, join(repository, path)] as const,
   access: { ...programs, workspace },
-  limit: 60,
-  memory: 4 * 1024 * 1024 * 1024,
-  processes: 1024,
+  limits: { attempt: 60, memory: 4 * 1024 * 1024 * 1024, processes: 1024 },
+});
+
+// A program as a verifier, which may keep files of `kept` bytes in all.
+const verifying = (judging: ReturnType<typeof program>, kept: number) => ({
+  ...judging,
+  limits: { ...judging.limits, kept },
 });
 
 const mebibyte = 1024 * 1024;
@@ -47,7 +52,7 @@ export const builtIn = {
     fields: { sha: { limit: 64, required: true } },
     body: { required: false, limit: mebibyte },
     // The bundle holds the commit's whole history.
-    verifier: { ...program("verifiers/commit.ts", "read"), kept: 1024 * mebibyte },
+    verifier: verifying(program("verifiers/commit.ts", "read"), 1024 * mebibyte),
     materialiser: { ...program("materialisers/commit.ts", "write"), branches: true },
   },
   verdict: {

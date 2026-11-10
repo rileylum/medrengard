@@ -270,7 +270,7 @@ for (let n = 1; n <= count; n += 1) {
 
   if (!exists(commission)) {
     start(commission, previous);
-    engine.commission(configuration, commission, { title: `${name} checkpoint ${n}`, body: problem.prompts[n - 1]! });
+    engine.commission(configuration, { title: `${name} checkpoint ${n}`, body: problem.prompts[n - 1]! }, { name: commission });
   }
 
   // A commission left escalated waits for the owner; one they decided, or one interrupted, goes on.

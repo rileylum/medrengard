@@ -69,7 +69,7 @@ async function watching(t: TestContext, check: string, wait = 60, inputs = {}) {
 
   const engine = createEngine(options);
 
-  engine.commission("build", "first", { title: "T", body: "B" });
+  engine.commission("build", { title: "T", body: "B" }, { name: "first" });
 
   return { engine, options, directory };
 }
@@ -245,7 +245,7 @@ for (const [what, watch, problem] of [
       ),
     });
 
-    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+    assert.throws(() => engine.commission("build", { title: "T", body: "B" }, { name: "first" }), {
       message: `Workflow build is invalid: step watch's ${problem}.`,
     });
   });
@@ -268,7 +268,9 @@ test("a watch step builds no workspace", async (t) => {
             kind: "command",
             run: ["true"],
             watch: { interval: 1, wait: 60 },
-            workspace: "subject",
+            // SAFETY: a workspace the compiler would refuse, as a factory it does not check
+            // could hold.
+            workspace: "subject" as never,
             inputs: {},
             claims: [],
             on: { done: "end" },
@@ -280,7 +282,7 @@ test("a watch step builds no workspace", async (t) => {
     },
   });
 
-  assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+  assert.throws(() => engine.commission("build", { title: "T", body: "B" }, { name: "first" }), {
     message: "Workflow build is invalid: step watch's workspace must be empty, since it watches.",
   });
 });

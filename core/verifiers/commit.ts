@@ -5,21 +5,16 @@
  * factory's own start, is compared as a commit is.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
-
-// What the engine writes as claim.json for a commit; a subject that names no commit has no sha.
-type Claim = { fields: { sha: string }; subject: { kind: string; fields: { sha?: string } } };
+import { accept, output, readClaim, reject } from "../step/contract.ts";
 
 // Git sees the commits as written: a step's planted grafts or replace refs could otherwise show an
 // empty commit with a changed tree or parent, and a bundle with another history.
 Object.assign(process.env, { GIT_GRAFT_FILE: "/dev/null", GIT_NO_REPLACE_OBJECTS: "1" });
 
-const input = process.env.MEDRENGARD_IN!;
-const output = process.env.MEDRENGARD_OUT!;
-
-// SAFETY: the engine encodes claim.json for a commit claim with these fields.
-const { fields, subject } = JSON.parse(readFileSync(join(input, "claim.json"), "utf8")) as Claim;
+// A commit's one field is its sha; a subject that names no commit has none.
+const { fields, subject } = readClaim();
 
 // The object `name` names in the workspace's repository, or undefined if it has none.
 function resolve(name: string): string | undefined {
@@ -67,25 +62,24 @@ function bundledWhole(): boolean {
   }
 }
 
-const verdict =
+// Why the claim is refused, if it is: the first that holds.
+const refusal =
   head === undefined
-    ? { accepted: false, reason: "The workspace has no Git HEAD." }
+    ? "The workspace has no Git HEAD."
     : head !== fields.sha
-      ? { accepted: false, reason: `HEAD is ${head}, not ${fields.sha}.` }
+      ? `HEAD is ${head}, not ${fields.sha}.`
       : subject.fields.sha === fields.sha
-        ? { accepted: false, reason: `${fields.sha} is already the subject.` }
+        ? `${fields.sha} is already the subject.`
         : tree === parent
-          ? { accepted: false, reason: `${fields.sha} changes nothing: its tree is its parent's.` }
+          ? `${fields.sha} changes nothing: its tree is its parent's.`
           : tree === subjectTree
-            ? {
-                accepted: false,
-                reason: `${fields.sha} changes nothing: its tree is the subject's.`,
-              }
+            ? `${fields.sha} changes nothing: its tree is the subject's.`
             : !bundledWhole()
-              ? {
-                  accepted: false,
-                  reason: `${fields.sha}'s history is incomplete in the workspace.`,
-                }
-              : { accepted: true, keep: ["commit.bundle"] };
+              ? `${fields.sha}'s history is incomplete in the workspace.`
+              : undefined;
 
-writeFileSync(join(output, "output.json"), JSON.stringify(verdict));
+if (refusal === undefined) {
+  accept(["commit.bundle"]);
+} else {
+  reject(refusal);
+}

@@ -1,16 +1,18 @@
 # Medrengard
 
-A framework for building a personal software factory: workflows that take an idea to merged code.
+Medrengard is a framework for building a personal software factory: workflows that take an idea
+to merged code, on your own machine. You write workflows of steps that run coding agents, run
+your own programs, or wait for you. Medrengard runs each step in a sandbox, keeps a record of
+everything, and stops to ask you when something fails or needs approval.
 
-[`docs/core.md`](docs/core.md) holds what Medrengard is and the rules it keeps.
-
-- [`core/`](core/): Medrengard itself, the package `@medrengard/core`: the engine, the sandbox, the
-  CLI, the TUI and the Claude Code adapter. Its README shows how to build a factory on it.
-- [`bench/`](bench/): benchmarks comparing Medrengard workflows, starting with SlopCodeBench, and
-  their published results.
+- [`core/`](core/) is Medrengard itself, the package `@medrengard/core`. **Start with its
+  [README](core/README.md)**: it shows how to write a factory and run it.
+- [`docs/`](docs/) holds the reference for each part, and [`docs/core.md`](docs/core.md), the
+  principles and exact rules Medrengard keeps.
+- [`bench/`](bench/) holds benchmarks that compare Medrengard workflows, and their results.
 
 Node 24 runs the TypeScript directly; nothing is built. `npm install` at the root links the
-packages; `npm test` checks them all.
+packages, and `npm test` checks them all.
 
 ## Licence
 

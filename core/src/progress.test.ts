@@ -177,6 +177,74 @@ test("a commission's money limit counts what its attempts reported since the lat
   );
 });
 
+test("an attended attempt, which reports no cost, is not counted toward a commission's money limit", () => {
+  const definition = definitionWith(1);
+
+  definition.workflow.steps.plan = {
+    kind: "agent",
+    attended: true,
+    agent: { harness: { run: ["true"] }, model: "m", prompt: "Plan with me." },
+    workspace: "empty",
+    inputs: {},
+    claims: [],
+    on: { done: "build" },
+    budget: 1,
+    access: contract,
+    limits,
+  };
+
+  const planned: Log = [
+    commissioned,
+    {
+      type: "attempt-started",
+      step: "plan",
+      attempt: 1,
+      subject: "r",
+      inputs: [],
+      process: { pid: 1, start: 1 },
+      engine: "one",
+    },
+  ];
+
+  const completed = {
+    type: "attempt-completed",
+    step: "plan",
+    attempt: 1,
+    outcome: "done",
+    artifacts: [],
+    transcript: "t",
+    next: "build",
+  } as const;
+
+  // The owner was there for it: its cost is not unknown, it is not the factory's to count.
+  assert.deepEqual(admit("first", definition, [...planned, completed], "build", "one"), {
+    attempt: 2,
+    commission: { limit: 1, spent: 0 },
+  });
+
+  // However it ended, and whether or not the escalation names its step, as an earlier one did not.
+  const unnamed: Log[1] = {
+    type: "escalated",
+    cause: "exit",
+    reason: "It failed.",
+    attempt: 1,
+    transcript: "t",
+  };
+
+  for (const escalated of [unnamed, { ...unnamed, step: "plan" }]) {
+    assert.deepEqual(admit("first", definition, [...planned, escalated, retried], "plan", "one"), {
+      attempt: 2,
+      commission: { limit: 1, spent: 0 },
+    });
+  }
+
+  // An unattended attempt that reports none still counts as over.
+  assert.partialDeepStrictEqual(
+    admit("first", definition, [...planned, completed, ...attempted(2)], "build", "one"),
+    { cause: "money" },
+  );
+});
+
 test("a commission that last ran on another engine is not admitted until the owner decides on the escalation naming this one", () => {
   const log: Log = [commissioned, ...attempted(1)];
 
@@ -238,13 +306,13 @@ test("an attempt on the same subject and inputs as one since the latest decision
 });
 
 test("a children step's wait is met, can no longer be met, is late, or goes on", () => {
-  const step = (wait: Children<string>["wait"]): Children<string> => ({
+  const step = (until: Children<string>["until"]): Children<string> => ({
     kind: "children",
     workflow: "review",
     count: 3,
     width: 3,
     concurrent: 3,
-    wait,
+    until,
     on: { done: "end" },
     budget: 1,
     limits: { wait: 60 },
@@ -302,7 +370,7 @@ test("only an attempt's escalation is routed, by its cause or else by any, and n
     count: 1,
     width: 1,
     concurrent: 1,
-    wait: "all",
+    until: "all",
     on: { done: "end" },
     escalate: { unmet: "build", any: "fan" },
     budget: 1,

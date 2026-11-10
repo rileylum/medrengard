@@ -412,10 +412,7 @@ function decide(commission: string): void {
   const { subject, since } = state;
   const step = state.step.name;
 
-  const outcomes =
-    state.status === "awaiting"
-      ? [...Object.keys(engine.definition(commission).workflow.steps[step].on), "abandon"]
-      : ["retry", "abandon"];
+  const { outcomes } = state;
 
   const made = (outcome: string, feedback: string | undefined) => {
     const about = `${commission} at ${step}, about ${subject.slice(0, 8)}`;
@@ -489,7 +486,7 @@ function create(): void {
         const body = edit();
 
         say(() => {
-          engine.commission(workflow, name, { title, body });
+          engine.commission(workflow, { title, body }, { name: name });
 
           return `${name}: ${where(engine.state(name))}`;
         });

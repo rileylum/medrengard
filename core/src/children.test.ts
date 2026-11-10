@@ -68,7 +68,7 @@ async function engineWith(t: TestContext, workflows: (directory: string) => Work
     workflows: factory,
   });
 
-  engine.commission("build", "first", { title: "Plan", body: "Plan three tasks." });
+  engine.commission("build", { title: "Plan", body: "Plan three tasks." }, { name: "first" });
 
   return { engine, directory, factory };
 }
@@ -161,7 +161,7 @@ const mapping = (directory: string, concurrent = 3, width = 3): Workflows => ({
         each: { from: ["plan"], kind: "document" },
         width,
         concurrent,
-        wait: "all",
+        until: "all",
         on: { done: "gather" },
         budget: 1,
         limits: { wait: 60 },
@@ -172,7 +172,7 @@ const mapping = (directory: string, concurrent = 3, width = 3): Workflows => ({
           { done: "end" },
           directory,
         ),
-        inputs: { results: { children: "fanOut", kind: "document" } },
+        inputs: { results: { children: "fanOut", kind: "document", take: "latest" } },
       },
     },
   },
@@ -246,7 +246,7 @@ test("a child starts with the artifacts given it, the latest subject among them 
           given: { draft: "subject" },
           width: 2,
           concurrent: 2,
-          wait: "all",
+          until: "all",
           on: { done: "end" },
           budget: 1,
           limits: { wait: 60 },
@@ -309,7 +309,7 @@ const panel = (directory: string, wait: Wait): Workflows => ({
         count: 3,
         width: 3,
         concurrent: 3,
-        wait,
+        until: wait,
         on: { met: "merge", unmet: "fix" },
         budget: 1,
         limits: { wait: 60 },
@@ -320,7 +320,7 @@ const panel = (directory: string, wait: Wait): Workflows => ({
           { done: "end" },
           directory,
         ),
-        inputs: { verdicts: { children: "panel", kind: "verdict" } },
+        inputs: { verdicts: { children: "panel", kind: "verdict", take: "latest" } },
       },
       fix: {
         ...command(
@@ -328,7 +328,7 @@ const panel = (directory: string, wait: Wait): Workflows => ({
           { done: "end" },
           directory,
         ),
-        inputs: { verdicts: { children: "panel", kind: "verdict" } },
+        inputs: { verdicts: { children: "panel", kind: "verdict", take: "latest" } },
       },
     },
   },
@@ -371,7 +371,7 @@ test("a children step waiting on the first child withdraws the rest, stopping on
           count: 2,
           width: 2,
           concurrent: 2,
-          wait: "first",
+          until: "first",
           on: { done: "end" },
           budget: 1,
           limits: { wait: 60 },
@@ -438,7 +438,7 @@ test("a children step escalates at its wait limit, withdrawing the children stil
           count: 1,
           width: 1,
           concurrent: 1,
-          wait: "all",
+          until: "all",
           on: { done: "end" },
           budget: 1,
           limits: { wait: 1 },
@@ -479,7 +479,7 @@ test("cancelling a children step withdraws its children and escalates", async (t
           count: 1,
           width: 1,
           concurrent: 1,
-          wait: "all",
+          until: "all",
           on: { done: "end" },
           budget: 1,
           limits: { wait: 60 },
@@ -537,7 +537,7 @@ test("a step adopts a child's artifact it was given, which becomes the parent's 
           count: 2,
           width: 2,
           concurrent: 2,
-          wait: "all",
+          until: "all",
           on: { done: "pick" },
           budget: 1,
           limits: { wait: 60 },
@@ -549,7 +549,7 @@ test("a step adopts a child's artifact it was given, which becomes the parent's 
             { done: "end" },
             directory,
           ),
-          inputs: { tries: { children: "tries", kind: "document" } },
+          inputs: { tries: { children: "tries", kind: "document", take: "latest" } },
         },
       },
     },
@@ -645,7 +645,7 @@ const waitingOnAll = (directory: string, count: number, script: string): Workflo
         count,
         width: count,
         concurrent: count,
-        wait: "all",
+        until: "all",
         on: { done: "end" },
         budget: 1,
         limits: { wait: 60 },
@@ -731,7 +731,7 @@ const integrating = (directory: string, base: "request" | "commit"): Workflows =
         given: { base: "subject" },
         width: 2,
         concurrent: 2,
-        wait: "all",
+        until: "all",
         on: { done: "integrate" },
         budget: 1,
         limits: { wait: 60 },
@@ -751,7 +751,7 @@ const integrating = (directory: string, base: "request" | "commit"): Workflows =
         inputs: {
           base:
             base === "request" ? "request" : { from: ["setup"], kind: "commit", take: "latest" },
-          built: { children: "fanOut", kind: "commit" },
+          built: { children: "fanOut", kind: "commit", take: "latest" },
         },
         workspace: { input: "base", branches: "built" },
       },
@@ -840,7 +840,7 @@ for (const [what, workflows, problem] of [
             count: 1,
             width: 1,
             concurrent: 1,
-            wait: "all",
+            until: "all",
             on: { done: "end" },
             budget: 1,
             limits: { wait: 60 },
@@ -862,7 +862,7 @@ for (const [what, workflows, problem] of [
             count: 1,
             width: 1,
             concurrent: 1,
-            wait: "all",
+            until: "all",
             on: { done: "end" },
             budget: 1,
             limits: { wait: 60 },
@@ -884,7 +884,7 @@ for (const [what, workflows, problem] of [
             count: 1,
             width: 1,
             concurrent: 1,
-            wait: { all: "approved" },
+            until: { all: "approved" },
             on: { met: "end", unmet: "end" },
             budget: 1,
             limits: { wait: 60 },
@@ -907,7 +907,7 @@ for (const [what, workflows, problem] of [
             count: 1,
             width: 1,
             concurrent: 1,
-            wait: { all: "pass" },
+            until: { all: "pass" },
             on: { done: "end" },
             budget: 1,
             limits: { wait: 60 },
@@ -930,7 +930,7 @@ for (const [what, workflows, problem] of [
             count: 3,
             width: 2,
             concurrent: 2,
-            wait: "all",
+            until: "all",
             on: { done: "end" },
             budget: 1,
             limits: { wait: 60 },
@@ -955,7 +955,7 @@ for (const [what, workflows, problem] of [
       workflows: JSON.parse(JSON.stringify(workflows)),
     });
 
-    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+    assert.throws(() => engine.commission("build", { title: "T", body: "B" }, { name: "first" }), {
       message: problem,
     });
   });

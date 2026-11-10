@@ -7,7 +7,6 @@ import type {
   Commissioning,
   Definition,
   Limits,
-  Money,
   Query,
   Skill,
   Wait,
@@ -49,7 +48,7 @@ export function parseDefinition(name: string, stored: string): Definition {
 // commissioning pinned them.
 function refuseChildren(
   name: string,
-  workflow: Workflow<string, { limits: Limits & Money }>,
+  workflow: Workflow<string, "whole">,
   text: string,
   kinds: Kinds,
   limits: Partial<Limits>,
@@ -83,10 +82,13 @@ function refuseChildren(
         );
       }
 
-      const outcome = waitOutcome(declared.wait);
+      const outcome = waitOutcome(declared.until);
 
       const ends = Object.values(parsed.get(child)!.steps).some(
-        (each) => outcome !== undefined && outcome !== null && each.on[outcome] === "end",
+        (each) =>
+          outcome !== undefined &&
+          outcome !== null &&
+          new Map(Object.entries(each.on)).get(outcome) === "end",
       );
 
       if (isText(outcome) && !ends) {
@@ -165,6 +167,26 @@ const kindName = /^[A-Za-z][A-Za-z0-9-]*$/;
 // each, now read as 64 MiB in all.
 const programBefore = { memory: 4 * 1024 * 1024 * 1024, processes: 1024 };
 const keptBefore = 64 * 1024 * 1024;
+
+// A value as JSON.parse gives it, whose fields are checked as they are read.
+type Loose = ReturnType<typeof JSON.parse>;
+
+// A kind's program with its limits as a definition holds them now. One stored before they were
+// named as a step's are stated them beside its program, its seconds as `limit`.
+function limitsOf(stated: Loose): Loose {
+  if (!Object.hasOwn(stated, "limit")) {
+    return stated;
+  }
+
+  const { limit: attempt, memory, processes, kept, ...rest } = stated;
+
+  return {
+    ...rest,
+    limits: Object.hasOwn(stated, "kept")
+      ? { attempt, memory, processes, kept }
+      : { attempt, memory, processes },
+  };
+}
 
 function parseKinds(text: string): Kinds {
   const { kinds, defaults } = JSON.parse(text);
@@ -270,16 +292,22 @@ function parseKinds(text: string): Kinds {
 
       const verifying = program === "verifier";
       const before = verifying ? { ...programBefore, kept: keptBefore } : programBefore;
-      const stated = defaults === undefined ? { ...before, ...given } : given;
-      const { run, access, limit, memory, processes, kept, branches } = stated;
-      const bounds = ["limit", "memory", "processes", ...(verifying ? ["kept"] : [])];
+      const stated = limitsOf(defaults === undefined ? { ...before, ...given } : given);
+      const { run, access, limits, branches } = stated;
+
+      // Read before hasExactly, which narrows what it checks to object.
+      const { attempt: limit, memory, processes, kept } = limits ?? {};
+      const bounds = ["attempt", "memory", "processes", ...(verifying ? ["kept"] : [])];
       const adds = !verifying && Object.hasOwn(stated, "branches") ? ["branches"] : [];
 
-      if (!hasExactly(stated, ["run", "access", ...bounds, ...adds])) {
+      if (
+        !hasExactly(stated, ["run", "access", "limits", ...adds]) ||
+        !hasExactly(limits, bounds)
+      ) {
         throw refused(
           verifying
-            ? `its verifier must be a program, its access, and its limit, memory, processes and kept`
-            : `its ${program} must be a program, its access, and its limit, memory and processes`,
+            ? `its verifier must be a program, its access, and its limits: attempt, memory, processes and kept`
+            : `its ${program} must be a program, its access, and its limits: attempt, memory and processes`,
         );
       }
 
@@ -295,13 +323,13 @@ function parseKinds(text: string): Kinds {
 
       if (!Number.isFinite(limit) || limit <= 0 || limit > longestLimit) {
         throw refused(
-          `its ${program}'s limit must be a positive number of seconds, at most ${longestLimit}`,
+          `its ${program}'s attempt limit must be a positive number of seconds, at most ${longestLimit}`,
         );
       }
 
       for (const [bound, value] of Object.entries({ memory, processes })) {
         if (!Number.isInteger(value) || value <= 0) {
-          throw refused(`its ${program}'s ${bound} must be a positive integer`);
+          throw refused(`its ${program}'s ${bound} limit must be a positive integer`);
         }
       }
 
@@ -311,10 +339,17 @@ function parseKinds(text: string): Kinds {
 
       // A verifier that only judges keeps nothing.
       if (verifying && (!Number.isInteger(kept) || kept < 0)) {
-        throw refused("its verifier's kept must be an integer, 0 or more");
+        throw refused("its verifier's kept limit must be an integer, 0 or more");
       }
 
-      Object.assign(given, stated);
+      // An earlier form is replaced whole, so its own limits do not stay beside these.
+      if (stated !== given) {
+        for (const key of Object.keys(given)) {
+          delete given[key];
+        }
+
+        Object.assign(given, stated);
+      }
     }
   }
 
@@ -503,7 +538,7 @@ function parseWorkflow(
   text: string,
   defined: Kinds,
   defaults: Partial<Limits>,
-): Workflow<string, { limits: Limits & Money }> {
+): Workflow<string, "whole"> {
   const invalid = (problem: string) => new Error(`Workflow ${name} is invalid: ${problem}.`);
   const definition = JSON.parse(text).workflow;
   const claimable = Object.keys(defined);
@@ -609,6 +644,12 @@ function parseWorkflow(
     const on = step?.on;
     const kind = step?.kind;
 
+    // A children step stored before what it waits until was named so held it as its wait.
+    if (kind === "children" && Object.hasOwn(step, "wait") && !Object.hasOwn(step, "until")) {
+      step.until = step.wait;
+      delete step.wait;
+    }
+
     const leads =
       isRecord(on) &&
       Object.values(on).every((next) => isText(next) && (next === "end" || names.includes(next)));
@@ -626,10 +667,14 @@ function parseWorkflow(
         throw invalid(`step ${name}'s routes must each lead a cause to a step`);
       }
 
+      // A children step's attempt runs no program, so it escalates with few causes; unmet is its
+      // alone.
+      const routable = kind === "children" ? waited : ran;
+
       for (const [cause, next] of Object.entries(routes)) {
         if (!routable.includes(cause)) {
           throw invalid(
-            `step ${name} routes ${cause}, which is not a cause a step may route: ${routable.slice(0, -1).join(", ")} or any`,
+            `step ${name} routes ${cause}, which is not a cause a ${kind} step may route: ${routable.slice(0, -1).join(", ")} or any`,
           );
         }
 
@@ -843,7 +888,7 @@ function parseWorkflow(
       throw invalid(`step ${name}'s program must be a command and its arguments`);
     }
 
-    if (!Number.isInteger(budget) || budget <= 0) {
+    if (!positive(budget)) {
       throw invalid(`step ${name}'s budget must be a positive integer`);
     }
 
@@ -912,7 +957,7 @@ function parseWorkflow(
   }
 
   // SAFETY: every field the engine reads was checked above, and each step's limits made whole.
-  const parsed = definition as Workflow<string, { limits: Limits & Money }>;
+  const parsed = definition as Workflow<string, "whole">;
 
   refuseUnbuildable(parsed, defined, invalid);
 
@@ -933,7 +978,7 @@ function childrenFields(step: Children<string>): string[] {
     ...(has("given") ? ["given"] : []),
     "width",
     "concurrent",
-    "wait",
+    "until",
     "on",
     ...(has("escalate") ? ["escalate"] : []),
     "budget",
@@ -943,8 +988,31 @@ function childrenFields(step: Children<string>): string[] {
 
 const positive = (value: number) => Number.isSafeInteger(value) && value > 0;
 
-// The causes a step may route, and any, for each of them without a route of its own.
-const routable = ["limit", "claim", "exit", "kind", "broker", "interrupted", "unmet", "any"];
+// Whether `given`, if a step states it, names artifacts for the commissions it starts: each by
+// an input name that is none of `reserved`, which the step's own inputs take, and a query the
+// workflow can resolve that is no session, a session being no artifact.
+function givable(
+  given: Children<string>["given"],
+  valid: (query: Query) => boolean,
+  reserved: readonly string[],
+): boolean {
+  return (
+    given === undefined ||
+    (isRecord(given) &&
+      Object.entries(given).every(
+        ([input, query]) =>
+          inputName.test(input) &&
+          !reserved.includes(input) &&
+          valid(query) &&
+          !(isRecord(query) && Object.hasOwn(query, "session")),
+      ))
+  );
+}
+
+// The causes a step that runs a program may route, and a children step, each with any, for
+// each of them without a route of its own.
+const ran = ["limit", "claim", "exit", "kind", "broker", "interrupted", "any"];
+const waited = ["limit", "unmet", "any"];
 
 // Why the children step `step` cannot run, if it cannot; `valid` says whether a query is one its
 // workflow can resolve. That the workflow it names is the factory's, and leads not back to its
@@ -953,11 +1021,11 @@ function childrenProblem(
   step: Children<string>,
   valid: (query: Query) => boolean,
 ): string | undefined {
-  const { workflow, each, count, request, given, width, concurrent, wait, on, budget, limits } =
+  const { workflow, each, count, request, given, width, concurrent, until, on, budget, limits } =
     step;
 
   if (!hasExactly(step, childrenFields(step))) {
-    return "fields must be a children step's: its workflow, each or count, any request and given, width, concurrent, wait, on, budget and limits";
+    return "fields must be a children step's: its workflow, each or count, any request and given, width, concurrent, until, on, budget and limits";
   }
 
   if (!isText(workflow)) {
@@ -994,20 +1062,7 @@ function childrenProblem(
     return "request must be request, or a query of documents that takes the latest, and goes with count";
   }
 
-  if (
-    given !== undefined &&
-    !(
-      isRecord(given) &&
-      Object.entries(given).every(
-        ([input, query]) =>
-          inputName.test(input) &&
-          input !== "each" &&
-          input !== "request" &&
-          valid(query) &&
-          !(isRecord(query) && Object.hasOwn(query, "session")),
-      )
-    )
-  ) {
+  if (!givable(given, valid, ["each", "request"])) {
     return "given must name artifacts, each by an input name other than each or request and a query that is no session";
   }
 
@@ -1019,14 +1074,14 @@ function childrenProblem(
     return `count of ${count} is over its width of ${width}`;
   }
 
-  const outcome = waitOutcome(wait);
+  const outcome = waitOutcome(until);
 
   if (outcome === null) {
-    return 'wait must be "all", "first", { atLeast: N } with any outcome, or { all: <outcome> }';
+    return 'until must be "all", "first", { atLeast: N } with any outcome, or { all: <outcome> }';
   }
 
-  if (isRecord(wait) && "atLeast" in wait && wait.atLeast > (count ?? width)) {
-    return `wait for at least ${wait.atLeast} children is over the ${count ?? width} it may have`;
+  if (isRecord(until) && "atLeast" in until && until.atLeast > (count ?? width)) {
+    return `until at least ${until.atLeast} children is over the ${count ?? width} it may have`;
   }
 
   const outcomes = outcome === undefined ? ["done"] : ["met", "unmet"];
@@ -1085,19 +1140,7 @@ function commissioningProblem(
     return "each must be request, or a query of documents, which become the commissions' requests";
   }
 
-  if (
-    given !== undefined &&
-    !(
-      isRecord(given) &&
-      Object.entries(given).every(
-        ([input, query]) =>
-          inputName.test(input) &&
-          input !== "each" &&
-          valid(query) &&
-          !(isRecord(query) && Object.hasOwn(query, "session")),
-      )
-    )
-  ) {
+  if (!givable(given, valid, ["each"])) {
     return "given must name artifacts, each by an input name other than each and a query that is no session";
   }
 
@@ -1149,7 +1192,7 @@ export function waitOutcome(wait: Wait): string | undefined | null {
 // the commission does not find out only once the earlier steps have run. Every kind that could be
 // the subject counts, wherever in the workflow it is claimed.
 function refuseUnbuildable(
-  workflow: Workflow<string, { limits: Limits & Money }>,
+  workflow: Workflow<string, "whole">,
   kinds: Kinds,
   invalid: (problem: string) => Error,
 ): void {
@@ -1182,9 +1225,9 @@ function refuseUnbuildable(
       ? subjects
       : query === "request"
         ? ["document"]
-        : "session" in query
+        : query.session !== undefined
           ? []
-          : "across" in query
+          : query.across !== undefined
             ? query.kind === undefined
               ? [...Object.keys(kinds), "decision"]
               : [query.kind]

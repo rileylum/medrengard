@@ -94,14 +94,7 @@ const memoryOf = (engine: Engine, link: string) => {
 test("a long-lived agent is a chain of commissions carrying approved memory, bounded by its trigger's allowance", async (t) => {
   const engine = await engineWith(t);
 
-  engine.commission(
-    "mayor",
-    undefined,
-    { title: "Mayor", body: "Keep the books.\n" },
-    {
-      trigger: "mayor",
-    },
-  );
+  engine.commission("mayor", { title: "Mayor", body: "Keep the books.\n" }, { trigger: "mayor" });
 
   assert.partialDeepStrictEqual(await approved(engine, "mayor-1"), { status: "finished" });
   assert.equal(memoryOf(engine, "mayor-2"), "Keep the books.\nmayor-1 worked.\n");

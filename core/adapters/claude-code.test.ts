@@ -188,7 +188,7 @@ ${script}
     workflows: { build: { start: continuing === undefined ? "plan" : "first", steps } },
   });
 
-  engine.commission("build", "first", { title: "Greet", body: "Say hello." });
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "first" });
 
   return { engine, directory };
 }
@@ -1108,7 +1108,7 @@ test(
       },
     });
 
-    engine.commission("build", "first", { title: "Greet", body: "Say hello." });
+    engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "first" });
 
     // The refused token fails the run; what matters is what claude said it loaded first.
     assert.equal((await engine.advance("first")).status, "escalated");
@@ -1389,7 +1389,7 @@ test(
       },
     });
 
-    engine.commission("build", "first", { title: "Greet", body: "Say hello." });
+    engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "first" });
 
     // Refused at its first request, it still leaves the session claude wrote.
     assert.equal((await engine.advance("first")).status, "escalated");

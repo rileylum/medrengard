@@ -39,7 +39,7 @@ import {
   type Children,
   type Commissioning,
   type Definition,
-  type Limits,
+  type Factory,
   type Query,
   type Skill,
   type Trigger,
@@ -58,6 +58,7 @@ import { parseDefinition } from "./parse-definition.ts";
 import {
   admit,
   because,
+  type Admitted,
   finishOf,
   outcomeOf,
   overMoney,
@@ -79,14 +80,6 @@ import { createStore, type Artifact } from "./store.ts";
 
 // The milliseconds a write waits for another process's write to the log.
 const logWait = 5000;
-
-type Options = {
-  log: string;
-  workflows: Record<string, Workflow>;
-  kinds: Kinds;
-  defaults: { limits: Limits };
-  triggers?: Readonly<Record<string, Trigger>>;
-};
 
 /**
  * One entry in a commission's record: an attempt, with its notes so far, and once it ends the
@@ -157,6 +150,10 @@ export type CommissionRecord = {
   entries: Entry[];
 };
 
+// How a commission is named and started: by the owner, under a name, or through a trigger, which
+// names it after itself unless given one.
+type Naming = { name: string; trigger?: string } | { name?: string; trigger: string };
+
 // An event the engine writes: an escalation it writes always names its cause.
 type Written = Exclude<Log[1], { type: "escalated" }> | Escalation;
 
@@ -178,7 +175,7 @@ type Refusal =
  * Runs commissions through the owner's workflows, keeping every event in the SQLite log at `log`
  * and every artifact in the store beside it.
  */
-export function createEngine({ log, workflows, kinds, defaults, triggers = {} }: Options) {
+export function createEngine({ log, workflows, kinds, defaults, triggers = {} }: Factory) {
   refuseTriggers(triggers, workflows);
 
   // Another engine or CLI call may be writing to the same log; waiting for it is bounded, and past
@@ -367,6 +364,12 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     }: { origin?: Commissioned["origin"]; given?: readonly string[]; events?: Log } = {},
   ): string {
     const name = commission ?? `${origin!.trigger}-${startedBy.all(origin!.trigger).length + 1}`;
+
+    // Said in the engine's words, before the log refuses the name in its own.
+    if (select.all(name).length > 0) {
+      throw new Error(`There is already a commission named ${name}.`);
+    }
+
     const text = pinned(workflow, checked(workflow), (bytes) => store.keep(bytes));
     const event = commissioning(workflow, text, request);
 
@@ -436,13 +439,9 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
   ): void {
     const { step: name, attempt, inputs } = started;
 
-    database.exec("BEGIN IMMEDIATE");
-
-    try {
+    atomically(() => {
       // Another engine may have moved the commission on since it was read: the caller reads again.
       if (read(commission).length !== events.length) {
-        database.exec("ROLLBACK");
-
         return;
       }
 
@@ -451,7 +450,6 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
 
       if (problem !== undefined) {
         write(commission, events, { type: "escalated", ...problem });
-        database.exec("COMMIT");
 
         return;
       }
@@ -473,14 +471,9 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
         outcome: "done",
         artifacts: [],
         transcript: store.keep(Buffer.alloc(0)),
-        next: step.on.done!,
+        next: step.on.done,
       });
-      database.exec("COMMIT");
-    } catch (error) {
-      database.exec("ROLLBACK");
-
-      throw error;
-    }
+    });
   }
 
   function spoolOf(commission: string, attempt: number): Spool {
@@ -658,7 +651,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
   // Every commission's events after a position in the log, in the order written: rowid follows
   // insertion, and no event is ever removed.
   const after = database.prepare(
-    "SELECT rowid AS position, commission, event FROM events WHERE rowid > ? ORDER BY rowid",
+    "SELECT rowid AS position, commission, position AS place, event FROM events WHERE rowid > ? ORDER BY rowid",
   );
 
   // Every commission's events after `position`, each with its own position in the log.
@@ -666,6 +659,8 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     return after.all(position).map((row) => ({
       position: Number(row.position),
       commission: String(row.commission),
+      // Its place among its commission's own events, which a decision names as since.
+      index: Number(row.place),
       // SAFETY: only the engine writes events, each replayed against its commission first.
       event: JSON.parse(String(row.event)) as CommissionEvent,
     }));
@@ -736,11 +731,55 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     throw new Error(`Commission ${commission} has no transcript for attempt ${attempt}.`);
   }
 
+  // Writes each note of the commission's attempt as an event of its own, from `position` on. A
+  // note changes no state and the attempt is the commission's one writer, so it is appended at
+  // the next position without replaying the log; another writer's event there refuses it.
+  function noting(commission: string, attempt: number, position: number) {
+    let next = position;
+
+    return (text: string, from: "step" | "engine") => {
+      // A step's note says nothing of who wrote it, as every note did before the engine's.
+      const noted: Extract<CommissionEvent, { type: "noted" }> = {
+        type: "noted",
+        attempt,
+        note: text,
+        at: Date.now(),
+      };
+
+      if (from === "engine") {
+        noted.from = from;
+      }
+
+      insert.run(commission, next, JSON.stringify(noted));
+      next += 1;
+    };
+  }
+
+  // Ends an attempt no engine is running, for `why`: an escalation with what it had spooled.
+  function endUnheld(commission: string, events: Log, started: Started, why: Why): void {
+    const spool = spoolOf(commission, started.attempt);
+
+    write(commission, events, {
+      type: "escalated",
+      attempt: started.attempt,
+      ...ended(spool, transcriptOf(definitionOf(events).workflow.steps[started.step]), why),
+    });
+    unspool(spool);
+  }
+
   // An escalation as written: its reason bounded, and the step its step routes it to, if it
   // routes it.
   function escalating(events: Log, given: Escalation): Escalation {
-    const next = routeOf(definitionOf(events), events, given);
-    const bound = { ...given, reason: bounded(given.reason) };
+    const definition = definitionOf(events);
+    const next = routeOf(definition, events, given);
+    const state = replay(definition, events);
+
+    // An escalation names the step the commission is at, which replay allows it only at one.
+    const bound = {
+      ...given,
+      reason: bounded(given.reason),
+      step: state.status === "finished" ? undefined : state.step.name,
+    };
 
     return next === undefined ? bound : { ...bound, next };
   }
@@ -956,7 +995,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     const finishes = children.map(({ events: child }) => finishOf(child));
 
     // Without an outcome, a wait met follows done and one that cannot be met escalates.
-    const routed = outcomeOf(step.wait) !== undefined;
+    const routed = outcomeOf(step.until) !== undefined;
 
     const { wait, failed } = waitOf(step, total, finishes, Date.now() - (started.at ?? Date.now()));
 
@@ -1115,23 +1154,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     const spool = spoolOf(commission, attempt);
 
     // Notes go after the events already written: positions count from 0.
-    let position = events.length;
-
-    const note = (text: string, from: "step" | "engine") => {
-      const noted: Extract<CommissionEvent, { type: "noted" }> = {
-        type: "noted",
-        attempt,
-        note: text,
-        at: Date.now(),
-      };
-
-      if (from === "engine") {
-        noted.from = from;
-      }
-
-      insert.run(commission, position, JSON.stringify(noted));
-      position += 1;
-    };
+    const note = noting(commission, attempt, events.length);
 
     const artifact = (hash: string) => ({
       hash,
@@ -1207,10 +1230,10 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     /** Starts a commission under the workflow named `workflow`, about the owner's request. */
     commission(
       workflow: string,
-      commission: string | undefined,
       request: { title: string; body: string },
-      { trigger }: { trigger?: string } = {},
+      { name: commission, trigger }: Naming,
     ): string {
+      // The type says so to a caller checked by the compiler; the CLI's is not.
       if (commission === undefined && trigger === undefined) {
         throw new Error("A commission needs a name unless a trigger starts it.");
       }
@@ -1466,7 +1489,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
             if (event.attempt === undefined) {
               entries.push({
                 entry: "escalation",
-                step: at,
+                step: event.step ?? at,
                 reason: event.reason,
                 cause: event.cause,
                 at: event.at,
@@ -1602,13 +1625,12 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       const name = state.step.name;
       const step = workflow.steps[name];
 
-      // Abandon ends the commission at every wait, so no workflow can leave the owner without one.
-      const on: Record<string, string> =
-        step.kind === "approval" ? { ...step.on, abandon: "end" } : { retry: name, abandon: "end" };
-
-      if (!Object.hasOwn(on, outcome)) {
+      if (!state.outcomes.includes(outcome)) {
         throw new Error(`Step ${name} does not declare outcome "${outcome}".`);
       }
+
+      const on: Record<string, string> =
+        step.kind === "approval" ? { ...step.on, abandon: "end" } : { retry: name, abandon: "end" };
 
       const feedbackBytes = Buffer.byteLength(feedback ?? "");
 
@@ -1659,18 +1681,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
 
       // With no engine to stop it, the attempt is over already: the cancel is its end.
       if (!held(commission, started)) {
-        const spool = spoolOf(commission, started.attempt);
-
-        write(commission, events, {
-          type: "escalated",
-          attempt: started.attempt,
-          ...ended(
-            spool,
-            transcriptOf(definitionOf(events).workflow.steps[started.step]),
-            cancelledBy(started.step),
-          ),
-        });
-        unspool(spool);
+        endUnheld(commission, events, started, cancelledBy(started.step));
 
         return;
       }
@@ -1711,7 +1722,8 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
   };
 
   // Attempts ready steps, as advance does; or, `attending`, the one attended step the commission
-  // is ready at, returning once it ends.
+  // is ready at, returning once it ends. Each pass reads the commission afresh and hands it to
+  // the one function for the state it is in, which says whether it moved on.
   async function drive(
     commission: string,
     signal: AbortSignal | undefined,
@@ -1720,105 +1732,116 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     for (;;) {
       const events = read(commission);
       const definition = definitionOf(events);
-      const { workflow } = definition;
       const state = replay(definition, events);
 
-      if (state.status === "ready" && signal?.aborted) {
-        return state;
+      const moved =
+        state.status === "attempting"
+          ? await carriedOn(commission, events, definition)
+          : state.status === "ready" && signal?.aborted !== true
+            ? await started(commission, events, definition, state, attending)
+            : false;
+
+      if (!moved) {
+        const now = read(commission);
+
+        return replay(definitionOf(now), now);
       }
+    }
+  }
 
-      if (state.status === "attempting") {
-        const started = events.findLast((event) => event.type === "attempt-started")!;
+  // Attempting: carries on a wait, which holds no program, so any engine that looks does; leaves
+  // an attempt an engine is running to it; and ends one no engine is running as interrupted.
+  // Whether the commission moved on.
+  async function carriedOn(commission: string, events: Log, definition: Definition) {
+    const started = events.findLast((event) => event.type === "attempt-started")!;
+    const step = definition.workflow.steps[started.step];
 
-        // A watching attempt holds no program, so no engine holds it: each look carries it on.
-        if (
-          waits(workflow.steps[started.step]) &&
-          workflow.steps[started.step]?.kind === "command"
-        ) {
-          if (await look(commission, definition, started)) {
-            continue;
-          }
+    if (step?.kind === "command" && step.watch !== undefined) {
+      return look(commission, definition, started);
+    }
 
-          return replay(definition, read(commission));
-        }
+    if (step?.kind === "children") {
+      return tick(commission, events, definition, started);
+    }
 
-        // A children attempt runs no program, so no engine holds it: each look carries it on.
-        if (workflow.steps[started.step]?.kind === "children") {
-          if (tick(commission, events, definition, started)) {
-            continue;
-          }
+    if (held(commission, started)) {
+      return false;
+    }
 
-          return replay(definition, read(commission));
-        }
+    endUnheld(
+      commission,
+      events,
+      started,
+      because("interrupted", `Step ${started.step} was interrupted.`),
+    );
 
-        if (held(commission, started)) {
-          return state;
-        }
+    return true;
+  }
 
-        const spool = spoolOf(commission, started.attempt);
+  // A commission ready at a step, admitted to an attempt of it.
+  type Ready = {
+    commission: string;
+    events: Log;
+    definition: Definition;
+    state: Extract<CommissionState, { status: "ready" }>;
+    name: string;
+    admitted: Admitted;
+    // The artifacts a query names, as the record and related commissions have them now.
+    named: (query: Query) => Named[];
+    // The event that starts the attempt, given `inputs`.
+    starting: (inputs: Inputs) => Started;
+  };
 
-        write(commission, events, {
-          type: "escalated",
-          attempt: started.attempt,
-          ...ended(
-            spool,
-            transcriptOf(workflow.steps[state.step.name]),
-            because("interrupted", `Step ${state.step.name} was interrupted.`),
-          ),
-        });
-        unspool(spool);
+  // Ready: starts an attempt of the step the commission is at, as its kind of step does, or
+  // escalates; and runs it through, when it runs a program. Whether the commission moved on and
+  // is to be looked at again: not once an attended step, which the owner attends alone, has run.
+  async function started(
+    commission: string,
+    events: Log,
+    definition: Definition,
+    state: Extract<CommissionState, { status: "ready" }>,
+    attending: boolean,
+  ): Promise<boolean> {
+    // A child its parent is withdrawing starts no attempt; its parent records it withdrawn.
+    if (withdrawalOf(commission) !== undefined) {
+      return false;
+    }
 
-        continue;
-      }
+    if (state.step.kind === "agent" && state.step.attended === true && !attending) {
+      return false;
+    }
 
-      if (state.status !== "ready") {
-        return state;
-      }
+    const name = state.step.name;
+    const step = definition.workflow.steps[name];
 
-      // A child its parent is withdrawing starts no attempt; its parent records it withdrawn.
-      if (withdrawalOf(commission) !== undefined) {
-        return state;
-      }
+    // Replay arrives at an approval step as awaiting, never ready.
+    if (step.kind === "approval") {
+      throw new Error(`Step ${name} is an approval step, so it cannot be ready.`);
+    }
 
-      if (state.step.kind === "agent" && state.step.attended === true && !attending) {
-        return state;
-      }
+    const admitted = admit(commission, definition, events, name, engineVersion());
 
-      const name = state.step.name;
-      const step = workflow.steps[name];
+    if ("cause" in admitted) {
+      // An escalation over the engine names this one, which the owner's decision accepts.
+      write(
+        commission,
+        events,
+        admitted.cause === "upgrade"
+          ? { type: "escalated", ...admitted, engine: engineVersion() }
+          : { type: "escalated", ...admitted },
+      );
 
-      // Replay arrives at an approval step as awaiting, never ready.
-      if (step.kind === "approval") {
-        throw new Error(`Step ${name} is an approval step, so it cannot be ready.`);
-      }
+      return true;
+    }
 
-      const admitted = admit(commission, definition, events, name, engineVersion());
-
-      if ("cause" in admitted) {
-        // An escalation over the engine names this one, which the owner's decision accepts.
-        write(
-          commission,
-          events,
-          admitted.cause === "upgrade"
-            ? { type: "escalated", ...admitted, engine: engineVersion() }
-            : { type: "escalated", ...admitted },
-        );
-
-        continue;
-      }
-
-      // The event that starts the attempt the commission is admitted to, given `inputs`.
-      const starting = (inputs: Inputs): Started => ({
-        type: "attempt-started",
-        step: name,
-        attempt: admitted.attempt,
-        subject: state.subject,
-        inputs,
-        process: self,
-        engine: engineVersion(),
-      });
-
-      const named = (query: Query) =>
+    const ready: Ready = {
+      commission,
+      events,
+      definition,
+      state,
+      name,
+      admitted,
+      named: (query) =>
         resolve(
           query,
           state,
@@ -1826,329 +1849,357 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
           definition.kinds,
           (children) => childrenOf(commission, events, children),
           (relation) => relatedTo(commission, events, relation),
-        );
+        ),
+      starting: (inputs) => ({
+        type: "attempt-started",
+        step: name,
+        attempt: admitted.attempt,
+        subject: state.subject,
+        inputs,
+        process: self,
+        engine: engineVersion(),
+      }),
+    };
 
-      if (step.kind === "commission") {
-        const inputs = [
-          { name: "each", hashes: named(step.each).map(({ hash }) => hash) },
-          ...Object.entries(step.given ?? {}).map(([input, query]) => ({
-            name: input,
-            hashes: named(query).map(({ hash }) => hash),
-          })),
-        ];
+    if (step.kind === "commission") {
+      startCommissions(ready, step);
 
-        const repeat = repeats(events, name, state.subject, inputs);
+      return true;
+    }
 
-        if (repeat !== undefined) {
-          write(commission, events, { type: "escalated", ...repeat });
+    if (step.kind === "children") {
+      startChildren(ready, step);
 
-          continue;
-        }
+      return true;
+    }
 
-        dispatch(commission, events, step, starting(inputs));
+    return (await startProgram(ready, step)) && !attending;
+  }
 
-        continue;
-      }
+  // What a step gives each commission it starts: the artifacts each named query names, by hash.
+  function givenBy({ named }: Ready, given: Readonly<Record<string, Query>> | undefined) {
+    return Object.entries(given ?? {}).map(([input, query]) => ({
+      name: input,
+      hashes: named(query).map(({ hash }) => hash),
+    }));
+  }
 
-      if (step.kind === "children") {
-        const requests =
-          step.each === undefined
-            ? { name: "request", hashes: named(step.request ?? "request").map(({ hash }) => hash) }
-            : { name: "each", hashes: named(step.each).map(({ hash }) => hash) };
+  // A commission step: starts its commissions, all or none, and completes, or escalates.
+  function startCommissions(ready: Ready, step: Commissioning<string>): void {
+    const { commission, events, state, name } = ready;
 
-        const inputs = [
-          requests,
-          ...Object.entries(step.given ?? {}).map(([input, query]) => ({
-            name: input,
-            hashes: named(query).map(({ hash }) => hash),
-          })),
-        ];
+    const inputs = [
+      { name: "each", hashes: ready.named(step.each).map(({ hash }) => hash) },
+      ...givenBy(ready, step.given),
+    ];
 
-        const problem =
-          step.each === undefined && requests.hashes.length === 0
-            ? because("inputs", `Step ${name}'s request names no document.`)
-            : requests.hashes.length > step.width
-              ? because(
-                  "limit",
-                  `Step ${name} has ${requests.hashes.length} children to start, over its width of ${step.width}.`,
-                )
-              : repeats(events, name, state.subject, inputs);
+    const repeat = repeats(events, name, state.subject, inputs);
 
-        write(
-          commission,
-          events,
-          problem === undefined ? starting(inputs) : { type: "escalated", ...problem },
-        );
+    if (repeat !== undefined) {
+      write(commission, events, { type: "escalated", ...repeat });
 
-        continue;
-      }
+      return;
+    }
 
-      const resolved = Object.entries(step.inputs).map(([input, query]) => ({
-        name: input,
-        named: named(query),
-      }));
+    dispatch(commission, events, step, ready.starting(inputs));
+  }
 
-      const given = resolved.map(({ name: input, named: each }) => ({
-        name: input,
-        hashes: each.map(({ hash }) => hash),
-      }));
+  // A children step: starts its attempt, the wait, which each look carries on, or escalates.
+  function startChildren(ready: Ready, step: Children<string>): void {
+    const { commission, events, state, name } = ready;
 
-      // Read from the store before the attempt starts. The engine's failure here, such as a file
-      // it cannot read, is nothing it can classify: the owner decides, and no budget is spent.
-      const prepared = (() => {
-        try {
-          return {
-            inputs: resolved.map(({ name: input, named: each }): Input => {
-              const query = step.inputs[input];
+    const requests =
+      step.each === undefined
+        ? {
+            name: "request",
+            hashes: ready.named(step.request ?? "request").map(({ hash }) => hash),
+          }
+        : { name: "each", hashes: ready.named(step.each).map(({ hash }) => hash) };
 
-              // A session is no artifact: its body is the bytes its program left.
-              return isRecord(query) && "session" in query
-                ? {
-                    name: input,
-                    sessions: each.map(({ hash }) => ({ hash, body: store.read(hash) })),
-                  }
-                : {
-                    name: input,
-                    artifacts: each.map(({ hash, commission: child }) => {
-                      const artifact = {
-                        hash,
-                        artifact: store.get(hash),
-                        kept: keptAnywhere(events, hash),
-                      };
+    const inputs = [requests, ...givenBy(ready, step.given)];
 
-                      return child === undefined ? artifact : { ...artifact, commission: child };
-                    }),
+    const problem =
+      step.each === undefined && requests.hashes.length === 0
+        ? because("inputs", `Step ${name}'s request names no document.`)
+        : requests.hashes.length > step.width
+          ? because(
+              "limit",
+              `Step ${name} has ${requests.hashes.length} children to start, over its width of ${step.width}.`,
+            )
+          : repeats(events, name, state.subject, inputs);
+
+    write(
+      commission,
+      events,
+      problem === undefined ? ready.starting(inputs) : { type: "escalated", ...problem },
+    );
+  }
+
+  // What an attempt of a step that runs a program is given, read and checked before it starts.
+  type Supplying = {
+    inputs: readonly Input[];
+    skills: Given["skills"];
+    // The artifact its workspace is built from, when it is an input's, and the branches it adds.
+    built: Supplied | undefined;
+    branches: readonly Supplied[] | undefined;
+  };
+
+  // Reads what the step's attempt is to be given, each query's artifacts as `resolved` names them,
+  // and checks it: why it cannot be given, or what is. The engine's failure reading the store is
+  // nothing it can classify, a workspace's base must be there and its branches of its kind, and
+  // all of it within the step's input limit.
+  function supplying(
+    { events, definition, name }: Ready,
+    step: Runnable,
+    resolved: readonly { name: string; named: Named[] }[],
+  ): Why | Supplying {
+    let prepared: Pick<Supplying, "inputs" | "skills">;
+
+    try {
+      prepared = {
+        inputs: resolved.map(({ name: input, named: each }): Input => {
+          const query = step.inputs[input];
+
+          // A session is no artifact: its body is the bytes its program left.
+          return isRecord(query) && query.session !== undefined
+            ? {
+                name: input,
+                sessions: each.map(({ hash }) => ({ hash, body: store.read(hash) })),
+              }
+            : {
+                name: input,
+                artifacts: each.map(({ hash, commission: child }) => {
+                  const artifact = {
+                    hash,
+                    artifact: store.get(hash),
+                    kept: keptAnywhere(events, hash),
                   };
-            }),
-            skills: (step.kind === "agent" ? (step.agent.skills ?? []) : []).map((path) => {
-              const { name: skill, files } = definition.skills[path];
 
-              return {
-                name: skill,
-                files: Object.entries(files).map(([file, hash]) => ({
-                  file,
-                  bytes: store.read(hash),
-                })),
+                  return child === undefined ? artifact : { ...artifact, commission: child };
+                }),
               };
-            }),
+        }),
+        skills: (step.kind === "agent" ? (step.agent.skills ?? []) : []).map((path) => {
+          const { name: skill, files } = definition.skills[path];
+
+          return {
+            name: skill,
+            files: Object.entries(files).map(([file, hash]) => ({
+              file,
+              bytes: store.read(hash),
+            })),
           };
-        } catch (error) {
-          return `The engine could not prepare step ${name}: ${error instanceof Error ? error.message : String(error)}`;
+        }),
+      };
+    } catch (error) {
+      return because(
+        "engine",
+        `The engine could not prepare step ${name}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const { skills } = prepared;
+
+    // The artifact the workspace is built from, when it is an input's: one the record names.
+    const source = step.workspace;
+    const sourceInput = source === "subject" || source === "empty" ? undefined : source.input;
+    const branchInput = source === "subject" || source === "empty" ? undefined : source.branches;
+
+    // The artifacts the workspace adds as branches, each named for the step to find it.
+    const inputs = prepared.inputs.map((input) =>
+      input.name !== branchInput || !("artifacts" in input)
+        ? input
+        : {
+            ...input,
+            artifacts: input.artifacts.map((each, index) => ({
+              ...each,
+              branch: branchName(input.name, each.commission, index),
+            })),
+          },
+    );
+
+    // The definition refuses a workspace built from a session.
+    const from = inputs.find((input) => input.name === sourceInput);
+    const built = from !== undefined && "artifacts" in from ? from.artifacts[0] : undefined;
+
+    if (sourceInput !== undefined && built === undefined) {
+      return because("inputs", `Step ${name}'s workspace input ${sourceInput} holds no artifact.`);
+    }
+
+    // None when the step adds no branches; possibly empty when it does.
+    const adding = inputs.find((input) => input.name === branchInput);
+    const branches = adding !== undefined && "artifacts" in adding ? adding.artifacts : undefined;
+
+    // lazy: the materialiser of the base's kind adds every branch, so all must be of that kind.
+    // Give each kind its own materialiser run once a workspace needs to mix them.
+    const foreign = branches?.find(({ artifact }) => artifact.kind !== built?.artifact.kind);
+
+    if (foreign !== undefined) {
+      return because(
+        "inputs",
+        `Step ${name}'s workspace cannot add the ${foreign.artifact.kind} ${foreign.branch} as a branch of a ${built?.artifact.kind}.`,
+      );
+    }
+
+    // An agent's prompt goes to its harness with its inputs, so it counts with them.
+    const prompt = step.kind === "agent" ? Buffer.byteLength(step.agent.prompt) : 0;
+
+    const bytes =
+      inputs
+        .flatMap((input) =>
+          "artifacts" in input
+            ? input.artifacts.map(({ artifact }) => Buffer.byteLength(artifact.body ?? ""))
+            : input.sessions.map(({ body }) => body.length),
+        )
+        .reduce((sum, size) => sum + size, 0) +
+      skills.flatMap(({ files }) => files).reduce((sum, { bytes: file }) => sum + file.length, 0) +
+      prompt;
+
+    if (bytes > step.limits.input) {
+      const what =
+        step.kind !== "agent"
+          ? "inputs are"
+          : skills.length === 0
+            ? "inputs and prompt are"
+            : "inputs, prompt and skills are";
+
+      return because(
+        "limit",
+        `Step ${name}'s ${what} ${bytes} bytes, over its input limit of ${step.limits.input}.`,
+      );
+    }
+
+    return { inputs, skills, built, branches };
+  }
+
+  // An agent or command step: reads and checks what its attempt is given, escalating before one
+  // starts if it cannot be given or would repeat an earlier; then starts the attempt, which for a
+  // watching step is the wait, and for any other runs its program through. Whether an attempt
+  // started or the commission escalated.
+  async function startProgram(ready: Ready, step: Runnable): Promise<boolean> {
+    const { commission, events, state, name } = ready;
+
+    const resolved = Object.entries(step.inputs).map(([input, query]) => ({
+      name: input,
+      named: ready.named(query),
+    }));
+
+    const given = resolved.map(({ name: input, named: each }) => ({
+      name: input,
+      hashes: each.map(({ hash }) => hash),
+    }));
+
+    const supplied = supplying(ready, step, resolved);
+    const problem = "cause" in supplied ? supplied : repeats(events, name, state.subject, given);
+
+    if ("cause" in supplied || problem !== undefined) {
+      // SAFETY: one of the two is a Why: what is supplied, or the repeat.
+      write(commission, events, { type: "escalated", ...(problem as Why) });
+
+      return true;
+    }
+
+    write(commission, events, ready.starting(given));
+
+    // The attempt is the wait; each look runs its checks.
+    if (step.kind === "command" && step.watch !== undefined) {
+      return true;
+    }
+
+    await attempt(ready, step, supplied);
+
+    return true;
+  }
+
+  // Runs the program of an attempt just started through to its end, and writes the end: what it
+  // claimed, or why it escalated. A cancel that arrives first wins, and the engine's own failure
+  // escalates with what the program wrote.
+  async function attempt(ready: Ready, step: Runnable, supplied: Supplying): Promise<void> {
+    const { commission, events, definition, state, name, admitted } = ready;
+    const { attempt: number } = admitted;
+    const key = runningKey(log, commission, number);
+    const spool = spoolOf(commission, number);
+
+    running.add(key);
+
+    const cancelled = () => requested.get(commission, number) !== undefined;
+
+    // Why it must stop: the owner cancelled it, or its parent withdrew the commission.
+    const stopping = () => (cancelled() ? stoppedWhy(commission, name) : undefined);
+
+    // Its notes go after attempt-started, just written.
+    const note = noting(commission, number, events.length + 1);
+
+    try {
+      const subject = {
+        hash: state.subject,
+        artifact: store.get(state.subject),
+        kept: keptOf(events, state.subject),
+      };
+
+      const ending = await run(
+        step,
+        {
+          commission,
+          step: name,
+          attempt: number,
+          kinds: definition.kinds,
+          subject,
+          workspace:
+            supplied.built !== undefined
+              ? supplied.built
+              : step.workspace === "subject"
+                ? subject
+                : undefined,
+          branches: supplied.branches,
+          inputs: supplied.inputs,
+          skills: supplied.skills,
+          routed: routedBy(events),
+        },
+        stopping,
+        note,
+        store,
+        spool,
+        { step: step.limits.usd, commission: admitted.commission },
+      );
+
+      // Only a check finds nothing.
+      if (ending.type === "nothing") {
+        throw new Error(`Step ${name}'s attempt, which is no check, ended finding nothing.`);
+      }
+
+      // A cancel that arrives before the attempt's end is written wins: nothing it claimed is
+      // recorded.
+      write(
+        commission,
+        read(commission),
+        ending.type === "attempt-completed" && cancelled()
+          ? cancelledEnding(ending, stopping()!)
+          : ending,
+      );
+      unspool(spool);
+    } catch (error) {
+      // The engine's own failure, such as a full disk, is nothing it can classify: the owner
+      // decides, with what the step's program wrote, if it ran and the store can keep it. If
+      // this write fails too, the next advance finds the attempt interrupted, and keeps what
+      // was spooled.
+      const failed = failedIn(name, error instanceof Error ? error.message : String(error));
+
+      const kept = (() => {
+        try {
+          return ended(spool, step.limits.transcript, failed);
+        } catch (keeping) {
+          return because(
+            "engine",
+            `${failed.reason}; its transcript could not be kept: ${keeping instanceof Error ? keeping.message : String(keeping)}`,
+          );
         }
       })();
 
-      if (isText(prepared)) {
-        write(commission, events, { type: "escalated", cause: "engine", reason: prepared });
-
-        continue;
-      }
-
-      const { skills } = prepared;
-
-      // The artifact the workspace is built from, when it is an input's: one the record names.
-      const source = step.workspace;
-      const sourceInput = source === "subject" || source === "empty" ? undefined : source.input;
-      const branchInput = source === "subject" || source === "empty" ? undefined : source.branches;
-
-      // The artifacts the workspace adds as branches, each named for the step to find it.
-      const inputs = prepared.inputs.map((input) =>
-        input.name !== branchInput || !("artifacts" in input)
-          ? input
-          : {
-              ...input,
-              artifacts: input.artifacts.map((each, index) => ({
-                ...each,
-                branch: branchName(input.name, each.commission, index),
-              })),
-            },
-      );
-
-      // The definition refuses a workspace built from a session.
-      const from = inputs.find((input) => input.name === sourceInput);
-      const built = from !== undefined && "artifacts" in from ? from.artifacts[0] : undefined;
-
-      if (sourceInput !== undefined && built === undefined) {
-        write(commission, events, {
-          type: "escalated",
-          cause: "inputs",
-          reason: `Step ${name}'s workspace input ${sourceInput} holds no artifact.`,
-        });
-
-        continue;
-      }
-
-      // None when the step adds no branches; possibly empty when it does.
-      const adding = inputs.find((input) => input.name === branchInput);
-      const branches = adding !== undefined && "artifacts" in adding ? adding.artifacts : undefined;
-
-      // lazy: the materialiser of the base's kind adds every branch, so all must be of that kind.
-      // Give each kind its own materialiser run once a workspace needs to mix them.
-      const foreign = branches?.find(({ artifact }) => artifact.kind !== built?.artifact.kind);
-
-      if (foreign !== undefined) {
-        write(commission, events, {
-          type: "escalated",
-          cause: "inputs",
-          reason: `Step ${name}'s workspace cannot add the ${foreign.artifact.kind} ${foreign.branch} as a branch of a ${built?.artifact.kind}.`,
-        });
-
-        continue;
-      }
-
-      // An agent's prompt goes to its harness with its inputs, so it counts with them.
-      const prompt = step.kind === "agent" ? Buffer.byteLength(step.agent.prompt) : 0;
-
-      const bytes =
-        inputs
-          .flatMap((input) =>
-            "artifacts" in input
-              ? input.artifacts.map(({ artifact }) => Buffer.byteLength(artifact.body ?? ""))
-              : input.sessions.map(({ body }) => body.length),
-          )
-          .reduce((sum, size) => sum + size, 0) +
-        skills
-          .flatMap(({ files }) => files)
-          .reduce((sum, { bytes: file }) => sum + file.length, 0) +
-        prompt;
-
-      if (bytes > step.limits.input) {
-        const what =
-          step.kind !== "agent"
-            ? "inputs are"
-            : skills.length === 0
-              ? "inputs and prompt are"
-              : "inputs, prompt and skills are";
-
-        write(commission, events, {
-          type: "escalated",
-          cause: "limit",
-          reason: `Step ${name}'s ${what} ${bytes} bytes, over its input limit of ${step.limits.input}.`,
-        });
-
-        continue;
-      }
-
-      const repeat = repeats(events, name, state.subject, given);
-
-      if (repeat !== undefined) {
-        write(commission, events, { type: "escalated", ...repeat });
-
-        continue;
-      }
-
-      const { attempt } = admitted;
-
-      write(commission, events, starting(given));
-
-      // The attempt is the wait; each look runs its checks.
-      if (step.kind === "command" && step.watch !== undefined) {
-        continue;
-      }
-
-      const key = runningKey(log, commission, attempt);
-      const spool = spoolOf(commission, attempt);
-
-      running.add(key);
-
-      const cancelled = () => requested.get(commission, attempt) !== undefined;
-
-      // Why it must stop: the owner cancelled it, or its parent withdrew the commission.
-      const stopping = () => (cancelled() ? stoppedWhy(commission, name) : undefined);
-
-      // Each note the attempt writes is an event of its own, after attempt-started. A note
-      // changes no state and this attempt is the commission's one writer, so it is appended at
-      // the next position without replaying the log; another writer's event there refuses it.
-      let position = events.length + 1;
-
-      const note = (text: string, from: "step" | "engine") => {
-        // A step's note says nothing of who wrote it, as every note did before the engine's.
-        const noted: Extract<CommissionEvent, { type: "noted" }> = {
-          type: "noted",
-          attempt,
-          note: text,
-          at: Date.now(),
-        };
-
-        if (from === "engine") {
-          noted.from = from;
-        }
-
-        insert.run(commission, position, JSON.stringify(noted));
-        position += 1;
-      };
-
-      try {
-        const subject = {
-          hash: state.subject,
-          artifact: store.get(state.subject),
-          kept: keptOf(events, state.subject),
-        };
-
-        const ending = await run(
-          step,
-          {
-            commission,
-            step: name,
-            attempt,
-            kinds: definition.kinds,
-            subject,
-            workspace: built !== undefined ? built : source === "subject" ? subject : undefined,
-            branches,
-            inputs,
-            skills,
-            routed: routedBy(events),
-          },
-          stopping,
-          note,
-          store,
-          spool,
-          { step: step.limits.usd, commission: admitted.commission },
-        );
-
-        // Only a check finds nothing.
-        if (ending.type === "nothing") {
-          throw new Error(`Step ${name}'s attempt, which is no check, ended finding nothing.`);
-        }
-
-        // A cancel that arrives before the attempt's end is written wins: nothing it claimed is
-        // recorded.
-        write(
-          commission,
-          read(commission),
-          ending.type === "attempt-completed" && cancelled()
-            ? cancelledEnding(ending, stopping()!)
-            : ending,
-        );
-        unspool(spool);
-      } catch (error) {
-        // The engine's own failure, such as a full disk, is nothing it can classify: the owner
-        // decides, with what the step's program wrote, if it ran and the store can keep it. If
-        // this write fails too, the next advance finds the attempt interrupted, and keeps what
-        // was spooled.
-        const failed = failedIn(name, error instanceof Error ? error.message : String(error));
-
-        const kept = (() => {
-          try {
-            return ended(spool, step.limits.transcript, failed);
-          } catch (keeping) {
-            return because(
-              "engine",
-              `${failed.reason}; its transcript could not be kept: ${keeping instanceof Error ? keeping.message : String(keeping)}`,
-            );
-          }
-        })();
-
-        write(commission, read(commission), { type: "escalated", attempt, ...kept });
-        unspool(spool);
-      } finally {
-        running.delete(key);
-      }
-
-      if (attending) {
-        const ended = read(commission);
-
-        return replay(definitionOf(ended), ended);
-      }
+      write(commission, read(commission), { type: "escalated", attempt: number, ...kept });
+      unspool(spool);
+    } finally {
+      running.delete(key);
     }
   }
 }
@@ -2314,14 +2365,14 @@ function resolve(
     case "request":
       return [{ hash: events[0].request }];
     default: {
-      if ("session" in query) {
+      if (query.session !== undefined) {
         return sessionsOf(events, query.session)
           .slice(-1)
           .map((hash) => ({ hash }));
       }
 
       // Each child that reached its end, its latest artifact of the kind or all of them.
-      if ("children" in query) {
+      if (query.children !== undefined) {
         return childrenOf(query.children).flatMap(({ commission, events: child }) => {
           if (finishOf(child)?.outcome === undefined) {
             return [];
@@ -2331,12 +2382,13 @@ function resolve(
             .filter((artifact) => artifact.kind === query.kind)
             .map(({ hash }) => ({ hash, commission }));
 
+          // One stored before a children query had to say took each child's latest.
           return query.take === "all" ? named : named.slice(-1);
         });
       }
 
       // Each related commission's artifacts as it has them now, finished or not.
-      if ("across" in query) {
+      if (query.across !== undefined) {
         return related(query.across).flatMap(({ commission, events: other }) => {
           const named = recorded(other, kinds)
             .filter(
@@ -2639,7 +2691,7 @@ function cancelledEnding(
 // or an agent with two skills of one name, and returns the skills by path.
 function pin(
   name: string,
-  workflow: Workflow,
+  workflow: Workflow<string, "stated" | "whole">,
   keep: (bytes: Buffer) => string,
 ): Definition["skills"] {
   const invalid = (problem: string) => new Error(`Workflow ${name} is invalid: ${problem}.`);
@@ -2924,7 +2976,7 @@ async function run(
       }
 
       if (failed !== undefined) {
-        return escalate(because("kind", failed));
+        return escalate(failed);
       }
     }
 
@@ -2945,10 +2997,10 @@ async function run(
         : undefined;
 
     if (network !== true && network !== false) {
-      const opened = await openBrokers(network.brokers ?? {}, bounds);
+      const opened = await openBrokers(network.brokers ?? {}, bounds, name);
 
-      if ("failed" in opened) {
-        return escalate(because("broker", `Step ${name}'s ${opened.failed}`));
+      if ("reason" in opened) {
+        return escalate(opened);
       }
 
       brokers = opened;
@@ -3085,99 +3137,73 @@ async function run(
     child.stdout!.on("data", guarded(record(false)));
     child.stderr!.on("data", guarded(record(true)));
 
-    // The part of a note whose line has not ended yet.
-    let pending = Buffer.alloc(0);
+    // What the step writes on a descriptor of its own, as lines: each complete line goes to
+    // `line`, as does one that has grown past a line's limit, which stops the step, naming
+    // `what` it wrote. Its bytes count toward the transcript limit with everything else the step
+    // writes.
+    const lines = (what: string, line: (text: string) => void) => {
+      let pending = Buffer.alloc(0);
 
-    // Records each complete line as a note, unless it is empty. A note's bytes count toward the
-    // transcript limit, so notes are bounded with everything else the step writes.
-    const noteFrom = (chunk: Buffer) => {
-      idle?.refresh();
-      written += chunk.length;
+      const one = (bytes: Buffer) => {
+        if (stopped !== undefined) {
+          return;
+        }
 
-      if (written > step.limits.transcript) {
-        stopFor(overTranscript);
+        if (bytes.length > noteLimit) {
+          stopFor(
+            because("limit", `Step ${name} wrote ${what} over its limit of ${noteLimit} bytes.`),
+          );
 
-        return;
-      }
+          return;
+        }
 
-      pending = Buffer.concat([pending, chunk]);
+        line(bytes.toString());
+      };
 
-      for (let end = pending.indexOf(10); end !== -1; end = pending.indexOf(10)) {
-        noteLine(pending.subarray(0, end));
-        pending = pending.subarray(end + 1);
-      }
+      return {
+        read(chunk: Buffer) {
+          idle?.refresh();
+          written += chunk.length;
 
-      if (pending.length > noteLimit) {
-        noteLine(pending);
-      }
+          if (written > step.limits.transcript) {
+            stopFor(overTranscript);
+
+            return;
+          }
+
+          pending = Buffer.concat([pending, chunk]);
+
+          for (let end = pending.indexOf(10); end !== -1; end = pending.indexOf(10)) {
+            one(pending.subarray(0, end));
+            pending = pending.subarray(end + 1);
+          }
+
+          if (pending.length > noteLimit) {
+            one(pending);
+          }
+        },
+        // A last line need not end.
+        end() {
+          one(pending);
+        },
+      };
     };
 
-    const noteLine = (line: Buffer) => {
-      if (stopped !== undefined) {
-        return;
-      }
-
-      if (line.length > noteLimit) {
-        stopFor(
-          because("limit", `Step ${name} wrote a note over its limit of ${noteLimit} bytes.`),
-        );
-
-        return;
-      }
-
-      const text = line.toString().trimEnd();
+    // Each line the step writes to fd 3 is a note, unless it is empty.
+    const notes = lines("a note", (line) => {
+      const text = line.trimEnd();
 
       if (text !== "") {
         note(text, "step");
       }
-    };
+    });
 
-    child.stdio[3]!.on("data", guarded(noteFrom));
+    child.stdio[3]!.on("data", guarded(notes.read));
 
-    // The part of a usage report whose line has not ended yet.
-    let reporting = Buffer.alloc(0);
-
-    // Keeps each complete line as the step's latest usage, spooled so an engine that finds the
-    // attempt interrupted records it too. Bounded like notes, and counted with them.
-    const usageFrom = (chunk: Buffer) => {
-      idle?.refresh();
-      written += chunk.length;
-
-      if (written > step.limits.transcript) {
-        stopFor(overTranscript);
-
-        return;
-      }
-
-      reporting = Buffer.concat([reporting, chunk]);
-
-      for (let end = reporting.indexOf(10); end !== -1; end = reporting.indexOf(10)) {
-        usageLine(reporting.subarray(0, end));
-        reporting = reporting.subarray(end + 1);
-      }
-
-      if (reporting.length > noteLimit) {
-        usageLine(reporting);
-      }
-    };
-
-    const usageLine = (line: Buffer) => {
-      if (stopped !== undefined) {
-        return;
-      }
-
-      if (line.length > noteLimit) {
-        stopFor(
-          because(
-            "limit",
-            `Step ${name} wrote a usage report over its limit of ${noteLimit} bytes.`,
-          ),
-        );
-
-        return;
-      }
-
-      const text = line.toString().trim();
+    // Each line it writes to fd 4 is its latest usage, spooled so an engine that finds the attempt
+    // interrupted records it too.
+    const reports = lines("a usage report", (line) => {
+      const text = line.trim();
 
       if (text === "") {
         return;
@@ -3199,9 +3225,9 @@ async function run(
       if (over !== undefined) {
         stopFor(over);
       }
-    };
+    });
 
-    child.stdio[4]!.on("data", guarded(usageFrom));
+    child.stdio[4]!.on("data", guarded(reports.read));
 
     // While the owner and an attended step's agent go back and forth, the engine reads each
     // output.json the agent writes and notes what it holds, so the owner knows when the result
@@ -3223,8 +3249,8 @@ async function run(
     await reading?.close();
 
     // A last note or report need not end its line.
-    noteLine(pending);
-    usageLine(reporting);
+    notes.end();
+    reports.end();
 
     left = sessionLeft(output, step.limits.transcript);
 
@@ -3294,7 +3320,7 @@ async function run(
     const claim = await parse(step, name, output, given);
 
     if ("reason" in claim) {
-      return escalate(because("claim", claim.reason));
+      return escalate(claim);
     }
 
     // Each artifact whose kind has a verifier is accepted by it, which may keep files. A new one
@@ -3514,7 +3540,8 @@ const brokerSaid = 1024;
 async function openBrokers(
   programs: Readonly<Record<string, readonly [string, ...string[]]>>,
   bounds: Bounds,
-): Promise<Brokers | { failed: string }> {
+  step: string,
+): Promise<Brokers | Why> {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-brokers-"));
   const sockets = new Map<string, string>();
   const started: ChildProcess[] = [];
@@ -3551,7 +3578,7 @@ async function openBrokers(
     if (why !== undefined) {
       await close();
 
-      return { failed: `broker ${name} ${why}` };
+      return because("broker", `Step ${step}'s broker ${name} ${why}`);
     }
 
     sockets.set(name, socket);
@@ -3717,15 +3744,18 @@ async function parse(
   name: string,
   output: string,
   { subject: { hash: subject }, kinds, inputs }: Given,
-): Promise<Claim | { reason: string }> {
+): Promise<Claim | Why> {
   const bytes = await readAtMost(join(output, "output.json"), claimLimit);
 
   if (bytes === undefined) {
-    return { reason: `Step ${name} exited 0 without a readable output.json.` };
+    return because("claim", `Step ${name} exited 0 without a readable output.json.`);
   }
 
   if (bytes.length > claimLimit) {
-    return { reason: `Step ${name} wrote an output.json over its limit of ${claimLimit} bytes.` };
+    return because(
+      "claim",
+      `Step ${name} wrote an output.json over its limit of ${claimLimit} bytes.`,
+    );
   }
 
   let claim;
@@ -3733,16 +3763,17 @@ async function parse(
   try {
     claim = JSON.parse(utf8.decode(bytes));
   } catch {
-    return { reason: `Step ${name} wrote an output.json that is not JSON.` };
+    return because("claim", `Step ${name} wrote an output.json that is not JSON.`);
   }
 
   // Strict equality with a declared key also refuses an outcome that is not a string.
   const outcome = Object.keys(step.on).find((declared) => declared === claim?.outcome);
 
   if (outcome === undefined) {
-    return {
-      reason: `Step ${name} claimed an outcome it does not declare: ${JSON.stringify(claim?.outcome)}.`,
-    };
+    return because(
+      "claim",
+      `Step ${name} claimed an outcome it does not declare: ${JSON.stringify(claim?.outcome)}.`,
+    );
   }
 
   // A misspelt field would otherwise drop the claim it was meant to carry.
@@ -3751,15 +3782,16 @@ async function parse(
   );
 
   if (undefinedFields.length > 0) {
-    return {
-      reason: `Step ${name} wrote an output.json with fields it does not define: ${JSON.stringify(undefinedFields)}.`,
-    };
+    return because(
+      "claim",
+      `Step ${name} wrote an output.json with fields it does not define: ${JSON.stringify(undefinedFields)}.`,
+    );
   }
 
   const claimed = Object.hasOwn(claim, "artifacts") ? claim.artifacts : [];
 
   if (!Array.isArray(claimed)) {
-    return { reason: `Step ${name} claimed artifacts that are not a list.` };
+    return because("claim", `Step ${name} claimed artifacts that are not a list.`);
   }
 
   const artifacts: (Artifact | Adopted)[] = [];
@@ -3778,19 +3810,24 @@ async function parse(
       const found = isText(hash) ? offered.get(hash) : undefined;
 
       if (!hasExactly(artifact, ["adopt"]) || found === undefined) {
-        return {
-          reason: `Step ${name} adopted an artifact it was not given: ${JSON.stringify(hash)}.`,
-        };
+        return because(
+          "claim",
+          `Step ${name} adopted an artifact it was not given: ${JSON.stringify(hash)}.`,
+        );
       }
 
       if (!step.claims.includes(found.artifact.kind)) {
-        return {
-          reason: `Step ${name} adopted an artifact of undeclared kind: ${JSON.stringify(found.artifact.kind)}.`,
-        };
+        return because(
+          "claim",
+          `Step ${name} adopted an artifact of undeclared kind: ${JSON.stringify(found.artifact.kind)}.`,
+        );
       }
 
       if (found.hash === subject) {
-        return { reason: `Step ${name} adopted the commission's subject, which it already is.` };
+        return because(
+          "claim",
+          `Step ${name} adopted the commission's subject, which it already is.`,
+        );
       }
 
       artifacts.push({ adopt: found.hash, artifact: found.artifact, kept: found.kept });
@@ -3802,13 +3839,14 @@ async function parse(
     const { kind, fields, body } = artifact ?? {};
 
     if (kind === "decision") {
-      return { reason: `Step ${name} claimed a decision, which only the owner makes.` };
+      return because("claim", `Step ${name} claimed a decision, which only the owner makes.`);
     }
 
     if (!isText(kind) || !step.claims.includes(kind)) {
-      return {
-        reason: `Step ${name} claimed an artifact of undeclared kind: ${JSON.stringify(kind)}.`,
-      };
+      return because(
+        "claim",
+        `Step ${name} claimed an artifact of undeclared kind: ${JSON.stringify(kind)}.`,
+      );
     }
 
     // The definition allows only kinds in the table, so the step's claims name one.
@@ -3818,9 +3856,10 @@ async function parse(
       !isRecord(fields) ||
       !hasExactly(artifact, body === undefined ? ["kind", "fields"] : ["kind", "fields", "body"])
     ) {
-      return {
-        reason: `Step ${name} claimed a ${kind} that is not a kind, its fields and a body path.`,
-      };
+      return because(
+        "claim",
+        `Step ${name} claimed a ${kind} that is not a kind, its fields and a body path.`,
+      );
     }
 
     // The engine names a judgement's subject, so a claimed subject is refused here as undefined.
@@ -3829,9 +3868,10 @@ async function parse(
     );
 
     if (undefinedFields.length > 0) {
-      return {
-        reason: `Step ${name} claimed a ${kind} with fields its kind does not define: ${JSON.stringify(undefinedFields)}.`,
-      };
+      return because(
+        "claim",
+        `Step ${name} claimed a ${kind} with fields its kind does not define: ${JSON.stringify(undefinedFields)}.`,
+      );
     }
 
     const given = new Map(Object.entries(fields));
@@ -3842,26 +3882,28 @@ async function parse(
 
       if (value === undefined) {
         if (rule.required) {
-          return { reason: `Step ${name} claimed a ${kind} without its ${field}.` };
+          return because("claim", `Step ${name} claimed a ${kind} without its ${field}.`);
         }
 
         continue;
       }
 
       if (!isText(value)) {
-        return { reason: `Step ${name} claimed a ${kind} ${field} that is not text.` };
+        return because("claim", `Step ${name} claimed a ${kind} ${field} that is not text.`);
       }
 
       if (rule.values !== undefined && !rule.values.includes(value)) {
-        return {
-          reason: `Step ${name} claimed a ${kind} ${field} that is not one of ${rule.values.join(", ")}.`,
-        };
+        return because(
+          "claim",
+          `Step ${name} claimed a ${kind} ${field} that is not one of ${rule.values.join(", ")}.`,
+        );
       }
 
       if (Buffer.byteLength(value) > rule.limit) {
-        return {
-          reason: `Step ${name} claimed a ${kind} ${field} over its limit of ${rule.limit} bytes.`,
-        };
+        return because(
+          "claim",
+          `Step ${name} claimed a ${kind} ${field} over its limit of ${rule.limit} bytes.`,
+        );
       }
 
       parsed[field] = value;
@@ -3869,9 +3911,10 @@ async function parse(
 
     // The kind's outcome field, such as a verdict's, so the edge followed is the judgement given.
     if (definition.outcome !== undefined && parsed[definition.outcome] !== outcome) {
-      return {
-        reason: `Step ${name} claimed a ${kind} whose ${definition.outcome} is ${parsed[definition.outcome]}, not its outcome ${outcome}.`,
-      };
+      return because(
+        "claim",
+        `Step ${name} claimed a ${kind} whose ${definition.outcome} is ${parsed[definition.outcome]}, not its outcome ${outcome}.`,
+      );
     }
 
     // The engine names a judgement's subject: the one the attempt was given, which the step judged.
@@ -3881,7 +3924,7 @@ async function parse(
 
     if (body === undefined) {
       if (definition.body.required) {
-        return { reason: `Step ${name} claimed a ${kind} without its body.` };
+        return because("claim", `Step ${name} claimed a ${kind} without its body.`);
       }
 
       artifacts.push({ kind, fields: parsed });
@@ -3890,7 +3933,7 @@ async function parse(
     }
 
     if (!isText(body)) {
-      return { reason: `Step ${name} claimed a ${kind} body that is not a path.` };
+      return because("claim", `Step ${name} claimed a ${kind} body that is not a path.`);
     }
 
     const read = await readBody(name, output, body, definition.body.limit);
@@ -3914,9 +3957,10 @@ async function parse(
   ) {
     const kind = routing;
 
-    return {
-      reason: `Step ${name} claimed a ${kind}, whose ${kinds[kind].outcome} routes its outcome, with a new subject: the ${kind} would be about the subject its claim replaces.`,
-    };
+    return because(
+      "claim",
+      `Step ${name} claimed a ${kind}, whose ${kinds[kind].outcome} routes its outcome, with a new subject: the ${kind} would be about the subject its claim replaces.`,
+    );
   }
 
   return { outcome, artifacts };
@@ -3929,28 +3973,36 @@ async function readBody(
   output: string,
   body: string,
   limit: number,
-): Promise<{ text: string } | { reason: string }> {
+): Promise<{ text: string } | Why> {
   // Joined to the output, an absolute path would read as a relative one.
   if (isAbsolute(body)) {
-    return {
-      reason: `Step ${name} claimed a body path that is not relative to its output: ${JSON.stringify(body)}.`,
-    };
+    return because(
+      "claim",
+      `Step ${name} claimed a body path that is not relative to its output: ${JSON.stringify(body)}.`,
+    );
   }
 
   const read = await readUnder(output, body, limit);
 
   if (read === "outside") {
-    return { reason: `Step ${name} claimed a body outside its output: ${JSON.stringify(body)}.` };
+    return because(
+      "claim",
+      `Step ${name} claimed a body outside its output: ${JSON.stringify(body)}.`,
+    );
   }
 
   if (read === undefined) {
-    return { reason: `Step ${name} claimed a body it did not write: ${JSON.stringify(body)}.` };
+    return because(
+      "claim",
+      `Step ${name} claimed a body it did not write: ${JSON.stringify(body)}.`,
+    );
   }
 
   if (read.length > limit) {
-    return {
-      reason: `Step ${name} claimed a body over its limit of ${limit} bytes: ${JSON.stringify(body)}.`,
-    };
+    return because(
+      "claim",
+      `Step ${name} claimed a body over its limit of ${limit} bytes: ${JSON.stringify(body)}.`,
+    );
   }
 
   let text;
@@ -3960,7 +4012,10 @@ async function readBody(
   try {
     text = utf8.decode(read);
   } catch {
-    return { reason: `Step ${name} claimed a body that is not UTF-8: ${JSON.stringify(body)}.` };
+    return because(
+      "claim",
+      `Step ${name} claimed a body that is not UTF-8: ${JSON.stringify(body)}.`,
+    );
   }
 
   return { text };
@@ -4091,8 +4146,8 @@ async function runProgram(
   const { workspace } = areas;
 
   const { command, args, env, unit } = confine(program.access, areas, program.run, {
-    memory: program.memory,
-    processes: program.processes,
+    memory: program.limits.memory,
+    processes: program.limits.processes,
   });
 
   // lazy: no notes, stdout dropped, stderr kept only as a failure's tail. Give kind programs a
@@ -4118,7 +4173,7 @@ async function runProgram(
   const limit = setTimeout(() => {
     late = true;
     stop(child, child.pid!);
-  }, program.limit * 1000);
+  }, program.limits.attempt * 1000);
 
   const cancel = setInterval(() => {
     if (cancelled()) {
@@ -4145,11 +4200,11 @@ async function runProgram(
         : ` Its stderr: ${JSON.stringify(tail.toString())}.`;
 
   if (late) {
-    return `it reached its limit of ${program.limit} s.${stderr}`;
+    return `it reached its limit of ${program.limits.attempt} s.${stderr}`;
   }
 
   if (closed[0] !== 0 && overMemory(unit)) {
-    return `it reached its memory limit of ${program.memory} bytes.${stderr}`;
+    return `it reached its memory limit of ${program.limits.memory} bytes.${stderr}`;
   }
 
   const [code, signal] = closed;
@@ -4201,6 +4256,7 @@ async function verify(
   await writeFile(
     join(input, "claim.json"),
     JSON.stringify({
+      kind: claim.kind,
       fields: claim.fields,
       body: claim.body === undefined ? undefined : "body",
       subject: { hash: subject.hash, kind: subject.artifact.kind, fields: subject.artifact.fields },
@@ -4246,7 +4302,7 @@ async function verify(
   }
 
   const read = new Map<string, Buffer>();
-  let room = verifier.kept;
+  let room = verifier.limits.kept;
 
   for (const file of verdict.keep) {
     if (!isText(file) || !plainName.test(file)) {
@@ -4260,7 +4316,9 @@ async function verify(
     }
 
     if (bytes.length > room) {
-      return failed(`the files it kept total more than its limit of ${verifier.kept} bytes.`);
+      return failed(
+        `the files it kept total more than its limit of ${verifier.limits.kept} bytes.`,
+      );
     }
 
     room -= bytes.length;
@@ -4283,13 +4341,16 @@ async function materialise(
   kinds: Kinds,
   store: Store,
   cancelled: () => boolean,
-): Promise<string | undefined> {
+): Promise<Why | undefined> {
   const { artifact } = from;
 
   const materialiser = kinds[artifact.kind]?.materialiser;
 
   if (materialiser === undefined) {
-    return `Step ${name}'s workspace cannot be built from a ${artifact.kind}, whose kind has no materialiser.`;
+    return because(
+      "kind",
+      `Step ${name}'s workspace cannot be built from a ${artifact.kind}, whose kind has no materialiser.`,
+    );
   }
 
   const { input, output, scratch } = await areaFor(spool.work, "materialiser");
@@ -4341,5 +4402,5 @@ async function materialise(
 
   return why === undefined
     ? undefined
-    : `The ${artifact.kind} materialiser failed for step ${name}: ${why}`;
+    : because("kind", `The ${artifact.kind} materialiser failed for step ${name}: ${why}`);
 }

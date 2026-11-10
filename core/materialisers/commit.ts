@@ -3,34 +3,21 @@
  * out its SHA, then adds each commit branches.json lists as its branch, leaving no remote behind.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { input, readArtifact, readBranches, type Materialised } from "../step/contract.ts";
 
-// What the engine writes as artifact.json for a commit, and for each of branches.json with its
-// branch; kept paths are relative to the input.
-type Artifact = { fields: { sha: string }; kept: { "commit.bundle": string } };
-
-const input = process.env.MEDRENGARD_IN!;
-
-const read = (file: string) => readFileSync(join(input, file), "utf8");
-
-// SAFETY: the engine encodes artifact.json for a commit with these fields.
-const { fields, kept } = JSON.parse(read("artifact.json")) as Artifact;
+// A commit's one field is its sha, and its verifier kept its bundle.
+const bundleOf = ({ kept }: Materialised) => join(input, kept["commit.bundle"]!);
+const artifact = readArtifact();
 
 const git = (...args: string[]) => execFileSync("git", args, { stdio: "ignore" });
 
-git("clone", "--quiet", "--no-checkout", join(input, kept["commit.bundle"]), ".");
+git("clone", "--quiet", "--no-checkout", bundleOf(artifact), ".");
 
-git("checkout", "--quiet", "--detach", fields.sha);
+git("checkout", "--quiet", "--detach", artifact.fields.sha!);
 
 git("remote", "remove", "origin");
 
-// Present only when the step adds branches.
-const listed = existsSync(join(input, "branches.json")) ? read("branches.json") : "[]";
-
-// SAFETY: the engine encodes branches.json as commits, each with its branch.
-const branches = JSON.parse(listed) as (Artifact & { branch: string })[];
-
-for (const { branch, fields: added, kept: files } of branches) {
-  git("fetch", "--quiet", join(input, files["commit.bundle"]), `${added.sha}:refs/heads/${branch}`);
+for (const added of readBranches()) {
+  git("fetch", "--quiet", bundleOf(added), `${added.fields.sha}:refs/heads/${added.branch}`);
 }

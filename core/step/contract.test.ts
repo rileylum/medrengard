@@ -68,7 +68,7 @@ test("a step written in TypeScript reads its input, notes and claims through the
     },
   });
 
-  engine.commission("reply", "first", { title: "Greet", body: "Say hello." });
+  engine.commission("reply", { title: "Greet", body: "Say hello." }, { name: "first" });
 
   const state = await engine.advance("first");
   const { entries } = engine.record("first");
@@ -88,4 +88,123 @@ test("a step written in TypeScript reads its input, notes and claims through the
       ],
     },
   ]);
+});
+
+// A kind's programs are written with the same module: a verifier reads the claim and accepts or
+// rejects it, and a materialiser reads the artifact to build a workspace from.
+test("a kind's verifier and materialiser written in TypeScript read the claim and the artifact through the contract's module", async (t) => {
+  const factory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(factory, { recursive: true, force: true }));
+
+  await mkdir(join(factory, "kinds"));
+  await mkdir(join(factory, "state"));
+  await writeFile(
+    join(factory, "kinds", "verify.ts"),
+    `import { writeFileSync } from "node:fs";
+     import { join } from "node:path";
+     import { accept, output, readClaim, reject } from ${JSON.stringify(join(import.meta.dirname, "contract.ts"))};
+
+     const claim = readClaim();
+
+     if (claim.fields.title === "Refuse me") {
+       reject(\`A \${claim.kind} titled so, about the \${claim.subject.kind} \${claim.subject.fields.title}.\`);
+     } else {
+       writeFileSync(join(output, "seen"), claim.fields.title ?? "");
+       accept(["seen"]);
+     }`,
+  );
+  await writeFile(
+    join(factory, "kinds", "build.ts"),
+    `import { copyFileSync, writeFileSync } from "node:fs";
+     import { join } from "node:path";
+     import { bodyOf, input, readArtifact } from ${JSON.stringify(join(import.meta.dirname, "contract.ts"))};
+
+     const artifact = readArtifact();
+
+     writeFileSync("built", \`\${artifact.kind} \${artifact.fields.title}: \${bodyOf(artifact)}\`);
+     copyFileSync(join(input, artifact.kept.seen ?? ""), "seen");`,
+  );
+
+  const access = {
+    ...node,
+    paths: [...node.paths, { path: join(factory, "kinds"), mode: "read" as const }],
+  };
+
+  const program = (file: string) => ({
+    run: [process.execPath, join(factory, "kinds", file)] as const,
+    access,
+    limits: { attempt: 30, memory: 4 * 1024 * 1024 * 1024, processes: 1024 },
+  });
+
+  const verifier = program("verify.ts");
+
+  const claiming = (title: string, next: "read" | "end") =>
+    ({
+      kind: "command",
+      run: [
+        "sh",
+        "-c",
+        `printf 'A note.' > "$MEDRENGARD_OUT/note.md"
+         echo '{"outcome":"done","artifacts":[{"kind":"note","fields":{"title":"${title}"},"body":"note.md"}]}' > "$MEDRENGARD_OUT/output.json"`,
+      ],
+      workspace: "empty",
+      inputs: {},
+      claims: ["note"],
+      on: { done: next },
+      budget: 1,
+      access: node,
+    }) as const;
+
+  const engine = createEngine({
+    log: join(factory, "state", "log.sqlite"),
+    kinds: {
+      ...builtIn,
+      note: {
+        role: "subject",
+        description: "A note.",
+        fields: { title: { limit: 100, required: true } },
+        body: { required: true, limit: 1024 },
+        verifier: { ...verifier, limits: { ...verifier.limits, kept: 1024 } },
+        materialiser: program("build.ts"),
+      },
+    },
+    defaults: { limits },
+    workflows: {
+      keep: defineWorkflow({
+        start: "write",
+        steps: {
+          write: claiming("Keep me", "read"),
+          // Its workspace is built from the note by the materialiser.
+          read: {
+            kind: "command",
+            run: [
+              "sh",
+              "-c",
+              `cat built seen; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            ],
+            workspace: "subject",
+            inputs: {},
+            claims: [],
+            on: { done: "end" },
+            budget: 1,
+            access: node,
+          },
+        },
+      }),
+      refuse: defineWorkflow({ start: "write", steps: { write: claiming("Refuse me", "end") } }),
+    },
+  });
+
+  engine.commission("keep", { title: "Greet", body: "Say hello." }, { name: "kept" });
+  assert.deepEqual(await engine.advance("kept"), { status: "finished", by: "end" });
+  assert.equal(engine.transcript("kept", 2).toString(), "note Keep me: A note.Keep me");
+
+  engine.commission("refuse", { title: "Greet", body: "Say hello." }, { name: "refused" });
+  assert.partialDeepStrictEqual(await engine.advance("refused"), {
+    status: "escalated",
+    cause: "claim",
+    reason:
+      "Step write claimed a note its verifier rejected: A note titled so, about the document Greet.",
+  });
 });

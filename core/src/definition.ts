@@ -11,19 +11,31 @@ import type { Kinds } from "./kinds.ts";
 export type Query<N extends string = string> =
   | "subject"
   | "request"
-  | {
-      from?: readonly N[];
-      kind?: string;
-      about?: "subject" | "earlier" | "any";
-      take?: "latest" | "all";
-    }
+  | Recorded<N>
   // The latest session an attempt of the step N left, if any: a harness's conversation, opaque to
   // the engine, which a later attempt's adapter may continue.
-  | { session: N }
+  | {
+      session: N;
+      kind?: never;
+      take?: never;
+      from?: never;
+      about?: never;
+      children?: never;
+      across?: never;
+    }
   // The artifacts of `kind` the children of the children step N claimed, from its latest attempt:
   // each child that reached its end, in the order they were commissioned, its latest artifact of
-  // the kind, or all of them.
-  | { children: N; kind: string; take?: "latest" | "all" }
+  // the kind, or all of them. It says which: a record's query takes all unless told, and each
+  // child's latest is what a parent most often wants, so neither is left to a default here.
+  | {
+      children: N;
+      kind: string;
+      take: "latest" | "all";
+      from?: never;
+      about?: never;
+      session?: never;
+      across?: never;
+    }
   // The artifacts of related commissions, as each has them when the attempt starts, finished or
   // not: the commission that started this one, as its parent or through a commission step; those
   // it started; or those the same attempt started, but this one. `from` names steps of their
@@ -34,7 +46,32 @@ export type Query<N extends string = string> =
       from?: readonly string[];
       kind?: string;
       take?: "latest" | "all";
+      about?: never;
+      session?: never;
+      children?: never;
     };
+
+// A query over the commission's own record. It is no other form, so it holds none of their keys.
+type Recorded<N extends string> = {
+  from?: readonly N[];
+  kind?: string;
+  about?: "subject" | "earlier" | "any";
+  take?: "latest" | "all";
+  session?: never;
+  children?: never;
+  across?: never;
+};
+
+// A query that names documents: the request each child or started commission is about. A query
+// over a record, a children step's children or related commissions, of the kind document.
+type Documents<N extends string = string> = Extract<
+  Query<N>,
+  { kind?: string; session?: never }
+> & { kind: "document" };
+
+// A query whose artifacts a child or a started commission is given: any but a session, which is
+// no artifact.
+type Givable<N extends string = string> = Exclude<Query<N>, { session: N }>;
 
 /**
  * A reusable agent: the harness adapter program that runs it, the model and prompt it is given,
@@ -119,27 +156,40 @@ export type Money = { usd?: number };
  * The attempt spent a unit of the step's budget, and a route renews none, so routes are bounded
  * as every loop is.
  */
-export type Routes<N extends string = string> = Partial<
-  Record<"limit" | "claim" | "exit" | "kind" | "broker" | "interrupted" | "unmet" | "any", N>
->;
+export type Routes<
+  N extends string = string,
+  Cause extends string = "limit" | "claim" | "exit" | "kind" | "broker" | "interrupted" | "unmet",
+> = Partial<Record<Cause | "any", N>>;
 
-// The limits a step states: those it changes from the factory's defaults, or none, and any money
-// limit.
-type Stated = { limits?: Partial<Limits> & Money };
+// The causes an attempt that runs a program can escalate with: every one a step may route but
+// unmet, which is a children step's wait alone.
+type Ran = "limit" | "claim" | "exit" | "kind" | "broker" | "interrupted";
+
+// A step's limits with its time bounded, as every step's but an attended one's must be.
+type Timed = Omit<Limits, "idle" | "attempt"> & { idle: number; attempt: number };
+
+// The limits a step holds. A factory states those it changes from its defaults, or none: an
+// attended step may leave its time unbounded and has no money limit, reporting no cost; any
+// other bounds its time and may have one. A commission's definition holds every step's whole.
+type Bounds<Held extends "stated" | "whole", Attended extends boolean> = Held extends "whole"
+  ? { limits: Limits & Money }
+  : Attended extends true
+    ? { limits?: Partial<Limits> }
+    : { limits?: Partial<Timed> & Money };
 
 // What every step that starts a program declares: its inputs, the artifact kinds it may claim,
 // whether its workspace is built from the subject, from the one artifact an input names, with the
 // artifacts another input names added as branches, or starts empty, its outcomes' edges, the attempts it may start between the owner's decisions, its access,
-// and, as `Bounded` holds them, its limits.
-type Program<N extends string, Bounded> = {
+// and its limits, which its kind of step adds.
+type Program<N extends string> = {
   inputs: Readonly<Record<string, Query<N>>>;
   claims: readonly string[];
   workspace: "subject" | "empty" | { input: string; branches?: string };
   on: Record<string, N | "end">;
-  escalate?: Routes<N>;
+  escalate?: Routes<N, Ran>;
   budget: number;
   access: Access;
-} & Bounded;
+};
 
 /**
  * What a program outside the engine, such as a timer, or a commission step may start through a
@@ -173,24 +223,27 @@ export type Wait = "all" | "first" | { atLeast: number; outcome?: string } | { a
  * A children step: it commissions child commissions of `workflow`, one per document `each` names,
  * or `count` on the parent's request or the document `request` names, each starting with the
  * artifacts `given` names; at most `width` in all and `concurrent` unfinished at once; and waits,
- * at most `limits.wait` seconds, for what `wait` says. A wait without an outcome follows `done`
+ * at most `limits.wait` seconds, until what `until` says. A wait without an outcome follows `done`
  * once met; one with an outcome follows `met`, or `unmet` once it can no longer be met.
  */
 export type Children<N extends string> = {
   kind: "children";
   workflow: string;
-  each?: Query<N>;
-  count?: number;
-  request?: Query<N>;
-  given?: Readonly<Record<string, Query<N>>>;
+  given?: Readonly<Record<string, Givable<N>>>;
   width: number;
   concurrent: number;
-  wait: Wait;
+  until: Wait;
   on: Record<string, N | "end">;
-  escalate?: Routes<N>;
+  // Its attempt runs no program: it escalates only past its wait limit or over its width, or
+  // once its wait cannot be met.
+  escalate?: Routes<N, "limit" | "unmet">;
   budget: number;
   limits: { wait: number };
-};
+} & (
+  | { each: Documents<N>; count?: never; request?: never }
+  // The request each is about: the parent's, or the latest document a query names.
+  | { count: number; request?: "request" | (Documents<N> & { take: "latest" }); each?: never }
+);
 
 /**
  * A commission step: it starts top-level commissions of `workflow` through `trigger`, one per
@@ -202,9 +255,9 @@ export type Commissioning<N extends string> = {
   kind: "commission";
   trigger: string;
   workflow: string;
-  each: Query<N>;
-  given?: Readonly<Record<string, Query<N>>>;
-  on: Record<string, N | "end">;
+  each: "request" | Documents<N>;
+  given?: Readonly<Record<string, Givable<N>>>;
+  on: { done: N | "end" };
   budget: number;
 };
 
@@ -214,9 +267,16 @@ export type Commissioning<N extends string> = {
  * following the edge its outcome names in `on`, a children step waits on child commissions, and a
  * commission step starts commissions of their own.
  */
-type Step<N extends string, Bounded> =
-  | ({ kind: "agent"; agent: Agent; attended?: boolean } & Program<N, Bounded>)
-  | ({ kind: "command"; run: readonly [string, ...string[]]; watch?: Watch } & Program<N, Bounded>)
+type Step<N extends string, Held extends "stated" | "whole"> =
+  | ({ kind: "agent"; agent: Agent; attended: true } & Program<N> & Bounds<Held, true>)
+  | ({ kind: "agent"; agent: Agent; attended?: false } & Program<N> & Bounds<Held, false>)
+  | ({ kind: "command"; run: readonly [string, ...string[]]; watch?: undefined } & Program<N> &
+      Bounds<Held, false>)
+  // A watching step's checks each run in an empty workspace.
+  | ({ kind: "command"; run: readonly [string, ...string[]]; watch: Watch } & Omit<
+      Program<N>,
+      "workspace"
+    > & { workspace: "empty" } & Bounds<Held, false>)
   | { kind: "approval"; on: Record<string, N | "end"> }
   | Children<N>
   | Commissioning<N>;
@@ -227,10 +287,23 @@ type Step<N extends string, Bounded> =
  * holds every step's limits whole. `usd`, optional, is the most its commission's attempts may cost
  * between the owner's decisions, in US dollars, as their steps report it.
  */
-export type Workflow<N extends string = string, Bounded = Stated> = {
+export type Workflow<N extends string = string, Held extends "stated" | "whole" = "stated"> = {
   start: NoInfer<N>;
   usd?: number;
-  steps: { [K in N]: K extends "end" ? never : Step<NoInfer<N>, Bounded> };
+  steps: { [K in N]: K extends "end" ? never : Step<NoInfer<N>, Held> };
+};
+
+/**
+ * A factory, as its module exports it by default: where its log lives, the kinds of artifact its
+ * steps claim, its workflows by name, the limits every step has unless it states its own, and
+ * any triggers. Write `export default { ... } satisfies Factory`.
+ */
+export type Factory = {
+  log: string;
+  kinds: Kinds;
+  workflows: Record<string, Workflow>;
+  defaults: { limits: Limits };
+  triggers?: Readonly<Record<string, Trigger>>;
 };
 
 /** A skill as the commission started with it: its name, and each file's hash by relative path. */
@@ -241,7 +314,7 @@ export type Skill = { name: string; files: Readonly<Record<string, string>> };
  * the factory defined, and the skills its agents declare, by path.
  */
 export type Definition<N extends string = string> = {
-  workflow: Workflow<N, { limits: Limits & Money }>;
+  workflow: Workflow<N, "whole">;
   kinds: Kinds;
   skills: Readonly<Record<string, Skill>>;
 };

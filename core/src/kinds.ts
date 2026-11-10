@@ -2,15 +2,16 @@ import type { Access } from "./definition.ts";
 
 /**
  * A program a kind runs, such as its verifier: `run` in its own sandbox under `access`, the
- * workspace in the mode `access` gives, stopped after `limit` seconds or once its processes use
- * more than `memory` bytes, and unable to run more than `processes` processes and threads at once.
+ * workspace in the mode `access` gives, within its limits, named as a step's are: stopped after
+ * `attempt` seconds or once its processes use more than `memory` bytes, and unable to run more
+ * than `processes` processes and threads at once. `More` is any limit of its own, as a verifier's
+ * `kept`.
  */
-export type Program = {
+export type Program<More = unknown> = {
   run: readonly [string, ...string[]];
-  access: Access;
-  limit: number;
-  memory: number;
-  processes: number;
+  // All of the network or none: no proxy runs for a kind's program.
+  access: Access & { network: boolean };
+  limits: { attempt: number; memory: number; processes: number } & More;
 };
 
 /**
@@ -18,7 +19,7 @@ export type Program = {
  * most `limit` bytes, optionally required or one of `values`; whether its UTF-8 body is required,
  * and its size; the field, if any, that must equal the outcome claimed with it; a one-line
  * `description` that tells a step what it is and how to claim it; and the programs that verify a
- * claim of it, keeping files of at most `kept` bytes in all, and build a workspace from it, which
+ * claim of it, keeping files of at most `limits.kept` bytes in all, and build a workspace from it, which
  * with `branches` can also add other artifacts of the kind to the workspace as branches.
  */
 export type Kind = {
@@ -27,7 +28,7 @@ export type Kind = {
   fields: Readonly<Record<string, { limit: number; required?: true; values?: readonly string[] }>>;
   body: { required: boolean; limit: number };
   outcome?: string;
-  verifier?: Program & { kept: number };
+  verifier?: Program<{ kept: number }>;
   materialiser?: Program & { branches?: true };
 };
 

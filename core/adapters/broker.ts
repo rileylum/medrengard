@@ -29,7 +29,13 @@ export type Route =
       headers: OutgoingHttpHeaders;
       upstream?: URL;
       unauthorised?: () => void;
+      // Judges the request by the start of its body, given as much as has arrived: a refusal,
+      // "forward", or "more" to be given more. A body it still wants more of at 64 KiB is refused.
+      screen?: (start: Buffer) => { refused: string } | "forward" | "more";
     };
+
+// The most of a request's body a route may ask for before it judges the request.
+const screened = 64 * 1024;
 
 /**
  * Serves as a broker: each request whose Authorization is the placeholder as a bearer token goes
@@ -88,6 +94,38 @@ export function serve(
       return;
     }
 
+    // The start of the body, read for a route that judges the request by it.
+    let start = Buffer.alloc(0);
+
+    if (routed.screen !== undefined) {
+      let verdict = routed.screen(start);
+
+      for await (const chunk of request) {
+        // SAFETY: an incoming request without an encoding set yields buffers.
+        start = Buffer.concat([start, chunk as Buffer]);
+        verdict = routed.screen(start);
+
+        if (verdict !== "more" || start.length > screened) {
+          break;
+        }
+      }
+
+      if (verdict !== "forward") {
+        request.resume();
+        answer(
+          403,
+          JSON.stringify({
+            message:
+              verdict === "more"
+                ? "Refused by Medrengard's broker: the request's body could not be judged."
+                : verdict.refused,
+          }),
+        );
+
+        return;
+      }
+    }
+
     const target = routed.upstream ?? upstream;
     const send = target.protocol === "https:" ? tlsRequest : plainRequest;
 
@@ -123,6 +161,7 @@ export function serve(
       );
     });
 
+    forwarded.write(start);
     request.pipe(forwarded);
   });
 

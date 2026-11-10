@@ -34,7 +34,7 @@ const system = ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
 
 // Every test's directory is under the temp directory, so a step can reach its own; nothing of the
 // owner's is visible.
-const access: Access = {
+const access: Access & { network: boolean } = {
   paths: [...system, { path: tmpdir(), mode: "write" }],
   network: false,
   environment: [],
@@ -81,7 +81,7 @@ async function engineWith<N extends string>(
 
   const engine = createEngine(options);
 
-  engine.commission("build", "first", { title: "Greet", body: "Say hello." });
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "first" });
 
   return { engine, directory, record, options };
 }
@@ -453,7 +453,7 @@ function engineConfined(
   t: TestContext,
   confined: (directory: string) => Access,
   script: string,
-  limits: Partial<Limits> = {},
+  limits: Partial<Record<keyof Limits, number>> = {},
 ) {
   return engineWith(t, (directory) =>
     defineWorkflow({
@@ -1509,6 +1509,8 @@ function agentStep(
   attended = true,
   limits: Partial<Record<"idle" | "attempt", number | "unbounded">> = {},
 ) {
+  // SAFETY: attended or not with any limits, some of which the compiler would refuse, as a
+  // factory it does not check could hold: what the parser then says is what these tests are of.
   return {
     kind: "agent",
     attended,
@@ -1520,7 +1522,7 @@ function agentStep(
     access,
     budget: 1,
     limits: { idle: 1, attempt: 5, transcript: 65536, input: 65536, ...limits },
-  } as const;
+  } as never;
 }
 
 test("an attended step is left ready for the owner to attend: advance starts nothing", async (t) => {
@@ -1620,7 +1622,7 @@ test("an observer reads every commission's events after a position, in the order
     }),
   );
 
-  engine.commission("build", "second", { title: "Greet", body: "Say hello." });
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "second" });
   await engine.advance("first");
 
   const all = engine.events(0);
@@ -1657,7 +1659,11 @@ test("an observer is woken by the next event any engine on the log writes", asyn
   await sleep(200);
   assert.equal(early, false);
 
-  createEngine(options).commission("build", "second", { title: "Greet", body: "Say hello." });
+  createEngine(options).commission(
+    "build",
+    { title: "Greet", body: "Say hello." },
+    { name: "second" },
+  );
 
   assert.deepEqual(
     (await woken).map(({ commission, event }) => [commission, event.type]),
@@ -2504,7 +2510,7 @@ test("a commission runs on the workflow definition it started with", async (t) =
 });
 
 // A command step that names only the limits in `limits` and claims done once it has run `script`.
-function stepLimited(script: string, limits?: Partial<Limits>) {
+function stepLimited(script: string, limits?: Partial<Record<keyof Limits, number>>) {
   const { limits: _named, ...step } = stepRunning(
     `${script}
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
@@ -2635,7 +2641,7 @@ test("a step that names a limit there is not cannot be commissioned", async (t) 
       defineWorkflow({
         start: "build",
         // SAFETY: the workflow module is the owner's JavaScript, which the type cannot hold to.
-        steps: { build: stepLimited("true", { cpu: 1 } as Partial<Limits>) },
+        steps: { build: stepLimited("true", { cpu: 1 } as never) },
       }),
     ),
     {
@@ -2817,7 +2823,7 @@ test("a workflow whose workspace adds every commit of each child as branches can
             count: 1,
             width: 1,
             concurrent: 1,
-            wait: "all",
+            until: "all",
             on: { done: "build" },
             budget: 1,
             limits: { wait: 60 },
@@ -3081,7 +3087,7 @@ test("a step whose program cannot start escalates its commission", async (t) => 
     workflows: { build: { ...build, steps: { build: missing } } },
   });
 
-  engine.commission("build", "second", { title: "Greet", body: "Say hello." });
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "second" });
 
   // bwrap starts, then cannot start the program, so the reason is in the transcript.
   assert.partialDeepStrictEqual(await engine.advance("second"), {
@@ -3262,6 +3268,66 @@ test("an unattended step has empty stdin", async (t) => {
   await engine.advance("first");
 
   assert.equal(engine.transcript("first", 1).toString(), "nothing to read\n");
+});
+
+// What an observer needs is on the state and the events: no client works a wait's outcomes, an
+// event's place in its commission or an escalation's step out again.
+test("a waiting commission's state names the outcomes the owner may decide, and each event its place in its commission", async (t) => {
+  const { engine } = await engineAwaiting(t);
+  const awaiting = engine.state("first");
+
+  assert.ok(awaiting.status === "awaiting");
+  assert.deepEqual(awaiting.outcomes, ["approve", "reject", "abandon"]);
+
+  // The event that began the wait, by its place in the commission's own events: what a decision
+  // names as since, whatever its position in the whole log.
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "second" });
+
+  const began = engine.events(0).filter(({ commission }) => commission === "second");
+
+  assert.deepEqual(
+    began.map(({ index }) => index),
+    [0],
+  );
+  assert.notEqual(began[0]?.position, 0);
+
+  const second = engine.state("second");
+
+  assert.ok(second.status === "awaiting");
+  assert.equal(second.since, began[0]?.index);
+
+  engine.decide("first", { subject: awaiting.subject, since: awaiting.since, outcome: "approve" });
+
+  // The build step, ["true"], claims nothing: it escalates, and the event names its step.
+  const escalated = await engine.advance("first");
+
+  assert.ok(escalated.status === "escalated");
+  assert.deepEqual(escalated.outcomes, ["retry", "abandon"]);
+  assert.partialDeepStrictEqual(engine.events(0).at(-1), {
+    commission: "first",
+    index: escalated.since,
+    event: { type: "escalated", step: "build", cause: "claim" },
+  });
+  assert.throws(
+    () =>
+      engine.decide("first", {
+        subject: escalated.subject,
+        since: escalated.since,
+        outcome: "approve",
+      }),
+    /Step build does not declare outcome "approve"\./,
+  );
+});
+
+test("a commission under a name already taken is refused, saying so, and nothing is recorded", async (t) => {
+  const { engine } = await engineRunning(t, "true");
+  const events = engine.events(0).length;
+
+  assert.throws(
+    () => engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "first" }),
+    { message: "There is already a commission named first." },
+  );
+  assert.equal(engine.events(0).length, events);
 });
 
 test("a finished commission accepts nothing", async (t) => {
@@ -3778,7 +3844,7 @@ test(
     const { engine, directory, options } = await engineVerifying(
       t,
       `${lingering("verifier")}; echo '{"accepted":true,"keep":[]}' > "$MEDRENGARD_OUT/output.json"`,
-      { limit: 60 },
+      { attempt: 60 },
     );
 
     const running = engine.advance("first");
@@ -3819,8 +3885,7 @@ test(
           materialiser: {
             run: ["sh", "-c", lingering("materialiser"), "sh", directory],
             access,
-            limit: 60,
-            ...bounded,
+            limits: { attempt: 60, ...bounded },
           },
         },
       }),
@@ -3863,7 +3928,11 @@ function engineMaterialising(t: TestContext, script: string, limit = 5) {
       ...builtIn,
       document: {
         ...builtIn.document,
-        materialiser: { run: ["sh", "-c", script, "sh", directory], access, limit, ...bounded },
+        materialiser: {
+          run: ["sh", "-c", script, "sh", directory],
+          access,
+          limits: { attempt: limit, ...bounded },
+        },
       },
     }),
   );
@@ -3978,7 +4047,7 @@ function damage(log: string, commission: string) {
 test("a commission that cannot be read is listed with its error, and the others with their states", async (t) => {
   const { engine, options } = await engineRunning(t, "exit 0");
 
-  engine.commission("build", "broken", { title: "Greet", body: "Say hello." });
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "broken" });
   damage(options.log, "broken");
 
   assert.deepEqual(
@@ -4351,7 +4420,7 @@ test("a request the factory's document kind refuses is not commissioned", async 
   ];
 
   for (const [request, message] of refused) {
-    assert.throws(() => engine.commission("build", "second", request), { message });
+    assert.throws(() => engine.commission("build", request, { name: "second" }), { message });
     assert.throws(() => engine.state("second"), {
       message: "There is no commission named second.",
     });
@@ -4413,47 +4482,68 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
     [
       {
         document,
-        memo: { ...memo, verifier: { run: ["true"], access, limit: 0, ...bounded, kept: 1024 } },
-      },
-      "Kind memo is invalid: its verifier's limit must be a positive number of seconds, at most 2147483.",
-    ],
-    [
-      {
-        document,
         memo: {
           ...memo,
-          verifier: { run: ["true"], access, limit: 1, ...bounded, memory: 0, kept: 1 },
+          verifier: { run: ["true"], access, limits: { attempt: 0, ...bounded, kept: 1024 } },
         },
       },
-      "Kind memo is invalid: its verifier's memory must be a positive integer.",
-    ],
-    [
-      {
-        document,
-        memo: { ...memo, verifier: { run: ["true"], access, limit: 1, ...bounded, kept: -1 } },
-      },
-      "Kind memo is invalid: its verifier's kept must be an integer, 0 or more.",
-    ],
-    [
-      {
-        document,
-        memo: { ...memo, verifier: { run: ["true"], access, limit: 1, memory: 1024, kept: 1 } },
-      },
-      "Kind memo is invalid: its verifier must be a program, its access, and its limit, memory, processes and kept.",
-    ],
-    [
-      {
-        document,
-        memo: { ...memo, materialiser: { run: ["true"], access, limit: 1, ...bounded, kept: 1 } },
-      },
-      "Kind memo is invalid: its materialiser must be a program, its access, and its limit, memory and processes.",
+      "Kind memo is invalid: its verifier's attempt limit must be a positive number of seconds, at most 2147483.",
     ],
     [
       {
         document,
         memo: {
           ...memo,
-          materialiser: { run: ["true"], access, limit: 1, ...bounded, branches: false },
+          verifier: {
+            run: ["true"],
+            access,
+            limits: { attempt: 1, ...bounded, memory: 0, kept: 1 },
+          },
+        },
+      },
+      "Kind memo is invalid: its verifier's memory limit must be a positive integer.",
+    ],
+    [
+      {
+        document,
+        memo: {
+          ...memo,
+          verifier: { run: ["true"], access, limits: { attempt: 1, ...bounded, kept: -1 } },
+        },
+      },
+      "Kind memo is invalid: its verifier's kept limit must be an integer, 0 or more.",
+    ],
+    [
+      {
+        document,
+        memo: {
+          ...memo,
+          verifier: { run: ["true"], access, limits: { attempt: 1, memory: 1024, kept: 1 } },
+        },
+      },
+      "Kind memo is invalid: its verifier must be a program, its access, and its limits: attempt, memory, processes and kept.",
+    ],
+    [
+      {
+        document,
+        memo: {
+          ...memo,
+          materialiser: { run: ["true"], access, limits: { attempt: 1, ...bounded, kept: 1 } },
+        },
+      },
+      "Kind memo is invalid: its materialiser must be a program, its access, and its limits: attempt, memory and processes.",
+    ],
+    [
+      {
+        document,
+        memo: {
+          ...memo,
+          materialiser: {
+            run: ["true"],
+            access,
+            limits: { attempt: 1, ...bounded },
+            branches: false,
+          },
         },
       },
       "Kind memo is invalid: its materialiser may only state branches: true.",
@@ -4461,7 +4551,10 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
     [
       {
         document,
-        memo: { ...memo, verifier: { run: [], access, limit: 1, ...bounded, kept: 1024 } },
+        memo: {
+          ...memo,
+          verifier: { run: [], access, limits: { attempt: 1, ...bounded, kept: 1024 } },
+        },
       },
       "Kind memo is invalid: its verifier's program must be a command and its arguments.",
     ],
@@ -4473,8 +4566,7 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
           materialiser: {
             run: ["true"],
             access: { ...access, network: "yes" },
-            limit: 1,
-            ...bounded,
+            limits: { attempt: 1, ...bounded },
           },
         },
       },
@@ -4501,7 +4593,7 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
       {
         document: {
           ...document,
-          verifier: { run: ["true"], access, limit: 1, ...bounded, kept: 1024 },
+          verifier: { run: ["true"], access, limits: { attempt: 1, ...bounded, kept: 1024 } },
         },
       },
       "Kind document is invalid: the owner's request is a document, and no attempt claims it, so it cannot have a verifier.",
@@ -4529,7 +4621,8 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
 function engineVerifying(
   t: TestContext,
   script: string,
-  given: Partial<Omit<NonNullable<Kind["verifier"]>, "run">> = {},
+  given: Partial<NonNullable<Kind["verifier"]>["limits"]> = {},
+  under: Access & { network: boolean } = access,
 ) {
   return engineWith(
     t,
@@ -4552,11 +4645,8 @@ function engineVerifying(
         ...memo,
         verifier: {
           run: ["sh", "-c", script, "sh", directory],
-          access,
-          limit: 5,
-          ...bounded,
-          kept: 1024 * 1024,
-          ...given,
+          access: under,
+          limits: { attempt: 5, ...bounded, kept: 1024 * 1024, ...given },
         },
       },
     }),
@@ -4594,7 +4684,10 @@ test("the record names the verifier that accepted each artifact, or that its kin
       }),
     () => ({
       ...builtIn,
-      memo: { ...memo, verifier: { run: verifier, access, limit: 5, ...bounded, kept: 1024 } },
+      memo: {
+        ...memo,
+        verifier: { run: verifier, access, limits: { attempt: 5, ...bounded, kept: 1024 } },
+      },
       note: memo,
     }),
   );
@@ -4633,7 +4726,8 @@ test("a kind's verifier whose access makes the workspace read-only cannot write 
   const { engine } = await engineVerifying(
     t,
     `touch written && echo '{"accepted":true,"keep":[]}' > "$MEDRENGARD_OUT/output.json"`,
-    { access: { ...access, workspace: "read" } },
+    {},
+    { ...access, workspace: "read" },
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
@@ -4645,7 +4739,7 @@ test("a kind's verifier whose access makes the workspace read-only cannot write 
 });
 
 test("a kind's verifier past its limit is stopped and escalates", async (t) => {
-  const { engine } = await engineVerifying(t, "sleep 5", { limit: 1 });
+  const { engine } = await engineVerifying(t, "sleep 5", { attempt: 1 });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
@@ -5185,6 +5279,7 @@ test("the log's events are exactly the seven types, each with its pinned fields"
       type: "escalated",
       cause: "string",
       reason: "string",
+      step: "string",
       attempt: "number",
       transcript: "string",
       errors: "string",
@@ -5324,15 +5419,12 @@ test("a kind's verifier and materialiser are started with exactly the pinned env
             directory,
           ],
           access,
-          limit: 5,
-          ...bounded,
-          kept: 1024,
+          limits: { attempt: 5, ...bounded, kept: 1024 },
         },
         materialiser: {
           run: ["sh", "-c", recording("materialiser", "artifact.json"), "sh", directory],
           access,
-          limit: 5,
-          ...bounded,
+          limits: { attempt: 5, ...bounded },
         },
       },
     }),
@@ -5350,6 +5442,7 @@ test("a kind's verifier and materialiser are started with exactly the pinned env
 
   assert.equal(await read("verifier-listing"), "body\nclaim.json\n");
   assert.deepEqual(typesIn(await read("verifier.json"), []), {
+    kind: "string",
     fields: { note: "string" },
     body: "string",
     subject: { hash: "string", kind: "string", fields: { title: "string" } },
@@ -5524,7 +5617,7 @@ function engineSpending(
   { step, commission }: { step?: number; commission?: number },
 ) {
   return engineWith(t, (directory) => {
-    const limits: Partial<Limits> & Money = {
+    const limits: Partial<Record<keyof Limits, number>> & Money = {
       idle: 5,
       attempt: 10,
       transcript: 65536,
@@ -5679,6 +5772,8 @@ const planning = {
   budget: 1,
 } as const;
 
+// SAFETY: each a definition the compiler would refuse, as a factory it does not check could hold:
+// what the parser then says is what these tests are of.
 for (const [what, workflow, problem] of [
   [
     "a money limit at an attended step",
@@ -5738,7 +5833,7 @@ for (const [what, workflow, problem] of [
     { start: "build", usd: JSON.parse('"lots"'), steps: { build: planning } },
     "its money limit must be a positive number of dollars",
   ],
-] satisfies [string, Workflow<"build">, string][]) {
+] as [string, never, string][]) {
   test(`commissioning refuses ${what}`, async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
@@ -5751,7 +5846,7 @@ for (const [what, workflow, problem] of [
       workflows: { build: workflow },
     });
 
-    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+    assert.throws(() => engine.commission("build", { title: "T", body: "B" }, { name: "first" }), {
       message: `Workflow build is invalid: ${problem}.`,
     });
   });
@@ -5909,7 +6004,7 @@ for (const [what, session, problem] of [
       },
     });
 
-    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+    assert.throws(() => engine.commission("build", { title: "T", body: "B" }, { name: "first" }), {
       message: new RegExp(RegExp.escape(problem)),
     });
   });
@@ -6245,7 +6340,7 @@ for (const [what, network, problem] of [
       },
     });
 
-    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+    assert.throws(() => engine.commission("build", { title: "T", body: "B" }, { name: "first" }), {
       message: `Workflow build is invalid: step build's ${problem}.`,
     });
   });
@@ -6273,7 +6368,7 @@ test("access whose paths name /network, where the step's proxy goes, cannot be c
     },
   });
 
-  assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+  assert.throws(() => engine.commission("build", { title: "T", body: "B" }, { name: "first" }), {
     message: /paths cannot name \/workspace, \/input, \/output or \/network/,
   });
 });

@@ -68,7 +68,7 @@ test("a step routes an attempt's escalation, by its cause, to another step, whic
     },
   }));
 
-  engine.commission("build", "first", request);
+  engine.commission("build", request, { name: "first" });
 
   // No owner in between: the commission goes on to fix, and ends there.
   assert.deepEqual(await engine.advance("first"), { status: "finished", by: "end" });
@@ -112,7 +112,7 @@ test("a cause's own route wins over the route for any, and a cause with neither 
     },
   }));
 
-  engine.commission("build", "first", request);
+  engine.commission("build", request, { name: "first" });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
@@ -138,7 +138,7 @@ test("a step routed back to itself runs until its budget is spent, then waits fo
     },
   }));
 
-  engine.commission("build", "first", request);
+  engine.commission("build", request, { name: "first" });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
@@ -170,7 +170,7 @@ test("an escalation before an attempt starts is the owner's, whatever the step r
     },
   }));
 
-  engine.commission("build", "first", request);
+  engine.commission("build", request, { name: "first" });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
@@ -191,7 +191,7 @@ test("the owner's cancel is never routed", async (t) => {
     },
   }));
 
-  engine.commission("build", "first", request);
+  engine.commission("build", request, { name: "first" });
 
   const advancing = engine.advance("first");
 
@@ -216,7 +216,7 @@ test("a workflow is refused whose step routes a cause the owner alone answers, o
       steps: { build: { ...command(path, done, { done: "end" }), escalate } } as never,
     }));
 
-    return () => engine.commission("build", "first", request);
+    return () => engine.commission("build", request, { name: "first" });
   };
 
   for (const cause of [
@@ -229,12 +229,13 @@ test("a workflow is refused whose step routes a cause the owner alone answers, o
     "withdrawn",
     "upgrade",
     "trigger",
+    "unmet",
     "unknown",
   ]) {
     assert.throws(
       await refused({ [cause]: "build" }),
       new RegExp(
-        `Workflow build is invalid: step build routes ${cause}, which is not a cause a step may route: limit, claim, exit, kind, broker, interrupted, unmet or any\\.`,
+        `Workflow build is invalid: step build routes ${cause}, which is not a cause a command step may route: limit, claim, exit, kind, broker, interrupted or any\\.`,
       ),
     );
   }

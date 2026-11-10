@@ -108,6 +108,8 @@ type Escalated<N extends string> = {
   type: "escalated";
   reason: string;
   cause?: Cause;
+  // The step the commission was at; absent in events written before escalations named it.
+  step?: N;
   // The step its step routed it to, when it did: the commission goes on there, and does not
   // wait for the owner.
   next?: N;
@@ -172,6 +174,8 @@ export type CommissionState<N extends string = string> =
       subject: string;
       decision?: string;
       since: number;
+      // What the owner may decide: the step's outcomes, and abandon.
+      outcomes: string[];
     }
   | {
       status: "attempting";
@@ -188,6 +192,8 @@ export type CommissionState<N extends string = string> =
       // Absent for an escalation written before escalations carried one.
       cause?: Cause;
       since: number;
+      // What the owner may decide: retry, or abandon.
+      outcomes: string[];
     }
   | { status: "finished"; by: "end" | "abandoned" | "withdrawn" };
 
@@ -212,7 +218,7 @@ export function replay<N extends string>(
 
 // position is the event's in the commission's log: an approval step waits since it.
 function arrive<N extends string>(
-  workflow: Workflow<N>,
+  workflow: Workflow<N, "whole">,
   name: N,
   subject: string,
   decision: string | undefined,
@@ -222,7 +228,15 @@ function arrive<N extends string>(
   const { kind } = step;
 
   if (kind === "approval") {
-    return { status: "awaiting", step: { name, kind }, subject, decision, since: position };
+    return {
+      status: "awaiting",
+      step: { name, kind },
+      subject,
+      decision,
+      since: position,
+      // Abandon ends the commission at every wait, so no workflow can leave the owner without one.
+      outcomes: [...Object.keys(step.on), "abandon"],
+    };
   }
 
   const at: At<N> =
@@ -236,7 +250,7 @@ function arrive<N extends string>(
 }
 
 function apply<N extends string>(
-  workflow: Workflow<N>,
+  workflow: Workflow<N, "whole">,
   kinds: Kinds,
   state: CommissionState<N>,
   event: Exclude<CommissionEvent<N>, Commissioned>,
@@ -288,13 +302,14 @@ function apply<N extends string>(
       }
 
       return event.cause === undefined
-        ? { ...state, status: "escalated", reason: event.reason, since: position }
+        ? { ...state, status: "escalated", reason: event.reason, since: position, outcomes }
         : {
             ...state,
             status: "escalated",
             reason: event.reason,
             cause: event.cause,
             since: position,
+            outcomes,
           };
     case "decided":
       if (state.status !== "awaiting" && state.status !== "escalated") {
@@ -317,6 +332,9 @@ function apply<N extends string>(
       return assertNever(event);
   }
 }
+
+// What the owner may decide on an escalation.
+const outcomes = ["retry", "abandon"];
 
 /** Fails at compile time when a switch misses a case, and at run time if one arrives anyway. */
 function assertNever(value: never): never {

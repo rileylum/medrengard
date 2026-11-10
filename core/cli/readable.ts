@@ -127,7 +127,8 @@ function spentOf({ usd, tokens }: Usage): string {
 export function linesOf(
   index: number,
   entry: Entry,
-  errors = (attempt: number) => `medrengard errors <commission> ${attempt}`,
+  // How the owner reads an attempt's errors where the lines are shown.
+  errors: (attempt: number) => string,
 ): [string, string][] {
   const at = entry.step.padEnd(12);
 

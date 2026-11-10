@@ -4,7 +4,7 @@
  * files and descriptors, which a program in any language can use as they are. It imports nothing
  * of the engine's, so a step's access needs only this directory to run it.
  */
-import { readFileSync, writeFileSync, writeSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 /** The step's input and output directories, as the engine names them. */
@@ -120,4 +120,55 @@ export type Usage = {
 /** Writes what the attempt has used so far to fd 4: the latest report stands. */
 export function reportUsage(usage: Usage): void {
   writeSync(4, `${JSON.stringify(usage)}\n`);
+}
+
+/**
+ * A claim as a kind's verifier is given it, in claim.json: its kind and fields, its body, when it
+ * has one, a path relative to the input, and the commission's current subject.
+ */
+export type Claim = {
+  kind: string;
+  fields: Record<string, string>;
+  body?: string;
+  subject: { hash: string; kind: string; fields: Record<string, string> };
+};
+
+/** A verifier's claim.json. */
+export function readClaim(): Claim {
+  // SAFETY: the engine encodes claim.json with these fields.
+  return JSON.parse(readFileSync(join(input, "claim.json"), "utf8")) as Claim;
+}
+
+/** Accepts the claim, a verifier's verdict: `keep` names files it wrote in its output to keep. */
+export function accept(keep: readonly string[] = []): void {
+  writeFileSync(join(output, "output.json"), JSON.stringify({ accepted: true, keep }));
+}
+
+/** Rejects the claim, a verifier's verdict, so the commission escalates with `reason`. */
+export function reject(reason: string): void {
+  writeFileSync(join(output, "output.json"), JSON.stringify({ accepted: false, reason }));
+}
+
+/**
+ * An artifact as a kind's materialiser is given it, in artifact.json: as input.json lists one,
+ * with the files its verifier kept, by name, each a path relative to the input.
+ */
+export type Materialised = Artifact & { kept: Record<string, string> };
+
+/** A materialiser's artifact.json: the artifact to build the workspace from. */
+export function readArtifact(): Materialised {
+  // SAFETY: the engine encodes artifact.json with these fields.
+  return JSON.parse(readFileSync(join(input, "artifact.json"), "utf8")) as Materialised;
+}
+
+/** A materialiser's branches.json: the artifacts to add, each with its branch; none without it. */
+export function readBranches(): (Materialised & { branch: string })[] {
+  if (!existsSync(join(input, "branches.json"))) {
+    return [];
+  }
+
+  // SAFETY: the engine encodes branches.json as artifacts, each with its branch.
+  return JSON.parse(readFileSync(join(input, "branches.json"), "utf8")) as (Materialised & {
+    branch: string;
+  })[];
 }

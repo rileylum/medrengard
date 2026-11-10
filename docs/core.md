@@ -38,7 +38,7 @@
 **Constraints**
 
 1. No extension code in the engine. Commands, harness adapters, verifiers, materialisers and observers are programs. Workflow definitions are TypeScript that evaluates to data.
-2. Everything has a declared limit. Every attempt, output stream, artifact, transcript and disk area has an explicit bound; only an attended step's time may be declared unbounded. Money is bounded where the owner declares it, per step and per commission: an attempt that reports no cost counts as over a money limit, since unknown cost is not zero, and an agent whose harness declares it reports no cost cannot be given one. Exceeding a bound escalates; nothing is silently truncated or allowed to grow without limit. A wait has no bound: nothing runs while the commission waits for the owner.
+2. Everything has a declared limit. Every attempt, output stream, artifact, transcript and disk area has an explicit bound; only an attended step's time may be declared unbounded. Money is bounded where the owner declares it, per step and per commission: an attempt that reports no cost counts as over a money limit, since unknown cost is not zero, but for an attended one, which reports none and which the owner is there for, and an agent whose harness declares it reports no cost cannot be given one. Exceeding a bound escalates; nothing is silently truncated or allowed to grow without limit. A wait has no bound: nothing runs while the commission waits for the owner.
 3. A commission runs on the definitions it started with. Commissioning records its workflow, agent and kind definitions and the factory's defaults by hash. Editing a definition affects only new commissions. It runs on the engine it last ran on, too: every attempt records the engine's version, a hash of its package's source, the adapters and kinds' programs it ships among it, and before an attempt on another engine the commission escalates, until the owner decides to go on with it, for one commission or for every one it stopped.
 4. Hermetic steps. A step sees only its declared inputs, workspace, environment and tools. A harness adapter loads only declared skills and configuration, or records the leak on every attempt.
 5. Commissions are independent. Commissions share no mutable state, and each has one writer at a time. A parent gives its children artifacts and reads theirs, by hash; nothing else passes between commissions. Any number of commissions, across repositories and workflows, can advance at once.
@@ -85,7 +85,7 @@ A step declares each input as a name and a query. The name is the input's direct
   - `kind`: one artifact kind;
   - `about`: judgements only, about the current subject (the evidence), earlier subjects (history), or any;
   - `take`: the latest, or all, which is the default;
-- `children` and a children step, with a kind and optionally take: from the step's latest attempt, each child that reached its end, in the order commissioned, its latest artifact of that kind, or all of them. `input.json` names the child each artifact came from;
+- `children` and a children step, with a kind and a take, which it always states: from the step's latest attempt, each child that reached its end, in the order commissioned, its latest artifact of that kind, or all of them. `input.json` names the child each artifact came from;
 - `across` and a relation, with `from`, `kind` and `take` as a query over the record has them, applied to each related commission's record as it is when the attempt starts, finished or not: `origin`, the commission that started this one, as its parent or through a commission step; `started`, those this one started, in the order started; or `siblings`, those the same attempt started, but this one. `input.json` names the commission each artifact came from. No workspace is built from them, nor branches added;
 - `session` and a step: the latest session an attempt of that step left, however it ended, or none. It is no artifact: `input.json` lists it by its hash and body alone, and no workspace is built from it. A harness adapter continues it as a fork, so the session kept never changes, and escalates rather than start afresh when it cannot.
 
@@ -115,7 +115,7 @@ Seven events are the whole log vocabulary. Each carries the time the engine wrot
 - `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, at most 1 MiB, and the next step or end.
 - `noted`: the attempt and one note for the owner, recorded as it arrives: one the attempt wrote, or the engine's, marked as such. It changes no state.
 - `withdrawn`: the reason a child's parent no longer waits for it. It finishes the child; it is the engine's, not the owner's decision.
-- `escalated`: the cause and the reason, the step it was routed to if its step routed it, and the attempt if one was involved, with its transcript and errors when its program ran, its latest usage report when it made one, and the session it left when it left one. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it. A reason is at most 4096 bytes; a longer one is cut on a character boundary and says so. The cause is one of: `budget`, the step's budget spent; `money`, a money limit reached or spend unknown; `limit`, any other declared limit reached; `repeat`, the step already attempted on this subject and these inputs; `inputs`, what the step was to be given cannot be given; `claim`, an invalid claim or one its kind's verifier rejected; `exit`, the step's program failed or could not start; `kind`, a kind's program failed; `broker`, a broker did not start; `interrupted`, no engine was running the attempt; `engine`, the engine's own failure; `cancelled`, by the owner; `withdrawn`, by its parent; `upgrade`, another engine than the commission last ran on; `unmet`, a children step's wait that can no longer be met; `trigger`, a commission step's trigger that cannot start its commissions now.
+- `escalated`: the step the commission was at, the cause and the reason, the step it was routed to if its step routed it, and the attempt if one was involved, with its transcript and errors when its program ran, its latest usage report when it made one, and the session it left when it left one. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it. A reason is at most 4096 bytes; a longer one is cut on a character boundary and says so. The cause is one of: `budget`, the step's budget spent; `money`, a money limit reached or spend unknown; `limit`, any other declared limit reached; `repeat`, the step already attempted on this subject and these inputs; `inputs`, what the step was to be given cannot be given; `claim`, an invalid claim or one its kind's verifier rejected; `exit`, the step's program failed or could not start; `kind`, a kind's program failed; `broker`, a broker did not start; `interrupted`, no engine was running the attempt; `engine`, the engine's own failure; `cancelled`, by the owner; `withdrawn`, by its parent; `upgrade`, another engine than the commission last ran on; `unmet`, a children step's wait that can no longer be met; `trigger`, a commission step's trigger that cannot start its commissions now.
 
 Transitions:
 
@@ -155,7 +155,7 @@ A kind's verifier and materialiser are programs, each with its own access and li
 A verifier is a program run after a claim parses, under the step contract:
 
 - the attempt's workspace as its working directory, in the mode its access gives: read-only for the built-in commit verifier;
-- `MEDRENGARD_IN` holding `claim.json`: the claim's fields, its body and the commission's current subject;
+- `MEDRENGARD_IN` holding `claim.json`: the claim's kind and fields, its body and the commission's current subject;
 - `MEDRENGARD_OUT`, where it writes `output.json`: accepted, with the files to keep, or rejected, with a reason.
 
 Kept files go to the store, attached to the artifact. A rejected claim or a failed verifier escalates. The record names the verifier that accepted an artifact, or that its kind has none.
@@ -231,7 +231,7 @@ _Record: the log and the store._
 - Log: the ordered events of every commission.
 - Store: content-addressed artifact bodies, kept files, transcripts and definitions.
 - Replay: the pure fold from a commission's events to its state.
-- Observer: a program that reads the log and never writes: every commission's events after a position, woken by the next one.
+- Observer: a program that reads the log and never writes: every commission's events after a position, woken by the next one. Each event comes with its position in the log, to read on from, and its index among its commission's own events, which is what a decision's wait names. A waiting commission's state says which outcomes the owner may decide.
 - Extension: a package supplying artifact kinds, harness adapters, commands or observers.
 - Owner: the one person the factory serves.
 
