@@ -133,6 +133,10 @@ A children step commissions child commissions of one workflow: one per document 
 
 The attempt is the wait: it spends a unit of the step's budget and runs no program. A child succeeds when its workflow reaches its end, on the wait's outcome when the wait names one. The wait is for every child, the first or at least some; without an outcome, met it follows `done` and once it can no longer be met the commission escalates; with one, met it follows `met` and once it can no longer be met, `unmet`. Past its wait limit, or cancelled by the owner, it escalates. Once the wait is decided, the children still unfinished are withdrawn, an attempt in flight stopped first, and the attempt ends once every child has finished. An engine stopping does not interrupt the wait: the next engine to look carries it on.
 
+**Watching**
+
+A command step may watch, with an interval of at least 1 s and a wait limit. Its attempt is the wait: it spends a unit of the step's budget and holds no program. Each interval its program runs as a check, under the step contract with the attempt's inputs and an empty workspace, one check at a time whichever engines look. A check that exits 0 without writing `output.json` found nothing yet, and leaves no event; one that writes it claims, as any step does, and ends the attempt. A check that fails is the engine's note, and the wait goes on; the third to fail in a row escalates with its reason. Past its wait limit, or cancelled by the owner, the attempt escalates. An engine stopping does not interrupt the wait: the next engine to look carries it on.
+
 **Artifact kinds**
 
 A step declares the kinds it may claim; a claim of any other kind is invalid. A kind is data: a name; a role, subject or judgement; a schema for its fields, each with a size limit; whether it has a body, UTF-8 text, with its size limit; and optionally a verifier, a materialiser and an outcome field. An artifact's hash covers its kind, fields and body hash, the same way for every kind. A judgement's subject is always named by artifact hash.
@@ -168,7 +172,7 @@ _Definition: what the owner writes; data, verified before anything runs._
 
 - Factory: the owner's workflows, agents and extensions. Medrengard builds factories; it is not one.
 - Workflow: a graph of steps whose edges are labelled by outcome.
-- Step: a node of a workflow, of one kind: an agent step runs an agent through its harness adapter, attended or unattended; a command step runs the owner's program; an approval step waits for the owner's decision; a children step waits on child commissions.
+- Step: a node of a workflow, of one kind: an agent step runs an agent through its harness adapter, attended or unattended; a command step runs the owner's program, once or, watching, as a check each interval; an approval step waits for the owner's decision; a children step waits on child commissions.
 - Agent: a reusable definition of harness, model, prompt and skills. The step supplies its workspace and inputs.
 - Harness: the vendor tool an agent runs in, such as Claude Code, Codex, Pi or OpenCode.
 - Prompt: what the agent is told to do at a step.
@@ -184,6 +188,7 @@ _Execution: the core. The commission is the aggregate root._
 
 - Commission: one idea taken through one workflow, from the owner's request to a terminal state, with its whole history.
 - Child: a commission a parent's children step commissioned, which the parent waits on.
+- Check: one run of a watching step's program, which claims, finds nothing yet, or fails.
 - Attempt: one start of a step's program within a commission, through to its completion or escalation.
 - Claim: what an attempt wrote to its output, untrusted until it parses and its kind's verifier, if any, accepts it.
 - Artifact: an immutable record of an accepted claim, identified by its hash, naming the verifier that accepted it or that its kind has none.

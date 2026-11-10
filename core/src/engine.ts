@@ -48,6 +48,7 @@ import {
   type Query,
   type Skill,
   type Usage,
+  type Watch,
   type Workflow,
 } from "./replay.ts";
 import { parseDefinition, waitOutcome } from "./definition.ts";
@@ -233,6 +234,33 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
   // as a cancel stops it, and no other starts, until the parent records it withdrawn.
   database.exec(`CREATE TABLE IF NOT EXISTS withdrawals (
     commission TEXT NOT NULL PRIMARY KEY, reason TEXT NOT NULL) STRICT`);
+
+  // A watching attempt's checks: when the latest ended, how many have failed in a row since one
+  // did not, and until when an engine holds the right to run the next, so engines that look at
+  // the same commission run one check at a time. Its events say nothing of a check that found
+  // nothing.
+  database.exec(`CREATE TABLE IF NOT EXISTS watches (
+    commission TEXT NOT NULL, attempt INTEGER NOT NULL, checked REAL NOT NULL,
+    failures INTEGER NOT NULL, until REAL NOT NULL,
+    PRIMARY KEY (commission, attempt)) STRICT`);
+
+  const watched = database.prepare("INSERT OR IGNORE INTO watches VALUES (?, ?, 0, 0, 0)");
+
+  // Takes the right to run a check that is due, which no other engine holds; changes nothing
+  // otherwise.
+  const due = database.prepare(
+    "UPDATE watches SET until = ? WHERE commission = ? AND attempt = ? AND until <= ? AND checked + ? <= ?",
+  );
+
+  const checkEnded = database.prepare(
+    "UPDATE watches SET checked = ?, failures = ?, until = 0 WHERE commission = ? AND attempt = ?",
+  );
+
+  const failuresOf = database.prepare(
+    "SELECT failures FROM watches WHERE commission = ? AND attempt = ?",
+  );
+
+  const unwatched = database.prepare("DELETE FROM watches WHERE commission = ? AND attempt = ?");
 
   const withdrawing = database.prepare("INSERT OR IGNORE INTO withdrawals VALUES (?, ?)");
   const withdrawal = database.prepare("SELECT reason FROM withdrawals WHERE commission = ?");
@@ -676,6 +704,132 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
     return true;
   }
 
+  /**
+   * Looks once at the watching attempt `started` of `commission`: ends it once it is cancelled or
+   * past its wait limit, and otherwise runs a check if one is due and no engine runs one. A check
+   * that claims ends the attempt; one that found nothing leaves no event; one that failed is noted,
+   * and the third in a row escalates. Whether the attempt has ended.
+   */
+  async function look(
+    commission: string,
+    definition: Definition,
+    started: Extract<CommissionEvent, { type: "attempt-started" }>,
+  ): Promise<boolean> {
+    // SAFETY: the caller found the attempt's step to be a command step that watches.
+    const step = definition.workflow.steps[started.step] as Runnable & { watch: Watch };
+    const { attempt, step: name } = started;
+    const now = Date.now();
+    const why = withdrawalOf(commission) ?? cancelledReason(name);
+    const cancelled = () => requested.get(commission, attempt) !== undefined;
+
+    const end = (ending: Ending) => {
+      write(commission, read(commission), ending);
+      unwatched.run(commission, attempt);
+
+      return true;
+    };
+
+    if (cancelled()) {
+      return end({ type: "escalated", reason: why, attempt });
+    }
+
+    if (now - (started.at ?? now) > step.watch.wait * 1000) {
+      return end({
+        type: "escalated",
+        reason: `Step ${name} waited ${step.watch.wait} s, its wait limit.`,
+        attempt,
+      });
+    }
+
+    watched.run(commission, attempt);
+
+    // Held for as long as a check may run, and a minute more for its programs to be stopped.
+    // SAFETY: only an attended step's attempt limit may be unbounded, and a watch is a command's.
+    const lease = now + ((step.limits.attempt as number) + 60) * 1000;
+
+    if (due.run(lease, commission, attempt, now, step.watch.interval * 1000, now).changes === 0) {
+      return false;
+    }
+
+    const events = read(commission);
+    const spool = spoolOf(commission, attempt);
+
+    // Notes go after the events already written: positions count from 0.
+    let position = events.length;
+
+    const note = (text: string, from: "step" | "engine") => {
+      const noted: Extract<CommissionEvent, { type: "noted" }> = {
+        type: "noted",
+        attempt,
+        note: text,
+        at: Date.now(),
+      };
+
+      if (from === "engine") {
+        noted.from = from;
+      }
+
+      insert.run(commission, position, JSON.stringify(noted));
+      position += 1;
+    };
+
+    const artifact = (hash: string) => ({
+      hash,
+      artifact: store.get(hash),
+      kept: keptAnywhere(events, hash),
+    });
+
+    // lazy: a check is given its attempt's inputs by hash, without the child each came from. Name
+    // it once a check reads a children query.
+    const ending = await run(
+      step,
+      {
+        commission,
+        step: name,
+        attempt,
+        kinds: definition.kinds,
+        subject: { ...artifact(started.subject), kept: keptOf(events, started.subject) },
+        workspace: undefined,
+        branches: undefined,
+        inputs: started.inputs.map((input) => ({
+          name: input.name,
+          artifacts: input.hashes.map(artifact),
+        })),
+        skills: [],
+      },
+      () => (cancelled() ? why : undefined),
+      note,
+      store,
+      spool,
+      { step: step.limits.usd },
+      true,
+    );
+
+    unspool(spool);
+
+    if (ending.type === "nothing") {
+      checkEnded.run(Date.now(), 0, commission, attempt);
+
+      return false;
+    }
+
+    if (ending.type === "attempt-completed" || cancelled()) {
+      return end(ending);
+    }
+
+    // SAFETY: the row was made above and is removed only when the attempt ends.
+    const failures = (failuresOf.get(commission, attempt) as { failures: number }).failures + 1;
+
+    if (failures >= failuresInARow) {
+      return end(ending);
+    }
+
+    note(`A check failed, and the wait goes on: ${ending.reason}`, "engine");
+    checkEnded.run(Date.now(), failures, commission, attempt);
+
+    return false;
+  }
+
   return {
     /**
      * The definition the workflow named `workflow` would be commissioned with, as `definition`
@@ -1098,8 +1252,9 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
       const started = events.findLast((event) => event.type === "attempt-started")!;
 
-      // A children attempt runs no program: the next look withdraws its children and escalates.
-      if (definitionOf(events).workflow.steps[started.step]?.kind === "children") {
+      // A children or watching attempt holds no program: the next look ends it, stopping a check
+      // that runs.
+      if (waits(definitionOf(events).workflow.steps[started.step])) {
         request.run(commission, started.attempt);
 
         return;
@@ -1177,6 +1332,18 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
       if (state.status === "attempting") {
         const started = events.findLast((event) => event.type === "attempt-started")!;
+
+        // A watching attempt holds no program, so no engine holds it: each look carries it on.
+        if (
+          waits(workflow.steps[started.step]) &&
+          workflow.steps[started.step]?.kind === "command"
+        ) {
+          if (await look(commission, definition, started)) {
+            continue;
+          }
+
+          return replay(definition, read(commission));
+        }
 
         // A children attempt runs no program, so no engine holds it: each look carries it on.
         if (workflow.steps[started.step]?.kind === "children") {
@@ -1485,6 +1652,11 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
 
       write(commission, events, started);
 
+      // The attempt is the wait; each look runs its checks.
+      if (step.kind === "command" && step.watch !== undefined) {
+        continue;
+      }
+
       const key = runningKey(log, commission, attempt);
       const spool = spoolOf(commission, attempt);
 
@@ -1544,6 +1716,11 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
           spool,
           { step: step.limits.usd, commission: overspent },
         );
+
+        // Only a check finds nothing.
+        if (ending.type === "nothing") {
+          throw new Error(`Step ${name}'s attempt, which is no check, ended finding nothing.`);
+        }
 
         // A cancel that arrives before the attempt's end is written wins: nothing it claimed is
         // recorded.
@@ -2117,6 +2294,14 @@ const cancelLook = 1000;
 
 const cancelledReason = (step: string) => `Step ${step} was cancelled by the owner.`;
 
+// Checks that fail in a row before a watch escalates: one or two may be a passing outage.
+const failuresInARow = 3;
+
+// Whether an attempt of `step` is a wait that holds no program: a children step's, or a watch's.
+function waits(step: Definition["workflow"]["steps"][string] | undefined): boolean {
+  return step?.kind === "children" || (step?.kind === "command" && step.watch !== undefined);
+}
+
 // The engine's own failure during a step's attempt, such as a full disk.
 const failedIn = (step: string, message: string) => `Step ${step} failed in the engine: ${message}`;
 
@@ -2322,7 +2507,8 @@ async function run(
   store: Store,
   spool: Spool,
   money: Allowance,
-): Promise<Ending> {
+  checking = false,
+): Promise<Ending | { type: "nothing" }> {
   const { step: name, attempt } = given;
   const directory = spool.work;
 
@@ -2785,6 +2971,11 @@ async function run(
       return escalate(
         signal ? `Step ${name} was ended by ${signal}.` : `Step ${name} exited with code ${code}.`,
       );
+    }
+
+    // A check that exits 0 without a claim found nothing yet.
+    if (checking && !existsSync(join(output, "output.json"))) {
+      return { type: "nothing" };
     }
 
     // A claim cannot complete an attempt whose session the record could not keep.
