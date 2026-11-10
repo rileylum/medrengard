@@ -32,7 +32,7 @@
 
 9. Durable. The log is a commission's only state. Replaying it rebuilds every commission. Beside it are only what engines tell one another, which changes nothing until an event records it (a cancel, a withdrawal, a watching attempt's checks and the engines running), and the owner's renewals of triggers. An interrupted attempt is never silently re-run. An outward step is safe to retry: attempted again, it finds what it already did.
 10. Bounded. Every step that starts attempts has a budget, which only the owner renews, so every unattended loop terminates. A commission is refused before it starts if a step lacks one.
-11. Unknown stops and asks. Anything the engine cannot classify pauses the commission for the owner.
+11. Unknown stops and asks. Anything the engine cannot classify pauses the commission for the owner. Every escalation names its cause, from a closed set, so what the engine can classify can be told apart from what it cannot.
 12. Safe by default, risk visible. The defaults confine candidate code and keep outward actions as explicit steps. Leaving a default is possible, and readable in the workflow definition. A credential never enters a sandbox: a broker holds it outside. The sandbox confines an agent's mistakes and instructions injected into it; it shares the machine's kernel, so it is no boundary against code written to escape it. A host a step may reach is a way out for whatever the step can read.
 
 **Constraints**
@@ -104,7 +104,7 @@ Replay derives a commission's state; none is stored.
 - Ready: at an agent or command step, with no attempt in flight. At an attended step, it waits for the owner to attend.
 - Attempting: an attempt has started and not completed.
 - Awaiting: at an approval step, waiting for the owner's decision.
-- Escalated: paused for the owner, with a reason.
+- Escalated: paused for the owner, with a cause and a reason.
 - Finished: an edge reached the end, the owner abandoned the commission, or its parent withdrew it; what finished it is recorded.
 
 Seven events are the whole log vocabulary. Each carries the time the engine wrote it:
@@ -115,7 +115,7 @@ Seven events are the whole log vocabulary. Each carries the time the engine wrot
 - `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, at most 1 MiB, and the next step or end.
 - `noted`: the attempt and one note for the owner, recorded as it arrives: one the attempt wrote, or the engine's, marked as such. It changes no state.
 - `withdrawn`: the reason a child's parent no longer waits for it. It finishes the child; it is the engine's, not the owner's decision.
-- `escalated`: the reason, and the attempt if one was involved, with its transcript and errors when its program ran, its latest usage report when it made one, and the session it left when it left one. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it. A reason is at most 4096 bytes; a longer one is cut on a character boundary and says so.
+- `escalated`: the cause and the reason, and the attempt if one was involved, with its transcript and errors when its program ran, its latest usage report when it made one, and the session it left when it left one. A kind's program that fails ends the reason with its stderr, or the last 1024 bytes of it. A reason is at most 4096 bytes; a longer one is cut on a character boundary and says so. The cause is one of: `budget`, the step's budget spent; `money`, a money limit reached or spend unknown; `limit`, any other declared limit reached; `repeat`, the step already attempted on this subject and these inputs; `inputs`, what the step was to be given cannot be given; `claim`, an invalid claim or one its kind's verifier rejected; `exit`, the step's program failed or could not start; `kind`, a kind's program failed; `broker`, a broker did not start; `interrupted`, no engine was running the attempt; `engine`, the engine's own failure; `cancelled`, by the owner; `withdrawn`, by its parent; `upgrade`, another engine than the commission last ran on; `unmet`, a children step's wait that can no longer be met; `trigger`, a commission step's trigger that cannot start its commissions now.
 
 Transitions:
 
@@ -207,7 +207,7 @@ _Execution: the core. The commission is the aggregate root._
 - Evidence: the judgements about the current subject. Judgements about earlier subjects are history.
 - Decision: the owner's outcome at an approval step or on an escalation, naming the current subject and the wait it ends.
 - Wait: the time a commission is awaiting or escalated, from the event that began it until the owner's decision; a decision names it by that event.
-- Escalation: the commission paused for the owner, with a reason.
+- Escalation: the commission paused for the owner, with a cause, from a closed set, and a reason, in words.
 - Cancel: the owner stopping an attempt in flight; the commission escalates, and nothing is decided.
 - Attend: the owner starting an attended step in their terminal and taking part in it until they leave.
 

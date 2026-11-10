@@ -459,6 +459,7 @@ test("a children step escalates at its wait limit, withdrawing the children stil
 
   assert.partialDeepStrictEqual(await settle(engine), {
     status: "escalated",
+    cause: "limit",
     reason: "Step slow waited 1 s for its children, its wait limit.",
   });
   assert.partialDeepStrictEqual(engine.state("first.slow.1.1"), {
@@ -502,6 +503,7 @@ test("cancelling a children step withdraws its children and escalates", async (t
 
   assert.partialDeepStrictEqual(await settle(engine), {
     status: "escalated",
+    cause: "cancelled",
     reason: "Step slow was cancelled by the owner.",
   });
   assert.partialDeepStrictEqual(engine.state("first.slow.1.1"), {
@@ -515,6 +517,7 @@ test("a children step with more children to start than its width escalates, spen
 
   assert.partialDeepStrictEqual(await settle(engine), {
     status: "escalated",
+    cause: "limit",
     reason: "Step fanOut has 3 children to start, over its width of 2.",
   });
   assert.equal(
@@ -582,6 +585,7 @@ test("a step cannot adopt an artifact it was not given", async (t) => {
 
   assert.partialDeepStrictEqual(await settle(engine), {
     status: "escalated",
+    cause: "claim",
     reason: `Step pick adopted an artifact it was not given: "${"0".repeat(64)}".`,
   });
 });
@@ -692,6 +696,7 @@ test("a workspace cannot add branches of a kind other than its base's", async (t
 
   assert.partialDeepStrictEqual(await settle(engine), {
     status: "escalated",
+    cause: "inputs",
     reason: "Step integrate's workspace cannot add the commit built-1 as a branch of a document.",
   });
 });

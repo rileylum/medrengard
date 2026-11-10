@@ -84,6 +84,7 @@ test("a step whose preparation fails escalates before its program runs, saying s
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "exit",
     reason: "Step build exited with code 127.",
   });
   assert.partialDeepStrictEqual(engine.record("first").entries, [

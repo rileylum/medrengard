@@ -609,6 +609,7 @@ test("a step that fills its shared memory past its memory limit escalates, namin
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step build reached its memory limit of 33554432 bytes.",
   });
 });
@@ -625,6 +626,7 @@ test("a step over its memory limit is stopped and escalates, naming the limit", 
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step build reached its memory limit of 33554432 bytes.",
   });
 });
@@ -670,6 +672,7 @@ test(
 
     assert.partialDeepStrictEqual(await engine.advance("first"), {
       status: "escalated",
+      cause: "limit",
       reason: "Step build used more than its disk limit of 1048576 bytes.",
     });
   },
@@ -684,6 +687,7 @@ test("a step that exits at once past its disk limit escalates", async (t) => {
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step build used more than its disk limit of 1048576 bytes.",
   });
 });
@@ -710,6 +714,7 @@ test("a step that hides its bytes under a locked directory past its disk limit e
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step build used more than its disk limit of 1048576 bytes.",
   });
 });
@@ -727,6 +732,7 @@ test("a step that fills an empty area of its access escalates", async (t) => {
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step build filled /scratch, its area of 1048576 bytes.",
   });
 });
@@ -760,6 +766,7 @@ test(
 
     assert.partialDeepStrictEqual(await engine.advance("first"), {
       status: "escalated",
+      cause: "limit",
       reason: "Step build used more than its disk limit of 1048576 bytes.",
     });
   },
@@ -1001,6 +1008,7 @@ test("a claim with a field output.json does not define escalates", async (t) => 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: 'Step build wrote an output.json with fields it does not define: ["artifact"].',
   });
 });
@@ -1014,6 +1022,7 @@ test("a claimed artifact of an undeclared kind escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: 'Step build claimed an artifact of undeclared kind: "memo".',
   });
 });
@@ -1036,6 +1045,7 @@ test("a claimed artifact of a kind its step does not declare escalates", async (
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "claim",
     reason: 'Step build claimed an artifact of undeclared kind: "verdict".',
   });
 });
@@ -1049,6 +1059,7 @@ test("a claimed decision escalates, since only the owner decides", async (t) => 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: "Step build claimed a decision, which only the owner makes.",
   });
 });
@@ -1062,6 +1073,7 @@ test("a claimed document without a title escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: "Step build claimed a document without its title.",
   });
 });
@@ -1072,6 +1084,7 @@ test("a claimed body the step did not write escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: 'Step build claimed a body it did not write: "plan.md".',
   });
 });
@@ -1086,6 +1099,7 @@ test("a claimed body named by an absolute path escalates, though the step wrote 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: 'Step build claimed a body path that is not relative to its output: "/plan.md".',
   });
 });
@@ -1101,6 +1115,7 @@ test("a claimed body outside the step's output escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: 'Step build claimed a body outside its output: "plan.md".',
   });
 });
@@ -1115,6 +1130,7 @@ test("an output.json over its size limit escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: "Step build wrote an output.json over its limit of 65536 bytes.",
   });
 });
@@ -1128,6 +1144,7 @@ test("a claimed document title over its size limit escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: "Step build claimed a document title over its limit of 200 bytes.",
   });
 });
@@ -1142,6 +1159,7 @@ test("a claimed body over its size limit escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: 'Step build claimed a body over its limit of 1048576 bytes: "plan.md".',
   });
 });
@@ -1156,6 +1174,7 @@ test("a claimed body that is not UTF-8 escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: 'Step build claimed a body that is not UTF-8: "plan.md".',
   });
 });
@@ -1766,6 +1785,7 @@ test("an agent step whose skills are over its input limit escalates without star
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step plan's inputs, prompt and skills are 116 bytes, over its input limit of 64.",
   });
 });
@@ -1777,6 +1797,7 @@ test("an agent step whose prompt is over its input limit escalates without start
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step plan's inputs and prompt are 100 bytes, over its input limit of 64.",
   });
   await assert.rejects(readFile(join(directory, "received", "input.json")), { code: "ENOENT" });
@@ -1835,6 +1856,7 @@ test("a claimed commit report over its size limit escalates", async (t) => {
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "claim",
     reason: 'Step build claimed a body over its limit of 1048576 bytes: "report.md".',
   });
 });
@@ -2140,6 +2162,7 @@ test("a claim of a verdict that routes it and of a new subject escalates, and re
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     subject: request,
+    cause: "claim",
     reason:
       "Step build claimed a verdict, whose verdict routes its outcome, with a new subject: the verdict would be about the subject its claim replaces.",
   });
@@ -2234,6 +2257,7 @@ test("a claimed verdict that is not the outcome escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "check" },
+    cause: "claim",
     reason: "Step check claimed a verdict whose verdict is fail, not its outcome pass.",
   });
 });
@@ -2247,6 +2271,7 @@ test("a claimed verdict that names its own subject escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "check" },
+    cause: "claim",
     reason: 'Step check claimed a verdict with fields its kind does not define: ["subject"].',
   });
 });
@@ -2259,6 +2284,7 @@ test("a claimed verdict that is not pass or fail escalates", async (t) => {
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "claim",
     reason: "Step check claimed a verdict verdict that is not one of pass, fail.",
   });
 });
@@ -2269,6 +2295,7 @@ test("a claimed verdict summary over its size limit escalates", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "check" },
+    cause: "claim",
     reason: "Step check claimed a verdict summary over its limit of 200 bytes.",
   });
 });
@@ -2425,6 +2452,7 @@ test("a step whose workspace input holds no artifact escalates without starting"
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "inputs",
     reason: "Step check's workspace input base holds no artifact.",
   });
   assert.ok(engine.record("first").entries.every((entry) => entry.entry !== "attempt"));
@@ -2496,6 +2524,7 @@ test("a step that names no limits has the factory's", async (t) => {
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step build wrote more than its transcript limit of 16 bytes.",
   });
 });
@@ -2531,6 +2560,7 @@ test("a step that names some limits has the factory's for the rest", async (t) =
 
   assert.partialDeepStrictEqual(await slow.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step build reached its attempt limit of 0.2 s.",
   });
 });
@@ -2547,6 +2577,7 @@ test("a commission runs on the factory's limits it started with", async (t) => {
 
   assert.partialDeepStrictEqual(await changed.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step build wrote more than its transcript limit of 16 bytes.",
   });
 });
@@ -2991,6 +3022,7 @@ test("a step that exits non-zero escalates its commission", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "exit",
     reason: "Step build exited with code 3.",
   });
 });
@@ -3001,6 +3033,7 @@ test("a step that exits 0 without output.json escalates its commission", async (
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: "Step build exited 0 without a readable output.json.",
   });
 });
@@ -3014,6 +3047,7 @@ test("a step that claims an undeclared outcome escalates its commission", async 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "claim",
     reason: 'Step build claimed an outcome it does not declare: "shipped".',
   });
 });
@@ -3053,6 +3087,7 @@ test("a step whose program cannot start escalates its commission", async (t) => 
   assert.partialDeepStrictEqual(await engine.advance("second"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "exit",
     reason: "Step build exited with code 1.",
   });
   assert.match(engine.transcript("second", 1).toString(), /execvp .*missing: No such file/);
@@ -3064,6 +3099,7 @@ test("a step that has spent its budget escalates instead of starting again", asy
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "budget",
     reason: "Step build has spent its budget of 2 attempts.",
   });
   assert.equal(await readFile(join(directory, "started"), "utf8"), "started\nstarted\n");
@@ -3078,6 +3114,7 @@ test("a step attempted again on the same subject and inputs escalates instead", 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "repeat",
     reason: "Step build was already attempted on this subject and these inputs.",
   });
   assert.equal(await readFile(join(directory, "started"), "utf8"), "started\n");
@@ -3114,6 +3151,7 @@ test("a step that writes past its transcript limit is stopped and escalates", as
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "limit",
     reason: "Step build wrote more than its transcript limit of 1000 bytes.",
   });
   assert.equal(engine.transcript("first", 1).length, 1000);
@@ -3136,6 +3174,7 @@ test("a step whose inputs are over its input limit escalates without starting", 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "limit",
     reason: "Step build's inputs are 10 bytes, over its input limit of 9.",
   });
 
@@ -3149,6 +3188,7 @@ test("a step that is idle for its idle limit is stopped and escalates", async (t
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "limit",
     reason: "Step build was idle for 1 s.",
   });
 });
@@ -3174,6 +3214,7 @@ test("a step that runs for its attempt limit is stopped and escalates", async (t
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "build" },
+    cause: "limit",
     reason: "Step build reached its attempt limit of 1 s.",
   });
 });
@@ -3264,6 +3305,7 @@ test("an attempt started in an earlier boot escalates as interrupted, even if it
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "interrupted",
     reason: "Step build was interrupted.",
   });
 });
@@ -3334,6 +3376,7 @@ test(
     assert.partialDeepStrictEqual(await engine.advance("first"), {
       status: "escalated",
       step: { name: "build" },
+      cause: "interrupted",
       reason: "Step build was interrupted.",
     });
   },
@@ -3369,6 +3412,7 @@ test(
 
     assert.partialDeepStrictEqual(await engine.advance("first"), {
       status: "escalated",
+      cause: "interrupted",
       reason: "Step build was interrupted.",
     });
     assert.equal(engine.transcript("first", 1).toString(), "before the crash\non stderr\n");
@@ -3410,6 +3454,7 @@ test(
 
     assert.partialDeepStrictEqual(await engine.advance("first"), {
       status: "escalated",
+      cause: "interrupted",
       reason: "Step build was interrupted.",
     });
     assert.deepEqual(await readdir(join(record, "attempts")), []);
@@ -3571,6 +3616,7 @@ test("a store file whose bytes no longer match its hash is refused, and the step
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "engine",
     reason: `The engine could not prepare step build: The store's file ${hash} does not match its hash.`,
   });
 });
@@ -3592,6 +3638,7 @@ test("an attempt this engine stopped running without recording its end escalates
   // The attempt is held by this process, which is alive but no longer running it.
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "interrupted",
     reason: "Step build was interrupted.",
   });
 });
@@ -3612,6 +3659,7 @@ test("an attempt cancelled from another engine is stopped and escalates", async 
   assert.partialDeepStrictEqual(await running, {
     status: "escalated",
     step: { name: "build" },
+    cause: "cancelled",
     reason: "Step build was cancelled by the owner.",
   });
 });
@@ -3631,6 +3679,7 @@ test("a cancel made just before the step exits still escalates", async (t) => {
 
   assert.partialDeepStrictEqual(await running, {
     status: "escalated",
+    cause: "cancelled",
     reason: "Step build was cancelled by the owner.",
   });
 });
@@ -3681,6 +3730,7 @@ test(
 
     assert.partialDeepStrictEqual(await running, {
       status: "escalated",
+      cause: "cancelled",
       reason: "Step build was cancelled by the owner.",
     });
     assert.equal(await readFile(join(directory, "verifier"), "utf8"), "started\n");
@@ -3725,6 +3775,7 @@ test(
 
     assert.partialDeepStrictEqual(await running, {
       status: "escalated",
+      cause: "cancelled",
       reason: "Step build was cancelled by the owner.",
     });
     assert.equal(await readFile(join(directory, "materialiser"), "utf8"), "started\n");
@@ -3765,6 +3816,7 @@ test("a kind's materialiser that fails escalates with its stderr, and the step n
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "kind",
     reason:
       'The document materialiser failed for step build: it exited with code 1. Its stderr: "No room.\\n".',
   });
@@ -3789,6 +3841,7 @@ test("a kind's materialiser past its limit is stopped and escalates", async (t) 
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "kind",
     reason: "The document materialiser failed for step build: it reached its limit of 1 s.",
   });
 });
@@ -3807,6 +3860,7 @@ test("a kind's materialiser ended by a signal escalates, naming the signal", asy
 
   assert.partialDeepStrictEqual(await advancing, {
     status: "escalated",
+    cause: "kind",
     reason: "The document materialiser failed for step build: it was ended by SIGKILL.",
   });
 });
@@ -3846,6 +3900,7 @@ test(
 
     assert.partialDeepStrictEqual(engine.state("first"), {
       status: "escalated",
+      cause: "cancelled",
       reason: "Step build was cancelled by the owner.",
     });
     assert.equal(engine.transcript("first", 1).toString(), "before the crash\n");
@@ -4027,6 +4082,7 @@ test("a retry renews the budget of the escalated step", async (t) => {
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "budget",
     reason: "Step build has spent its budget of 2 attempts.",
   });
   assert.equal(await readFile(join(directory, "started"), "utf8"), "started\n".repeat(4));
@@ -4505,6 +4561,7 @@ test("a kind's verifier sees the claim's fields and body, and its rejection esca
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "claim",
     reason: "Step build claimed a memo its verifier rejected: No.",
   });
 
@@ -4523,6 +4580,7 @@ test("a kind's verifier whose access makes the workspace read-only cannot write 
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "kind",
     reason:
       "The memo verifier failed on step build's claim: it exited with code 1. Its stderr: \"touch: cannot touch 'written': Read-only file system\\n\".",
   });
@@ -4533,6 +4591,7 @@ test("a kind's verifier past its limit is stopped and escalates", async (t) => {
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "kind",
     reason: "The memo verifier failed on step build's claim: it reached its limit of 1 s.",
   });
 });
@@ -4569,6 +4628,7 @@ test("a kind's verifier whose kept files total more than its kept limit fails", 
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "kind",
     reason:
       "The memo verifier failed on step build's claim: the files it kept total more than its limit of 10 bytes.",
   });
@@ -4582,6 +4642,7 @@ test("a kind's verifier over its memory limit is stopped and escalates, naming t
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "kind",
     reason:
       "The memo verifier failed on step build's claim: it reached its memory limit of 33554432 bytes.",
   });
@@ -4630,6 +4691,7 @@ test("a kind's verifier ended by a signal escalates, naming the signal", async (
 
   assert.partialDeepStrictEqual(await advancing, {
     status: "escalated",
+    cause: "kind",
     reason: "The memo verifier failed on step build's claim: it was ended by SIGKILL.",
   });
 });
@@ -4692,6 +4754,7 @@ test("a failing verifier's stderr ends the reason its commission escalates", asy
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "kind",
     reason:
       'The memo verifier failed on step build\'s claim: it exited with code 3. Its stderr: "fatal: no repository\\n".',
   });
@@ -4745,6 +4808,7 @@ test("a commission's record lists its attempts, claims, escalations and decision
     {
       entry: "escalation",
       step: "build",
+      cause: "budget",
       reason: "Step build has spent its budget of 2 attempts.",
     },
     { entry: "decision", step: "build", outcome: "abandon", subject, feedback: "Enough." },
@@ -4770,6 +4834,7 @@ test("a commission's record names the step each escalation is at, after the comm
       entry: "attempt",
       attempt: 1,
       step: "build",
+      cause: "claim",
       escalated: "Step build exited 0 without a readable output.json.",
     },
     { entry: "decision", step: "build", outcome: "retry" },
@@ -4851,6 +4916,7 @@ test("a note over its limit stops the step, which escalates", async (t) => {
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step build wrote a note over its limit of 4096 bytes.",
   });
 });
@@ -4864,6 +4930,7 @@ test("a step's notes count toward its transcript limit", async (t) => {
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step build wrote more than its transcript limit of 40 bytes.",
   });
 });
@@ -5058,6 +5125,7 @@ test("the log's events are exactly the seven types, each with its pinned fields"
     started([{ name: "string", hashes: ["string"] }]),
     {
       type: "escalated",
+      cause: "string",
       reason: "string",
       attempt: "number",
       transcript: "string",
@@ -5251,6 +5319,7 @@ for (const [what, written] of [
 
     assert.partialDeepStrictEqual(await engine.advance("first"), {
       status: "escalated",
+      cause: "kind",
       reason: "The memo verifier failed on step build's claim: it wrote no valid output.json.",
     });
   });
@@ -5377,6 +5446,7 @@ test(
 
     assert.partialDeepStrictEqual(await engine.advance("first"), {
       status: "escalated",
+      cause: "interrupted",
       reason: "Step build was interrupted.",
     });
     assert.partialDeepStrictEqual(engine.record("first").entries, [
@@ -5443,6 +5513,7 @@ test("an attempt whose reported cost goes over its step's money limit is stopped
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "money",
     reason: "Step build reached its money limit of $1.",
   });
   assert.ok(Date.now() - started < 5000);
@@ -5469,6 +5540,7 @@ test("an attempt with a money limit that reports no cost escalates, its claim un
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "money",
     reason: "Step build reported no cost, so it counts as over its money limit of $1.",
   });
 });
@@ -5481,6 +5553,7 @@ test("a commission is stopped once its attempts' cost since the owner's last dec
   // 0.6, then 1.2 during the second attempt.
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "money",
     reason: "The commission reached its money limit of $1.",
   });
   assert.equal(engine.record("first").entries.length, 2);
@@ -5490,6 +5563,7 @@ test("a commission is stopped once its attempts' cost since the owner's last dec
   // Renewed: the next attempt runs, and the one after goes over again.
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "money",
     reason: "The commission reached its money limit of $1.",
   });
   assert.equal(
@@ -5505,6 +5579,7 @@ test("a commission that has spent its whole money limit escalates before another
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "money",
     reason: "The commission has spent $1.00 of its money limit of $1.",
   });
   assert.partialDeepStrictEqual(engine.record("first").entries, [
@@ -5518,6 +5593,7 @@ test("a commission with a money limit whose attempt reported no cost escalates b
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "money",
     reason:
       "The commission's spend is unknown: attempt 1 reported no cost, so it counts as over its money limit of $1.",
   });
@@ -5666,6 +5742,7 @@ test("a session a failed attempt left is given to a later attempt that declares 
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "exit",
     reason: "Step build exited with code 3.",
   });
 
@@ -5700,6 +5777,7 @@ test("a session over the step's transcript limit escalates, and is not kept", as
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "limit",
     reason: "Step build left a session of 200 bytes, over its transcript limit of 100.",
   });
 
@@ -5733,6 +5811,7 @@ test(
 
     assert.partialDeepStrictEqual(await engine.advance("first"), {
       status: "escalated",
+      cause: "interrupted",
       reason: "Step build was interrupted.",
     });
 
@@ -5816,6 +5895,7 @@ test("a commission that last ran on another engine escalates once, and the owner
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "upgrade",
     reason: `Commission first last ran on engine 01234567; this engine is ${current.slice(0, 8)}.`,
   });
   assert.deepEqual(engine.record("first").entries.length, 1);
@@ -5843,6 +5923,7 @@ test("a decision at an approval step does not carry a commission on with another
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "upgrade",
     reason: `Commission first last ran on engine 01234567; this engine is ${current.slice(0, 8)}.`,
   });
 });
@@ -5859,6 +5940,7 @@ test("a commission written before engines recorded their version escalates once"
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "upgrade",
     reason: `Commission first last ran on an engine that recorded no version; this engine is ${current.slice(0, 8)}.`,
   });
 });
@@ -6028,6 +6110,7 @@ test("a broker that ends before it listens escalates its attempt, which never st
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "broker",
     reason: "Step build's broker model ended before it listened: no credential",
   });
   assert.equal(existsSync(join(directory, "ran")), false);

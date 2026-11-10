@@ -1310,7 +1310,10 @@ A state has a `status`:
   marked `attended: true`;
 - `awaiting`, at an approval `step`, about a `subject`;
 - `escalated`, at a `step`, about a `subject`, with a `reason` of at most 4096 bytes, longer ones
-  cut and marked `… (cut to 4096 of N bytes)`;
+  cut and marked `… (cut to 4096 of N bytes)`, and its `cause`: `budget`, `money`, `limit`, `repeat`,
+  `inputs`, `claim`, `exit`, `kind`, `broker`, `interrupted`, `engine`, `cancelled`, `withdrawn`,
+  `upgrade`, `unmet` or `trigger`, which [`docs/core.md`](../docs/core.md) defines. `record` gives
+  each escalation's too, and `state` prints it as `cause: limit`;
 - `finished`, `by` `"end"` or `"abandoned"`: abandoned only by the owner's `abandon`, at an
   approval step or an escalation; an approval's own edge to `end` finishes it by `"end"`.
 

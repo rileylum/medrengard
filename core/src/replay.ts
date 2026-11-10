@@ -64,14 +64,50 @@ type AttemptCompleted<N extends string> = {
   next: N | "end";
 };
 
-// lazy: reason is free text for the owner. When an observer needs to group escalations,
-// add a closed set of causes beside it; the text stays, as the why.
+/**
+ * Why a commission escalated, from a closed set, so an observer can group escalations and tell
+ * one the owner must judge from one that waiting or a renewal answers:
+ *
+ * - budget: the step spent its budget; money: a money limit was reached, or spend is unknown;
+ * - limit: another declared limit was reached, such as time, size, disk, memory or a wait;
+ * - repeat: the step was already attempted on this subject and these inputs;
+ * - inputs: what the step was to be given cannot be given, such as a workspace's base;
+ * - claim: the step's output was invalid, or its kind's verifier rejected it;
+ * - exit: the step's program failed, or could not start;
+ * - kind: a kind's verifier or materialiser failed; broker: a broker did not start;
+ * - interrupted: no engine was running the attempt; engine: the engine's own failure;
+ * - cancelled: the owner cancelled it; withdrawn: its parent no longer waits for it;
+ * - upgrade: this engine is not the one the commission last ran on;
+ * - unmet: a children step's wait can no longer be met;
+ * - trigger: a commission step's trigger cannot start its commissions now.
+ */
+export type Cause =
+  | "budget"
+  | "money"
+  | "limit"
+  | "repeat"
+  | "inputs"
+  | "claim"
+  | "exit"
+  | "kind"
+  | "broker"
+  | "interrupted"
+  | "engine"
+  | "cancelled"
+  | "withdrawn"
+  | "upgrade"
+  | "unmet"
+  | "trigger";
+
+// reason is free text for the owner, the why; cause is absent in events written before
+// escalations carried one.
 // transcript and errors are there when the attempt's program ran, errors only when it wrote to
 // stderr; an interrupted attempt's are what it wrote before its engine died. usage is as on
 // attempt-completed.
 type Escalated = {
   type: "escalated";
   reason: string;
+  cause?: Cause;
   attempt?: number;
   transcript?: string;
   errors?: string;
@@ -146,6 +182,8 @@ export type CommissionState<N extends string = string> =
       subject: string;
       decision?: string;
       reason: string;
+      // Absent for an escalation written before escalations carried one.
+      cause?: Cause;
       since: number;
     }
   | { status: "finished"; by: "end" | "abandoned" | "withdrawn" };
@@ -240,7 +278,15 @@ function apply<N extends string>(
         throw new Error(`A commission cannot escalate while it is ${state.status}.`);
       }
 
-      return { ...state, status: "escalated", reason: event.reason, since: position };
+      return event.cause === undefined
+        ? { ...state, status: "escalated", reason: event.reason, since: position }
+        : {
+            ...state,
+            status: "escalated",
+            reason: event.reason,
+            cause: event.cause,
+            since: position,
+          };
     case "decided":
       if (state.status !== "awaiting" && state.status !== "escalated") {
         throw new Error(`A decision cannot arrive while the commission is ${state.status}.`);

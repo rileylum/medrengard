@@ -146,6 +146,7 @@ test("a commission step whose documents do not fit its trigger starts none and e
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "trigger",
     reason:
       "Step spawn would start 3 commissions through trigger workers, which has 2 of its allowance of 2 left.",
   });
@@ -170,6 +171,7 @@ test("a trigger's allowance counts every commission it started until the owner r
 
   assert.partialDeepStrictEqual(escalated, {
     status: "escalated",
+    cause: "trigger",
     reason:
       "Step spawn would start 1 commission through trigger workers, which has 0 of its allowance of 2 left.",
   });
@@ -194,6 +196,7 @@ test("a commission step is bounded by its trigger's unfinished limit", async (t)
 
   assert.partialDeepStrictEqual(await engine.advance("second"), {
     status: "escalated",
+    cause: "trigger",
     reason:
       "Step spawn would start 2 commissions through trigger workers, which has 2 unfinished of its limit of 3.",
   });

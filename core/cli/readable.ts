@@ -41,6 +41,7 @@ export function describe(state: CommissionState): string {
 
   return [
     `${state.status} at ${state.step.name}${waiting(state)}, about ${state.subject}`,
+    ...(state.status === "escalated" && state.cause !== undefined ? [`cause: ${state.cause}`] : []),
     ...(state.status === "escalated" ? [`reason: ${state.reason}`] : []),
     ...(state.decision === undefined ? [] : [`decision: ${state.decision}`]),
   ].join("\n");

@@ -50,6 +50,7 @@ import {
 } from "./definition.ts";
 import {
   replay,
+  type Cause,
   type Commissioned,
   type CommissionEvent,
   type CommissionState,
@@ -110,10 +111,12 @@ export type Entry =
       started?: number;
       ended?: number;
       escalated: string;
+      // Absent for an escalation written before escalations carried a cause.
+      cause?: Cause;
       errors: boolean;
       usage?: Usage;
     }
-  | { entry: "escalation"; step: string; reason: string; at?: number }
+  | { entry: "escalation"; step: string; reason: string; cause?: Cause; at?: number }
   // A child its parent no longer waited for, finished by the engine.
   | { entry: "withdrawal"; step: string; reason: string; at?: number }
   | {
@@ -138,6 +141,16 @@ export type CommissionRecord = {
 };
 
 type Log = [Commissioned & { at?: number }, ...Exclude<CommissionEvent, Commissioned>[]];
+
+// Why a commission escalates: its cause and, for the owner, the reason.
+type Why = { cause: Cause; reason: string };
+
+const because = (cause: Cause, reason: string): Why => ({ cause, reason });
+
+// An event the engine writes: an escalation it writes always names its cause.
+type Written = Exclude<Log[1], { type: "escalated" }> | Escalation;
+
+type Escalation = Extract<CommissionEvent, { type: "escalated" }> & { cause: Cause };
 
 // Which of a trigger's caps refuses more commissions, with what it counted.
 type Refusal =
@@ -296,32 +309,36 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
 
   // Why the commission step `name` may not start `count` commissions through its trigger now, if it
   // may not, for the owner, who may renew the trigger and retry.
-  function stepRefusal(name: string, step: Commissioning<string>, count: number) {
+  function stepRefusal(name: string, step: Commissioning<string>, count: number): Why | undefined {
     const refusal = refusalOf(step.trigger, step.workflow, count);
     const would = `Step ${name} would start ${count} commission${count === 1 ? "" : "s"} through trigger ${step.trigger}`;
 
-    switch (refusal?.cap) {
-      case undefined:
-        return undefined;
-      // An engine refuses a commission step whose trigger is not the factory's or may not start
-      // its workflow, so another engine's factory must differ.
-      case "missing":
-        return `${would}, which this engine's factory lacks.`;
-      case "workflow":
-        return `${would}, which may not start workflow ${step.workflow}.`;
-      case "rate":
-        return `${would}, which started ${refusal.started} in the last ${refusal.per} s, of its rate of ${refusal.count}.`;
-      case "allowance":
-        return `${would}, which has ${refusal.allowance - refusal.started} of its allowance of ${refusal.allowance} left.`;
-      case "unfinished":
-        return `${would}, which has ${refusal.open} unfinished of its limit of ${refusal.unfinished}.`;
-      case "unknown":
-        return `${would}, whose commission ${refusal.commission} reported no cost, so its spend counts as over its money limit of $${refusal.usd}.`;
-      case "usd":
-        return `${would}, whose commissions ${refusal.period} cost $${refusal.spent}, its money limit of $${refusal.usd}.`;
-      default:
-        return assertNever(refusal);
-    }
+    const which = (() => {
+      switch (refusal?.cap) {
+        case undefined:
+          return undefined;
+        // An engine refuses a commission step whose trigger is not the factory's or may not
+        // start its workflow, so another engine's factory must differ.
+        case "missing":
+          return `which this engine's factory lacks.`;
+        case "workflow":
+          return `which may not start workflow ${step.workflow}.`;
+        case "rate":
+          return `which started ${refusal.started} in the last ${refusal.per} s, of its rate of ${refusal.count}.`;
+        case "allowance":
+          return `which has ${refusal.allowance - refusal.started} of its allowance of ${refusal.allowance} left.`;
+        case "unfinished":
+          return `which has ${refusal.open} unfinished of its limit of ${refusal.unfinished}.`;
+        case "unknown":
+          return `whose commission ${refusal.commission} reported no cost, so its spend counts as over its money limit of $${refusal.usd}.`;
+        case "usd":
+          return `whose commissions ${refusal.period} cost $${refusal.spent}, its money limit of $${refusal.usd}.`;
+        default:
+          return assertNever(refusal);
+      }
+    })();
+
+    return which === undefined ? undefined : because("trigger", `${would}, ${which}`);
   }
 
   // Starts a commission of the factory's workflow `workflow` about the document `request`, named
@@ -392,7 +409,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       const problem = stepRefusal(name, step, requests!.hashes.length);
 
       if (problem !== undefined) {
-        write(commission, events, { type: "escalated", reason: problem });
+        write(commission, events, { type: "escalated", ...problem });
         database.exec("COMMIT");
 
         return;
@@ -456,18 +473,18 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
   // What an attempt no engine finished left, for the escalation that ends it, with `reason`: its
   // transcript, errors and usage as spooled, and its session if within its step's transcript
   // limit, `limit`. One over it is not kept, and the reason says so.
-  function ended(spool: Spool, limit: number, reason: string) {
+  function ended(spool: Spool, limit: number, { cause, reason }: Why) {
     const left = sessionLeft(join(spool.work, "output"), limit);
 
     if (left === undefined) {
-      return { reason, ...spooled(spool) };
+      return { cause, reason, ...spooled(spool) };
     }
 
     if ("over" in left) {
-      return { reason: `${reason}${unkept(left.over, limit)}`, ...spooled(spool) };
+      return { cause, reason: `${reason}${unkept(left.over, limit)}`, ...spooled(spool) };
     }
 
-    return { reason, ...spooled(spool), session: store.keep(left.body) };
+    return { cause, reason, ...spooled(spool), session: store.keep(left.body) };
   }
 
   function spooled(spool: Spool) {
@@ -547,6 +564,14 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     const row = withdrawal.get(commission);
 
     return row === undefined ? undefined : String(row.reason);
+  };
+
+  // Why the commission's attempt at the step named is stopped on request: its parent withdrew the
+  // commission, or the owner cancelled the attempt.
+  const stoppedWhy = (commission: string, step: string): Why => {
+    const withdrawn = withdrawalOf(commission);
+
+    return withdrawn === undefined ? cancelledBy(step) : because("withdrawn", withdrawn);
   };
 
   // The engines registered as running on this log, such as the CLI's run. A registration is no
@@ -680,7 +705,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     throw new Error(`Commission ${commission} has no transcript for attempt ${attempt}.`);
   }
 
-  function write(commission: string, events: Log, given: Log[1]): void {
+  function write(commission: string, events: Log, given: Written): void {
     // Every reason passes here, so one bound covers those quoting a step's own words.
     const event = given.type === "escalated" ? { ...given, reason: bounded(given.reason) } : given;
 
@@ -940,27 +965,33 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       next: step.on[result]!,
     });
 
-    const escalated = (reason: string): Ending => ({
+    const escalated = (why: Why): Ending => ({
       type: "escalated",
-      reason,
+      ...why,
       attempt: started.attempt,
     });
 
     const failedNames = failed.map((child) => child.commission).join(", ");
 
     const ending = cancelled
-      ? escalated(cancelledReason(name))
+      ? escalated(cancelledBy(name))
       : met
         ? completed(outcome === undefined ? "done" : "met")
         : unmet
           ? outcome === undefined
             ? escalated(
-                `Step ${name}'s wait can no longer be met: ${failedNames} did not reach the end.`,
+                because(
+                  "unmet",
+                  `Step ${name}'s wait can no longer be met: ${failedNames} did not reach the end.`,
+                ),
               )
             : completed("unmet")
           : late
             ? escalated(
-                `Step ${name} waited ${step.limits.wait} s for its children, its wait limit.`,
+                because(
+                  "limit",
+                  `Step ${name} waited ${step.limits.wait} s for its children, its wait limit.`,
+                ),
               )
             : undefined;
 
@@ -1039,7 +1070,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     const step = definition.workflow.steps[started.step] as Runnable & { watch: Watch };
     const { attempt, step: name } = started;
     const now = Date.now();
-    const why = withdrawalOf(commission) ?? cancelledReason(name);
+    const why = stoppedWhy(commission, name);
     const cancelled = () => requested.get(commission, attempt) !== undefined;
 
     const end = (ending: Ending) => {
@@ -1050,12 +1081,13 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     };
 
     if (cancelled()) {
-      return end({ type: "escalated", reason: why, attempt });
+      return end({ type: "escalated", ...why, attempt });
     }
 
     if (now - (started.at ?? now) > step.watch.wait * 1000) {
       return end({
         type: "escalated",
+        cause: "limit",
         reason: `Step ${name} waited ${step.watch.wait} s, its wait limit.`,
         attempt,
       });
@@ -1422,7 +1454,13 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
             break;
           case "escalated":
             if (event.attempt === undefined) {
-              entries.push({ entry: "escalation", step: at, reason: event.reason, at: event.at });
+              entries.push({
+                entry: "escalation",
+                step: at,
+                reason: event.reason,
+                cause: event.cause,
+                at: event.at,
+              });
             } else {
               entries[entryOf(event.attempt)] = {
                 entry: "attempt",
@@ -1432,6 +1470,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
                 started: startOf(event.attempt),
                 ended: event.at,
                 escalated: event.reason,
+                cause: event.cause,
                 errors: event.errors !== undefined,
               };
               withUsage(entryOf(event.attempt), event.usage);
@@ -1617,7 +1656,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
           ...ended(
             spool,
             transcriptOf(definitionOf(events).workflow.steps[started.step]),
-            cancelledReason(started.step),
+            cancelledBy(started.step),
           ),
         });
         unspool(spool);
@@ -1713,7 +1752,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
           ...ended(
             spool,
             transcriptOf(workflow.steps[state.step.name]),
-            `Step ${state.step.name} was interrupted.`,
+            because("interrupted", `Step ${state.step.name} was interrupted.`),
           ),
         });
         unspool(spool);
@@ -1746,7 +1785,12 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       const upgraded = unacceptedEngine(commission, events);
 
       if (upgraded !== undefined) {
-        write(commission, events, { type: "escalated", reason: upgraded, engine: engineVersion() });
+        write(commission, events, {
+          type: "escalated",
+          cause: "upgrade",
+          reason: upgraded,
+          engine: engineVersion(),
+        });
 
         continue;
       }
@@ -1758,6 +1802,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       if (attempts.length >= step.budget) {
         write(commission, events, {
           type: "escalated",
+          cause: "budget",
           reason: `Step ${name} has spent its budget of ${step.budget} attempts.`,
         });
 
@@ -1769,7 +1814,11 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       const overspent = spent === undefined ? undefined : moneyLeft(spent, workflow.usd!);
 
       if (overspent !== undefined && "reason" in overspent) {
-        write(commission, events, { type: "escalated", reason: overspent.reason });
+        write(commission, events, {
+          type: "escalated",
+          cause: "money",
+          reason: overspent.reason,
+        });
 
         continue;
       }
@@ -1803,6 +1852,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
         if (repeated) {
           write(commission, events, {
             type: "escalated",
+            cause: "repeat",
             reason: `Step ${name} was already attempted on this subject and these inputs.`,
           });
 
@@ -1830,16 +1880,22 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
 
         const problem =
           step.each === undefined && requests.hashes.length === 0
-            ? `Step ${name}'s request names no document.`
+            ? because("inputs", `Step ${name}'s request names no document.`)
             : requests.hashes.length > step.width
-              ? `Step ${name} has ${requests.hashes.length} children to start, over its width of ${step.width}.`
+              ? because(
+                  "limit",
+                  `Step ${name} has ${requests.hashes.length} children to start, over its width of ${step.width}.`,
+                )
               : attempts.some(
                     (event) =>
                       event.type === "attempt-started" &&
                       event.subject === state.subject &&
                       isDeepStrictEqual(event.inputs, inputs),
                   )
-                ? `Step ${name} was already attempted on this subject and these inputs.`
+                ? because(
+                    "repeat",
+                    `Step ${name} was already attempted on this subject and these inputs.`,
+                  )
                 : undefined;
 
         write(
@@ -1855,7 +1911,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
                 process: self,
                 engine: engineVersion(),
               }
-            : { type: "escalated", reason: problem },
+            : { type: "escalated", ...problem },
         );
 
         continue;
@@ -1916,7 +1972,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       })();
 
       if (isText(prepared)) {
-        write(commission, events, { type: "escalated", reason: prepared });
+        write(commission, events, { type: "escalated", cause: "engine", reason: prepared });
 
         continue;
       }
@@ -1948,6 +2004,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       if (sourceInput !== undefined && built === undefined) {
         write(commission, events, {
           type: "escalated",
+          cause: "inputs",
           reason: `Step ${name}'s workspace input ${sourceInput} holds no artifact.`,
         });
 
@@ -1965,6 +2022,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       if (foreign !== undefined) {
         write(commission, events, {
           type: "escalated",
+          cause: "inputs",
           reason: `Step ${name}'s workspace cannot add the ${foreign.artifact.kind} ${foreign.branch} as a branch of a ${built?.artifact.kind}.`,
         });
 
@@ -1997,6 +2055,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
 
         write(commission, events, {
           type: "escalated",
+          cause: "limit",
           reason: `Step ${name}'s ${what} ${bytes} bytes, over its input limit of ${step.limits.input}.`,
         });
 
@@ -2014,6 +2073,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       if (repeated) {
         write(commission, events, {
           type: "escalated",
+          cause: "repeat",
           reason: `Step ${name} was already attempted on this subject and these inputs.`,
         });
 
@@ -2047,8 +2107,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       const cancelled = () => requested.get(commission, attempt) !== undefined;
 
       // Why it must stop: the owner cancelled it, or its parent withdrew the commission.
-      const stopping = () =>
-        cancelled() ? (withdrawalOf(commission) ?? cancelledReason(name)) : undefined;
+      const stopping = () => (cancelled() ? stoppedWhy(commission, name) : undefined);
 
       // Each note the attempt writes is an event of its own, after attempt-started. A note
       // changes no state and this attempt is the commission's one writer, so it is appended at
@@ -2125,9 +2184,10 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
           try {
             return ended(spool, step.limits.transcript, failed);
           } catch (keeping) {
-            return {
-              reason: `${failed}; its transcript could not be kept: ${keeping instanceof Error ? keeping.message : String(keeping)}`,
-            };
+            return because(
+              "engine",
+              `${failed.reason}; its transcript could not be kept: ${keeping instanceof Error ? keeping.message : String(keeping)}`,
+            );
           }
         })();
 
@@ -2489,13 +2549,16 @@ type Allowance = { step?: number; commission?: { limit: number; spent: number } 
 
 // Why an attempt that has reported costing `usd` must stop, if it must: over its step's money
 // limit, or with what its commission spent before it, over the commission's.
-function overMoney(name: string, usd: number, money: Allowance): string | undefined {
+function overMoney(name: string, usd: number, money: Allowance): Why | undefined {
   if (money.step !== undefined && usd > money.step) {
-    return `Step ${name} reached its money limit of $${money.step}.`;
+    return because("money", `Step ${name} reached its money limit of $${money.step}.`);
   }
 
   if (money.commission !== undefined && money.commission.spent + usd > money.commission.limit) {
-    return `The commission reached its money limit of $${money.commission.limit}.`;
+    return because(
+      "money",
+      `The commission reached its money limit of $${money.commission.limit}.`,
+    );
   }
 
   return undefined;
@@ -2660,7 +2723,7 @@ type Input =
 
 type Store = ReturnType<typeof createStore>;
 
-type Ending = Extract<CommissionEvent, { type: "attempt-completed" | "escalated" }>;
+type Ending = Extract<CommissionEvent, { type: "attempt-completed" }> | Escalation;
 
 // The bytes one note may hold: a line for the owner to read, not a log.
 const noteLimit = 4096;
@@ -2729,7 +2792,7 @@ async function removed(directory: string): Promise<void> {
 
 // Why the step must stop if an empty area of its access is full, seen through its sandbox's root,
 // or undefined. The sandbox is bwrap's child, in its own mount namespace.
-function filled(sandbox: number, access: Access, name: string): string | undefined {
+function filled(sandbox: number, access: Access, name: string): Why | undefined {
   let root;
 
   try {
@@ -2752,7 +2815,10 @@ function filled(sandbox: number, access: Access, name: string): string | undefin
       })();
 
       if (free === 0) {
-        return `Step ${name} filled ${area.path}, its area of ${area.size} bytes.`;
+        return because(
+          "limit",
+          `Step ${name} filled ${area.path}, its area of ${area.size} bytes.`,
+        );
       }
     }
   }
@@ -2763,7 +2829,8 @@ function filled(sandbox: number, access: Access, name: string): string | undefin
 // How often, in milliseconds, the engine running an attempt looks for the owner's cancel.
 const cancelLook = 1000;
 
-const cancelledReason = (step: string) => `Step ${step} was cancelled by the owner.`;
+const cancelledBy = (step: string) =>
+  because("cancelled", `Step ${step} was cancelled by the owner.`);
 
 // Checks that fail in a row before a watch escalates: one or two may be a passing outage.
 const failuresInARow = 3;
@@ -2779,17 +2846,18 @@ function waits(step: Definition["workflow"]["steps"][string] | undefined): boole
 }
 
 // The engine's own failure during a step's attempt, such as a full disk.
-const failedIn = (step: string, message: string) => `Step ${step} failed in the engine: ${message}`;
+const failedIn = (step: string, message: string) =>
+  because("engine", `Step ${step} failed in the engine: ${message}`);
 
 // The end of a completed attempt stopped, for `reason`, before it was written: an escalation, with
 // its transcript and errors.
 function cancelledEnding(
   completed: Extract<Ending, { type: "attempt-completed" }>,
-  reason: string,
+  why: Why,
 ): Ending {
   const ending: Ending = {
     type: "escalated",
-    reason,
+    ...why,
     attempt: completed.attempt,
     transcript: completed.transcript,
   };
@@ -2978,7 +3046,7 @@ async function prepare(input_: string, step: Runnable, given: Given): Promise<vo
 async function run(
   step: Runnable,
   given: Given,
-  stopping: () => string | undefined,
+  stopping: () => Why | undefined,
   note: (text: string, from: "step" | "engine") => void,
   store: Store,
   spool: Spool,
@@ -3036,20 +3104,27 @@ async function run(
   };
 
   // A session over its limit is not kept, and the reason says so.
-  const escalate = (reason: string): Ending =>
+  const escalate = ({ cause, reason }: Why): Ending =>
     spooling !== undefined
-      ? recorded<Extract<Ending, { type: "escalated" }>>({
+      ? recorded<Escalation>({
           type: "escalated",
+          cause,
           reason:
             left !== undefined && "over" in left
               ? `${reason}${unkept(left.over, step.limits.transcript)}`
               : reason,
           attempt,
         })
-      : { type: "escalated", reason, attempt };
+      : { type: "escalated", cause, reason, attempt };
 
   const { disk } = step.limits;
-  const overDisk = `Step ${name} used more than its disk limit of ${disk} bytes.`;
+
+  const overDisk = because("limit", `Step ${name} used more than its disk limit of ${disk} bytes.`);
+
+  const overTranscript = because(
+    "limit",
+    `Step ${name} wrote more than its transcript limit of ${step.limits.transcript} bytes.`,
+  );
 
   // Measured while the attempt's programs run, so a runaway is stopped within a look; and after
   // each, so one that wrote and exited at once is caught.
@@ -3068,7 +3143,7 @@ async function run(
 
   // The engine's own failure while a program ran, such as a note it could not write. It is caught
   // where it happens, since a throw from an event handler or timer would end the engine's process.
-  let fault: string | undefined;
+  let fault: Why | undefined;
 
   // Why the attempt must stop now, if it must.
   const halt = () => {
@@ -3121,7 +3196,7 @@ async function run(
       }
 
       if (failed !== undefined) {
-        return escalate(failed);
+        return escalate(because("kind", failed));
       }
     }
 
@@ -3145,7 +3220,7 @@ async function run(
       const opened = await openBrokers(network.brokers ?? {}, bounds);
 
       if ("failed" in opened) {
-        return escalate(`Step ${name}'s ${opened.failed}`);
+        return escalate(because("broker", `Step ${name}'s ${opened.failed}`));
       }
 
       brokers = opened;
@@ -3209,11 +3284,11 @@ async function run(
     // The sandbox's process: under script for an attended step, once script has started it.
     const sandbox = () => (attended ? underTerminal(child.pid!) : child.pid!);
 
-    let stopped: string | undefined;
+    let stopped: Why | undefined;
 
     // The first reason to stop is the one recorded; stopping twice would signal a group that may be gone.
     // script would kill an attended step with no grace period, so the sandbox is stopped itself.
-    const stopFor = (reason: string) => {
+    const stopFor = (reason: Why) => {
       if (stopped === undefined) {
         stopped = reason;
         stop(child, sandbox() ?? child.pid!);
@@ -3234,7 +3309,9 @@ async function run(
 
     // No timer for a limit an attended step declares unbounded.
     const timer = (seconds: number | "unbounded", reason: string) =>
-      seconds === "unbounded" ? undefined : setTimeout(() => stopFor(reason), seconds * 1000);
+      seconds === "unbounded"
+        ? undefined
+        : setTimeout(() => stopFor(because("limit", reason)), seconds * 1000);
 
     const idle = timer(step.limits.idle, `Step ${name} was idle for ${step.limits.idle} s.`);
 
@@ -3273,9 +3350,7 @@ async function run(
       }
 
       if (written > step.limits.transcript) {
-        stopFor(
-          `Step ${name} wrote more than its transcript limit of ${step.limits.transcript} bytes.`,
-        );
+        stopFor(overTranscript);
       }
     };
 
@@ -3292,9 +3367,7 @@ async function run(
       written += chunk.length;
 
       if (written > step.limits.transcript) {
-        stopFor(
-          `Step ${name} wrote more than its transcript limit of ${step.limits.transcript} bytes.`,
-        );
+        stopFor(overTranscript);
 
         return;
       }
@@ -3317,7 +3390,9 @@ async function run(
       }
 
       if (line.length > noteLimit) {
-        stopFor(`Step ${name} wrote a note over its limit of ${noteLimit} bytes.`);
+        stopFor(
+          because("limit", `Step ${name} wrote a note over its limit of ${noteLimit} bytes.`),
+        );
 
         return;
       }
@@ -3341,9 +3416,7 @@ async function run(
       written += chunk.length;
 
       if (written > step.limits.transcript) {
-        stopFor(
-          `Step ${name} wrote more than its transcript limit of ${step.limits.transcript} bytes.`,
-        );
+        stopFor(overTranscript);
 
         return;
       }
@@ -3366,7 +3439,12 @@ async function run(
       }
 
       if (line.length > noteLimit) {
-        stopFor(`Step ${name} wrote a usage report over its limit of ${noteLimit} bytes.`);
+        stopFor(
+          because(
+            "limit",
+            `Step ${name} wrote a usage report over its limit of ${noteLimit} bytes.`,
+          ),
+        );
 
         return;
       }
@@ -3380,7 +3458,7 @@ async function run(
       const report = usageIn(text);
 
       if (report === undefined) {
-        stopFor(`Step ${name} wrote a usage report that is not one: ${text}.`);
+        stopFor(because("claim", `Step ${name} wrote a usage report that is not one: ${text}.`));
 
         return;
       }
@@ -3423,7 +3501,7 @@ async function run(
     left = sessionLeft(output, step.limits.transcript);
 
     if (closed instanceof Error) {
-      return escalate(`Step ${name} could not start: ${closed.code}.`);
+      return escalate(because("exit", `Step ${name} could not start: ${closed.code}.`));
     }
 
     const [code, signal] = closed;
@@ -3441,11 +3519,18 @@ async function run(
     if (code !== 0) {
       // systemd stops the whole scope; only it knows why.
       if (overMemory(unit)) {
-        return escalate(`Step ${name} reached its memory limit of ${bounds.memory} bytes.`);
+        return escalate(
+          because("limit", `Step ${name} reached its memory limit of ${bounds.memory} bytes.`),
+        );
       }
 
       return escalate(
-        signal ? `Step ${name} was ended by ${signal}.` : `Step ${name} exited with code ${code}.`,
+        because(
+          "exit",
+          signal
+            ? `Step ${name} was ended by ${signal}.`
+            : `Step ${name} exited with code ${code}.`,
+        ),
       );
     }
 
@@ -3461,21 +3546,27 @@ async function run(
       left = undefined;
 
       return escalate(
-        `Step ${name} left a session of ${over} bytes, over its transcript limit of ${step.limits.transcript}.`,
+        because(
+          "limit",
+          `Step ${name} left a session of ${over} bytes, over its transcript limit of ${step.limits.transcript}.`,
+        ),
       );
     }
 
     // Unknown cost is not zero.
     if (money.step !== undefined && usage?.usd === undefined) {
       return escalate(
-        `Step ${name} reported no cost, so it counts as over its money limit of $${money.step}.`,
+        because(
+          "money",
+          `Step ${name} reported no cost, so it counts as over its money limit of $${money.step}.`,
+        ),
       );
     }
 
     const claim = await parse(step, name, output, given);
 
     if ("reason" in claim) {
-      return escalate(claim.reason);
+      return escalate(because("claim", claim.reason));
     }
 
     // Each artifact whose kind has a verifier is accepted by it, which may keep files. A new one
@@ -3514,7 +3605,7 @@ async function run(
         }
 
         if ("reason" in result) {
-          return escalate(result.reason);
+          return escalate(result);
         }
 
         verified.push({ artifact, kept: result.kept });
@@ -4368,13 +4459,12 @@ async function verify(
   subject: Subject,
   store: Store,
   cancelled: () => boolean,
-): Promise<{ kept: Record<string, string> } | { reason: string }> {
+): Promise<{ kept: Record<string, string> } | Why> {
   const { input, output, scratch } = await areaFor(spool.work, "verifier");
   const { kind } = claim;
 
-  const failed = (why: string) => ({
-    reason: `The ${kind} verifier failed on step ${name}'s claim: ${why}`,
-  });
+  const failed = (why: string) =>
+    because("kind", `The ${kind} verifier failed on step ${name}'s claim: ${why}`);
 
   if (claim.body !== undefined) {
     await writeFile(join(input, "body"), claim.body);
@@ -4413,7 +4503,10 @@ async function verify(
   const exactly = (fields: readonly string[]) => hasExactly(verdict, fields);
 
   if (verdict?.accepted === false && isText(verdict.reason) && exactly(["accepted", "reason"])) {
-    return { reason: `Step ${name} claimed a ${kind} its verifier rejected: ${verdict.reason}` };
+    return because(
+      "claim",
+      `Step ${name} claimed a ${kind} its verifier rejected: ${verdict.reason}`,
+    );
   }
 
   if (

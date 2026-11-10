@@ -350,6 +350,7 @@ test("the Claude Code adapter refuses a step whose access names no broker for it
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "exit",
     reason: "Step plan exited with code 2.",
   });
   assert.match(engine.errors("first", 1).toString(), /through the broker anthropic/);
@@ -392,6 +393,7 @@ test("the Claude Code adapter refuses to start claude where its managed settings
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "exit",
     reason: "Step plan exited with code 2.",
   });
   assert.match(
@@ -552,6 +554,7 @@ for (const args of [
 
     assert.partialDeepStrictEqual(await engine.advance("first"), {
       status: "escalated",
+      cause: "exit",
       reason: "Step plan exited with code 2.",
     });
   });
@@ -563,6 +566,7 @@ test("a Claude Code run that fails escalates its commission", async (t) => {
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
     step: { name: "plan" },
+    cause: "exit",
     reason: "Step plan exited with code 3.",
   });
 });
@@ -576,6 +580,7 @@ test("a Claude Code run that finishes with an error escalates, though the agent 
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "exit",
     reason: "Step plan exited with code 1.",
   });
   assert.match(
@@ -592,6 +597,7 @@ test("a Claude Code run that ends without a result escalates, though the agent c
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "exit",
     reason: "Step plan exited with code 1.",
   });
   assert.match(engine.errors("first", 1).toString(), /^claude ended without a result\.$/m);
@@ -667,6 +673,7 @@ for (const { what, loaded, stopped } of [
 
     assert.partialDeepStrictEqual(await engine.advance("first"), {
       status: "escalated",
+      cause: "exit",
       reason: "Step plan exited with code 1.",
     });
     assert.partialDeepStrictEqual(engine.record("first").entries, [
@@ -687,6 +694,7 @@ test("the Claude Code adapter stops claude before its first turn when it did not
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "exit",
     reason: "Step plan exited with code 1.",
   });
   assert.partialDeepStrictEqual(engine.record("first").entries, [
@@ -986,6 +994,7 @@ test("the Claude Code adapter refuses to continue another harness's session", as
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "exit",
     reason: "Step plan exited with code 1.",
   });
   assert.match(

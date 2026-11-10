@@ -383,6 +383,7 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
     step: step("command"),
     subject: "string",
     reason: "string",
+    cause: "string",
     since: "number",
   };
 
@@ -466,7 +467,7 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
   json("commission", "failing", "second", "--title", "Greet", "--body", "Say hello.");
   assert.deepEqual(json("advance", "second"), escalated);
   assert.deepEqual(json("show", "second").entries, [
-    { entry: "attempt", ...timed, escalated: "string", errors: true },
+    { entry: "attempt", ...timed, escalated: "string", cause: "string", errors: true },
   ]);
 
   const failed = JSON.parse(run(["state", "second", "--json"], factory).stdout);
@@ -483,6 +484,7 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
     entry: "escalation",
     step: "string",
     reason: "string",
+    cause: "string",
     at: "number",
   });
 
@@ -563,6 +565,7 @@ test("the CLI exits 0 when a commission escalates, since the call succeeded", as
   assert.equal(status, 0);
   assert.partialDeepStrictEqual(JSON.parse(stdout), {
     status: "escalated",
+    cause: "exit",
     reason: "Step build exited with code 3.",
   });
 });
@@ -1067,6 +1070,7 @@ test(
     assert.notEqual(code, 0);
     assert.partialDeepStrictEqual(JSON.parse(run(["advance", "first", "--json"], factory).stdout), {
       status: "escalated",
+      cause: "interrupted",
       reason: "Step build was interrupted.",
     });
     assert.equal(await readFile(join(directory, "steps"), "utf8"), "start\n");

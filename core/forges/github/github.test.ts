@@ -443,6 +443,7 @@ test("a pull request whose head moved after it was opened is not landed, and the
   // The land step, the third attempt, says why GitHub refused.
   assert.partialDeepStrictEqual(ended, {
     status: "escalated",
+    cause: "exit",
     reason: "Step land exited with code 1.",
   });
   assert.match(engine.errors("first", 3).toString(), /\(409\): .*Head branch was modified/);
