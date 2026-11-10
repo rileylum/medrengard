@@ -1,6 +1,14 @@
 import { execFileSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, statfsSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statfsSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import type { Access } from "./definition.ts";
 
@@ -26,49 +34,151 @@ const scoped = ["XDG_RUNTIME_DIR", "INVOCATION_ID"];
 
 const runtime = process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid!()}`;
 
-/**
- * systemd-run's arguments, before the command they run, that put it in a scope of the owner's
- * systemd named `unit`, which holds its memory and processes within `bounds`.
- */
-export function scope(unit: string, bounds: Bounds): string[] {
-  return [
-    "--user",
-    "--scope",
-    "--quiet",
-    // Otherwise systemd-run replaces $NAME in the command's own arguments, and $$ with $.
-    "--expand-environment=no",
-    "--unit",
-    unit,
-    "-p",
-    `MemoryMax=${bounds.memory}`,
-    // Swap would let a program past its memory limit by slowing the machine instead.
-    "-p",
-    "MemorySwapMax=0",
-    "-p",
-    `TasksMax=${bounds.processes}`,
-    "--",
-  ];
-}
+// Where a step whose access grants cgroups finds its own control group, and so where an engine
+// running in such a step finds the one it runs in.
+const hierarchy = "/sys/fs/cgroup";
+
+// Whether this engine runs in a step whose access grants cgroups. No systemd answers it there, and
+// its control group is its own to divide, so it holds each program in a group it makes, with the
+// same limits. On the owner's machine the hierarchy's root is not the owner's to write.
+const delegated = (() => {
+  try {
+    accessSync(join(hierarchy, "cgroup.subtree_control"), constants.W_OK);
+
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+// Runs the rest in place of the shell. A shell that was not given SHLVL sets it, and sets it again
+// as it hands over: a program started through one is given only what its access names, so env
+// takes the shell's own away. One that was given it hands it on as it was.
+const handOver = `[ "\${SHLVL:-1}" -le 1 ] && exec env -u SHLVL "$@"
+exec "$@"`;
+
+// Makes the control group $1 with $2 bytes of memory, no swap and $3 processes, moves into it and
+// runs the rest: what systemd-run does, where there is no systemd to ask.
+const enter = `mkdir "$1" && echo "$2" > "$1/memory.max" && echo 0 > "$1/memory.swap.max" &&
+  echo "$3" > "$1/pids.max" && echo $$ > "$1/cgroup.procs" || exit 125
+shift 3
+${handOver}`;
+
+// Divides the control group this runs in, $1 or else the one /proc names, so what it runs can make
+// groups of its own there: a group holding processes cannot give its children limits, so this one
+// moves to a leaf, main, first. The argument equal to $3 becomes the group's path.
+//
+// systemd forgets a scope once it ends, and says nothing of memory for one it does not manage
+// alone. So with $2, a process outside the program's group and session waits for it to end, then
+// leaves the file $2 if the group itself ran out of memory, whatever its own groups did. It holds
+// the program's stderr, so the engine sees the program closed only once the file is there.
+const divide = `group=\${1:-${hierarchy}$(cut -d: -f3- /proc/self/cgroup)}
+marker=$2
+sentinel=$3
+shift 3
+mkdir "$group/main" && echo $$ > "$group/main/cgroup.procs" &&
+  echo "+memory +pids" > "$group/cgroup.subtree_control" || exit 125
+if [ -n "$marker" ]; then
+  setsid sh -c 'while kill -0 "$1" 2> /dev/null; do sleep 0.05; done
+    grep -q "^oom [1-9]" "$2/memory.events.local" && : > "$3"' sh $$ "$group" "$marker" < /dev/null > /dev/null &
+fi
+for argument; do
+  shift
+  [ "$argument" = "$sentinel" ] && argument=$group
+  set -- "$@" "$argument"
+done
+${handOver}`;
+
+// The scopes whose memory systemd does not answer for, and the file each leaves if it ran out.
+const markers = new Map<string, string>();
 
 /**
- * The command that runs `argv` outside any sandbox, with `env`, in a scope of the owner's systemd
- * that holds it within `bounds`, and the scope's unit.
+ * The command that runs `argv` held within `bounds`, as the unit `unit`: in a scope of the owner's
+ * systemd, or, for an engine in a step whose access grants cgroups, in a control group of its own
+ * making. With `divided`, the program may divide its group in turn: its argument `sentinel`
+ * becomes the group's path, and `marker` a file left if the group itself runs out of memory.
  */
-export function inScope(argv: readonly string[], bounds: Bounds, env: NodeJS.ProcessEnv) {
-  const unit = `medrengard-${randomUUID()}`;
+function held(
+  unit: string,
+  bounds: Bounds,
+  argv: readonly string[],
+  divided?: { marker: string; sentinel: string },
+) {
+  const group = join(hierarchy, unit);
+
+  // A group this engine made is still there to read once its program ends: no file is needed.
+  const dividing =
+    divided === undefined
+      ? []
+      : [
+          "sh",
+          "-c",
+          divide,
+          "sh",
+          delegated ? group : "",
+          delegated ? "" : divided.marker,
+          divided.sentinel,
+        ];
+
+  if (delegated) {
+    return {
+      command: "sh",
+      args: [
+        "-c",
+        enter,
+        "sh",
+        group,
+        String(bounds.memory),
+        String(bounds.processes),
+        ...dividing,
+        ...argv,
+      ],
+    };
+  }
+
+  if (divided !== undefined) {
+    markers.set(unit, divided.marker);
+  }
 
   return {
-    unit,
     command: "systemd-run",
-    args: [...scope(unit, bounds), ...argv],
-    env: { XDG_RUNTIME_DIR: runtime, ...env },
+    args: [
+      "--user",
+      "--scope",
+      "--quiet",
+      // Otherwise systemd-run replaces $NAME in the command's own arguments, and $$ with $.
+      "--expand-environment=no",
+      "--unit",
+      unit,
+      "-p",
+      `MemoryMax=${bounds.memory}`,
+      // Swap would let a program past its memory limit by slowing the machine instead.
+      "-p",
+      "MemorySwapMax=0",
+      "-p",
+      `TasksMax=${bounds.processes}`,
+      // The scope's group is the program's to divide: systemd leaves what is under it alone.
+      ...(divided === undefined ? [] : ["-p", "Delegate=yes"]),
+      "--",
+      ...dividing,
+      ...argv,
+    ],
   };
 }
 
 /**
+ * The command that runs `argv` outside any sandbox, with `env`, held within `bounds`, and its unit.
+ */
+export function inScope(argv: readonly string[], bounds: Bounds, env: NodeJS.ProcessEnv) {
+  const unit = `medrengard-${randomUUID()}`;
+
+  return { unit, ...held(unit, bounds, argv), env: { XDG_RUNTIME_DIR: runtime, ...env } };
+}
+
+/**
  * The command that runs `argv` in `areas.workspace`, which it sees as /workspace, under `access`, within `bounds`, the
- * environment to start it with, and the systemd scope it runs in: bubblewrap, in a scope of the
- * owner's systemd, which holds its memory and processes.
+ * environment to start it with, and the unit it runs as: bubblewrap, held within `bounds` as
+ * `inScope` holds a program.
  */
 export function confine(
   access: Access,
@@ -164,55 +274,69 @@ export function confine(
       ? []
       : scoped.filter((name) => !access.environment.includes(name) && !Object.hasOwn(passed, name));
 
+  // A step that may divide its control group finds it where any program looks for the hierarchy.
+  const sentinel = `${unit}.cgroup`;
+  const marker = join(areas.scratch, "over-memory");
+
+  if (access.cgroups === true) {
+    mkdirSync(areas.scratch, { recursive: true });
+  }
+
   return {
     unit,
-    command: "systemd-run",
-    args: [
-      ...scope(unit, bounds),
-      "bwrap",
-      ...unset.flatMap((name) => ["--unsetenv", name]),
-      // Each namespace by name: --unshare-all only tries for the user and cgroup ones, and carries
-      // on without them where the kernel refuses. The PID namespace means nothing the step starts
-      // outlives bwrap, and bwrap dies with the engine.
-      "--die-with-parent",
-      "--unshare-user",
-      "--unshare-cgroup",
-      "--unshare-ipc",
-      "--unshare-uts",
-      "--unshare-pid",
-      ...(access.network === true ? [] : ["--unshare-net"]),
-      ...(access.sandboxes ? [] : ["--disable-userns"]),
-      ...binds,
-      // Before the root is read-only, so their places can be made.
-      ...forwarding,
-      // Read-only once the mounts under it are made; they are mounts of their own, so keep theirs.
-      "--remount-ro",
-      areas.record,
-      "--proc",
-      "/proc",
-      "--dev",
-      "/dev",
-      // bwrap's /dev is a writable tmpfs: only shared memory, which programs expect to write, is
-      // left writable. Its pages count against the scope's MemoryMax, which bounds it.
-      "--tmpfs",
-      "/dev/shm",
-      "--remount-ro",
-      "/dev",
-      ...root,
-      "--chdir",
-      seen.workspace,
-      "--",
-      ...(network === undefined
-        ? argv
-        : [
-            "/network/node",
-            "/network/forward.mts",
-            "/network/socket",
-            ...brokers.map(([name]) => `${name}=/network/brokers/${name}`),
-            "--",
-            ...argv,
-          ]),
-    ],
+    ...held(
+      unit,
+      bounds,
+      [
+        "bwrap",
+        ...unset.flatMap((name) => ["--unsetenv", name]),
+        // Each namespace by name: --unshare-all only tries for the user and cgroup ones, and carries
+        // on without them where the kernel refuses. The PID namespace means nothing the step starts
+        // outlives bwrap, and bwrap dies with the engine.
+        "--die-with-parent",
+        "--unshare-user",
+        // A group can be moved into only from the namespace it was made in, so a step that divides
+        // its own keeps the engine's.
+        ...(access.cgroups === true ? [] : ["--unshare-cgroup"]),
+        "--unshare-ipc",
+        "--unshare-uts",
+        "--unshare-pid",
+        ...(access.network === true ? [] : ["--unshare-net"]),
+        ...(access.sandboxes ? [] : ["--disable-userns"]),
+        ...binds,
+        ...(access.cgroups === true ? ["--bind", sentinel, hierarchy] : []),
+        // Before the root is read-only, so their places can be made.
+        ...forwarding,
+        // Read-only once the mounts under it are made; they are mounts of their own, so keep theirs.
+        "--remount-ro",
+        areas.record,
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        // bwrap's /dev is a writable tmpfs: only shared memory, which programs expect to write, is
+        // left writable. Its pages count against the scope's MemoryMax, which bounds it.
+        "--tmpfs",
+        "/dev/shm",
+        "--remount-ro",
+        "/dev",
+        ...root,
+        "--chdir",
+        seen.workspace,
+        "--",
+        ...(network === undefined
+          ? argv
+          : [
+              "/network/node",
+              "/network/forward.mts",
+              "/network/socket",
+              ...brokers.map(([name]) => `${name}=/network/brokers/${name}`),
+              "--",
+              ...argv,
+            ]),
+      ],
+      access.cgroups === true ? { marker, sentinel } : undefined,
+    ),
     env: {
       XDG_RUNTIME_DIR: runtime,
       ...passed,
@@ -223,10 +347,23 @@ export function confine(
 }
 
 /**
- * Whether the program that ran in the scope `unit` was stopped for using more than its memory.
+ * Whether the program that ran as the unit `unit` was stopped for using more than its memory.
  * systemd keeps a scope that failed until it is reset, so this resets it.
  */
 export function overMemory(unit: string): boolean {
+  // A group this engine made: whether it ran out of memory itself, not a group under it.
+  if (delegated) {
+    return /^oom [1-9]/m.test(readFileSync(join(hierarchy, unit, "memory.events.local"), "utf8"));
+  }
+
+  const marker = markers.get(unit);
+
+  if (marker !== undefined) {
+    markers.delete(unit);
+
+    return existsSync(marker);
+  }
+
   const scope = `${unit}.scope`;
 
   const env = { ...process.env, XDG_RUNTIME_DIR: runtime };

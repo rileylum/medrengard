@@ -34,6 +34,7 @@ export const access: Access = {
 | `values`      | no       | Variables set to text, over the engine's own. Recorded with the definition, so never a secret.      |
 | `workspace`   | yes      | `"write"` or `"read"`: the mode of the step's workspace. A reviewer can have `"read"`.              |
 | `sandboxes`   | yes      | Whether the step's processes may make namespaces of their own, as a sandbox inside the step's does. |
+| `cgroups`     | no       | Whether the step has its own control group to divide. See [Control groups](#control-groups).        |
 
 A commission is refused before it starts if a step's access breaks a rule below, or holds a field
 this table lacks.
@@ -82,6 +83,23 @@ And never has:
 Without `sandboxes`, the kernel refuses the step's processes any user namespace. An agent that runs
 tools that sandbox themselves, such as bubblewrap, Codex or Chromium, needs `sandboxes: true`. A
 namespace the step makes still sees nothing the access hides and writes nothing it made read-only.
+
+## Control groups
+
+With `cgroups: true`, a step finds its own control group at `/sys/fs/cgroup`, and no group but its
+own. It can make groups under it and bound the memory and processes of programs it runs.
+
+- An engine inside the step does this for its own steps, with the same limits, since it cannot
+  reach systemd. So Medrengard's own tests run in a step with `sandboxes: true, cgroups: true`,
+  from a copy of the repository outside `/workspace`, which the engine under test keeps for its own
+  steps.
+- Whatever the step makes stays within its own memory and process limits.
+- The step keeps the engine's control-group namespace, so `/proc/self/cgroup` names where its group
+  sits on the machine.
+- Going over its memory limit stops the process that went over, not every process of the step. The
+  commission escalates naming the limit if the step then fails.
+- A program the step bounded itself and lost is the step's own business: if the step fails for it,
+  the escalation names the step's exit, not a limit.
 
 ## Environment
 

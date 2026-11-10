@@ -102,6 +102,10 @@ export type Agent = {
  *
  * `sandboxes` lets the step's processes make namespaces of their own, as a sandbox inside the
  * step's does; without it the kernel refuses them, which keeps more of it out of reach.
+ *
+ * `cgroups` gives the step its own control group to divide, at /sys/fs/cgroup, so it can bound
+ * the memory and processes of programs it runs, as an engine inside it does. The step sees no
+ * group but its own, and what it makes there stays within its own limits.
  */
 export type Access = {
   paths: readonly (
@@ -122,6 +126,7 @@ export type Access = {
   values?: Readonly<Record<string, string>>;
   workspace: "read" | "write";
   sandboxes: boolean;
+  cgroups?: boolean;
 };
 
 /**
