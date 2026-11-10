@@ -2331,6 +2331,7 @@ function resolve(
             .filter((artifact) => artifact.kind === query.kind)
             .map(({ hash }) => ({ hash, commission }));
 
+          // One stored before a children query had to say took each child's latest.
           return query.take === "all" ? named : named.slice(-1);
         });
       }

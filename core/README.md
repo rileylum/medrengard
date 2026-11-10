@@ -365,7 +365,7 @@ fanOut: {
 },
 gather: {
   kind: "agent",
-  inputs: { results: { children: "fanOut", kind: "document" } },
+  inputs: { results: { children: "fanOut", kind: "document", take: "latest" } },
   // ...
 },
 ```
@@ -404,8 +404,8 @@ gather: {
   children still unfinished are withdrawn, one in flight stopped first and its transcript kept:
   they finish, recorded as withdrawn, not as your decision. A retry starts a fresh set.
 
-- **Reading the results.** `{ children: <step>, kind, take? }` gives a later step each child's
-  latest artifact of that kind, or all of them with `take: "all"`, for every child that reached
+- **Reading the results.** `{ children: <step>, kind, take }` gives a later step each child's
+  latest artifact of that kind with `take: "latest"`, or all of them with `take: "all"`, for every child that reached
   its end, failed reviews included, in the order commissioned. `input.json` names each one's
   child.
 - **Taking one as the parent's.** A step may adopt one of its inputs instead of writing a claim

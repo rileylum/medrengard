@@ -22,8 +22,9 @@ export type Query<N extends string = string> =
   | { session: N }
   // The artifacts of `kind` the children of the children step N claimed, from its latest attempt:
   // each child that reached its end, in the order they were commissioned, its latest artifact of
-  // the kind, or all of them.
-  | { children: N; kind: string; take?: "latest" | "all" }
+  // the kind, or all of them. It says which: a record's query takes all unless told, and each
+  // child's latest is what a parent most often wants, so neither is left to a default here.
+  | { children: N; kind: string; take: "latest" | "all" }
   // The artifacts of related commissions, as each has them when the attempt starts, finished or
   // not: the commission that started this one, as its parent or through a commission step; those
   // it started; or those the same attempt started, but this one. `from` names steps of their

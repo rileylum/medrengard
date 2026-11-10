@@ -172,7 +172,7 @@ const mapping = (directory: string, concurrent = 3, width = 3): Workflows => ({
           { done: "end" },
           directory,
         ),
-        inputs: { results: { children: "fanOut", kind: "document" } },
+        inputs: { results: { children: "fanOut", kind: "document", take: "latest" } },
       },
     },
   },
@@ -320,7 +320,7 @@ const panel = (directory: string, wait: Wait): Workflows => ({
           { done: "end" },
           directory,
         ),
-        inputs: { verdicts: { children: "panel", kind: "verdict" } },
+        inputs: { verdicts: { children: "panel", kind: "verdict", take: "latest" } },
       },
       fix: {
         ...command(
@@ -328,7 +328,7 @@ const panel = (directory: string, wait: Wait): Workflows => ({
           { done: "end" },
           directory,
         ),
-        inputs: { verdicts: { children: "panel", kind: "verdict" } },
+        inputs: { verdicts: { children: "panel", kind: "verdict", take: "latest" } },
       },
     },
   },
@@ -549,7 +549,7 @@ test("a step adopts a child's artifact it was given, which becomes the parent's 
             { done: "end" },
             directory,
           ),
-          inputs: { tries: { children: "tries", kind: "document" } },
+          inputs: { tries: { children: "tries", kind: "document", take: "latest" } },
         },
       },
     },
@@ -751,7 +751,7 @@ const integrating = (directory: string, base: "request" | "commit"): Workflows =
         inputs: {
           base:
             base === "request" ? "request" : { from: ["setup"], kind: "commit", take: "latest" },
-          built: { children: "fanOut", kind: "commit" },
+          built: { children: "fanOut", kind: "commit", take: "latest" },
         },
         workspace: { input: "base", branches: "built" },
       },
