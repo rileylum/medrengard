@@ -4207,6 +4207,7 @@ async function verify(
   await writeFile(
     join(input, "claim.json"),
     JSON.stringify({
+      kind: claim.kind,
       fields: claim.fields,
       body: claim.body === undefined ? undefined : "body",
       subject: { hash: subject.hash, kind: subject.artifact.kind, fields: subject.artifact.fields },

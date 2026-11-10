@@ -155,7 +155,7 @@ A kind's verifier and materialiser are programs, each with its own access and li
 A verifier is a program run after a claim parses, under the step contract:
 
 - the attempt's workspace as its working directory, in the mode its access gives: read-only for the built-in commit verifier;
-- `MEDRENGARD_IN` holding `claim.json`: the claim's fields, its body and the commission's current subject;
+- `MEDRENGARD_IN` holding `claim.json`: the claim's kind and fields, its body and the commission's current subject;
 - `MEDRENGARD_OUT`, where it writes `output.json`: accepted, with the files to keep, or rejected, with a reason.
 
 Kept files go to the store, attached to the artifact. A rejected claim or a failed verifier escalates. The record names the verifier that accepted an artifact, or that its kind has none.

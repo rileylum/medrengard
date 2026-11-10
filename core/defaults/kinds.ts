@@ -14,6 +14,7 @@ const programs: Access & { network: boolean } = {
   paths: [
     ...contract.paths,
     { path: process.execPath, mode: "read" },
+    { path: join(repository, "step"), mode: "read" },
     { path: join(repository, "verifiers"), mode: "read" },
     { path: join(repository, "materialisers"), mode: "read" },
   ],

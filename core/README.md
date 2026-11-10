@@ -759,7 +759,7 @@ commission records the kinds it started with, beside its workflow: editing a kin
 commissions.
 
 A verifier runs after a claim of its kind parses, in the attempt's workspace, in the mode its access
-gives. Its `MEDRENGARD_IN` holds `claim.json`, with the claim's `fields`, its `body` as a path to
+gives. Its `MEDRENGARD_IN` holds `claim.json`, with the claim's `kind` and `fields`, its `body` as a path to
 the file `body` when it has one, and the commission's current `subject`. It writes `output.json`:
 exactly `{ "accepted": true, "keep": [...] }`, naming files in its `MEDRENGARD_OUT` for the store to
 keep, together at most its `kept` bytes, `[]` for none; or exactly `{ "accepted": false, "reason": "..." }`, and
@@ -1157,7 +1157,12 @@ const reply = {
 - `note(text)` writes a note, `reportUsage({ usd, tokens })` a usage report, and `failed(why)`
   says why on stderr and exits 1, so the commission escalates.
 
-The adapters and the GitHub forge's steps are written with it.
+A kind's programs use the same module, which the built-in kinds' access grants them:
+`readClaim()` gives a verifier its `claim.json`, and `accept(keep)` or `reject(reason)` writes its
+verdict; `readArtifact()` gives a materialiser its `artifact.json`, and `readBranches()` the
+artifacts to add as branches, none when the step adds none.
+
+The adapters, the GitHub forge's steps and the built-in kinds' programs are written with it.
 
 `input.json` lists each input's artifacts, oldest first, always as a list. A body is a file at
 `<input>/<hash>`, and `body` holds that path. An agent's skills are directories under `.skills`,

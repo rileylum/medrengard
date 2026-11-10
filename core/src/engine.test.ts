@@ -5431,6 +5431,7 @@ test("a kind's verifier and materialiser are started with exactly the pinned env
 
   assert.equal(await read("verifier-listing"), "body\nclaim.json\n");
   assert.deepEqual(typesIn(await read("verifier.json"), []), {
+    kind: "string",
     fields: { note: "string" },
     body: "string",
     subject: { hash: "string", kind: "string", fields: { title: "string" } },
