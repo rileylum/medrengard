@@ -34,7 +34,7 @@ const system = ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
 
 // Every test's directory is under the temp directory, so a step can reach its own; nothing of the
 // owner's is visible.
-const access: Access = {
+const access: Access & { network: boolean } = {
   paths: [...system, { path: tmpdir(), mode: "write" }],
   network: false,
   environment: [],
@@ -453,7 +453,7 @@ function engineConfined(
   t: TestContext,
   confined: (directory: string) => Access,
   script: string,
-  limits: Partial<Limits> = {},
+  limits: Partial<Record<keyof Limits, number>> = {},
 ) {
   return engineWith(t, (directory) =>
     defineWorkflow({
@@ -1509,6 +1509,8 @@ function agentStep(
   attended = true,
   limits: Partial<Record<"idle" | "attempt", number | "unbounded">> = {},
 ) {
+  // SAFETY: attended or not with any limits, some of which the compiler would refuse, as a
+  // factory it does not check could hold: what the parser then says is what these tests are of.
   return {
     kind: "agent",
     attended,
@@ -1520,7 +1522,7 @@ function agentStep(
     access,
     budget: 1,
     limits: { idle: 1, attempt: 5, transcript: 65536, input: 65536, ...limits },
-  } as const;
+  } as never;
 }
 
 test("an attended step is left ready for the owner to attend: advance starts nothing", async (t) => {
@@ -2508,7 +2510,7 @@ test("a commission runs on the workflow definition it started with", async (t) =
 });
 
 // A command step that names only the limits in `limits` and claims done once it has run `script`.
-function stepLimited(script: string, limits?: Partial<Limits>) {
+function stepLimited(script: string, limits?: Partial<Record<keyof Limits, number>>) {
   const { limits: _named, ...step } = stepRunning(
     `${script}
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
@@ -2639,7 +2641,7 @@ test("a step that names a limit there is not cannot be commissioned", async (t) 
       defineWorkflow({
         start: "build",
         // SAFETY: the workflow module is the owner's JavaScript, which the type cannot hold to.
-        steps: { build: stepLimited("true", { cpu: 1 } as Partial<Limits>) },
+        steps: { build: stepLimited("true", { cpu: 1 } as never) },
       }),
     ),
     {
@@ -4560,7 +4562,7 @@ function engineVerifying(
   t: TestContext,
   script: string,
   given: Partial<NonNullable<Kind["verifier"]>["limits"]> = {},
-  under: Access = access,
+  under: Access & { network: boolean } = access,
 ) {
   return engineWith(
     t,
@@ -5553,7 +5555,7 @@ function engineSpending(
   { step, commission }: { step?: number; commission?: number },
 ) {
   return engineWith(t, (directory) => {
-    const limits: Partial<Limits> & Money = {
+    const limits: Partial<Record<keyof Limits, number>> & Money = {
       idle: 5,
       attempt: 10,
       transcript: 65536,
@@ -5708,6 +5710,8 @@ const planning = {
   budget: 1,
 } as const;
 
+// SAFETY: each a definition the compiler would refuse, as a factory it does not check could hold:
+// what the parser then says is what these tests are of.
 for (const [what, workflow, problem] of [
   [
     "a money limit at an attended step",
@@ -5767,7 +5771,7 @@ for (const [what, workflow, problem] of [
     { start: "build", usd: JSON.parse('"lots"'), steps: { build: planning } },
     "its money limit must be a positive number of dollars",
   ],
-] satisfies [string, Workflow<"build">, string][]) {
+] as [string, never, string][]) {
   test(`commissioning refuses ${what}`, async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 

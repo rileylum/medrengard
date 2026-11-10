@@ -3,7 +3,7 @@
  * and what stands in the way, what it has spent, how it finished. Nothing here does I/O or reads
  * a clock, so the engine's rules can be read, and tested, without running a step.
  */
-import type { Children, Definition, Wait } from "./definition.ts";
+import type { Children, Definition, Routes, Wait } from "./definition.ts";
 import type { Cause, Commissioned, CommissionEvent } from "./replay.ts";
 
 /** A commission's events, oldest first: the one that commissioned it, then the rest. */
@@ -111,6 +111,9 @@ export function routeOf(
     return undefined;
   }
 
+  // A program step's routes and a children step's, read as one: each holds only its own causes.
+  const routes: Routes | undefined = step.escalate;
+
   switch (escalated.cause) {
     case "limit":
     case "claim":
@@ -119,7 +122,7 @@ export function routeOf(
     case "broker":
     case "interrupted":
     case "unmet":
-      return step.escalate?.[escalated.cause] ?? step.escalate?.any;
+      return routes?.[escalated.cause] ?? routes?.any;
     default:
       return undefined;
   }

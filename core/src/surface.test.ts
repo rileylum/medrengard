@@ -17,6 +17,7 @@ const exports = {
     "Children",
     "Commissioning",
     "Definition",
+    "Factory",
     "Limits",
     "Money",
     "Query",

@@ -212,7 +212,7 @@ export function replay<N extends string>(
 
 // position is the event's in the commission's log: an approval step waits since it.
 function arrive<N extends string>(
-  workflow: Workflow<N>,
+  workflow: Workflow<N, "whole">,
   name: N,
   subject: string,
   decision: string | undefined,
@@ -236,7 +236,7 @@ function arrive<N extends string>(
 }
 
 function apply<N extends string>(
-  workflow: Workflow<N>,
+  workflow: Workflow<N, "whole">,
   kinds: Kinds,
   state: CommissionState<N>,
   event: Exclude<CommissionEvent<N>, Commissioned>,

@@ -7,7 +7,6 @@ import type {
   Commissioning,
   Definition,
   Limits,
-  Money,
   Query,
   Skill,
   Wait,
@@ -49,7 +48,7 @@ export function parseDefinition(name: string, stored: string): Definition {
 // commissioning pinned them.
 function refuseChildren(
   name: string,
-  workflow: Workflow<string, { limits: Limits & Money }>,
+  workflow: Workflow<string, "whole">,
   text: string,
   kinds: Kinds,
   limits: Partial<Limits>,
@@ -86,7 +85,10 @@ function refuseChildren(
       const outcome = waitOutcome(declared.until);
 
       const ends = Object.values(parsed.get(child)!.steps).some(
-        (each) => outcome !== undefined && outcome !== null && each.on[outcome] === "end",
+        (each) =>
+          outcome !== undefined &&
+          outcome !== null &&
+          new Map(Object.entries(each.on)).get(outcome) === "end",
       );
 
       if (isText(outcome) && !ends) {
@@ -536,7 +538,7 @@ function parseWorkflow(
   text: string,
   defined: Kinds,
   defaults: Partial<Limits>,
-): Workflow<string, { limits: Limits & Money }> {
+): Workflow<string, "whole"> {
   const invalid = (problem: string) => new Error(`Workflow ${name} is invalid: ${problem}.`);
   const definition = JSON.parse(text).workflow;
   const claimable = Object.keys(defined);
@@ -665,10 +667,14 @@ function parseWorkflow(
         throw invalid(`step ${name}'s routes must each lead a cause to a step`);
       }
 
+      // A children step's attempt runs no program, so it escalates with few causes; unmet is its
+      // alone.
+      const routable = kind === "children" ? waited : ran;
+
       for (const [cause, next] of Object.entries(routes)) {
         if (!routable.includes(cause)) {
           throw invalid(
-            `step ${name} routes ${cause}, which is not a cause a step may route: ${routable.slice(0, -1).join(", ")} or any`,
+            `step ${name} routes ${cause}, which is not a cause a ${kind} step may route: ${routable.slice(0, -1).join(", ")} or any`,
           );
         }
 
@@ -951,7 +957,7 @@ function parseWorkflow(
   }
 
   // SAFETY: every field the engine reads was checked above, and each step's limits made whole.
-  const parsed = definition as Workflow<string, { limits: Limits & Money }>;
+  const parsed = definition as Workflow<string, "whole">;
 
   refuseUnbuildable(parsed, defined, invalid);
 
@@ -982,8 +988,10 @@ function childrenFields(step: Children<string>): string[] {
 
 const positive = (value: number) => Number.isSafeInteger(value) && value > 0;
 
-// The causes a step may route, and any, for each of them without a route of its own.
-const routable = ["limit", "claim", "exit", "kind", "broker", "interrupted", "unmet", "any"];
+// The causes a step that runs a program may route, and a children step, each with any, for
+// each of them without a route of its own.
+const ran = ["limit", "claim", "exit", "kind", "broker", "interrupted", "any"];
+const waited = ["limit", "unmet", "any"];
 
 // Why the children step `step` cannot run, if it cannot; `valid` says whether a query is one its
 // workflow can resolve. That the workflow it names is the factory's, and leads not back to its
@@ -1188,7 +1196,7 @@ export function waitOutcome(wait: Wait): string | undefined | null {
 // the commission does not find out only once the earlier steps have run. Every kind that could be
 // the subject counts, wherever in the workflow it is claimed.
 function refuseUnbuildable(
-  workflow: Workflow<string, { limits: Limits & Money }>,
+  workflow: Workflow<string, "whole">,
   kinds: Kinds,
   invalid: (problem: string) => Error,
 ): void {
@@ -1221,9 +1229,9 @@ function refuseUnbuildable(
       ? subjects
       : query === "request"
         ? ["document"]
-        : "session" in query
+        : query.session !== undefined
           ? []
-          : "across" in query
+          : query.across !== undefined
             ? query.kind === undefined
               ? [...Object.keys(kinds), "decision"]
               : [query.kind]

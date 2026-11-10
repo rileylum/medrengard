@@ -39,7 +39,7 @@ import {
   type Children,
   type Commissioning,
   type Definition,
-  type Limits,
+  type Factory,
   type Query,
   type Skill,
   type Trigger,
@@ -79,14 +79,6 @@ import { createStore, type Artifact } from "./store.ts";
 
 // The milliseconds a write waits for another process's write to the log.
 const logWait = 5000;
-
-type Options = {
-  log: string;
-  workflows: Record<string, Workflow>;
-  kinds: Kinds;
-  defaults: { limits: Limits };
-  triggers?: Readonly<Record<string, Trigger>>;
-};
 
 /**
  * One entry in a commission's record: an attempt, with its notes so far, and once it ends the
@@ -182,7 +174,7 @@ type Refusal =
  * Runs commissions through the owner's workflows, keeping every event in the SQLite log at `log`
  * and every artifact in the store beside it.
  */
-export function createEngine({ log, workflows, kinds, defaults, triggers = {} }: Options) {
+export function createEngine({ log, workflows, kinds, defaults, triggers = {} }: Factory) {
   refuseTriggers(triggers, workflows);
 
   // Another engine or CLI call may be writing to the same log; waiting for it is bounded, and past
@@ -1906,7 +1898,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
               const query = step.inputs[input];
 
               // A session is no artifact: its body is the bytes its program left.
-              return isRecord(query) && "session" in query
+              return isRecord(query) && query.session !== undefined
                 ? {
                     name: input,
                     sessions: each.map(({ hash }) => ({ hash, body: store.read(hash) })),
@@ -2318,14 +2310,14 @@ function resolve(
     case "request":
       return [{ hash: events[0].request }];
     default: {
-      if ("session" in query) {
+      if (query.session !== undefined) {
         return sessionsOf(events, query.session)
           .slice(-1)
           .map((hash) => ({ hash }));
       }
 
       // Each child that reached its end, its latest artifact of the kind or all of them.
-      if ("children" in query) {
+      if (query.children !== undefined) {
         return childrenOf(query.children).flatMap(({ commission, events: child }) => {
           if (finishOf(child)?.outcome === undefined) {
             return [];
@@ -2341,7 +2333,7 @@ function resolve(
       }
 
       // Each related commission's artifacts as it has them now, finished or not.
-      if ("across" in query) {
+      if (query.across !== undefined) {
         return related(query.across).flatMap(({ commission, events: other }) => {
           const named = recorded(other, kinds)
             .filter(
@@ -2644,7 +2636,7 @@ function cancelledEnding(
 // or an agent with two skills of one name, and returns the skills by path.
 function pin(
   name: string,
-  workflow: Workflow,
+  workflow: Workflow<string, "stated" | "whole">,
   keep: (bytes: Buffer) => string,
 ): Definition["skills"] {
   const invalid = (problem: string) => new Error(`Workflow ${name} is invalid: ${problem}.`);

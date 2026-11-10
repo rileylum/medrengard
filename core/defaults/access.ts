@@ -32,13 +32,13 @@ const stepContract = { path: join(package_, "step"), mode: "read" as const };
 const tmp = { path: "/tmp", mode: "empty" as const, size: 256 * 1024 * 1024 };
 
 /** Only what the step contract gives a step, and the system's programs to run in it. */
-export const contract: Access = {
+export const contract = {
   paths: [...system, tmp],
   network: false,
   environment: ["PATH"],
   workspace: "write",
   sandboxes: false,
-};
+} satisfies Access;
 
 /**
  * What a step's program written in TypeScript needs: the contract's access, Node to run it, which
@@ -46,7 +46,7 @@ export const contract: Access = {
  * manifest, by which a program that reaches the package through its factory's node_modules finds
  * the module. The program's own directory, and that node_modules, are the factory's to add. Run it as `[process.execPath, "/path/to/step.ts"]`.
  */
-export const node: Access = {
+export const node = {
   ...contract,
   paths: [
     ...contract.paths,
@@ -54,7 +54,7 @@ export const node: Access = {
     stepContract,
     { path: join(package_, "package.json"), mode: "read" },
   ],
-};
+} satisfies Access;
 
 /** The variables that make Git author and commit as `name` and `email`, for an access's values. */
 export function gitIdentity(name: string, email: string) {

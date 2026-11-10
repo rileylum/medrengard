@@ -9,7 +9,8 @@ import type { Access } from "./definition.ts";
  */
 export type Program<More = unknown> = {
   run: readonly [string, ...string[]];
-  access: Access;
+  // All of the network or none: no proxy runs for a kind's program.
+  access: Access & { network: boolean };
   limits: { attempt: number; memory: number; processes: number } & More;
 };
 

@@ -56,7 +56,7 @@ owner.
 
 ```ts
 // factory.ts
-import { defineWorkflow } from "@medrengard/core/src/definition.ts";
+import { defineWorkflow, type Factory } from "@medrengard/core/src/definition.ts";
 import { contract } from "@medrengard/core/defaults/access.ts";
 import { builtIn } from "@medrengard/core/defaults/kinds.ts";
 import { limits } from "@medrengard/core/defaults/limits.ts";
@@ -113,8 +113,13 @@ export default {
       },
     }),
   },
-};
+} satisfies Factory;
 ```
+
+`satisfies Factory` has the compiler check the whole module as you write it: a field a factory or
+a step does not define, a step name no edge leads to, a children step with both `each` and
+`count`, a money limit at an attended step. What the compiler cannot see, such as a kind no
+factory defines, `medrengard check` refuses.
 
 Run it with the CLI:
 

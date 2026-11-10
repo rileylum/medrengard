@@ -36,13 +36,14 @@ export type Options = {
   api?: string;
 };
 
-type Command = Extract<Workflow["steps"][string], { kind: "command" }>;
+// A command step that does not watch; the watch step adds its own watch and empty workspace.
+type Command = Extract<Workflow["steps"][string], { kind: "command"; watch?: undefined }>;
 
 // What a step built here leaves to the factory: its outcomes' edges, whose literal step names a
 // workflow checks, and any field but its inputs and program, which the step needs as they are.
 // Its routes, whose step names a workflow checks too, a factory adds by spreading the step.
 type Overrides<O> = { on: O } & Partial<
-  Omit<Command, "kind" | "run" | "inputs" | "on" | "escalate">
+  Omit<Command, "kind" | "run" | "inputs" | "on" | "escalate" | "watch" | "workspace">
 >;
 
 const here = import.meta.dirname;

@@ -268,7 +268,9 @@ test("a watch step builds no workspace", async (t) => {
             kind: "command",
             run: ["true"],
             watch: { interval: 1, wait: 60 },
-            workspace: "subject",
+            // SAFETY: a workspace the compiler would refuse, as a factory it does not check
+            // could hold.
+            workspace: "subject" as never,
             inputs: {},
             claims: [],
             on: { done: "end" },

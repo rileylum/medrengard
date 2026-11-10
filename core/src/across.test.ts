@@ -210,7 +210,7 @@ for (const [what, query, problem] of [
     const changed = workflows();
 
     // SAFETY: the query is invalid on purpose, as a factory's untyped definition could hold it.
-    const bad = query as Query;
+    const bad = query as never;
 
     const work = {
       ...changed.work,

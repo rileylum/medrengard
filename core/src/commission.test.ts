@@ -302,7 +302,8 @@ for (const [what, change, problem] of [
     };
 
     assert.ok(engine);
-    assert.throws(() => createEngine(options({ workflows: changed })).check("plan"), {
+    // SAFETY: a step the compiler would refuse, as a factory it does not check could hold.
+    assert.throws(() => createEngine(options({ workflows: changed as never })).check("plan"), {
       message: `Workflow plan is invalid: step spawn's ${problem}.`,
     });
   });

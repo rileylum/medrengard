@@ -9,7 +9,7 @@ const repository = join(import.meta.dirname, "..");
 
 // The step contract and the system, with the Node executable, which may be under the owner's home,
 // and the programs below to run. Never Node's whole installation, which could be the home itself.
-const programs: Access = {
+const programs: Access & { network: boolean } = {
   ...contract,
   paths: [
     ...contract.paths,
