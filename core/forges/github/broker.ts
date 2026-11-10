@@ -1,6 +1,6 @@
 /**
  * The GitHub forge's broker: forwards a step's Git fetches and pushes, and its calls to open, read,
- * follow and merge a pull request, for one repository, with Medrengard's token, which only it reads, in
+ * follow, compare and merge a pull request, for one repository, with Medrengard's token, which only it reads, in
  * place of the placeholder. Anything else is refused, naming it, so a step can do no more than
  * land its change, whatever the token allows.
  *
@@ -64,9 +64,10 @@ const gitRoutes = [
 ] as const;
 
 // Opening a pull request, finding the one open for a branch, reading one, its reviews and their
-// comments, and merging one.
+// comments, comparing a commit with a branch, whose name has no "..", and merging one.
 const apiRoutes = [
   ["POST", /^\/pulls$/],
+  ["GET", /^\/compare\/[\w-]+(?:[./][\w-]+)*\.\.\.[0-9a-f]{40,64}$/],
   ["GET", /^\/pulls\?head=[\w.-]+:[\w./-]+&state=open$/],
   ["GET", /^\/pulls\/\d+$/],
   ["GET", /^\/pulls\/\d+\/(reviews|comments)$/],

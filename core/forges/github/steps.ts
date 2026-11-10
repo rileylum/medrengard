@@ -45,7 +45,7 @@ type Overrides<O> = { on: O } & Partial<Omit<Command, "kind" | "run" | "inputs" 
 const here = import.meta.dirname;
 
 /**
- * The open and land steps for `repository`, a pull request's base being `base`. Each reaches
+ * The open, watch, land and rebase steps for `repository`, a pull request's base being `base`. Each reaches
  * GitHub only through the broker, which forwards nothing but landing this repository's change.
  */
 export function github({ repository, base, token, git, api }: Options) {
@@ -107,18 +107,41 @@ export function github({ repository, base, token, git, api }: Options) {
       claims: ["document"],
       ...overrides,
     }),
-    /** Merges the latest pull request about the subject while its head is the subject's SHA. */
-    land: <const O extends Record<string, string>>({
+    /**
+     * Merges the latest pull request about the subject while its head is the subject's SHA,
+     * claiming done, or claims behind, merging nothing, if the subject lacks commits of the base.
+     */
+    land: <const O extends Record<"done" | "behind", string>>({
       method = "merge",
       ...overrides
     }: Overrides<O> & { method?: "merge" | "squash" | "rebase" }) => ({
-      ...step([join(here, "land.ts"), method]),
+      ...step([join(here, "land.ts"), base, method]),
       workspace: "empty" as const,
       inputs: {
         pullRequest: { kind: "pull-request", about: "subject" },
         subject: "subject",
       } as const,
       claims: [],
+      ...overrides,
+    }),
+    /**
+     * Rebases the subject onto the base branch, claiming done with the rebased commit, or
+     * conflict with a document listing the conflicting files, leaving the subject as it was.
+     */
+    rebase: <const O extends Record<"done" | "conflict", string>>(overrides: Overrides<O>) => ({
+      ...step([join(here, "rebase.ts"), repository, base]),
+      access: {
+        ...access,
+        // Rebasing commits again; each keeps its author.
+        values: {
+          ...access.values,
+          GIT_COMMITTER_NAME: "Medrengard",
+          GIT_COMMITTER_EMAIL: "medrengard@localhost",
+        },
+      },
+      workspace: "subject" as const,
+      inputs: {} as const,
+      claims: ["commit", "document"],
       ...overrides,
     }),
   };
