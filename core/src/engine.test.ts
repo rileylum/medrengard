@@ -34,7 +34,7 @@ const system = ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
 
 // Every test's directory is under the temp directory, so a step can reach its own; nothing of the
 // owner's is visible.
-const access: Access = {
+const access: Access & { network: boolean } = {
   paths: [...system, { path: tmpdir(), mode: "write" }],
   network: false,
   environment: [],
@@ -453,7 +453,7 @@ function engineConfined(
   t: TestContext,
   confined: (directory: string) => Access,
   script: string,
-  limits: Partial<Limits> = {},
+  limits: Partial<Record<keyof Limits, number>> = {},
 ) {
   return engineWith(t, (directory) =>
     defineWorkflow({
@@ -1509,6 +1509,8 @@ function agentStep(
   attended = true,
   limits: Partial<Record<"idle" | "attempt", number | "unbounded">> = {},
 ) {
+  // SAFETY: attended or not with any limits, some of which the compiler would refuse, as a
+  // factory it does not check could hold: what the parser then says is what these tests are of.
   return {
     kind: "agent",
     attended,
@@ -1520,7 +1522,7 @@ function agentStep(
     access,
     budget: 1,
     limits: { idle: 1, attempt: 5, transcript: 65536, input: 65536, ...limits },
-  } as const;
+  } as never;
 }
 
 test("an attended step is left ready for the owner to attend: advance starts nothing", async (t) => {
@@ -2508,7 +2510,7 @@ test("a commission runs on the workflow definition it started with", async (t) =
 });
 
 // A command step that names only the limits in `limits` and claims done once it has run `script`.
-function stepLimited(script: string, limits?: Partial<Limits>) {
+function stepLimited(script: string, limits?: Partial<Record<keyof Limits, number>>) {
   const { limits: _named, ...step } = stepRunning(
     `${script}
      echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
@@ -2639,7 +2641,7 @@ test("a step that names a limit there is not cannot be commissioned", async (t) 
       defineWorkflow({
         start: "build",
         // SAFETY: the workflow module is the owner's JavaScript, which the type cannot hold to.
-        steps: { build: stepLimited("true", { cpu: 1 } as Partial<Limits>) },
+        steps: { build: stepLimited("true", { cpu: 1 } as never) },
       }),
     ),
     {
@@ -3266,6 +3268,66 @@ test("an unattended step has empty stdin", async (t) => {
   await engine.advance("first");
 
   assert.equal(engine.transcript("first", 1).toString(), "nothing to read\n");
+});
+
+// What an observer needs is on the state and the events: no client works a wait's outcomes, an
+// event's place in its commission or an escalation's step out again.
+test("a waiting commission's state names the outcomes the owner may decide, and each event its place in its commission", async (t) => {
+  const { engine } = await engineAwaiting(t);
+  const awaiting = engine.state("first");
+
+  assert.ok(awaiting.status === "awaiting");
+  assert.deepEqual(awaiting.outcomes, ["approve", "reject", "abandon"]);
+
+  // The event that began the wait, by its place in the commission's own events: what a decision
+  // names as since, whatever its position in the whole log.
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "second" });
+
+  const began = engine.events(0).filter(({ commission }) => commission === "second");
+
+  assert.deepEqual(
+    began.map(({ index }) => index),
+    [0],
+  );
+  assert.notEqual(began[0]?.position, 0);
+
+  const second = engine.state("second");
+
+  assert.ok(second.status === "awaiting");
+  assert.equal(second.since, began[0]?.index);
+
+  engine.decide("first", { subject: awaiting.subject, since: awaiting.since, outcome: "approve" });
+
+  // The build step, ["true"], claims nothing: it escalates, and the event names its step.
+  const escalated = await engine.advance("first");
+
+  assert.ok(escalated.status === "escalated");
+  assert.deepEqual(escalated.outcomes, ["retry", "abandon"]);
+  assert.partialDeepStrictEqual(engine.events(0).at(-1), {
+    commission: "first",
+    index: escalated.since,
+    event: { type: "escalated", step: "build", cause: "claim" },
+  });
+  assert.throws(
+    () =>
+      engine.decide("first", {
+        subject: escalated.subject,
+        since: escalated.since,
+        outcome: "approve",
+      }),
+    /Step build does not declare outcome "approve"\./,
+  );
+});
+
+test("a commission under a name already taken is refused, saying so, and nothing is recorded", async (t) => {
+  const { engine } = await engineRunning(t, "true");
+  const events = engine.events(0).length;
+
+  assert.throws(
+    () => engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "first" }),
+    { message: "There is already a commission named first." },
+  );
+  assert.equal(engine.events(0).length, events);
 });
 
 test("a finished commission accepts nothing", async (t) => {
@@ -4560,7 +4622,7 @@ function engineVerifying(
   t: TestContext,
   script: string,
   given: Partial<NonNullable<Kind["verifier"]>["limits"]> = {},
-  under: Access = access,
+  under: Access & { network: boolean } = access,
 ) {
   return engineWith(
     t,
@@ -5217,6 +5279,7 @@ test("the log's events are exactly the seven types, each with its pinned fields"
       type: "escalated",
       cause: "string",
       reason: "string",
+      step: "string",
       attempt: "number",
       transcript: "string",
       errors: "string",
@@ -5379,6 +5442,7 @@ test("a kind's verifier and materialiser are started with exactly the pinned env
 
   assert.equal(await read("verifier-listing"), "body\nclaim.json\n");
   assert.deepEqual(typesIn(await read("verifier.json"), []), {
+    kind: "string",
     fields: { note: "string" },
     body: "string",
     subject: { hash: "string", kind: "string", fields: { title: "string" } },
@@ -5553,7 +5617,7 @@ function engineSpending(
   { step, commission }: { step?: number; commission?: number },
 ) {
   return engineWith(t, (directory) => {
-    const limits: Partial<Limits> & Money = {
+    const limits: Partial<Record<keyof Limits, number>> & Money = {
       idle: 5,
       attempt: 10,
       transcript: 65536,
@@ -5708,6 +5772,8 @@ const planning = {
   budget: 1,
 } as const;
 
+// SAFETY: each a definition the compiler would refuse, as a factory it does not check could hold:
+// what the parser then says is what these tests are of.
 for (const [what, workflow, problem] of [
   [
     "a money limit at an attended step",
@@ -5767,7 +5833,7 @@ for (const [what, workflow, problem] of [
     { start: "build", usd: JSON.parse('"lots"'), steps: { build: planning } },
     "its money limit must be a positive number of dollars",
   ],
-] satisfies [string, Workflow<"build">, string][]) {
+] as [string, never, string][]) {
   test(`commissioning refuses ${what}`, async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 

@@ -229,12 +229,13 @@ test("a workflow is refused whose step routes a cause the owner alone answers, o
     "withdrawn",
     "upgrade",
     "trigger",
+    "unmet",
     "unknown",
   ]) {
     assert.throws(
       await refused({ [cause]: "build" }),
       new RegExp(
-        `Workflow build is invalid: step build routes ${cause}, which is not a cause a step may route: limit, claim, exit, kind, broker, interrupted, unmet or any\\.`,
+        `Workflow build is invalid: step build routes ${cause}, which is not a cause a command step may route: limit, claim, exit, kind, broker, interrupted or any\\.`,
       ),
     );
   }

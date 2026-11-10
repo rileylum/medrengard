@@ -3,7 +3,7 @@
  * and what stands in the way, what it has spent, how it finished. Nothing here does I/O or reads
  * a clock, so the engine's rules can be read, and tested, without running a step.
  */
-import type { Children, Definition, Wait } from "./definition.ts";
+import type { Children, Definition, Routes, Wait } from "./definition.ts";
 import type { Cause, Commissioned, CommissionEvent } from "./replay.ts";
 
 /** A commission's events, oldest first: the one that commissioned it, then the rest. */
@@ -56,7 +56,7 @@ export function admit(
 
   const left = moneyLeft(spentSince(events, workflow), workflow.usd);
 
-  return "reason" in left ? because("money", left.reason) : { attempt, commission: left };
+  return "reason" in left ? left : { attempt, commission: left };
 }
 
 /**
@@ -111,6 +111,9 @@ export function routeOf(
     return undefined;
   }
 
+  // A program step's routes and a children step's, read as one: each holds only its own causes.
+  const routes: Routes | undefined = step.escalate;
+
   switch (escalated.cause) {
     case "limit":
     case "claim":
@@ -119,7 +122,7 @@ export function routeOf(
     case "broker":
     case "interrupted":
     case "unmet":
-      return step.escalate?.[escalated.cause] ?? step.escalate?.any;
+      return routes?.[escalated.cause] ?? routes?.any;
     default:
       return undefined;
   }
@@ -288,6 +291,13 @@ export function spentIn(
 ): { spent: number } | { unknown: number } {
   let spent = 0;
 
+  // The step of each attempt, for an escalation that does not name its own.
+  const steps = new Map(
+    events.flatMap((event) =>
+      event.type === "attempt-started" ? [[event.attempt, event.step] as const] : [],
+    ),
+  );
+
   for (const event of events) {
     // A children or commission step runs no program: it costs nothing itself.
     const kind = event.type === "attempt-completed" ? workflow.steps[event.step]?.kind : undefined;
@@ -297,6 +307,17 @@ export function spentIn(
       (event.type === "escalated" && event.attempt !== undefined && event.transcript !== undefined);
 
     if (!ran) {
+      continue;
+    }
+
+    // An attended attempt reports no cost, and the owner was there for it: it is not counted,
+    // where an unattended one that reported none counts as over.
+    const at =
+      event.type === "attempt-completed" ? event.step : (event.step ?? steps.get(event.attempt!));
+
+    const step = at === undefined ? undefined : workflow.steps[at];
+
+    if (step?.kind === "agent" && step.attended === true) {
       continue;
     }
 
@@ -317,17 +338,19 @@ export function spentIn(
 function moneyLeft(
   spent: ReturnType<typeof spentSince>,
   limit: number,
-): { limit: number; spent: number } | { reason: string } {
+): { limit: number; spent: number } | Why {
   if ("unknown" in spent) {
-    return {
-      reason: `The commission's spend is unknown: attempt ${spent.unknown} reported no cost, so it counts as over its money limit of $${limit}.`,
-    };
+    return because(
+      "money",
+      `The commission's spend is unknown: attempt ${spent.unknown} reported no cost, so it counts as over its money limit of $${limit}.`,
+    );
   }
 
   if (spent.spent >= limit) {
-    return {
-      reason: `The commission has spent $${spent.spent.toFixed(2)} of its money limit of $${limit}.`,
-    };
+    return because(
+      "money",
+      `The commission has spent $${spent.spent.toFixed(2)} of its money limit of $${limit}.`,
+    );
   }
 
   return { limit, spent: spent.spent };

@@ -4,8 +4,8 @@ import type { Kind, Program } from "./kinds.ts";
 import type {
   Access,
   Agent,
+  Factory as Declared,
   Limits,
-  Money,
   Query,
   Routes,
   Trigger,
@@ -26,6 +26,13 @@ type Step = Workflow["steps"][string];
 type Agentic = Extract<Step, { kind: "agent" }>;
 
 type Command = Extract<Step, { kind: "command" }>;
+
+type Watching = Extract<Command, { watch: Watch }>;
+
+type Attended = Extract<Agentic, { attended: true }>;
+
+// The keys of T that can hold a value: one a union member only forbids is not among them.
+type Keys<T> = { [K in keyof T]-?: [T[K]] extends [undefined] ? never : K }[keyof T];
 
 type Approval = Extract<Step, { kind: "approval" }>;
 
@@ -95,7 +102,7 @@ type Pinned = {
   wait: Expect<
     Same<Wait, "all" | "first" | { atLeast: number; outcome?: string } | { all: string }>
   >;
-  children: Expect<Same<keyof Reading, "children" | "kind" | "take">>;
+  children: Expect<Same<Keys<Reading>, "children" | "kind" | "take">>;
   agentStep: Expect<
     Same<
       keyof Agentic,
@@ -130,9 +137,28 @@ type Pinned = {
   >;
   approvalStep: Expect<Same<keyof Approval, "kind" | "on">>;
   workspace: Expect<
-    Same<Command["workspace"], "subject" | "empty" | { input: string; branches?: string }>
+    Same<Agentic["workspace"], "subject" | "empty" | { input: string; branches?: string }>
   >;
-  stated: Expect<Same<Command["limits"], (Partial<Limits> & Money) | undefined>>;
+  // A watching step's checks run in an empty workspace.
+  watching: Expect<Same<Watching["workspace"], "empty">>;
+  // Every step but an attended one bounds its time and may have a money limit.
+  stated: Expect<Same<keyof NonNullable<Command["limits"]>, keyof Limits | "usd">>;
+  timed: Expect<Same<NonNullable<Command["limits"]>["idle"], number | undefined>>;
+  attendedLimits: Expect<Same<keyof NonNullable<Attended["limits"]>, keyof Limits>>;
+  untimed: Expect<Same<NonNullable<Attended["limits"]>["idle"], number | "unbounded" | undefined>>;
+  // A children step makes one child per document, or a count of them; never both.
+  each: Expect<Same<Extract<Waiting, { each: object }>["count"], undefined>>;
+  counted: Expect<Same<Extract<Waiting, { count: number }>["each"], undefined>>;
+  childrenRoutes: Expect<Same<keyof NonNullable<Waiting["escalate"]>, "limit" | "unmet" | "any">>;
+  programRoutes: Expect<
+    Same<
+      keyof NonNullable<Command["escalate"]>,
+      "limit" | "claim" | "exit" | "kind" | "broker" | "interrupted" | "any"
+    >
+  >;
+  commissionEdges: Expect<Same<keyof Starting["on"], "done">>;
+  // What the engine is made with is the factory a module exports.
+  declared: Expect<Same<Factory, Declared>>;
   limits: Expect<
     Same<
       keyof Limits,
@@ -165,9 +191,9 @@ type Pinned = {
     >
   >;
   query: Expect<Same<Extract<Query, string>, "subject" | "request">>;
-  narrowing: Expect<Same<keyof Narrowing, "from" | "kind" | "about" | "take">>;
-  session: Expect<Same<keyof Continuing, "session">>;
-  across: Expect<Same<keyof Across, "across" | "from" | "kind" | "take">>;
+  narrowing: Expect<Same<Keys<Narrowing>, "from" | "kind" | "about" | "take">>;
+  session: Expect<Same<Keys<Continuing>, "session">>;
+  across: Expect<Same<Keys<Across>, "across" | "from" | "kind" | "take">>;
   relations: Expect<Same<Across["across"], "origin" | "started" | "siblings">>;
   kind: Expect<
     Same<

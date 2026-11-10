@@ -412,10 +412,7 @@ function decide(commission: string): void {
   const { subject, since } = state;
   const step = state.step.name;
 
-  const outcomes =
-    state.status === "awaiting"
-      ? [...Object.keys(engine.definition(commission).workflow.steps[step].on), "abandon"]
-      : ["retry", "abandon"];
+  const { outcomes } = state;
 
   const made = (outcome: string, feedback: string | undefined) => {
     const about = `${commission} at ${step}, about ${subject.slice(0, 8)}`;

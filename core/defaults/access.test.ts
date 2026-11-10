@@ -109,7 +109,7 @@ test(
   },
 );
 
-test("the built-in kinds' programs see nothing of the owner's home but Node and the programs", async (t) => {
+test("the built-in kinds' programs see nothing of the owner's home but Node, the step contract's module and the programs", async (t) => {
   const seen = await seenUnder(
     t,
     builtIn.commit.verifier.access,
@@ -123,6 +123,7 @@ test("the built-in kinds' programs see nothing of the owner's home but Node and 
 
   const granted = [
     process.execPath,
+    join(repository, "step"),
     join(repository, "verifiers"),
     join(repository, "materialisers"),
   ];
