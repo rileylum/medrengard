@@ -739,9 +739,10 @@ export const kinds = { ...builtIn, "pull-request": pullRequest };
 - `outcome`, optional: a required field with `values` that must equal the claimed outcome, as a
   verdict's `verdict` does. A judgement with one routes the step, so a claim of it beside a new
   subject escalates: it would be about the subject that claim replaces.
-- `verifier` and `materialiser`, optional: programs, each a `run`, an `access`, a `limit` in
-  seconds, `memory` in bytes and `processes`, bounded like a step's; a verifier also `kept`, the
-  bytes of all the files it keeps for an artifact, 0 for one that keeps none. Each runs in its own sandbox, like a step;
+- `verifier` and `materialiser`, optional: programs, each a `run`, an `access` and its `limits`,
+  named as a step's are: `{ attempt, memory, processes }`, in seconds, bytes and a count; a
+  verifier's also `kept`, the bytes of all the files it keeps for an artifact, 0 for one that
+  keeps none. A commission started before limits were named so still reads. Each runs in its own sandbox, like a step;
   leaving the sandbox is an access you write, such as one that writes `/`. The built-ins' have 60 s, 4 GiB and
   1024 processes, and the commit verifier keeps 1 GiB, its bundle holding the whole history.
 

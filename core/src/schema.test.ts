@@ -177,8 +177,11 @@ type Pinned = {
   >;
   rule: Expect<Same<keyof Rule, "limit" | "required" | "values">>;
   body: Expect<Same<keyof Kind["body"], "required" | "limit">>;
-  program: Expect<Same<keyof Program, "run" | "access" | "limit" | "memory" | "processes">>;
-  verifier: Expect<Same<Exclude<keyof NonNullable<Kind["verifier"]>, keyof Program>, "kept">>;
+  program: Expect<Same<keyof Program, "run" | "access" | "limits">>;
+  programLimits: Expect<Same<keyof Program["limits"], "attempt" | "memory" | "processes">>;
+  verifier: Expect<
+    Same<keyof NonNullable<Kind["verifier"]>["limits"], "attempt" | "memory" | "processes" | "kept">
+  >;
   materialiser: Expect<
     Same<Exclude<keyof NonNullable<Kind["materialiser"]>, keyof Program>, "branches">
   >;

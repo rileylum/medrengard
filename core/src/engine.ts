@@ -4091,8 +4091,8 @@ async function runProgram(
   const { workspace } = areas;
 
   const { command, args, env, unit } = confine(program.access, areas, program.run, {
-    memory: program.memory,
-    processes: program.processes,
+    memory: program.limits.memory,
+    processes: program.limits.processes,
   });
 
   // lazy: no notes, stdout dropped, stderr kept only as a failure's tail. Give kind programs a
@@ -4118,7 +4118,7 @@ async function runProgram(
   const limit = setTimeout(() => {
     late = true;
     stop(child, child.pid!);
-  }, program.limit * 1000);
+  }, program.limits.attempt * 1000);
 
   const cancel = setInterval(() => {
     if (cancelled()) {
@@ -4145,11 +4145,11 @@ async function runProgram(
         : ` Its stderr: ${JSON.stringify(tail.toString())}.`;
 
   if (late) {
-    return `it reached its limit of ${program.limit} s.${stderr}`;
+    return `it reached its limit of ${program.limits.attempt} s.${stderr}`;
   }
 
   if (closed[0] !== 0 && overMemory(unit)) {
-    return `it reached its memory limit of ${program.memory} bytes.${stderr}`;
+    return `it reached its memory limit of ${program.limits.memory} bytes.${stderr}`;
   }
 
   const [code, signal] = closed;
@@ -4246,7 +4246,7 @@ async function verify(
   }
 
   const read = new Map<string, Buffer>();
-  let room = verifier.kept;
+  let room = verifier.limits.kept;
 
   for (const file of verdict.keep) {
     if (!isText(file) || !plainName.test(file)) {
@@ -4260,7 +4260,9 @@ async function verify(
     }
 
     if (bytes.length > room) {
-      return failed(`the files it kept total more than its limit of ${verifier.kept} bytes.`);
+      return failed(
+        `the files it kept total more than its limit of ${verifier.limits.kept} bytes.`,
+      );
     }
 
     room -= bytes.length;

@@ -3778,7 +3778,7 @@ test(
     const { engine, directory, options } = await engineVerifying(
       t,
       `${lingering("verifier")}; echo '{"accepted":true,"keep":[]}' > "$MEDRENGARD_OUT/output.json"`,
-      { limit: 60 },
+      { attempt: 60 },
     );
 
     const running = engine.advance("first");
@@ -3819,8 +3819,7 @@ test(
           materialiser: {
             run: ["sh", "-c", lingering("materialiser"), "sh", directory],
             access,
-            limit: 60,
-            ...bounded,
+            limits: { attempt: 60, ...bounded },
           },
         },
       }),
@@ -3863,7 +3862,11 @@ function engineMaterialising(t: TestContext, script: string, limit = 5) {
       ...builtIn,
       document: {
         ...builtIn.document,
-        materialiser: { run: ["sh", "-c", script, "sh", directory], access, limit, ...bounded },
+        materialiser: {
+          run: ["sh", "-c", script, "sh", directory],
+          access,
+          limits: { attempt: limit, ...bounded },
+        },
       },
     }),
   );
@@ -4413,47 +4416,68 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
     [
       {
         document,
-        memo: { ...memo, verifier: { run: ["true"], access, limit: 0, ...bounded, kept: 1024 } },
-      },
-      "Kind memo is invalid: its verifier's limit must be a positive number of seconds, at most 2147483.",
-    ],
-    [
-      {
-        document,
         memo: {
           ...memo,
-          verifier: { run: ["true"], access, limit: 1, ...bounded, memory: 0, kept: 1 },
+          verifier: { run: ["true"], access, limits: { attempt: 0, ...bounded, kept: 1024 } },
         },
       },
-      "Kind memo is invalid: its verifier's memory must be a positive integer.",
-    ],
-    [
-      {
-        document,
-        memo: { ...memo, verifier: { run: ["true"], access, limit: 1, ...bounded, kept: -1 } },
-      },
-      "Kind memo is invalid: its verifier's kept must be an integer, 0 or more.",
-    ],
-    [
-      {
-        document,
-        memo: { ...memo, verifier: { run: ["true"], access, limit: 1, memory: 1024, kept: 1 } },
-      },
-      "Kind memo is invalid: its verifier must be a program, its access, and its limit, memory, processes and kept.",
-    ],
-    [
-      {
-        document,
-        memo: { ...memo, materialiser: { run: ["true"], access, limit: 1, ...bounded, kept: 1 } },
-      },
-      "Kind memo is invalid: its materialiser must be a program, its access, and its limit, memory and processes.",
+      "Kind memo is invalid: its verifier's attempt limit must be a positive number of seconds, at most 2147483.",
     ],
     [
       {
         document,
         memo: {
           ...memo,
-          materialiser: { run: ["true"], access, limit: 1, ...bounded, branches: false },
+          verifier: {
+            run: ["true"],
+            access,
+            limits: { attempt: 1, ...bounded, memory: 0, kept: 1 },
+          },
+        },
+      },
+      "Kind memo is invalid: its verifier's memory limit must be a positive integer.",
+    ],
+    [
+      {
+        document,
+        memo: {
+          ...memo,
+          verifier: { run: ["true"], access, limits: { attempt: 1, ...bounded, kept: -1 } },
+        },
+      },
+      "Kind memo is invalid: its verifier's kept limit must be an integer, 0 or more.",
+    ],
+    [
+      {
+        document,
+        memo: {
+          ...memo,
+          verifier: { run: ["true"], access, limits: { attempt: 1, memory: 1024, kept: 1 } },
+        },
+      },
+      "Kind memo is invalid: its verifier must be a program, its access, and its limits: attempt, memory, processes and kept.",
+    ],
+    [
+      {
+        document,
+        memo: {
+          ...memo,
+          materialiser: { run: ["true"], access, limits: { attempt: 1, ...bounded, kept: 1 } },
+        },
+      },
+      "Kind memo is invalid: its materialiser must be a program, its access, and its limits: attempt, memory and processes.",
+    ],
+    [
+      {
+        document,
+        memo: {
+          ...memo,
+          materialiser: {
+            run: ["true"],
+            access,
+            limits: { attempt: 1, ...bounded },
+            branches: false,
+          },
         },
       },
       "Kind memo is invalid: its materialiser may only state branches: true.",
@@ -4461,7 +4485,10 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
     [
       {
         document,
-        memo: { ...memo, verifier: { run: [], access, limit: 1, ...bounded, kept: 1024 } },
+        memo: {
+          ...memo,
+          verifier: { run: [], access, limits: { attempt: 1, ...bounded, kept: 1024 } },
+        },
       },
       "Kind memo is invalid: its verifier's program must be a command and its arguments.",
     ],
@@ -4473,8 +4500,7 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
           materialiser: {
             run: ["true"],
             access: { ...access, network: "yes" },
-            limit: 1,
-            ...bounded,
+            limits: { attempt: 1, ...bounded },
           },
         },
       },
@@ -4501,7 +4527,7 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
       {
         document: {
           ...document,
-          verifier: { run: ["true"], access, limit: 1, ...bounded, kept: 1024 },
+          verifier: { run: ["true"], access, limits: { attempt: 1, ...bounded, kept: 1024 } },
         },
       },
       "Kind document is invalid: the owner's request is a document, and no attempt claims it, so it cannot have a verifier.",
@@ -4529,7 +4555,8 @@ test("kinds the engine cannot rely on cannot be commissioned", async (t) => {
 function engineVerifying(
   t: TestContext,
   script: string,
-  given: Partial<Omit<NonNullable<Kind["verifier"]>, "run">> = {},
+  given: Partial<NonNullable<Kind["verifier"]>["limits"]> = {},
+  under: Access = access,
 ) {
   return engineWith(
     t,
@@ -4552,11 +4579,8 @@ function engineVerifying(
         ...memo,
         verifier: {
           run: ["sh", "-c", script, "sh", directory],
-          access,
-          limit: 5,
-          ...bounded,
-          kept: 1024 * 1024,
-          ...given,
+          access: under,
+          limits: { attempt: 5, ...bounded, kept: 1024 * 1024, ...given },
         },
       },
     }),
@@ -4594,7 +4618,10 @@ test("the record names the verifier that accepted each artifact, or that its kin
       }),
     () => ({
       ...builtIn,
-      memo: { ...memo, verifier: { run: verifier, access, limit: 5, ...bounded, kept: 1024 } },
+      memo: {
+        ...memo,
+        verifier: { run: verifier, access, limits: { attempt: 5, ...bounded, kept: 1024 } },
+      },
       note: memo,
     }),
   );
@@ -4633,7 +4660,8 @@ test("a kind's verifier whose access makes the workspace read-only cannot write 
   const { engine } = await engineVerifying(
     t,
     `touch written && echo '{"accepted":true,"keep":[]}' > "$MEDRENGARD_OUT/output.json"`,
-    { access: { ...access, workspace: "read" } },
+    {},
+    { ...access, workspace: "read" },
   );
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
@@ -4645,7 +4673,7 @@ test("a kind's verifier whose access makes the workspace read-only cannot write 
 });
 
 test("a kind's verifier past its limit is stopped and escalates", async (t) => {
-  const { engine } = await engineVerifying(t, "sleep 5", { limit: 1 });
+  const { engine } = await engineVerifying(t, "sleep 5", { attempt: 1 });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
@@ -5324,15 +5352,12 @@ test("a kind's verifier and materialiser are started with exactly the pinned env
             directory,
           ],
           access,
-          limit: 5,
-          ...bounded,
-          kept: 1024,
+          limits: { attempt: 5, ...bounded, kept: 1024 },
         },
         materialiser: {
           run: ["sh", "-c", recording("materialiser", "artifact.json"), "sh", directory],
           access,
-          limit: 5,
-          ...bounded,
+          limits: { attempt: 5, ...bounded },
         },
       },
     }),

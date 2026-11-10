@@ -166,6 +166,26 @@ const kindName = /^[A-Za-z][A-Za-z0-9-]*$/;
 const programBefore = { memory: 4 * 1024 * 1024 * 1024, processes: 1024 };
 const keptBefore = 64 * 1024 * 1024;
 
+// A value as JSON.parse gives it, whose fields are checked as they are read.
+type Loose = ReturnType<typeof JSON.parse>;
+
+// A kind's program with its limits as a definition holds them now. One stored before they were
+// named as a step's are stated them beside its program, its seconds as `limit`.
+function limitsOf(stated: Loose): Loose {
+  if (!Object.hasOwn(stated, "limit")) {
+    return stated;
+  }
+
+  const { limit: attempt, memory, processes, kept, ...rest } = stated;
+
+  return {
+    ...rest,
+    limits: Object.hasOwn(stated, "kept")
+      ? { attempt, memory, processes, kept }
+      : { attempt, memory, processes },
+  };
+}
+
 function parseKinds(text: string): Kinds {
   const { kinds, defaults } = JSON.parse(text);
   const invalid = (problem: string) => new Error(`The kinds are invalid: ${problem}.`);
@@ -270,16 +290,22 @@ function parseKinds(text: string): Kinds {
 
       const verifying = program === "verifier";
       const before = verifying ? { ...programBefore, kept: keptBefore } : programBefore;
-      const stated = defaults === undefined ? { ...before, ...given } : given;
-      const { run, access, limit, memory, processes, kept, branches } = stated;
-      const bounds = ["limit", "memory", "processes", ...(verifying ? ["kept"] : [])];
+      const stated = limitsOf(defaults === undefined ? { ...before, ...given } : given);
+      const { run, access, limits, branches } = stated;
+
+      // Read before hasExactly, which narrows what it checks to object.
+      const { attempt: limit, memory, processes, kept } = limits ?? {};
+      const bounds = ["attempt", "memory", "processes", ...(verifying ? ["kept"] : [])];
       const adds = !verifying && Object.hasOwn(stated, "branches") ? ["branches"] : [];
 
-      if (!hasExactly(stated, ["run", "access", ...bounds, ...adds])) {
+      if (
+        !hasExactly(stated, ["run", "access", "limits", ...adds]) ||
+        !hasExactly(limits, bounds)
+      ) {
         throw refused(
           verifying
-            ? `its verifier must be a program, its access, and its limit, memory, processes and kept`
-            : `its ${program} must be a program, its access, and its limit, memory and processes`,
+            ? `its verifier must be a program, its access, and its limits: attempt, memory, processes and kept`
+            : `its ${program} must be a program, its access, and its limits: attempt, memory and processes`,
         );
       }
 
@@ -295,13 +321,13 @@ function parseKinds(text: string): Kinds {
 
       if (!Number.isFinite(limit) || limit <= 0 || limit > longestLimit) {
         throw refused(
-          `its ${program}'s limit must be a positive number of seconds, at most ${longestLimit}`,
+          `its ${program}'s attempt limit must be a positive number of seconds, at most ${longestLimit}`,
         );
       }
 
       for (const [bound, value] of Object.entries({ memory, processes })) {
         if (!Number.isInteger(value) || value <= 0) {
-          throw refused(`its ${program}'s ${bound} must be a positive integer`);
+          throw refused(`its ${program}'s ${bound} limit must be a positive integer`);
         }
       }
 
@@ -311,10 +337,17 @@ function parseKinds(text: string): Kinds {
 
       // A verifier that only judges keeps nothing.
       if (verifying && (!Number.isInteger(kept) || kept < 0)) {
-        throw refused("its verifier's kept must be an integer, 0 or more");
+        throw refused("its verifier's kept limit must be an integer, 0 or more");
       }
 
-      Object.assign(given, stated);
+      // An earlier form is replaced whole, so its own limits do not stay beside these.
+      if (stated !== given) {
+        for (const key of Object.keys(given)) {
+          delete given[key];
+        }
+
+        Object.assign(given, stated);
+      }
     }
   }
 
