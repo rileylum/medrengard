@@ -157,7 +157,7 @@ export function linesOf(
 
       const ending =
         "escalated" in entry
-          ? `${number}${at} escalated${took}${spent}: ${entry.escalated}${read}`
+          ? `${number}${at} escalated${took}${spent}: ${entry.escalated}${entry.next === undefined ? "" : ` On to ${entry.next}.`}${read}`
           : [
               `${number}${at} ${entry.outcome}${took}${spent}${read}`,
               ...entry.artifacts.map(

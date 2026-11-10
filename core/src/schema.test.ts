@@ -7,6 +7,7 @@ import type {
   Limits,
   Money,
   Query,
+  Routes,
   Trigger,
   Wait,
   Watch,
@@ -78,8 +79,15 @@ type Pinned = {
       | "concurrent"
       | "wait"
       | "on"
+      | "escalate"
       | "budget"
       | "limits"
+    >
+  >;
+  routes: Expect<
+    Same<
+      keyof Routes,
+      "limit" | "claim" | "exit" | "kind" | "broker" | "interrupted" | "unmet" | "any"
     >
   >;
   childrenLimits: Expect<Same<keyof Waiting["limits"], "wait">>;
@@ -98,6 +106,7 @@ type Pinned = {
       | "claims"
       | "workspace"
       | "on"
+      | "escalate"
       | "budget"
       | "access"
       | "limits"
@@ -113,6 +122,7 @@ type Pinned = {
       | "claims"
       | "workspace"
       | "on"
+      | "escalate"
       | "budget"
       | "access"
       | "limits"

@@ -61,7 +61,8 @@ export function admit(
 
 /**
  * Why an attempt of `step` on `subject` and `inputs` would repeat one since the owner's latest
- * decision, if it would: it would see what the earlier one saw, so only a decision justifies it.
+ * decision and the latest route, if it would: it would see what the earlier one saw, so only a
+ * decision, or a route the workflow declares, justifies it.
  */
 export function repeats(
   events: Log,
@@ -78,8 +79,76 @@ export function repeats(
         input.hashes.every((hash, position) => hash === inputs[index]!.hashes[position]),
     );
 
-  return attemptsOf(events, step).some((event) => event.subject === subject && same(event.inputs))
+  // A route between is the workflow's own reason to attempt it again, as a decision is the
+  // owner's.
+  const since = events.slice(
+    events.findLastIndex((event) => event.type === "escalated" && event.next !== undefined) + 1,
+  );
+
+  return attemptsOf(events, step).some(
+    (event) => since.includes(event) && event.subject === subject && same(event.inputs),
+  )
     ? because("repeat", `Step ${step} was already attempted on this subject and these inputs.`)
+    : undefined;
+}
+
+/**
+ * The step the escalation `escalated` goes on at, if its step routes it: only an attempt's
+ * escalation is routed, by its cause or else by any, and never a cause that is the owner's alone.
+ */
+export function routeOf(
+  { workflow }: Definition,
+  events: Log,
+  escalated: { cause: Cause; attempt?: number },
+): string | undefined {
+  const started = events.find(
+    (event) => event.type === "attempt-started" && event.attempt === escalated.attempt,
+  );
+
+  const step = started?.type === "attempt-started" ? workflow.steps[started.step] : undefined;
+
+  if (step === undefined || step.kind === "approval" || step.kind === "commission") {
+    return undefined;
+  }
+
+  switch (escalated.cause) {
+    case "limit":
+    case "claim":
+    case "exit":
+    case "kind":
+    case "broker":
+    case "interrupted":
+    case "unmet":
+      return step.escalate?.[escalated.cause] ?? step.escalate?.any;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The escalation that routed the commission to the step it is ready at, if one did: the step it
+ * left, its attempt, and why.
+ */
+export function routedBy(
+  events: Log,
+): { step: string; attempt: number; cause: Cause; reason: string } | undefined {
+  const last = events.at(-1)!;
+
+  if (
+    last.type !== "escalated" ||
+    last.next === undefined ||
+    last.attempt === undefined ||
+    last.cause === undefined
+  ) {
+    return undefined;
+  }
+
+  const started = events.find(
+    (event) => event.type === "attempt-started" && event.attempt === last.attempt,
+  );
+
+  return started?.type === "attempt-started"
+    ? { step: started.step, attempt: last.attempt, cause: last.cause, reason: last.reason }
     : undefined;
 }
 

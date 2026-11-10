@@ -112,6 +112,17 @@ export type Limits = {
  */
 export type Money = { usd?: number };
 
+/**
+ * Where a step sends an escalation of one of its attempts, by its cause, in place of the owner:
+ * to a step of its workflow. `any` is every cause here without a route of its own. Only these
+ * causes may be routed; any other, and every escalation before an attempt starts, is the owner's.
+ * The attempt spent a unit of the step's budget, and a route renews none, so routes are bounded
+ * as every loop is.
+ */
+export type Routes<N extends string = string> = Partial<
+  Record<"limit" | "claim" | "exit" | "kind" | "broker" | "interrupted" | "unmet" | "any", N>
+>;
+
 // The limits a step states: those it changes from the factory's defaults, or none, and any money
 // limit.
 type Stated = { limits?: Partial<Limits> & Money };
@@ -125,6 +136,7 @@ type Program<N extends string, Bounded> = {
   claims: readonly string[];
   workspace: "subject" | "empty" | { input: string; branches?: string };
   on: Record<string, N | "end">;
+  escalate?: Routes<N>;
   budget: number;
   access: Access;
 } & Bounded;
@@ -175,6 +187,7 @@ export type Children<N extends string> = {
   concurrent: number;
   wait: Wait;
   on: Record<string, N | "end">;
+  escalate?: Routes<N>;
   budget: number;
   limits: { wait: number };
 };

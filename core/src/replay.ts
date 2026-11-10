@@ -104,10 +104,13 @@ export type Cause =
 // transcript and errors are there when the attempt's program ran, errors only when it wrote to
 // stderr; an interrupted attempt's are what it wrote before its engine died. usage is as on
 // attempt-completed.
-type Escalated = {
+type Escalated<N extends string> = {
   type: "escalated";
   reason: string;
   cause?: Cause;
+  // The step its step routed it to, when it did: the commission goes on there, and does not
+  // wait for the owner.
+  next?: N;
   attempt?: number;
   transcript?: string;
   errors?: string;
@@ -141,7 +144,7 @@ export type CommissionEvent<N extends string = string> = (
   | Commissioned
   | AttemptStarted<N>
   | AttemptCompleted<N>
-  | Escalated
+  | Escalated<N>
   | Noted
   | Decided<N>
   | Withdrawn
@@ -276,6 +279,12 @@ function apply<N extends string>(
     case "escalated":
       if (state.status !== "ready" && state.status !== "attempting") {
         throw new Error(`A commission cannot escalate while it is ${state.status}.`);
+      }
+
+      // Routed, it goes on at the step its step named: nothing is renewed, and the owner's
+      // latest decision about the subject stands.
+      if (event.next !== undefined) {
+        return arrive(workflow, event.next, state.subject, state.decision, position);
       }
 
       return event.cause === undefined

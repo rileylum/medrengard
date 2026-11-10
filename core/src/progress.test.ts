@@ -6,7 +6,7 @@ import { builtIn } from "../defaults/kinds.ts";
 import { limits } from "../defaults/limits.ts";
 import { contract } from "../defaults/access.ts";
 import type { Children, Definition } from "./definition.ts";
-import { admit, repeats, waitOf, type Log } from "./progress.ts";
+import { admit, repeats, routeOf, waitOf, type Log } from "./progress.ts";
 
 // Constraint 8: what the engine does next is judged from the log alone, so the module that judges
 // it imports types alone and names nothing that reads a clock, randomness or a file.
@@ -291,4 +291,53 @@ test("a children step's wait is met, can no longer be met, is late, or goes on",
     failed: [],
   });
   assert.deepEqual(waitOf(step("all"), 3, [pass, pass, pass], 61_000), { wait: "met", failed: [] });
+});
+
+test("only an attempt's escalation is routed, by its cause or else by any, and never the owner's own causes", () => {
+  const definition = definitionWith();
+
+  definition.workflow.steps.fan = {
+    kind: "children",
+    workflow: "review",
+    count: 1,
+    width: 1,
+    concurrent: 1,
+    wait: "all",
+    on: { done: "end" },
+    escalate: { unmet: "build", any: "fan" },
+    budget: 1,
+    limits: { wait: 60 },
+  };
+
+  const log: Log = [
+    commissioned,
+    {
+      type: "attempt-started",
+      step: "fan",
+      attempt: 1,
+      subject: "r",
+      inputs: [],
+      process: { pid: 1, start: 1 },
+    },
+  ];
+
+  assert.equal(routeOf(definition, log, { cause: "unmet", attempt: 1 }), "build");
+  assert.equal(routeOf(definition, log, { cause: "limit", attempt: 1 }), "fan");
+
+  // Before an attempt starts, and for a cause that is the owner's alone, there is no route.
+  assert.equal(routeOf(definition, log, { cause: "limit" }), undefined);
+
+  for (const cause of [
+    "budget",
+    "money",
+    "repeat",
+    "inputs",
+    "engine",
+    "cancelled",
+    "withdrawn",
+    "upgrade",
+    "trigger",
+  ] as const) {
+    assert.equal(routeOf(definition, log, { cause, attempt: 1 }), undefined, cause);
+  }
 });

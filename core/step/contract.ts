@@ -42,6 +42,9 @@ export type Input = {
   step: string;
   attempt: number;
   outcomes: string[];
+  // The escalation that routed the commission to this step, if one did: the step it left, its
+  // attempt, and why.
+  routed?: { step: string; attempt: number; cause: string; reason: string };
   inputs: Record<string, (Artifact | Session)[]>;
   claims: Record<string, Rules>;
   attended?: boolean;

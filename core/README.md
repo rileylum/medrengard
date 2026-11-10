@@ -153,13 +153,13 @@ outcome to the next step or to `end`.
 
 There are five kinds of step:
 
-| Kind         | Runs                                             | Fields besides `kind` and `on`                                                       |
-| ------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `command`    | the owner's program, `run`                       | `run`, `watch`?, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`?      |
-| `agent`      | an agent through its harness adapter             | `agent`, `attended`?, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`? |
-| `approval`   | nothing: it waits for the owner                  | none                                                                                 |
-| `children`   | nothing: it waits on child commissions           | see [Children](#children)                                                            |
-| `commission` | nothing: it starts commissions through a trigger | see [Commissions that start commissions](#commissions-that-start-commissions)        |
+| Kind         | Runs                                             | Fields besides `kind` and `on`                                                                    |
+| ------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `command`    | the owner's program, `run`                       | `run`, `watch`?, `workspace`, `inputs`, `claims`, `escalate`?, `budget`, `access`, `limits`?      |
+| `agent`      | an agent through its harness adapter             | `agent`, `attended`?, `workspace`, `inputs`, `claims`, `escalate`?, `budget`, `access`, `limits`? |
+| `approval`   | nothing: it waits for the owner                  | none                                                                                              |
+| `children`   | nothing: it waits on child commissions           | see [Children](#children)                                                                         |
+| `commission` | nothing: it starts commissions through a trigger | see [Commissions that start commissions](#commissions-that-start-commissions)                     |
 
 The fields of a command or agent step:
 
@@ -202,6 +202,34 @@ The fields of a command or agent step:
   it cannot state one, nor can a step whose agent's harness says `costs: false`.
 
 A kind's verifier and materialiser have bounds of their own; see [Kinds](#kinds).
+
+A command, agent or children step may route an escalation of one of its attempts to another step,
+by its cause, in place of the owner:
+
+```ts
+implement: {
+  kind: "agent",
+  inputs: { earlier: { session: "implement" } },
+  // An attempt whose engine died picks up its session again; a failed one goes to diagnose.
+  escalate: { interrupted: "implement", exit: "diagnose", limit: "diagnose" },
+  budget: 3,
+  // ...
+},
+```
+
+- The causes a step may route are `limit`, `claim`, `exit`, `kind`, `broker`, `interrupted` and
+  `unmet`, and `any` for each of them without a route of its own. The rest are yours alone:
+  `budget`, `money`, `repeat`, `inputs`, `engine`, `cancelled`, `withdrawn`, `upgrade` and
+  `trigger`. A route leads to a step, never to `end`.
+- Only an attempt's escalation is routed. One before an attempt starts, such as inputs over the
+  input limit, waits for you whatever the step routes.
+- The attempt spent a unit of its step's budget and a route renews none, so a step routed back to
+  itself stops once its budget is spent, `Step implement has spent its budget of 3 attempts.`,
+  and then waits for you.
+- The step it goes on at is told why: its `input.json` holds `routed`, `{ "step": "implement",
+  "attempt": 2, "cause": "exit", "reason": "Step implement exited with code 1." }`. It is given no
+  transcript.
+- `show` ends such an attempt's line with `On to diagnose.`, and `record` gives its `next`.
 
 A command step may `watch: { interval, wait }`, to wait on something outside the commission, such
 as CI or a review, without holding a program for the whole wait. Its attempt is the wait, a unit

@@ -20,6 +20,7 @@ const exports = {
     "Limits",
     "Money",
     "Query",
+    "Routes",
     "Skill",
     "Trigger",
     "Wait",

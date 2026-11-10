@@ -62,6 +62,8 @@ import {
   outcomeOf,
   overMoney,
   repeats,
+  routedBy,
+  routeOf,
   sessionsOf,
   spentIn,
   waitOf,
@@ -126,6 +128,8 @@ export type Entry =
       escalated: string;
       // Absent for an escalation written before escalations carried a cause.
       cause?: Cause;
+      // The step its step routed it to, when it did.
+      next?: string;
       errors: boolean;
       usage?: Usage;
     }
@@ -732,9 +736,18 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     throw new Error(`Commission ${commission} has no transcript for attempt ${attempt}.`);
   }
 
+  // An escalation as written: its reason bounded, and the step its step routes it to, if it
+  // routes it.
+  function escalating(events: Log, given: Escalation): Escalation {
+    const next = routeOf(definitionOf(events), events, given);
+    const bound = { ...given, reason: bounded(given.reason) };
+
+    return next === undefined ? bound : { ...bound, next };
+  }
+
   function write(commission: string, events: Log, given: Written): void {
     // Every reason passes here, so one bound covers those quoting a step's own words.
-    const event = given.type === "escalated" ? { ...given, reason: bounded(given.reason) } : given;
+    const event = given.type === "escalated" ? escalating(events, given) : given;
 
     replay(definitionOf(events), [...events, event]);
     insert.run(commission, events.length, JSON.stringify({ ...event, at: Date.now() }));
@@ -1143,6 +1156,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
           artifacts: input.hashes.map(artifact),
         })),
         skills: [],
+        routed: undefined,
       },
       () => (cancelled() ? why : undefined),
       note,
@@ -1467,6 +1481,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
                 ended: event.at,
                 escalated: event.reason,
                 cause: event.cause,
+                next: event.next,
                 errors: event.errors !== undefined,
               };
               withUsage(entryOf(event.attempt), event.usage);
@@ -2081,6 +2096,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
             branches,
             inputs,
             skills,
+            routed: routedBy(events),
           },
           stopping,
           note,
@@ -2483,6 +2499,8 @@ type Given = {
   branches: readonly Supplied[] | undefined;
   inputs: readonly Input[];
   skills: readonly { name: string; files: readonly { file: string; bytes: Buffer }[] }[];
+  // The escalation that routed the commission to this step, if one did.
+  routed: ReturnType<typeof routedBy>;
 };
 
 // An artifact an input names, with the child that claimed it, if any, and the branch the workspace
@@ -2725,6 +2743,8 @@ async function prepare(input_: string, step: Runnable, given: Given): Promise<vo
     step: given.step,
     attempt: given.attempt,
     outcomes: Object.keys(step.on),
+    // Left out unless an escalation routed the commission here: the step it left, and why.
+    routed: given.routed,
     inputs: Object.fromEntries(inputs),
     // What a claim of each kind holds; the programs behind a kind are the engine's, not the step's.
     claims: Object.fromEntries(

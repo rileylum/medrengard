@@ -617,6 +617,30 @@ function parseWorkflow(
       throw invalid(`step ${name}'s edges must each lead to a step or the end`);
     }
 
+    // A route leads an escalation of one of the step's attempts to a step, never to the end,
+    // and only for a cause that is not the owner's alone to answer.
+    if (Object.hasOwn(step, "escalate")) {
+      const routes = step.escalate;
+
+      if (!isRecord(routes)) {
+        throw invalid(`step ${name}'s routes must each lead a cause to a step`);
+      }
+
+      for (const [cause, next] of Object.entries(routes)) {
+        if (!routable.includes(cause)) {
+          throw invalid(
+            `step ${name} routes ${cause}, which is not a cause a step may route: ${routable.slice(0, -1).join(", ")} or any`,
+          );
+        }
+
+        if (!names.includes(next)) {
+          throw invalid(
+            `step ${name} routes ${cause} to ${next}, which is not one of its workflow's steps`,
+          );
+        }
+      }
+    }
+
     // An approval with none could never be decided, and a program step's every claim would escalate.
     if (Object.keys(on).length === 0) {
       throw invalid(`step ${name} has no outcomes`);
@@ -677,6 +701,7 @@ function parseWorkflow(
       ...(kind === "agent" && Object.hasOwn(step, "attended") ? ["attended"] : []),
       ...(kind === "command" && Object.hasOwn(step, "watch") ? ["watch"] : []),
       "on",
+      ...(Object.hasOwn(step, "escalate") ? ["escalate"] : []),
       "budget",
       "access",
       ...(Object.hasOwn(step, "limits") ? ["limits"] : []),
@@ -910,12 +935,16 @@ function childrenFields(step: Children<string>): string[] {
     "concurrent",
     "wait",
     "on",
+    ...(has("escalate") ? ["escalate"] : []),
     "budget",
     "limits",
   ];
 }
 
 const positive = (value: number) => Number.isSafeInteger(value) && value > 0;
+
+// The causes a step may route, and any, for each of them without a route of its own.
+const routable = ["limit", "claim", "exit", "kind", "broker", "interrupted", "unmet", "any"];
 
 // Why the children step `step` cannot run, if it cannot; `valid` says whether a query is one its
 // workflow can resolve. That the workflow it names is the factory's, and leads not back to its
