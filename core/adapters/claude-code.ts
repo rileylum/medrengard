@@ -18,8 +18,8 @@
  *
  * claude reaches the model only through the step's broker `anthropic`, claude-code-broker.ts,
  * which holds the subscription token outside the step's sandbox: claude has a placeholder in its
- * place, so the token is nowhere the agent could read it. claude runs in a nested sandbox of its
- * own, where what the agent runs sees only claude and itself.
+ * place, so the token is nowhere the agent could read it. claude runs in the step's sandbox, so
+ * what the agent runs may make namespaces of its own only if the step's access grants sandboxes.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -180,27 +180,16 @@ const { skills } = given.agent;
 const declared = [...tools, ...(skills.length === 0 ? [] : ["Skill"])];
 
 // Claude Code's managed settings, which --setting-sources cannot turn off: hooks and environment
-// that its init would not list. Hidden, so only what the agent declares loads.
+// that its init would not list. Absent, and under a read-only /etc, none can load or be written.
+// lazy: refused rather than hidden, the step's access having no read-only empty path; add one once
+// a machine with managed settings runs agents.
 const managed = "/etc/claude-code";
 
-// claude's own sandbox: a PID namespace and /proc of its own, so what the agent runs sees only
-// claude and itself, and the managed settings hidden; and no namespaces of the agent's own, which
-// the step's access grants only for this one. Every other mount stays as the step's access made it.
-const nested = [
-  "--die-with-parent",
-  "--unshare-user",
-  "--disable-userns",
-  "--unshare-pid",
-  "--dev-bind",
-  "/",
-  "/",
-  "--proc",
-  "/proc",
-  // An empty directory needs a place to mount: only one that exists can be hidden, and one that
-  // does not cannot load.
-  ...(existsSync(managed) ? ["--size", "4096", "--tmpfs", managed, "--remount-ro", managed] : []),
-  "--",
-];
+if (existsSync(managed)) {
+  refuse(
+    `${managed}, where Claude Code reads managed settings no flag turns off, exists in the step's sandbox, so claude would not load only what the agent declares.`,
+  );
+}
 
 // CLAUDE.md loads as Claude Code's own, not through a plugin, so only this variable keeps it out.
 // No telemetry, error reports or feature flags: flags fetched from Anthropic could change how
@@ -253,18 +242,20 @@ const headless = ["-p", "--output-format", "stream-json", "--verbose", "--includ
 // attended session does not. Random, as a commission's name is unique only within its log.
 const sessionId = randomUUID();
 
-// Starts claude in its sandbox, with `session` before its configuration and `credential` as its
-// token: the placeholder its broker replaces, or another, which the broker refuses. stdin, when
-// piped, is given `prompt`: Linux refuses one argument over 128 KiB.
+// Starts claude, with `session` before its configuration and `credential` as its token: the
+// placeholder its broker replaces, or another, which the broker refuses. stdin, when piped, is
+// given `prompt`: Linux refuses one argument over 128 KiB. Headless, it leads a process group of
+// its own, so stopping it stops what it started; in the terminal it must stay in the foreground.
 function start(
   session: string[],
   credential: string,
   stdio: ("inherit" | "pipe" | "ignore")[],
   prompt?: string,
 ): ChildProcess {
-  const claude = spawn("bwrap", [...nested, "claude", ...session, ...configuration], {
+  const claude = spawn("claude", [...session, ...configuration], {
     env: { ...claudeEnvironment, CLAUDE_CODE_OAUTH_TOKEN: credential },
     stdio,
+    detached: stdio[1] === "pipe",
   });
 
   // A claude that ends before reading what it is given says why in its exit; the write has
@@ -536,9 +527,9 @@ function startupOf(
     unfit.forEach(report);
     startup.stopped = unfit.length > 0;
 
-    // bwrap's --die-with-parent ends claude with it.
+    // Only a headless claude is followed, so it leads its group.
     if (startup.stopped || then === "stop") {
-      claude.kill("SIGTERM");
+      process.kill(-claude.pid!, "SIGTERM");
     }
   }
 }
@@ -784,7 +775,7 @@ if (!attended) {
 }
 
 if (closed instanceof Error) {
-  console.error(`bwrap could not start claude: ${closed.code}.`);
+  console.error(`claude could not start: ${closed.code}.`);
   process.exitCode = 127;
 } else if (startup.stopped) {
   // Why is already recorded.

@@ -473,8 +473,10 @@ exist.
   `claude` executable, no host of its own and the broker `anthropic`, the adapter's, which holds
   the subscription token from `~/.config/medrengard/claude-token` outside the sandbox and is the
   only way to the model API, `PATH`, `HOME` and `LANG`, the
-  Git identity `Medrengard <medrengard@localhost>` as `values`, and `sandboxes`: the adapter runs `claude` in a sandbox of its own, in which what
-  the agent runs cannot make namespaces. Its home is empty, so the owner's settings, skills, hooks
+  Git identity `Medrengard <medrengard@localhost>` as `values`, and no `sandboxes`, so what the
+  agent runs cannot make namespaces. A step whose agent runs tools that sandbox themselves, such as
+  bubblewrap, Codex or Chromium, grants them: `{ ...claudeCode, sandboxes: true }`. A namespace it
+  makes still sees nothing the step's access hides and writes nothing it made read-only. Its home is empty, so the owner's settings, skills, hooks
   and MCP servers never load. A path under the home, such as a repository,
   stays invisible until you add it: the deeper entry wins.
 - `codex`: what the Codex adapter needs: the system, a fresh `/tmp`, an empty home of 256 MiB,
@@ -735,8 +737,9 @@ const planner = agent("/path/to/agents/planner.md", harnesses);
   2026-11-09T14:00:00.000Z.` Retry once it has.
 - A tool `claude` refused the agent, such as `Bash` under `acceptEdits`, is noted:
   `Claude Code denied Bash: npm test`. An attended session shows its refusals on screen.
-- Claude Code's managed settings in `/etc/claude-code`, which no flag turns off, are hidden from
-  `claude` when they exist. Managed settings an organisation's token brings from the server are
+- Claude Code's managed settings in `/etc/claude-code`, which no flag turns off, would load
+  whatever the agent declares, so the adapter refuses to start `claude` where that directory exists.
+  Managed settings an organisation's token brings from the server are
   not; a personal subscription has none.
 - `claude` silently ignores settings with an invalid value, all of them at once, so the adapter's
   carry a canary hook. If it has not run by the time `claude` says what it loaded, the adapter
@@ -764,8 +767,8 @@ const planner = agent("/path/to/agents/planner.md", harnesses);
   token from `~/.config/medrengard/claude-token` unless given another file; `claudeCode` names it.
   `claude` is given a placeholder in its place and the broker's address as `ANTHROPIC_BASE_URL`, so
   nothing the agent runs, such as a dependency's install script, can read the token, from a
-  process or a file. A step whose access names no `anthropic` broker is refused. `claude` runs in a
-  nested sandbox of its own, where what the agent runs sees only `claude` and itself.
+  process or a file. A step whose access names no `anthropic` broker is refused. `claude` runs in the
+  step's sandbox, as `codex` does: nothing in it holds a credential.
 - `claudeCode` commits as `Medrengard <medrengard@localhost>`, whatever the engine's environment
   holds. For another identity, `{ ...claudeCode, values: gitIdentity("Name", "email") }`.
 - `claudeCode` grants the adapter's real directory. If you reach this repository through a

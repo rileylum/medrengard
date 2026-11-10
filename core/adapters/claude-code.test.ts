@@ -59,6 +59,7 @@ async function engineWithClaude(
   prompt = "Plan the change.",
   continuing?: { agent: true } | { command: string },
   brokered = true,
+  { sandboxes = false, managed = false } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
@@ -124,14 +125,20 @@ ${script}
     // for the fake claude and what it records.
     access: {
       paths: [
-        ...["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
+        ...["/usr", "/bin", "/lib", "/lib64"].map((path) => ({
           path,
           mode: "read" as const,
         })),
+        // An empty /etc where a directory under it must be made, which a read-only one refuses.
+        managed
+          ? ({ path: "/etc", mode: "empty", size: 65536 } as const)
+          : ({ path: "/etc", mode: "read" } as const),
         { path: "/tmp", mode: "empty", size: 16 * 1024 * 1024 },
         { path: dirname(dirname(process.execPath)), mode: "read" },
         { path: join(import.meta.dirname, ".."), mode: "read" },
         { path: directory, mode: "write" },
+        // Where Claude Code's managed settings would be, as on a machine an admin manages.
+        ...(managed ? [{ path: "/etc/claude-code", mode: "empty", size: 4096 } as const] : []),
       ],
       network: brokered && {
         hosts: [],
@@ -148,7 +155,7 @@ ${script}
       },
       environment: [],
       workspace: "write",
-      sandboxes: true,
+      sandboxes,
     },
     limits: { idle: 5, attempt: 10, transcript: 65536, input: 1024 * 1024 },
   } as const;
@@ -348,16 +355,50 @@ test("the Claude Code adapter refuses a step whose access names no broker for it
   assert.match(engine.errors("first", 1).toString(), /through the broker anthropic/);
 });
 
-test("what the agent runs under the Claude Code adapter cannot make namespaces of its own", async (t) => {
+for (const [sandboxes, expected] of [
+  [false, "refused\n"],
+  [true, "made\n"],
+] as const) {
+  test(`what the agent runs under the Claude Code adapter makes namespaces of its own only if its step's access grants sandboxes: ${sandboxes}`, async (t) => {
+    const { engine, directory } = await engineWithClaude(
+      t,
+      `${succeeded}
+       unshare -Ur true 2> /dev/null && echo made > "${"$"}{0%/claude}/nested" || echo refused > "${"$"}{0%/claude}/nested"
+       echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+      [],
+      {},
+      "Plan the change.",
+      undefined,
+      true,
+      { sandboxes },
+    );
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
+    assert.equal(await readFile(join(directory, "nested"), "utf8"), expected);
+  });
+}
+
+test("the Claude Code adapter refuses to start claude where its managed settings could load", async (t) => {
   const { engine, directory } = await engineWithClaude(
     t,
-    `${succeeded}
-     unshare -Ur true 2> /dev/null && echo made > "${"$"}{0%/claude}/nested" || echo refused > "${"$"}{0%/claude}/nested"
-     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+    `echo started > "${"$"}{0%/claude}/started"`,
+    [],
+    {},
+    "Plan the change.",
+    undefined,
+    true,
+    { managed: true },
   );
 
-  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
-  assert.equal(await readFile(join(directory, "nested"), "utf8"), "refused\n");
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    reason: "Step plan exited with code 2.",
+  });
+  assert.match(
+    engine.errors("first", 1).toString(),
+    /\/etc\/claude-code, where Claude Code reads managed settings no flag turns off, exists/,
+  );
+  await assert.rejects(readFile(join(directory, "started")));
 });
 
 test("the Claude Code adapter gives claude a prompt longer than one argument may be", async (t) => {

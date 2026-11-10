@@ -51,7 +51,8 @@ export function gitIdentity(name: string, email: string) {
  * npm, the `claude` executable, its broker, the only way to the model API, which holds the
  * subscription token from its default token file outside the sandbox, and a Git identity to commit
  * with, Medrengard's unless a factory sets its own with gitIdentity. It reaches no host itself.
- * Its home is empty, so the owner's settings, skills, hooks and MCP servers never load.
+ * Its home is empty, so the owner's settings, skills, hooks and MCP servers never load. What the
+ * agent runs makes no namespaces unless a step grants sandboxes.
  */
 export const claudeCode = {
   paths: [
@@ -78,8 +79,9 @@ export const claudeCode = {
   environment: ["PATH", "HOME", "LANG"],
   values: gitIdentity("Medrengard", "medrengard@localhost"),
   workspace: "write",
-  // The adapter runs claude in a sandbox of its own, which refuses them to what the agent runs.
-  sandboxes: true,
+  // What the agent runs may not make namespaces. A step running bubblewrap, Codex or Chromium,
+  // which sandbox themselves, spreads this and grants them.
+  sandboxes: false,
 } satisfies Access;
 
 // Codex's npm package, beside npm's, where npm installs it globally; it holds the native codex.
