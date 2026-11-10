@@ -919,6 +919,40 @@ test("a step whose access grants sandboxes can start one of its own", async (t) 
   assert.equal(engine.transcript("first", 1).toString(), "started\n");
 });
 
+test("a namespace a step makes uncovers nothing its access hides and writes nothing it made read-only", async (t) => {
+  const { engine } = await engineConfined(
+    t,
+    (directory) => {
+      mkdirSync(join(directory, "kept", "hidden"), { recursive: true });
+      writeFileSync(join(directory, "kept", "hidden", "secret"), "secret\n");
+
+      return {
+        ...access,
+        sandboxes: true,
+        paths: [
+          ...system,
+          { path: "/tmp", mode: "scratch" },
+          { path: join(directory, "kept"), mode: "read" },
+          { path: join(directory, "kept", "hidden"), mode: "empty", size: 4096 },
+        ],
+      };
+    },
+    `unshare -Urm sh -c '
+       echo made
+       umount "$1/kept/hidden" 2> /dev/null
+       cat "$1/kept/hidden/secret" 2> /dev/null || echo hidden
+       mkdir /tmp/kept; mount --bind "$1/kept" /tmp/kept 2> /dev/null
+       cat /tmp/kept/hidden/secret 2> /dev/null || echo hidden
+       mount -o remount,bind,rw "$1/kept" 2> /dev/null
+       touch "$1/kept/written" 2> /dev/null && echo written || echo read-only
+     ' sh "$1"`,
+  );
+
+  await engine.advance("first");
+
+  assert.equal(engine.transcript("first", 1).toString(), "made\nhidden\nhidden\nread-only\n");
+});
+
 test("a step without network access has only a loopback interface", async (t) => {
   // /proc/net/dev lists one interface per line, each with a colon; its headers have none.
   const { engine } = await engineConfined(t, () => access, `grep -c : /proc/net/dev`);
