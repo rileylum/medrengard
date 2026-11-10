@@ -4,7 +4,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { Access } from "../src/replay.ts";
+import type { Access } from "../src/definition.ts";
 
 const ownerHome = homedir();
 

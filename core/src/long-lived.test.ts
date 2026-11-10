@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { builtIn } from "../defaults/kinds.ts";
 import { limits } from "../defaults/limits.ts";
 import { createEngine } from "./engine.ts";
-import { defineWorkflow } from "./replay.ts";
+import { defineWorkflow } from "./definition.ts";
 
 const mayor = defineWorkflow({
   start: "work",

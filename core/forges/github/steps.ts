@@ -4,7 +4,7 @@
 import { join } from "node:path";
 import { contract } from "../../defaults/access.ts";
 import type { Kind } from "../../src/kinds.ts";
-import type { Access, Workflow } from "../../src/replay.ts";
+import type { Access, Workflow } from "../../src/definition.ts";
 
 /**
  * The pull-request kind: a judgement about the subject commit, that it is open as pull request

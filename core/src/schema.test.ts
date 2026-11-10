@@ -11,7 +11,7 @@ import type {
   Wait,
   Watch,
   Workflow,
-} from "./replay.ts";
+} from "./definition.ts";
 
 // Constraint 7: the definition's schema is pinned here, at compile time: a field added to or
 // removed from any type a factory writes fails the type check until this list changes on purpose.

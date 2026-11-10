@@ -4,6 +4,7 @@
   "license": "MIT",
   "type": "module",
   "exports": {
+    "./src/definition.ts": "./src/definition.ts",
     "./src/replay.ts": "./src/replay.ts",
     "./src/kinds.ts": "./src/kinds.ts",
     "./src/engine.ts": "./src/engine.ts",

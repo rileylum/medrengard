@@ -4,7 +4,7 @@
 // configuration of several agent steps runs free.
 import { join } from "node:path";
 import { benchmarkKinds, benchmarkLimits, benchmarkWorkflow, implementAccess, implementPrompt, type Configuration } from "../workflow.ts";
-import type { Access } from "@medrengard/core/src/replay.ts";
+import type { Access } from "@medrengard/core/src/definition.ts";
 import { data } from "../data.ts";
 
 const stub = new URL("agent.ts", import.meta.url).pathname;

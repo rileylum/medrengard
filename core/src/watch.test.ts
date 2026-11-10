@@ -7,7 +7,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { builtIn } from "../defaults/kinds.ts";
 import { limits } from "../defaults/limits.ts";
 import { createEngine } from "./engine.ts";
-import type { Access, CommissionState } from "./replay.ts";
+import type { Access } from "./definition.ts";
+import type { CommissionState } from "./replay.ts";
 
 // The system's programs, read-only, and the temp directory, where each test's directory is.
 const access: Access = {

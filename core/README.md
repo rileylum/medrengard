@@ -56,7 +56,7 @@ owner.
 
 ```ts
 // factory.ts
-import { defineWorkflow } from "@medrengard/core/src/replay.ts";
+import { defineWorkflow } from "@medrengard/core/src/definition.ts";
 import { contract } from "@medrengard/core/defaults/access.ts";
 import { builtIn } from "@medrengard/core/defaults/kinds.ts";
 import { limits } from "@medrengard/core/defaults/limits.ts";
@@ -234,7 +234,8 @@ decision on that escalation accepts the engine, not one at an approval step. A c
 before engines recorded their version escalates the same way, once. A test keeps a log written on
 2026-11-03 readable.
 
-`src/replay.ts` exports the types `Workflow`, `Agent`, `Access` and `Query`. A `run` is a non-empty
+`src/definition.ts` exports what a factory is written in: `defineWorkflow` and the types
+`Workflow`, `Agent`, `Access` and `Query`; `src/replay.ts`, the events and a commission's state. A `run` is a non-empty
 argv, `readonly [string, ...string[]]`: a function that builds steps from a `string[]` must declare
 that type, or the compiler refuses it.
 
@@ -518,7 +519,7 @@ medrengard commission mayor --trigger mayor --title "Mayor" --body-file standing
 Every command and agent step runs in bubblewrap under its `access`:
 
 ```ts
-import type { Access } from "@medrengard/core/src/replay.ts";
+import type { Access } from "@medrengard/core/src/definition.ts";
 
 const access: Access = {
   // In order of depth; on the same path, read wins. A path not listed is invisible.

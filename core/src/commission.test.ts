@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { builtIn } from "../defaults/kinds.ts";
 import { limits } from "../defaults/limits.ts";
 import { createEngine } from "./engine.ts";
-import type { Access, Workflow } from "./replay.ts";
+import type { Access, Workflow } from "./definition.ts";
 
 const access: Access = {
   paths: ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({

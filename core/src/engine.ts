@@ -37,23 +37,25 @@ import { connect as connectTo, createServer as createNetServer, type Socket } fr
 import { DatabaseSync } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import {
-  replay,
   type Access,
   type Children,
-  type Commissioned,
   type Commissioning,
-  type CommissionEvent,
-  type CommissionState,
   type Definition,
   type Limits,
   type Query,
   type Skill,
-  type Usage,
   type Trigger,
   type Watch,
   type Workflow,
+} from "./definition.ts";
+import {
+  replay,
+  type Commissioned,
+  type CommissionEvent,
+  type CommissionState,
+  type Usage,
 } from "./replay.ts";
-import { parseDefinition, waitOutcome } from "./definition.ts";
+import { parseDefinition, waitOutcome } from "./parse-definition.ts";
 import { hasExactly, isRecord, isText } from "./json.ts";
 import { confine, inScope, overMemory, type Bounds } from "./sandbox.ts";
 import type { Kind, Kinds, Program } from "./kinds.ts";

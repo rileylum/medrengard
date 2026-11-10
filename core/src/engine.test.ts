@@ -23,7 +23,7 @@ import {
   type Money,
   type Query,
   type Workflow,
-} from "./replay.ts";
+} from "./definition.ts";
 
 // The system's programs, read-only.
 const system = ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({

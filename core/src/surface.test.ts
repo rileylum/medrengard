@@ -11,13 +11,10 @@ import { createEngine } from "./engine.ts";
 // Public is these modules, which a factory or a client imports by path; the rest are the engine's
 // own. Types are erased at run time, so the names are read from each module's source.
 const exports = {
-  "src/replay.ts": [
+  "src/definition.ts": [
     "Access",
     "Agent",
     "Children",
-    "CommissionEvent",
-    "CommissionState",
-    "Commissioned",
     "Commissioning",
     "Definition",
     "Limits",
@@ -25,13 +22,12 @@ const exports = {
     "Query",
     "Skill",
     "Trigger",
-    "Usage",
     "Wait",
     "Watch",
     "Workflow",
     "defineWorkflow",
-    "replay",
   ],
+  "src/replay.ts": ["CommissionEvent", "CommissionState", "Commissioned", "Usage", "replay"],
   "src/kinds.ts": ["Kind", "Kinds", "Program"],
   "src/engine.ts": ["CommissionRecord", "Entry", "createEngine"],
   "src/store.ts": ["Artifact", "createStore"],

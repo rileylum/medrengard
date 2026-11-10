@@ -12,7 +12,7 @@ import { createEngine } from "../src/engine.ts";
 import { claudeCode } from "../defaults/access.ts";
 import { builtIn } from "../defaults/kinds.ts";
 import { limits } from "../defaults/limits.ts";
-import { defineWorkflow, type Workflow } from "../src/replay.ts";
+import { defineWorkflow, type Workflow } from "../src/definition.ts";
 
 const adapter = join(import.meta.dirname, "claude-code.ts");
 const broker = join(import.meta.dirname, "claude-code-broker.ts");

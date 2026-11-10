@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { builtIn } from "./kinds.ts";
 import { limits } from "./limits.ts";
 import { createEngine } from "../src/engine.ts";
-import { defineWorkflow, type Access } from "../src/replay.ts";
+import { defineWorkflow, type Access } from "../src/definition.ts";
 import { claudeCode, contract, gitIdentity } from "./access.ts";
 
 const tokenFile = join(homedir(), ".config", "medrengard", "claude-token");

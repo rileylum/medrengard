@@ -1,4 +1,4 @@
-import type { Limits } from "../src/replay.ts";
+import type { Limits } from "../src/definition.ts";
 
 const mebibyte = 1024 * 1024;
 const gibibyte = 1024 * mebibyte;

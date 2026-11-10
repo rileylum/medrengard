@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { Access } from "./replay.ts";
+import type { Access } from "./definition.ts";
 
 // The directories the step contract always gives a step, by path; the record's: the log's
 // directory, which every program is kept out of; and where its scratch areas go, on disk beside

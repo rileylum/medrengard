@@ -7,7 +7,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { builtIn } from "../defaults/kinds.ts";
 import { limits } from "../defaults/limits.ts";
 import { createEngine } from "./engine.ts";
-import type { Access, CommissionState, Wait, Workflow } from "./replay.ts";
+import type { Access, Wait, Workflow } from "./definition.ts";
+import type { CommissionState } from "./replay.ts";
 
 // A factory's workflows, by name.
 type Workflows = Parameters<typeof createEngine>[0]["workflows"];
