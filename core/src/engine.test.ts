@@ -2817,7 +2817,7 @@ test("a workflow whose workspace adds every commit of each child as branches can
             count: 1,
             width: 1,
             concurrent: 1,
-            wait: "all",
+            until: "all",
             on: { done: "build" },
             budget: 1,
             limits: { wait: 60 },

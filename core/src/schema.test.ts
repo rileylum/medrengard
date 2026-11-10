@@ -77,7 +77,7 @@ type Pinned = {
       | "given"
       | "width"
       | "concurrent"
-      | "wait"
+      | "until"
       | "on"
       | "escalate"
       | "budget"

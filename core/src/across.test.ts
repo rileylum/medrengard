@@ -95,7 +95,7 @@ function workflows() {
           count: 1,
           width: 1,
           concurrent: 1,
-          wait: "all",
+          until: "all",
           on: { done: "end" },
           budget: 1,
           limits: { wait: 60 },

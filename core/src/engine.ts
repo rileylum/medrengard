@@ -956,7 +956,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     const finishes = children.map(({ events: child }) => finishOf(child));
 
     // Without an outcome, a wait met follows done and one that cannot be met escalates.
-    const routed = outcomeOf(step.wait) !== undefined;
+    const routed = outcomeOf(step.until) !== undefined;
 
     const { wait, failed } = waitOf(step, total, finishes, Date.now() - (started.at ?? Date.now()));
 

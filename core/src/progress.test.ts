@@ -238,13 +238,13 @@ test("an attempt on the same subject and inputs as one since the latest decision
 });
 
 test("a children step's wait is met, can no longer be met, is late, or goes on", () => {
-  const step = (wait: Children<string>["wait"]): Children<string> => ({
+  const step = (until: Children<string>["until"]): Children<string> => ({
     kind: "children",
     workflow: "review",
     count: 3,
     width: 3,
     concurrent: 3,
-    wait,
+    until,
     on: { done: "end" },
     budget: 1,
     limits: { wait: 60 },
@@ -302,7 +302,7 @@ test("only an attempt's escalation is routed, by its cause or else by any, and n
     count: 1,
     width: 1,
     concurrent: 1,
-    wait: "all",
+    until: "all",
     on: { done: "end" },
     escalate: { unmet: "build", any: "fan" },
     budget: 1,

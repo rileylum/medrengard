@@ -174,7 +174,7 @@ export function waitOf(
   finishes: readonly ({ outcome?: string } | undefined)[],
   waited: number,
 ): Waited {
-  const outcome = outcomeOf(step.wait);
+  const outcome = outcomeOf(step.until);
 
   // A child succeeds by reaching its end, on the wait's outcome when it names one.
   const counts = (finish: { outcome?: string }) =>
@@ -187,11 +187,11 @@ export function waitOf(
   );
 
   const need =
-    step.wait === "first"
+    step.until === "first"
       ? 1
-      : step.wait === "all" || "all" in step.wait
+      : step.until === "all" || "all" in step.until
         ? total
-        : step.wait.atLeast;
+        : step.until.atLeast;
 
   const wait =
     succeeded >= need

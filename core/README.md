@@ -358,7 +358,7 @@ fanOut: {
   each: { from: ["plan"], kind: "document" },
   width: 8,
   concurrent: 3,
-  wait: "all",
+  until: "all",
   on: { done: "gather" },
   budget: 1,
   limits: { wait: 6 * 3600 },
@@ -379,7 +379,7 @@ gather: {
   after its request; its first subject is the latest subject among them, or its request. Given
   the parent's `subject`, a child reviews or builds on the parent's work:
   `given: { change: "subject" }`.
-- **What the parent waits for.** A child succeeds when its workflow reaches its end. `wait` is
+- **What the parent waits for.** A child succeeds when its workflow reaches its end. `until` is
   `"all"`, `"first"` or `{ atLeast: N }`, following `done` once met and escalating once it can no
   longer be met; or it counts children that ended on an outcome, `{ all: "pass" }` or
   `{ atLeast: 2, outcome: "pass" }`, following `met` or `unmet`, as a review panel does:
@@ -392,7 +392,7 @@ gather: {
     given: { change: "subject" },
     width: 3,
     concurrent: 3,
-    wait: { atLeast: 2, outcome: "pass" },
+    until: { atLeast: 2, outcome: "pass" },
     on: { met: "merge", unmet: "fix" },
     budget: 1,
     limits: { wait: 3600 },

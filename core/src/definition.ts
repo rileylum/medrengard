@@ -173,7 +173,7 @@ export type Wait = "all" | "first" | { atLeast: number; outcome?: string } | { a
  * A children step: it commissions child commissions of `workflow`, one per document `each` names,
  * or `count` on the parent's request or the document `request` names, each starting with the
  * artifacts `given` names; at most `width` in all and `concurrent` unfinished at once; and waits,
- * at most `limits.wait` seconds, for what `wait` says. A wait without an outcome follows `done`
+ * at most `limits.wait` seconds, until what `until` says. A wait without an outcome follows `done`
  * once met; one with an outcome follows `met`, or `unmet` once it can no longer be met.
  */
 export type Children<N extends string> = {
@@ -185,7 +185,7 @@ export type Children<N extends string> = {
   given?: Readonly<Record<string, Query<N>>>;
   width: number;
   concurrent: number;
-  wait: Wait;
+  until: Wait;
   on: Record<string, N | "end">;
   escalate?: Routes<N>;
   budget: number;

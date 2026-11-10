@@ -83,7 +83,7 @@ function refuseChildren(
         );
       }
 
-      const outcome = waitOutcome(declared.wait);
+      const outcome = waitOutcome(declared.until);
 
       const ends = Object.values(parsed.get(child)!.steps).some(
         (each) => outcome !== undefined && outcome !== null && each.on[outcome] === "end",
@@ -642,6 +642,12 @@ function parseWorkflow(
     const on = step?.on;
     const kind = step?.kind;
 
+    // A children step stored before what it waits until was named so held it as its wait.
+    if (kind === "children" && Object.hasOwn(step, "wait") && !Object.hasOwn(step, "until")) {
+      step.until = step.wait;
+      delete step.wait;
+    }
+
     const leads =
       isRecord(on) &&
       Object.values(on).every((next) => isText(next) && (next === "end" || names.includes(next)));
@@ -966,7 +972,7 @@ function childrenFields(step: Children<string>): string[] {
     ...(has("given") ? ["given"] : []),
     "width",
     "concurrent",
-    "wait",
+    "until",
     "on",
     ...(has("escalate") ? ["escalate"] : []),
     "budget",
@@ -986,11 +992,11 @@ function childrenProblem(
   step: Children<string>,
   valid: (query: Query) => boolean,
 ): string | undefined {
-  const { workflow, each, count, request, given, width, concurrent, wait, on, budget, limits } =
+  const { workflow, each, count, request, given, width, concurrent, until, on, budget, limits } =
     step;
 
   if (!hasExactly(step, childrenFields(step))) {
-    return "fields must be a children step's: its workflow, each or count, any request and given, width, concurrent, wait, on, budget and limits";
+    return "fields must be a children step's: its workflow, each or count, any request and given, width, concurrent, until, on, budget and limits";
   }
 
   if (!isText(workflow)) {
@@ -1052,14 +1058,14 @@ function childrenProblem(
     return `count of ${count} is over its width of ${width}`;
   }
 
-  const outcome = waitOutcome(wait);
+  const outcome = waitOutcome(until);
 
   if (outcome === null) {
-    return 'wait must be "all", "first", { atLeast: N } with any outcome, or { all: <outcome> }';
+    return 'until must be "all", "first", { atLeast: N } with any outcome, or { all: <outcome> }';
   }
 
-  if (isRecord(wait) && "atLeast" in wait && wait.atLeast > (count ?? width)) {
-    return `wait for at least ${wait.atLeast} children is over the ${count ?? width} it may have`;
+  if (isRecord(until) && "atLeast" in until && until.atLeast > (count ?? width)) {
+    return `until at least ${until.atLeast} children is over the ${count ?? width} it may have`;
   }
 
   const outcomes = outcome === undefined ? ["done"] : ["met", "unmet"];
