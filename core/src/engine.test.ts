@@ -2635,7 +2635,7 @@ test("a workflow whose input queries a step it does not have cannot be commissio
     ),
     {
       message:
-        "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, a session of one of its steps that runs a program, or a children step's children, a kind and any take.",
+        "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, a session of one of its steps that runs a program, a children step's children, a kind and any take, or across origin, started or siblings, with any from naming steps, kind and take.",
     },
   );
 });
@@ -2650,7 +2650,7 @@ test("a workflow whose input queries a kind there is not cannot be commissioned"
     ),
     {
       message:
-        "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, a session of one of its steps that runs a program, or a children step's children, a kind and any take.",
+        "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, a session of one of its steps that runs a program, a children step's children, a kind and any take, or across origin, started or siblings, with any from naming steps, kind and take.",
     },
   );
 });
@@ -2676,7 +2676,7 @@ for (const [what, query] of [
       ),
       {
         message:
-          "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, a session of one of its steps that runs a program, or a children step's children, a kind and any take.",
+          "Workflow build is invalid: step build's inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, a session of one of its steps that runs a program, a children step's children, a kind and any take, or across origin, started or siblings, with any from naming steps, kind and take.",
       },
     );
   });
@@ -2696,7 +2696,7 @@ for (const [what, inputs] of [
       ),
       {
         message:
-          "Workflow build is invalid: step build's workspace must be subject, empty, or one of its inputs that names at most one artifact: subject, request or a query that takes the latest.",
+          "Workflow build is invalid: step build's workspace must be subject, empty, or one of its inputs that names at most one artifact of this commission's: subject, request or a query that takes the latest.",
       },
     );
   });
@@ -2742,7 +2742,7 @@ test("a workflow whose workspace adds branches without a base cannot be commissi
     ),
     {
       message:
-        "Workflow build is invalid: step build's workspace must be subject, empty, or one of its inputs that names at most one artifact: subject, request or a query that takes the latest.",
+        "Workflow build is invalid: step build's workspace must be subject, empty, or one of its inputs that names at most one artifact of this commission's: subject, request or a query that takes the latest.",
     },
   );
 });
@@ -2767,7 +2767,7 @@ for (const [what, inputs] of [
       ),
       {
         message:
-          "Workflow build is invalid: step build's workspace branches must name one of its inputs that names artifacts.",
+          "Workflow build is invalid: step build's workspace branches must name one of its inputs that names artifacts of this commission's or its children's.",
       },
     );
   });

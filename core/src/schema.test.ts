@@ -30,7 +30,12 @@ type Approval = Extract<Step, { kind: "approval" }>;
 
 type Path = Access["paths"][number];
 
-type Narrowing = Exclude<Query, string | { session: string } | { children: string }>;
+type Narrowing = Exclude<
+  Query,
+  string | { session: string } | { children: string } | { across: string }
+>;
+
+type Across = Extract<Exclude<Query, string>, { across: string }>;
 
 type Waiting = Extract<Step, { kind: "children" }>;
 
@@ -152,6 +157,8 @@ type Pinned = {
   query: Expect<Same<Extract<Query, string>, "subject" | "request">>;
   narrowing: Expect<Same<keyof Narrowing, "from" | "kind" | "about" | "take">>;
   session: Expect<Same<keyof Continuing, "session">>;
+  across: Expect<Same<keyof Across, "across" | "from" | "kind" | "take">>;
+  relations: Expect<Same<Across["across"], "origin" | "started" | "siblings">>;
   kind: Expect<
     Same<
       keyof Kind,

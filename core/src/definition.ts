@@ -554,9 +554,11 @@ function parseWorkflow(
     query === "request" ||
     (hasExactly(query, ["session"]) && runsProgram(String(Object.values(query)[0]))) ||
     childrenQuery(query) ||
+    acrossQuery(query) ||
     (isRecord(query) &&
       !Object.hasOwn(query, "session") &&
       !Object.hasOwn(query, "children") &&
+      !Object.hasOwn(query, "across") &&
       Object.entries(query).every(
         ([field, value]) =>
           (field === "from" &&
@@ -566,6 +568,23 @@ function parseWorkflow(
           (field === "about" && (value === "subject" || value === "earlier" || value === "any")) ||
           (field === "take" && (value === "latest" || value === "all")),
       ));
+
+  // Whether `query` reads related commissions: names a relation, and any from, naming steps of
+  // their workflows, which this one cannot check, kind and take.
+  function acrossQuery(query: Query): boolean {
+    if (!isRecord(query) || !Object.hasOwn(query, "across")) {
+      return false;
+    }
+
+    return Object.entries(query).every(
+      ([field, value]) =>
+        (field === "across" &&
+          (value === "origin" || value === "started" || value === "siblings")) ||
+        (field === "from" && Array.isArray(value) && value.every(isText)) ||
+        (field === "kind" && isText(value) && kinds.includes(value)) ||
+        (field === "take" && (value === "latest" || value === "all")),
+    );
+  }
 
   // Whether `query` reads a children step's children: names one, a kind, and any take.
   function childrenQuery(query: Query): boolean {
@@ -705,19 +724,29 @@ function parseWorkflow(
       workspace !== "empty" &&
       source !== "subject" &&
       source !== "request" &&
-      !(isRecord(source) && take === "latest" && !Object.hasOwn(source, "children"))
+      !(
+        isRecord(source) &&
+        take === "latest" &&
+        !Object.hasOwn(source, "children") &&
+        !Object.hasOwn(source, "across")
+      )
     ) {
       throw invalid(
-        `step ${name}'s workspace must be subject, empty, or one of its inputs that names at most one artifact: subject, request or a query that takes the latest`,
+        `step ${name}'s workspace must be subject, empty, or one of its inputs that names at most one artifact of this commission's: subject, request or a query that takes the latest`,
       );
     }
 
     // Branches are any artifacts an input names, a session being none.
     const added = addsBranches ? declared.get(branches) : undefined;
 
-    if (addsBranches && (added === undefined || Object.hasOwn(added, "session"))) {
+    // lazy: no branches of other commissions' artifacts, whose names a branch would need; add them
+    // once a workflow builds on a sibling's work.
+    if (
+      addsBranches &&
+      (added === undefined || Object.hasOwn(added, "session") || Object.hasOwn(added, "across"))
+    ) {
       throw invalid(
-        `step ${name}'s workspace branches must name one of its inputs that names artifacts`,
+        `step ${name}'s workspace branches must name one of its inputs that names artifacts of this commission's or its children's`,
       );
     }
 
@@ -736,7 +765,7 @@ function parseWorkflow(
 
     if (!isRecord(inputs) || !Object.values(inputs).every(validQuery)) {
       throw invalid(
-        `step ${name}'s inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, a session of one of its steps that runs a program, or a children step's children, a kind and any take`,
+        `step ${name}'s inputs must each be subject, request, a query whose from names its steps, kind a kind, about subject, earlier or any, and take latest or all, a session of one of its steps that runs a program, a children step's children, a kind and any take, or across origin, started or siblings, with any from naming steps, kind and take`,
       );
     }
 
@@ -1126,11 +1155,15 @@ function refuseUnbuildable(
         ? ["document"]
         : "session" in query
           ? []
-          : query.kind !== undefined
-            ? [query.kind]
-            : "from" in query && query.from !== undefined
-              ? claimedBy(query.from)
-              : [...Object.keys(kinds), "decision"];
+          : "across" in query
+            ? query.kind === undefined
+              ? [...Object.keys(kinds), "decision"]
+              : [query.kind]
+            : query.kind !== undefined
+              ? [query.kind]
+              : "from" in query && query.from !== undefined
+                ? claimedBy(query.from)
+                : [...Object.keys(kinds), "decision"];
 
   for (const [name, step] of Object.entries(workflow.steps)) {
     if (

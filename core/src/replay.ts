@@ -23,7 +23,18 @@ export type Query<N extends string = string> =
   // The artifacts of `kind` the children of the children step N claimed, from its latest attempt:
   // each child that reached its end, in the order they were commissioned, its latest artifact of
   // the kind, or all of them.
-  | { children: N; kind: string; take?: "latest" | "all" };
+  | { children: N; kind: string; take?: "latest" | "all" }
+  // The artifacts of related commissions, as each has them when the attempt starts, finished or
+  // not: the commission that started this one, as its parent or through a commission step; those
+  // it started; or those the same attempt started, but this one. `from` names steps of their
+  // workflows, and `take` applies to each. lazy: one hop, and no `about`, which another
+  // commission's subject would decide; widen once a workflow needs either.
+  | {
+      across: "origin" | "started" | "siblings";
+      from?: readonly string[];
+      kind?: string;
+      take?: "latest" | "all";
+    };
 
 /**
  * A reusable agent: the harness adapter program that runs it, the model and prompt it is given,
