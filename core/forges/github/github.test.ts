@@ -84,6 +84,21 @@ async function fakeGitHub(t: TestContext, remote: string) {
       "/repos/owner/app/pulls/7/comments": () => world.comments,
     };
 
+    // How far the head is behind and ahead of main, as GitHub compares them.
+    const compared = /^\/repos\/owner\/app\/compare\/main\.\.\.([0-9a-f]{40})$/.exec(url.pathname);
+
+    if (incoming.method === "GET" && compared !== null) {
+      const bare = join(remote, "owner", "app.git");
+      const count = (range: string) => Number(git(bare, "rev-list", "--count", range));
+
+      json(200, {
+        behind_by: count(`${compared[1]}..main`),
+        ahead_by: count(`main..${compared[1]}`),
+      });
+
+      return;
+    }
+
     if (incoming.method === "GET" && Object.hasOwn(read, url.pathname)) {
       response.writeHead(200, { "content-type": "application/json" });
       // SAFETY: hasOwn found the path among read's keys.
@@ -189,9 +204,24 @@ async function fakeGitHub(t: TestContext, remote: string) {
   return { seen, world, url: `http://127.0.0.1:${port}` };
 }
 
+/** Commits `file` holding `text` to main of the bare repository `bare`, returning the commit. */
+async function commitToMain(t: TestContext, bare: string, file: string, text: string) {
+  const clone = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(clone, { recursive: true, force: true }));
+  git(clone, "clone", "--quiet", bare, ".");
+  await writeFile(join(clone, file), text);
+  git(clone, "add", file);
+  git(clone, "-c", "user.name=O", "-c", "user.email=o@example.com", "commit", "-q", "-m", file);
+  git(clone, "push", "--quiet", "origin", "HEAD:main");
+
+  return git(clone, "rev-parse", "HEAD");
+}
+
 /**
- * Commissions `first`, titled Plan, on a workflow that commits plan.txt, opens a pull request of it
- * on the fake GitHub, waits for the owner's approval and lands it.
+ * Commissions `first`, titled Plan, on a workflow that commits plan.txt on main, opens a pull
+ * request of it on the fake GitHub, waits for the owner's approval and lands it, rebasing it onto
+ * main and opening it again while it is behind.
  */
 async function landing(t: TestContext, after: "land" | "watch" | "fix" = "land") {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
@@ -205,6 +235,7 @@ async function landing(t: TestContext, after: "land" | "watch" | "fix" = "land")
 
   git(directory, "init", "--quiet", "--bare", bare);
   git(bare, "config", "http.receivepack", "true");
+  await commitToMain(t, bare, "README", "app\n");
 
   const { seen, world, url } = await fakeGitHub(t, join(directory, "remote"));
 
@@ -229,7 +260,7 @@ async function landing(t: TestContext, after: "land" | "watch" | "fix" = "land")
             run: [
               "sh",
               "-c",
-              `git init -q; echo plan > plan.txt; git add plan.txt; git commit -q --no-verify -m Plan
+              `git clone -q file://${bare} .; echo plan > plan.txt; git add plan.txt; git commit -q --no-verify -m Plan
                echo 'Ran the tests.' > "$MEDRENGARD_OUT/report.md"
                printf '{"outcome":"done","artifacts":[{"kind":"commit","fields":{"sha":"%s"},"body":"report.md"}]}' "$(git rev-parse HEAD)" > "$MEDRENGARD_OUT/output.json"`,
             ],
@@ -238,7 +269,11 @@ async function landing(t: TestContext, after: "land" | "watch" | "fix" = "land")
             claims: ["commit"],
             on: { done: "open" },
             budget: 1,
-            access: { ...contract, values: gitIdentity("Test", "test@example.com") },
+            access: {
+              ...contract,
+              paths: [...contract.paths, { path: bare, mode: "read" }],
+              values: gitIdentity("Test", "test@example.com"),
+            },
           },
           open: app.open({ on: { done: after === "land" ? "approve" : after } }),
           // A fix: another commit on the subject, opened again.
@@ -259,7 +294,8 @@ async function landing(t: TestContext, after: "land" | "watch" | "fix" = "land")
           },
           again: app.open({ on: { done: "end" } }),
           approve: { kind: "approval", on: { approve: "land" } },
-          land: app.land({ on: { done: "end" } }),
+          land: app.land({ on: { done: "end", behind: "rebase" } }),
+          rebase: app.rebase({ on: { done: "open", conflict: "end" } }),
           watch: app.watch({
             on: { merged: "end", changes: "end", closed: "end" },
             interval: 1,
@@ -324,8 +360,65 @@ test("a commission opens a pull request of its commit through the broker and, ap
   assert.ok(git_.length > 0 && git_.every(({ authorization }) => authorization === basic));
   assert.deepEqual(
     api.map(({ authorization }) => authorization),
-    ["Bearer test-token", "Bearer test-token"],
+    ["Bearer test-token", "Bearer test-token", "Bearer test-token"],
   );
+});
+
+/** The latest attempt at `step` of `first`, with what it claimed. */
+function latest(engine: Engine, step: string) {
+  const attempt = engine
+    .record("first")
+    .entries.findLast((entry) => entry.entry === "attempt" && entry.step === step);
+
+  assert.ok(attempt?.entry === "attempt" && "artifacts" in attempt);
+
+  return attempt;
+}
+
+test("work behind main is not landed but rebased onto it, opened again and, approved, landed", async (t) => {
+  const { engine, seen, bare } = await landing(t);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+
+  // Another change lands on main after the owner looked.
+  const main = await commitToMain(t, bare, "other.txt", "other\n");
+
+  approve(engine);
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+  assert.equal(latest(engine, "land").outcome, "behind");
+  assert.deepEqual(seen.merges, []);
+
+  const rebase = latest(engine, "rebase");
+  const rebased = rebase.artifacts[0]!.artifact.fields.sha!;
+
+  assert.equal(rebase.outcome, "done");
+  assert.equal(git(bare, "rev-parse", `${rebased}^`), main);
+  assert.equal(git(bare, "show", `${rebased}:plan.txt`), "plan");
+  assert.equal(git(bare, "rev-parse", "refs/heads/medrengard/first"), rebased);
+  assert.equal(seen.pulls.length, 1);
+
+  approve(engine);
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.deepEqual(seen.merges, [{ sha: rebased, merge_method: "merge" }]);
+});
+
+test("work that conflicts with main is not rebased, and the rebase claims the conflicting files", async (t) => {
+  const { engine, seen, bare } = await landing(t);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+  await commitToMain(t, bare, "plan.txt", "another plan\n");
+
+  approve(engine);
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+
+  const rebase = latest(engine, "rebase");
+
+  assert.equal(rebase.outcome, "conflict");
+  assert.deepEqual(
+    rebase.artifacts.map(({ artifact }) => [artifact.kind, artifact.fields.title, artifact.body]),
+    [["document", "Conflicts rebasing onto main", "plan.txt\n"]],
+  );
+  assert.deepEqual(seen.merges, []);
 });
 
 test("a pull request whose head moved after it was opened is not landed, and the commission escalates", async (t) => {
@@ -512,6 +605,10 @@ for (const [method, path] of [
   ["PATCH", "/api/repos/owner/app/pulls/7"],
   ["POST", "/api/repos/owner/other/pulls"],
   ["GET", "/api/repos/owner/app/pulls/7/../../../../user"],
+  [
+    "GET",
+    "/api/repos/owner/app/compare/main..x/../../../../user...0000000000000000000000000000000000000000",
+  ],
   ["GET", "/git/owner/other.git/info/refs?service=git-upload-pack"],
   ["GET", "/owner/app.git/info/refs?service=git-receive-pack"],
 ] as const) {
