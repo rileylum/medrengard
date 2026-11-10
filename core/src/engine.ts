@@ -654,7 +654,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
   // Every commission's events after a position in the log, in the order written: rowid follows
   // insertion, and no event is ever removed.
   const after = database.prepare(
-    "SELECT rowid AS position, commission, event FROM events WHERE rowid > ? ORDER BY rowid",
+    "SELECT rowid AS position, commission, position AS place, event FROM events WHERE rowid > ? ORDER BY rowid",
   );
 
   // Every commission's events after `position`, each with its own position in the log.
@@ -662,6 +662,8 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     return after.all(position).map((row) => ({
       position: Number(row.position),
       commission: String(row.commission),
+      // Its place among its commission's own events, which a decision names as since.
+      index: Number(row.place),
       // SAFETY: only the engine writes events, each replayed against its commission first.
       event: JSON.parse(String(row.event)) as CommissionEvent,
     }));
@@ -735,8 +737,16 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
   // An escalation as written: its reason bounded, and the step its step routes it to, if it
   // routes it.
   function escalating(events: Log, given: Escalation): Escalation {
-    const next = routeOf(definitionOf(events), events, given);
-    const bound = { ...given, reason: bounded(given.reason) };
+    const definition = definitionOf(events);
+    const next = routeOf(definition, events, given);
+    const state = replay(definition, events);
+
+    // An escalation names the step the commission is at, which replay allows it only at one.
+    const bound = {
+      ...given,
+      reason: bounded(given.reason),
+      step: state.status === "finished" ? undefined : state.step.name,
+    };
 
     return next === undefined ? bound : { ...bound, next };
   }
@@ -1462,7 +1472,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
             if (event.attempt === undefined) {
               entries.push({
                 entry: "escalation",
-                step: at,
+                step: event.step ?? at,
                 reason: event.reason,
                 cause: event.cause,
                 at: event.at,
@@ -1598,13 +1608,12 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       const name = state.step.name;
       const step = workflow.steps[name];
 
-      // Abandon ends the commission at every wait, so no workflow can leave the owner without one.
-      const on: Record<string, string> =
-        step.kind === "approval" ? { ...step.on, abandon: "end" } : { retry: name, abandon: "end" };
-
-      if (!Object.hasOwn(on, outcome)) {
+      if (!state.outcomes.includes(outcome)) {
         throw new Error(`Step ${name} does not declare outcome "${outcome}".`);
       }
+
+      const on: Record<string, string> =
+        step.kind === "approval" ? { ...step.on, abandon: "end" } : { retry: name, abandon: "end" };
 
       const feedbackBytes = Buffer.byteLength(feedback ?? "");
 

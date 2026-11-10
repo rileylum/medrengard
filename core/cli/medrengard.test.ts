@@ -377,6 +377,7 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
     step: step("approval"),
     subject: "string",
     since: "number",
+    outcomes: ["string", "string"],
   };
 
   const escalated = {
@@ -386,6 +387,7 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
     reason: "string",
     cause: "string",
     since: "number",
+    outcomes: ["string", "string"],
   };
 
   const timed = {

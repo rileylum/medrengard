@@ -3270,6 +3270,55 @@ test("an unattended step has empty stdin", async (t) => {
   assert.equal(engine.transcript("first", 1).toString(), "nothing to read\n");
 });
 
+// What an observer needs is on the state and the events: no client works a wait's outcomes, an
+// event's place in its commission or an escalation's step out again.
+test("a waiting commission's state names the outcomes the owner may decide, and each event its place in its commission", async (t) => {
+  const { engine } = await engineAwaiting(t);
+  const awaiting = engine.state("first");
+
+  assert.ok(awaiting.status === "awaiting");
+  assert.deepEqual(awaiting.outcomes, ["approve", "reject", "abandon"]);
+
+  // The event that began the wait, by its place in the commission's own events: what a decision
+  // names as since, whatever its position in the whole log.
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "second" });
+
+  const began = engine.events(0).filter(({ commission }) => commission === "second");
+
+  assert.deepEqual(
+    began.map(({ index }) => index),
+    [0],
+  );
+  assert.notEqual(began[0]?.position, 0);
+
+  const second = engine.state("second");
+
+  assert.ok(second.status === "awaiting");
+  assert.equal(second.since, began[0]?.index);
+
+  engine.decide("first", { subject: awaiting.subject, since: awaiting.since, outcome: "approve" });
+
+  // The build step, ["true"], claims nothing: it escalates, and the event names its step.
+  const escalated = await engine.advance("first");
+
+  assert.ok(escalated.status === "escalated");
+  assert.deepEqual(escalated.outcomes, ["retry", "abandon"]);
+  assert.partialDeepStrictEqual(engine.events(0).at(-1), {
+    commission: "first",
+    index: escalated.since,
+    event: { type: "escalated", step: "build", cause: "claim" },
+  });
+  assert.throws(
+    () =>
+      engine.decide("first", {
+        subject: escalated.subject,
+        since: escalated.since,
+        outcome: "approve",
+      }),
+    /Step build does not declare outcome "approve"\./,
+  );
+});
+
 test("a finished commission accepts nothing", async (t) => {
   const { engine } = await engineRunning(
     t,
@@ -5219,6 +5268,7 @@ test("the log's events are exactly the seven types, each with its pinned fields"
       type: "escalated",
       cause: "string",
       reason: "string",
+      step: "string",
       attempt: "number",
       transcript: "string",
       errors: "string",
