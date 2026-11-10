@@ -365,8 +365,24 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
   ): string {
     const name = commission ?? `${origin!.trigger}-${startedBy.all(origin!.trigger).length + 1}`;
     const text = pinned(workflow, checked(workflow), (bytes) => store.keep(bytes));
-    const parsed = parseDefinition(workflow, text);
+    const event = commissioning(workflow, text, request);
 
+    if (origin !== undefined) {
+      event.origin = origin;
+    }
+
+    if (given.length > 0) {
+      event.given = givenOf(given, events);
+    }
+
+    insert.run(name, 0, JSON.stringify({ ...event, at: Date.now() }));
+
+    return name;
+  }
+
+  // The event that commissions a commission of `workflow` on the definition `text`, about
+  // `request`: kept, and replayed, so a definition it could not start on is refused here.
+  function commissioning(workflow: string, text: string, request: string): Commissioned {
     const event: Commissioned = {
       type: "commissioned",
       workflow,
@@ -375,22 +391,35 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       request,
     };
 
-    if (origin !== undefined) {
-      event.origin = origin;
+    replay(parseDefinition(workflow, text), [event]);
+
+    return event;
+  }
+
+  // The artifacts a commission is given, by hash, each with its kind and the files its verifier
+  // kept, which the record `events` holds.
+  const givenOf = (given: readonly string[], events: Log | undefined) =>
+    given.map((hash) => ({
+      hash,
+      kind: store.get(hash).kind,
+      kept: events === undefined ? {} : keptAnywhere(events, hash),
+    }));
+
+  // Runs `body` as one write to the log, which no other engine's write comes between.
+  function atomically<T>(body: () => T): T {
+    database.exec("BEGIN IMMEDIATE");
+
+    try {
+      const result = body();
+
+      database.exec("COMMIT");
+
+      return result;
+    } catch (error) {
+      database.exec("ROLLBACK");
+
+      throw error;
     }
-
-    if (given.length > 0) {
-      event.given = given.map((hash) => ({
-        hash,
-        kind: store.get(hash).kind,
-        kept: events === undefined ? {} : keptAnywhere(events, hash),
-      }));
-    }
-
-    replay(parsed, [event]);
-    insert.run(name, 0, JSON.stringify({ ...event, at: Date.now() }));
-
-    return name;
   }
 
   // Runs the commission step `name` of `commission`, ready with `state`: in one transaction, so
@@ -875,23 +904,12 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
   ): void {
     const stored = JSON.parse(store.read(events[0].definition).toString());
     const text = JSON.stringify({ ...stored, workflow: stored.workflows[step.workflow] });
-    const parsed = parseDefinition(step.workflow, text);
 
     const event: Commissioned = {
-      type: "commissioned",
-      workflow: step.workflow,
-      engine: engineVersion(),
-      definition: store.keep(text),
-      request,
+      ...commissioning(step.workflow, text, request),
       parent: { commission: parent, step: started.step, attempt: started.attempt },
-      given: given.map((hash) => ({
-        hash,
-        kind: store.get(hash).kind,
-        kept: keptAnywhere(events, hash),
-      })),
+      given: givenOf(given, events),
     };
-
-    replay(parsed, [event]);
 
     try {
       insert.run(
@@ -1180,30 +1198,31 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       request: { title: string; body: string },
       { trigger }: { trigger?: string } = {},
     ): string {
-      if (trigger !== undefined) {
-        refuseTriggered(trigger, workflow);
-      }
-
       if (commission === undefined && trigger === undefined) {
         throw new Error("A commission needs a name unless a trigger starts it.");
       }
 
-      const definition = checked(workflow);
+      const requested = () => {
+        refuseRequest(checked(workflow).kinds.document, request);
 
-      refuseRequest(definition.kinds.document, request);
+        return store.put({
+          kind: "document",
+          fields: { title: request.title },
+          body: request.body,
+        });
+      };
 
-      const hash = store.put({
-        kind: "document",
-        fields: { title: request.title },
-        body: request.body,
+      if (trigger === undefined) {
+        return begin(workflow, commission, requested());
+      }
+
+      // Its caps are judged and its commission written as one, so no other program asking the
+      // trigger at the same moment is judged on a count this one is about to change.
+      return atomically(() => {
+        refuseTriggered(trigger, workflow);
+
+        return begin(workflow, commission, requested(), { origin: { trigger } });
       });
-
-      return begin(
-        workflow,
-        commission,
-        hash,
-        trigger === undefined ? {} : { origin: { trigger } },
-      );
     },
 
     /**
