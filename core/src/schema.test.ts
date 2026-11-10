@@ -173,7 +173,14 @@ type Pinned = {
   access: Expect<
     Same<
       keyof Access,
-      "paths" | "network" | "environment" | "values" | "workspace" | "sandboxes" | "cgroups"
+      | "paths"
+      | "network"
+      | "environment"
+      | "values"
+      | "workspace"
+      | "sandboxes"
+      | "cgroups"
+      | "users"
     >
   >;
   network: Expect<

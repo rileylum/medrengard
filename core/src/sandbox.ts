@@ -274,6 +274,12 @@ export function confine(
       ? []
       : scoped.filter((name) => !access.environment.includes(name) && !Object.hasOwn(passed, name));
 
+  // A step given a range of users runs in a user namespace made for it before bubblewrap starts:
+  // bubblewrap's own holds one user, and only the machine's helpers may map a range, which
+  // unshare asks of them. The step is user 0 there, the owner outside.
+  const ranging =
+    access.users === "range" ? ["unshare", "--user", "--map-root-user", "--map-auto", "--"] : [];
+
   // A step that may divide its control group finds it where any program looks for the hierarchy.
   const sentinel = `${unit}.cgroup`;
   const marker = join(areas.scratch, "over-memory");
@@ -288,13 +294,14 @@ export function confine(
       unit,
       bounds,
       [
+        ...ranging,
         "bwrap",
         ...unset.flatMap((name) => ["--unsetenv", name]),
         // Each namespace by name: --unshare-all only tries for the user and cgroup ones, and carries
         // on without them where the kernel refuses. The PID namespace means nothing the step starts
         // outlives bwrap, and bwrap dies with the engine.
         "--die-with-parent",
-        "--unshare-user",
+        ...(access.users === "range" ? [] : ["--unshare-user"]),
         // A group can be moved into only from the namespace it was made in, so a step that divides
         // its own keeps the engine's.
         ...(access.cgroups === true ? [] : ["--unshare-cgroup"]),
@@ -378,6 +385,19 @@ export function overMemory(unit: string): boolean {
   }
 
   return result === "oom-kill";
+}
+
+/**
+ * Hands every file under `directory` back to the owner. A step with a range of users may leave
+ * files that belong to another of them, which the owner can neither read nor remove; user 0 of the
+ * same range can.
+ */
+export function reclaim(directory: string): void {
+  execFileSync(
+    "unshare",
+    ["--user", "--map-root-user", "--map-auto", "--", "chown", "-R", "-h", "0:0", directory],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
 }
 
 /**

@@ -47,7 +47,7 @@
 8. The fold is pure. Rebuilding state from the log does no I/O and reads no clock or randomness. So is judging what a commission may do next from its log: whether its engine, budget and money admit another attempt, whether one would repeat an earlier, and how a children step's wait stands, given how long it has waited.
 9. Old logs stay readable. An event gains fields and the vocabulary gains types; neither loses one. A test keeps a log written by an earlier engine readable.
 
-**Technology.** Node 24 and its built-ins, with zero runtime dependencies. Linux, with bubblewrap as the default sandbox, in a systemd user scope that bounds each program's memory and processes. An engine that runs in a step whose access gives it a control group of its own bounds each program in a group it makes there, with the same limits, since no systemd answers it. Workflows are TypeScript modules.
+**Technology.** Node 24 and its built-ins, with zero runtime dependencies. Linux, with bubblewrap as the default sandbox, in a systemd user scope that bounds each program's memory and processes. A step whose access gives it a range of users runs in a user namespace made for it, as the first of the owner's range, so a container tool can run inside its sandbox; what it leaves to another of its users is the owner's again once its programs end. An engine that runs in a step whose access gives it a control group of its own bounds each program in a group it makes there, with the same limits, since no systemd answers it. Workflows are TypeScript modules.
 
 **Step contract**
 

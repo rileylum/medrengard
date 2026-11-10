@@ -1095,6 +1095,90 @@ test("an engine in a step whose access grants cgroups holds its own steps to the
   );
 });
 
+// A range of users is mapped by the machine's setuid helpers from the owner's entry in /etc/subuid,
+// which cannot be had where there is none, or inside a step.
+const ranged =
+  spawnSync("unshare", ["--user", "--map-root-user", "--map-auto", "true"]).status === 0
+    ? {}
+    : { skip: "this machine maps no range of users for the owner here" };
+
+test(
+  "a step whose access gives it a range of users is the first of them, with the rest to use",
+  ranged,
+  async (t) => {
+    const { engine } = await engineConfined(
+      t,
+      () => ({ ...access, sandboxes: true, users: "range" }),
+      // Each line of the map: the first user inside, the first outside, and how many.
+      `id -u
+     awk '{ print $1, $3 }' /proc/self/uid_map`,
+    );
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+    assert.equal(engine.transcript("first", 1).toString(), "0\n0 1\n1 65536\n");
+  },
+);
+
+test("a step without a range of users has one user, its owner", async (t) => {
+  const { engine } = await engineConfined(
+    t,
+    () => access,
+    `id -u
+     awk '{ print $3 }' /proc/self/uid_map`,
+  );
+
+  await engine.advance("first");
+
+  assert.equal(engine.transcript("first", 1).toString(), `${process.getuid!()}\n1\n`);
+});
+
+test(
+  "what a step leaves to another of its users counts against its disk limit and goes with its attempt",
+  ranged,
+  async (t) => {
+    // A megabyte in a directory only user 1000 of the step's range may read: no file of the owner's.
+    const { engine, directory } = await engineConfined(
+      t,
+      () => ({ ...access, sandboxes: true, users: "range" }),
+      `mkdir held && head -c 1048576 /dev/zero > held/big && chown -R 1000:1000 held && chmod 700 held`,
+      { disk: 512 * 1024 },
+    );
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      cause: "limit",
+      reason: "Step build used more than its disk limit of 524288 bytes.",
+    });
+    assert.deepEqual(await readdir(join(directory, "record", "attempts")), []);
+  },
+);
+
+test("an access whose users are anything but a range, or a range without sandboxes, is refused", async (t) => {
+  for (const [changed, problem] of [
+    [{ users: "all" }, "users, if given, must be range"],
+    [
+      { users: "range", sandboxes: false },
+      "a range of users needs sandboxes: the step is in a user namespace made for it",
+    ],
+  ] as const) {
+    await assert.rejects(
+      engineWith(t, () =>
+        defineWorkflow({
+          start: "build",
+          steps: {
+            build: {
+              ...stepRunning("true", "end"),
+              // SAFETY: a factory in JavaScript, or one that casts, can state what the type refuses.
+              access: { ...access, ...changed } as Access,
+            },
+          },
+        }),
+      ),
+      { message: `Workflow build is invalid: step build's ${problem}.` },
+    );
+  }
+});
+
 test("a step without network access has only a loopback interface", async (t) => {
   // /proc/net/dev lists one interface per line, each with a colon; its headers have none.
   const { engine } = await engineConfined(t, () => access, `grep -c : /proc/net/dev`);
