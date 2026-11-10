@@ -172,7 +172,7 @@ for (const [what, triggers] of [
   test(`a trigger with ${what} is refused`, async (t) => {
     await assert.rejects(engineWith(t, triggers), {
       message:
-        "Trigger nightly is invalid: it must name workflows of the factory, a rate of at least 1 commission per positive number of seconds, at least 1 unfinished commission, and any money limit above zero.",
+        "Trigger nightly is invalid: it must name workflows of the factory, a rate of at least 1 commission per positive number of seconds or an allowance of at least 1 commission, or both, at least 1 unfinished commission, and any money limit above zero.",
     });
   });
 }

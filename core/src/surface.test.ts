@@ -18,6 +18,7 @@ const exports = {
     "CommissionEvent",
     "CommissionState",
     "Commissioned",
+    "Commissioning",
     "Definition",
     "Limits",
     "Money",
@@ -101,6 +102,7 @@ test("the engine has exactly the pinned methods", async (t) => {
     "next",
     "record",
     "register",
+    "renew",
     "state",
     "transcript",
   ]);

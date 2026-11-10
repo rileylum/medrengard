@@ -34,6 +34,8 @@ type Narrowing = Exclude<Query, string | { session: string } | { children: strin
 
 type Waiting = Extract<Step, { kind: "children" }>;
 
+type Starting = Extract<Step, { kind: "commission" }>;
+
 type Reading = Extract<Exclude<Query, string>, { children: string }>;
 
 type Continuing = Extract<Exclude<Query, string>, { session: string }>;
@@ -47,11 +49,17 @@ type Expect<T extends true> = T;
 
 type Pinned = {
   factory: Expect<Same<keyof Factory, "log" | "workflows" | "kinds" | "defaults" | "triggers">>;
-  trigger: Expect<Same<keyof Trigger, "workflows" | "rate" | "unfinished" | "usd">>;
-  rate: Expect<Same<Trigger["rate"], { count: number; per: number }>>;
+  trigger: Expect<Same<keyof Trigger, "workflows" | "rate" | "allowance" | "unfinished" | "usd">>;
+  rate: Expect<Same<Trigger["rate"], { count: number; per: number } | undefined>>;
+  allowance: Expect<Same<Trigger["allowance"], number | undefined>>;
   defaults: Expect<Same<Factory["defaults"], { limits: Limits }>>;
   workflow: Expect<Same<keyof Workflow, "start" | "steps" | "usd">>;
-  stepKinds: Expect<Same<Step["kind"], "agent" | "command" | "approval" | "children">>;
+  stepKinds: Expect<
+    Same<Step["kind"], "agent" | "command" | "approval" | "children" | "commission">
+  >;
+  commissionStep: Expect<
+    Same<keyof Starting, "kind" | "trigger" | "workflow" | "each" | "given" | "on" | "budget">
+  >;
   childrenStep: Expect<
     Same<
       keyof Waiting,

@@ -347,6 +347,7 @@ test("the CLI's commands are exactly the pinned ones", () => {
     "run",
     "decide",
     "cancel",
+    "renew",
     "transcript",
     "errors",
     "artifact",
@@ -600,6 +601,29 @@ test("the CLI commissions through a trigger, naming the commission, and refuses 
     stderr: "Trigger nightly started 1 commission in the last 3600 s, its rate.\n",
   });
   assert.match(run(["show", "nightly-1"], factory).stdout, /Started by trigger nightly\./);
+});
+
+test("the CLI renews a trigger's allowance, and shows the commission that started one through it", async (t) => {
+  const { factory } = await factoryIn(t);
+
+  const spawn = (name: string) =>
+    run(["commission", "spawning", name, "--title", "T", "--body", "B"], factory);
+
+  spawn("first");
+  run(["advance", "first"], factory);
+  assert.match(
+    run(["show", "workers-1"], factory).stdout,
+    /Started by trigger workers, from commission first's step spawn, attempt 1\./,
+  );
+
+  spawn("second");
+  assert.match(run(["advance", "second"], factory).stdout, /escalated/);
+  assert.deepEqual(run(["renew", "workers"], factory), { status: 0, stdout: "", stderr: "" });
+  assert.deepEqual(run(["renew", "nightly"], factory), {
+    status: 1,
+    stdout: "",
+    stderr: "Trigger nightly has no allowance to renew.\n",
+  });
 });
 
 test("the CLI without a factory exits 2 naming both ways to give one", () => {

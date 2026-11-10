@@ -119,13 +119,16 @@ type Program<N extends string, Bounded> = {
 } & Bounded;
 
 /**
- * What a program outside the engine, such as a timer, may start through a trigger: commissions of
- * `workflows`, at most `rate.count` in any `rate.per` seconds and `unfinished` not finished at
- * once, and, given `usd`, only while those it started in the last `rate.per` seconds cost less.
+ * What a program outside the engine, such as a timer, or a commission step may start through a
+ * trigger: commissions of `workflows`, at most `rate.count` in any `rate.per` seconds, at most
+ * `allowance` until the owner renews it, or both, and `unfinished` not finished at once; and, given
+ * `usd`, only while those it started in the last `rate.per` seconds, or without a rate since it
+ * was last renewed, cost less. Only a trigger with an allowance may serve a commission step.
  */
 export type Trigger = {
   workflows: readonly string[];
-  rate: { count: number; per: number };
+  rate?: { count: number; per: number };
+  allowance?: number;
   unfinished: number;
   usd?: number;
 };
@@ -166,15 +169,33 @@ export type Children<N extends string> = {
 };
 
 /**
+ * A commission step: it starts top-level commissions of `workflow` through `trigger`, one per
+ * document `each` names, each its request, each starting with the artifacts `given` names, all
+ * or none, and goes on at once, following `done`. Each runs on the factory's definitions as they
+ * are when it starts; it is no child, so nothing here waits on it or withdraws it.
+ */
+export type Commissioning<N extends string> = {
+  kind: "commission";
+  trigger: string;
+  workflow: string;
+  each: Query<N>;
+  given?: Readonly<Record<string, Query<N>>>;
+  on: Record<string, N | "end">;
+  budget: number;
+};
+
+/**
  * A step: an agent step runs its agent's harness adapter, with the owner in their terminal when
  * `attended`, a command step runs `run`, once or, watching, as checks, an approval step waits for the owner's decision,
- * following the edge its outcome names in `on`, and a children step waits on child commissions.
+ * following the edge its outcome names in `on`, a children step waits on child commissions, and a
+ * commission step starts commissions of their own.
  */
 type Step<N extends string, Bounded> =
   | ({ kind: "agent"; agent: Agent; attended?: boolean } & Program<N, Bounded>)
   | ({ kind: "command"; run: readonly [string, ...string[]]; watch?: Watch } & Program<N, Bounded>)
   | { kind: "approval"; on: Record<string, N | "end"> }
-  | Children<N>;
+  | Children<N>
+  | Commissioning<N>;
 
 /**
  * A workflow over its step names `N`; `start` must name one of its steps, and `end` is reserved.
@@ -194,14 +215,15 @@ export type Workflow<N extends string = string, Bounded = Stated> = {
 // engine is the version of the engine that commissioned it, as attempt-started's.
 // A child commission names its parent, the commission, step and attempt that commissioned it, and
 // the artifacts it was given, by hash with their kinds and kept files: the latest subject among
-// them is its first subject. One a trigger started names it as its origin; the owner's has none.
+// them is its first subject. One a trigger started names it as its origin, with the commission,
+// step and attempt that started it through the trigger, if one did; the owner's has none.
 export type Commissioned = {
   type: "commissioned";
   workflow: string;
   definition: string;
   request: string;
   engine?: string;
-  origin?: { trigger: string };
+  origin?: { trigger: string; from?: { commission: string; step: string; attempt: number } };
   parent?: { commission: string; step: string; attempt: number };
   given?: readonly { hash: string; kind: string; kept: Readonly<Record<string, string>> }[];
 };
@@ -301,7 +323,8 @@ export type CommissionEvent<N extends string = string> = (
 type At<N extends string> =
   | { name: N; kind: "command" }
   | { name: N; kind: "agent"; attended?: true }
-  | { name: N; kind: "children" };
+  | { name: N; kind: "children" }
+  | { name: N; kind: "commission" };
 
 // decision is the owner's latest decision about the current subject; one about an earlier
 // subject is history.
@@ -390,7 +413,7 @@ function arrive<N extends string>(
   const at: At<N> =
     kind === "agent" && step.attended === true
       ? { name, kind, attended: true }
-      : kind === "children"
+      : kind === "children" || kind === "commission"
         ? { name, kind }
         : { name, kind };
 
