@@ -17,7 +17,8 @@ const repository = join(import.meta.dirname, "..");
  * the workflow `slow`, whose step appends start, then end half a second later, to the directory's
  * `steps` file and leads to `review`; the workflow `twice`, whose two such steps lead to `review`; and the workflow
  * `noting`, whose step writes two notes and leads to `review`; and `spending`, whose step reports
- * what it used and leads to `review`. Its log is in the directory's `state`.
+ * what it used and leads to `review`; and the trigger `nightly`, which may start one `build` an hour.
+ * Its log is in the directory's `state`.
  */
 export async function factoryIn(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
@@ -89,6 +90,7 @@ export async function factoryIn(t: TestContext) {
      export default {
        log: "state/log.sqlite",
        defaults: { limits },
+       triggers: { nightly: { workflows: ["build"], rate: { count: 1, per: 3600 }, unfinished: 5 } },
        kinds: {
          ...builtIn,
          memo: {

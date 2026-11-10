@@ -23,6 +23,7 @@ const exports = {
     "Money",
     "Query",
     "Skill",
+    "Trigger",
     "Usage",
     "Wait",
     "Watch",

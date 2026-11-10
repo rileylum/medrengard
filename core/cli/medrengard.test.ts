@@ -68,7 +68,7 @@ test("the CLI takes a commission through the engine's calls, printing their resu
 
   await writeFile(join(directory, "request.md"), "Say hello.");
 
-  assert.equal(
+  assert.deepEqual(
     json([
       "commission",
       "build",
@@ -78,7 +78,7 @@ test("the CLI takes a commission through the engine's calls, printing their resu
       "--body-file",
       join(directory, "request.md"),
     ]),
-    null,
+    { commission: "first" },
   );
 
   const awaiting = json(["advance", "first"]);
@@ -394,9 +394,9 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
   };
 
   // At an approval step, and finished by a decision with feedback.
-  assert.equal(
+  assert.deepEqual(
     json("commission", "judged", "first", "--title", "Greet", "--body", "Say hello."),
-    null,
+    { commission: "string" },
   );
   assert.deepEqual(json("state", "first"), ready);
   assert.deepEqual(json("advance", "first"), awaiting);
@@ -589,6 +589,19 @@ test("the CLI exits 1 with the engine's message as JSON when the engine refuses 
   );
 });
 
+test("the CLI commissions through a trigger, naming the commission, and refuses one past its caps", async (t) => {
+  const { factory } = await factoryIn(t);
+  const commission = ["commission", "build", "--trigger", "nightly", "--title", "T", "--body", "B"];
+
+  assert.deepEqual(run(commission, factory), { status: 0, stdout: "nightly-1\n", stderr: "" });
+  assert.deepEqual(run(commission, factory), {
+    status: 1,
+    stdout: "",
+    stderr: "Trigger nightly started 1 commission in the last 3600 s, its rate.\n",
+  });
+  assert.match(run(["show", "nightly-1"], factory).stdout, /Started by trigger nightly\./);
+});
+
 test("the CLI without a factory exits 2 naming both ways to give one", () => {
   const { status, stdout, stderr } = run(["state", "first"], undefined);
 
@@ -598,7 +611,7 @@ test("the CLI without a factory exits 2 naming both ways to give one", () => {
   assert.match(stderr, /MEDRENGARD_FACTORY/);
 });
 
-test("the CLI refuses a factory whose default export is not exactly { log, kinds, workflows, defaults }", async (t) => {
+test("the CLI refuses a factory whose default export is not exactly { log, kinds, workflows, defaults } and any triggers", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -610,7 +623,7 @@ test("the CLI refuses a factory whose default export is not exactly { log, kinds
   assert.deepEqual(run(["state", "first"], factory), {
     status: 1,
     stdout: "",
-    stderr: `Factory ${factory} must default-export { log, kinds, workflows, defaults }: missing workflows, defaults, not allowed workflow.\n`,
+    stderr: `Factory ${factory} must default-export { log, kinds, workflows, defaults } and any triggers: missing workflows, defaults, not allowed workflow.\n`,
   });
   assert.ok(!existsSync(join(directory, "log.sqlite")));
 });

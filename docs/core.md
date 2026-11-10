@@ -107,7 +107,7 @@ Replay derives a commission's state; none is stored.
 
 Seven events are the whole log vocabulary. Each carries the time the engine wrote it:
 
-- `commissioned`: the workflow, its definitions by hash and the request artifact; a child's also names its parent's commission, step and attempt, and the artifacts it was given, by hash with their kinds and kept files.
+- `commissioned`: the workflow, its definitions by hash and the request artifact; a child's also names its parent's commission, step and attempt, and the artifacts it was given, by hash with their kinds and kept files; one a trigger started names the trigger as its origin.
 - `attempt-started`: the step and attempt, the subject and each input's artifacts by hash; spends one unit of the step's budget.
 - `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, its transcript and, when it wrote to stderr, its errors, its latest usage report when it made one, the session it left when it left one, and the next step or end.
 - `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, at most 1 MiB, and the next step or end.
@@ -132,6 +132,10 @@ A step's budget counts its attempts since the commission's latest decision, so o
 A children step commissions child commissions of one workflow: one per document a query names, each the child's request, or a declared count on the parent's request or a document a query names. Each child is also given the artifacts named queries name, and its first subject is the latest subject among them, or its request. A child is a commission like any other, named `<parent>.<step>.<attempt>.<n>`; its workflow is the one the parent's commission pinned, which may not lead back to a workflow it is within. At most its width are commissioned, more escalating before any starts, and at most its concurrent number are unfinished at once.
 
 The attempt is the wait: it spends a unit of the step's budget and runs no program. A child succeeds when its workflow reaches its end, on the wait's outcome when the wait names one. The wait is for every child, the first or at least some; without an outcome, met it follows `done` and once it can no longer be met the commission escalates; with one, met it follows `met` and once it can no longer be met, `unmet`. Past its wait limit, or cancelled by the owner, it escalates. Once the wait is decided, the children still unfinished are withdrawn, an attempt in flight stopped first, and the attempt ends once every child has finished. An engine stopping does not interrupt the wait: the next engine to look carries it on.
+
+**Triggers**
+
+A program outside the engine, such as a timer or a webhook's receiver, starts a commission only through a trigger the factory declares: the workflows it may start, at most a count of commissions in a period, at most a number unfinished at once, and optionally a money limit on what those it started in the period cost, unknown cost counting as over. Each is judged from the log when commissioning; past one, the commission is refused and nothing is recorded. A trigger's commission, unless named, is named after it and numbered, `nightly-3`. The owner's own commissions have no trigger and no caps.
 
 **Watching**
 
@@ -188,6 +192,7 @@ _Execution: the core. The commission is the aggregate root._
 
 - Commission: one idea taken through one workflow, from the owner's request to a terminal state, with its whole history.
 - Child: a commission a parent's children step commissioned, which the parent waits on.
+- Trigger: a factory's declared way for a program outside the engine to start commissions, within its caps; the commissions it starts name it as their origin.
 - Check: one run of a watching step's program, which claims, finds nothing yet, or fails.
 - Attempt: one start of a step's program within a commission, through to its completion or escalation.
 - Claim: what an attempt wrote to its output, untrusted until it parses and its kind's verifier, if any, accepts it.

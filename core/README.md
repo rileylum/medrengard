@@ -13,6 +13,7 @@ Code adapter run, and the engine and CLI let an observer follow the log.
 - [Workflows](#workflows)
 - [Inputs](#inputs)
 - [Children](#children)
+- [Triggers](#triggers)
 - [Access](#access)
   - [Reaching only some hosts](#reaching-only-some-hosts)
   - [Brokers](#brokers)
@@ -372,6 +373,43 @@ gather: {
   it is within, so nesting is bounded. Each child's spend is its own workflow's `usd`.
 - **Run them with `run`.** Children advance like any commission, so `run` carries a fan-out
   through; `advance` on the parent returns while it waits.
+
+## Triggers
+
+Timers, cron and webhook receivers start work through a trigger the factory declares, never on
+their own. The engine runs none of them: it checks the trigger's caps when commissioning and
+records the trigger as the commission's origin.
+
+```ts
+export default {
+  log: "state/log.sqlite",
+  kinds,
+  workflows,
+  defaults: { limits },
+  triggers: {
+    nightly: {
+      workflows: ["bump-deps"], // what it may start
+      rate: { count: 1, per: 86400 }, // at most 1 a day
+      unfinished: 1, // at most 1 of its commissions not finished at once
+      usd: 5, // optional: at most $5 spent by those it started in the last day
+    },
+  },
+};
+```
+
+```sh
+# A systemd timer's or cron's command; it prints the commission's name, nightly-1.
+medrengard commission bump-deps --trigger nightly --title "Bump dependencies" --body-file bump.md
+```
+
+- Past a cap, the commission is refused, with the reason on stderr and exit 1, and nothing is
+  recorded: `Trigger nightly started 1 commission in the last 86400 s, its rate.`, `Trigger nightly
+  has 1 unfinished commission, its limit.`, or, with `usd`, what its commissions cost. Unknown cost
+  counts as over, so a trigger over a workflow whose harness reports no cost leaves `usd` out.
+- Without a name, the commission is `<trigger>-<n>`, counting the trigger's commissions from 1.
+- `show` says `Started by trigger nightly.`, and `record` has `origin: { trigger: "nightly" }`. The
+  owner's own commissions have no trigger and no caps.
+- Caps are read when commissioning, so editing a trigger affects the commissions it starts next.
 
 ## Access
 
@@ -1079,24 +1117,24 @@ for (;;) {
 }
 ```
 
-| Method                                                       | Returns                                                                                                                                                                                        |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `commission(workflow, commission, { title, body })`          | nothing; refuses an unknown workflow or an invalid one                                                                                                                                         |
-| `check(workflow)`                                            | the definition it would be commissioned with, as `definition` gives a commission's; refuses as `commission` would, recording nothing                                                           |
-| `advance(commission, { signal? })`                           | the state it stopped at, which may be ready at an attended step; once `signal` aborts, it starts no further attempt                                                                            |
-| `attend(commission)`                                         | the state once the attended step it is ready at ends, run in this process's terminal                                                                                                           |
-| `events(position)`                                           | `{ position, commission, event }[]`: every commission's events after the log position, oldest first                                                                                            |
-| `next(position, { signal? })`                                | the same, once there are any, woken by any engine's write; none once `signal` aborts                                                                                                           |
-| `state(commission)`                                          | the state, replayed from the log                                                                                                                                                               |
-| `commissions()`                                              | `{ commission, state }[]`, oldest first; `{ commission, error }` for one the engine cannot read                                                                                                |
-| `decide(commission, { subject, since, outcome, feedback? })` | the new state; refuses a stale subject or wait, an undeclared outcome, or feedback over 1 MiB                                                                                                  |
-| `cancel(commission)`                                         | nothing; the engine running the attempt stops it and escalates, or, with none, it escalates at once                                                                                            |
-| `record(commission)`                                         | `{ state, request, entries }`: every attempt, escalation and decision, oldest first; each claimed artifact with its `verifier`, the command that accepted it, or `null` when its kind has none |
-| `errors(commission, attempt)`                                | what the attempt wrote to stderr, as a `Buffer`; empty for none                                                                                                                                |
-| `transcript(commission, attempt)`                            | the attempt's stdout and stderr as a `Buffer`                                                                                                                                                  |
-| `artifact(hash)`                                             | `{ kind, fields, body? }`; refuses a hash the log does not name as an artifact                                                                                                                 |
-| `register()`                                                 | a function that withdraws it; records this engine as running on the log, removing this machine's engines that ended                                                                            |
-| `engines()`                                                  | `{ host, pid, since, status }[]`, oldest first: `alive` or `dead`, judged on this machine, or `unknown` on another                                                                             |
+| Method                                                            | Returns                                                                                                                                                                                        |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commission(workflow, commission, { title, body }, { trigger? })` | the commission's name; refuses an unknown workflow or an invalid one, and a trigger past its caps. With a trigger, `commission` may be `undefined`: it is named `<trigger>-<n>`                |
+| `check(workflow)`                                                 | the definition it would be commissioned with, as `definition` gives a commission's; refuses as `commission` would, recording nothing                                                           |
+| `advance(commission, { signal? })`                                | the state it stopped at, which may be ready at an attended step; once `signal` aborts, it starts no further attempt                                                                            |
+| `attend(commission)`                                              | the state once the attended step it is ready at ends, run in this process's terminal                                                                                                           |
+| `events(position)`                                                | `{ position, commission, event }[]`: every commission's events after the log position, oldest first                                                                                            |
+| `next(position, { signal? })`                                     | the same, once there are any, woken by any engine's write; none once `signal` aborts                                                                                                           |
+| `state(commission)`                                               | the state, replayed from the log                                                                                                                                                               |
+| `commissions()`                                                   | `{ commission, state }[]`, oldest first; `{ commission, error }` for one the engine cannot read                                                                                                |
+| `decide(commission, { subject, since, outcome, feedback? })`      | the new state; refuses a stale subject or wait, an undeclared outcome, or feedback over 1 MiB                                                                                                  |
+| `cancel(commission)`                                              | nothing; the engine running the attempt stops it and escalates, or, with none, it escalates at once                                                                                            |
+| `record(commission)`                                              | `{ state, request, entries }`: every attempt, escalation and decision, oldest first; each claimed artifact with its `verifier`, the command that accepted it, or `null` when its kind has none |
+| `errors(commission, attempt)`                                     | what the attempt wrote to stderr, as a `Buffer`; empty for none                                                                                                                                |
+| `transcript(commission, attempt)`                                 | the attempt's stdout and stderr as a `Buffer`                                                                                                                                                  |
+| `artifact(hash)`                                                  | `{ kind, fields, body? }`; refuses a hash the log does not name as an artifact                                                                                                                 |
+| `register()`                                                      | a function that withdraws it; records this engine as running on the log, removing this machine's engines that ended                                                                            |
+| `engines()`                                                       | `{ host, pid, since, status }[]`, oldest first: `alive` or `dead`, judged on this machine, or `unknown` on another                                                                             |
 
 A state has a `status`:
 
@@ -1116,7 +1154,7 @@ the subject, if there is one.
 ```text
 medrengard <command> [--json] [--factory <path>]
 
-  commission <workflow> <commission> --title <title> (--body <text> | --body-file <path>)
+  commission <workflow> [<commission>] [--trigger <name>] --title <title> (--body <text> | --body-file <path>)
   check      [<workflow>]
   advance    <commission>
   attend     <commission>

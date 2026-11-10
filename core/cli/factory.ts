@@ -37,6 +37,7 @@ export async function openFactory(path: string): Promise<{ engine: Engine; workf
     workflows: options.workflows,
     kinds: options.kinds,
     defaults: options.defaults,
+    triggers: options.triggers,
   });
 
   return { engine, workflows: Object.keys(options.workflows) };
@@ -47,7 +48,7 @@ export async function openFactory(path: string): Promise<{ engine: Engine; workf
 function refuseFactory(path: string, given: readonly string[]): void {
   const keys = ["log", "kinds", "workflows", "defaults"];
   const missing = keys.filter((key) => !given.includes(key));
-  const extra = given.filter((key) => !keys.includes(key));
+  const extra = given.filter((key) => !keys.includes(key) && key !== "triggers");
 
   if (missing.length > 0 || extra.length > 0) {
     const problems = [
@@ -56,7 +57,7 @@ function refuseFactory(path: string, given: readonly string[]): void {
     ];
 
     throw new Error(
-      `Factory ${path} must default-export { log, kinds, workflows, defaults }: ${problems.join(", ")}.`,
+      `Factory ${path} must default-export { log, kinds, workflows, defaults } and any triggers: ${problems.join(", ")}.`,
     );
   }
 }

@@ -119,6 +119,18 @@ type Program<N extends string, Bounded> = {
 } & Bounded;
 
 /**
+ * What a program outside the engine, such as a timer, may start through a trigger: commissions of
+ * `workflows`, at most `rate.count` in any `rate.per` seconds and `unfinished` not finished at
+ * once, and, given `usd`, only while those it started in the last `rate.per` seconds cost less.
+ */
+export type Trigger = {
+  workflows: readonly string[];
+  rate: { count: number; per: number };
+  unfinished: number;
+  usd?: number;
+};
+
+/**
  * A command step that watches: its attempt is a wait of at most `wait` seconds, in which its
  * program runs every `interval` seconds as a check, in an empty workspace, until one claims. A
  * check that exits 0 without a claim found nothing yet; three that fail in a row escalate.
@@ -182,13 +194,14 @@ export type Workflow<N extends string = string, Bounded = Stated> = {
 // engine is the version of the engine that commissioned it, as attempt-started's.
 // A child commission names its parent, the commission, step and attempt that commissioned it, and
 // the artifacts it was given, by hash with their kinds and kept files: the latest subject among
-// them is its first subject.
+// them is its first subject. One a trigger started names it as its origin; the owner's has none.
 export type Commissioned = {
   type: "commissioned";
   workflow: string;
   definition: string;
   request: string;
   engine?: string;
+  origin?: { trigger: string };
   parent?: { commission: string; step: string; attempt: number };
   given?: readonly { hash: string; kind: string; kept: Readonly<Record<string, string>> }[];
 };
