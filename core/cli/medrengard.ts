@@ -31,6 +31,7 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
   decide     <commission> <outcome> --subject <hash> --since <event>
              [--feedback <text> | --feedback-file <path>]
   cancel     <commission>
+  renew      <trigger>
   transcript <commission> <attempt>
   errors     <commission> <attempt>
   artifact   <hash or a prefix of at least 8 characters>
@@ -56,6 +57,7 @@ const commands = new Map<string, { arguments: number; optional?: number; options
   ["run", { arguments: 0, options: ["parallel"] }],
   ["decide", { arguments: 2, options: ["subject", "since", "feedback", "feedback-file"] }],
   ["cancel", { arguments: 1, options: [] }],
+  ["renew", { arguments: 1, options: [] }],
   ["transcript", { arguments: 2, options: [] }],
   ["artifact", { arguments: 1, options: [] }],
   ["definition", { arguments: 1, options: [] }],
@@ -169,6 +171,10 @@ try {
       break;
     case "cancel":
       engine.cancel(first);
+      print(null, "");
+      break;
+    case "renew":
+      engine.renew(first);
       print(null, "");
       break;
     case "show":
@@ -561,7 +567,13 @@ function printRecord(commission: string, record: CommissionRecord): void {
     `${commission}: ${where(state)}${waiting(state)}`,
     ...(state.status === "escalated" ? [`reason: ${state.reason}`] : []),
     line("request", request.hash, request.artifact),
-    ...(origin === undefined ? [] : [`Started by trigger ${origin.trigger}.`]),
+    ...(origin === undefined
+      ? []
+      : origin.from === undefined
+        ? [`Started by trigger ${origin.trigger}.`]
+        : [
+            `Started by trigger ${origin.trigger}, from commission ${origin.from.commission}'s step ${origin.from.step}, attempt ${origin.from.attempt}.`,
+          ]),
     ...timeline,
   ];
 

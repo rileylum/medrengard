@@ -107,7 +107,7 @@ Replay derives a commission's state; none is stored.
 
 Seven events are the whole log vocabulary. Each carries the time the engine wrote it:
 
-- `commissioned`: the workflow, its definitions by hash and the request artifact; a child's also names its parent's commission, step and attempt, and the artifacts it was given, by hash with their kinds and kept files; one a trigger started names the trigger as its origin.
+- `commissioned`: the workflow, its definitions by hash and the request artifact; a child's also names its parent's commission, step and attempt, and the artifacts it was given, by hash with their kinds and kept files; one a trigger started names the trigger as its origin, and one a commission step started also its commission, step and attempt.
 - `attempt-started`: the step and attempt, the subject and each input's artifacts by hash; spends one unit of the step's budget.
 - `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, its transcript and, when it wrote to stderr, its errors, its latest usage report when it made one, the session it left when it left one, and the next step or end.
 - `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, at most 1 MiB, and the next step or end.
@@ -135,7 +135,9 @@ The attempt is the wait: it spends a unit of the step's budget and runs no progr
 
 **Triggers**
 
-A program outside the engine, such as a timer or a webhook's receiver, starts a commission only through a trigger the factory declares: the workflows it may start, at most a count of commissions in a period, at most a number unfinished at once, and optionally a money limit on what those it started in the period cost, unknown cost counting as over. Each is judged from the log when commissioning; past one, the commission is refused and nothing is recorded. A trigger's commission, unless named, is named after it and numbered, `nightly-3`. The owner's own commissions have no trigger and no caps.
+A program outside the engine, such as a timer or a webhook's receiver, starts a commission only through a trigger the factory declares: the workflows it may start, at most a count of commissions in a period, at most a count until the owner renews it, its allowance, or both, at most a number unfinished at once, and optionally a money limit on what those it started in the period, or without one since its renewal, cost, unknown cost counting as over. Each is judged from the log when commissioning; past one, the commission is refused and nothing is recorded. A renewal is the owner's, recorded with its time beside the events; it belongs to no commission. A trigger's commission, unless named, is named after it and numbered, `nightly-3`. The owner's own commissions have no trigger and no caps.
+
+A commission step starts top-level commissions of a workflow through a trigger, one per document a query names, each its request, each given the artifacts named queries name, as a child is; it runs no program and waits on none of them. Its attempt starts all or none in one write: if the trigger cannot start every one now, it starts none and the commission escalates; otherwise it completes at once, on `done`. Commissions that start commissions are a loop no budget bounds, so an engine refuses one whose trigger has no allowance, or that it lacks or that may not start the workflow. Each started commission names the trigger, commission, step and attempt as its origin, runs on the factory's definitions as they are when it starts, and is no child: nothing withdraws it.
 
 **Watching**
 
@@ -192,7 +194,8 @@ _Execution: the core. The commission is the aggregate root._
 
 - Commission: one idea taken through one workflow, from the owner's request to a terminal state, with its whole history.
 - Child: a commission a parent's children step commissioned, which the parent waits on.
-- Trigger: a factory's declared way for a program outside the engine to start commissions, within its caps; the commissions it starts name it as their origin.
+- Trigger: a factory's declared way for a program outside the engine, or a commission step, to start commissions, within its caps; the commissions it starts name it as their origin.
+- Allowance: how many commissions a trigger may start until the owner renews it.
 - Check: one run of a watching step's program, which claims, finds nothing yet, or fails.
 - Attempt: one start of a step's program within a commission, through to its completion or escalation.
 - Claim: what an attempt wrote to its output, untrusted until it parses and its kind's verifier, if any, accepts it.

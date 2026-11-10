@@ -41,6 +41,7 @@ import {
   type Access,
   type Children,
   type Commissioned,
+  type Commissioning,
   type CommissionEvent,
   type CommissionState,
   type Definition,
@@ -130,11 +131,21 @@ type Note = { note: string; from: "step" | "engine" };
 export type CommissionRecord = {
   state: CommissionState;
   request: { hash: string; artifact: Artifact };
-  origin?: { trigger: string };
+  origin?: Commissioned["origin"];
   entries: Entry[];
 };
 
 type Log = [Commissioned & { at?: number }, ...Exclude<CommissionEvent, Commissioned>[]];
+
+// Which of a trigger's caps refuses more commissions, with what it counted.
+type Refusal =
+  | { cap: "missing" }
+  | { cap: "workflow" }
+  | { cap: "rate"; started: number; count: number; per: number }
+  | { cap: "allowance"; started: number; allowance: number }
+  | { cap: "unfinished"; open: number; unfinished: number }
+  | { cap: "unknown"; commission: string; usd: number }
+  | { cap: "usd"; spent: number; usd: number; period: string };
 
 /**
  * Runs commissions through the owner's workflows, keeping every event in the SQLite log at `log`
@@ -167,20 +178,29 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     "SELECT commission FROM events WHERE position = 0 AND json_extract(event, '$.origin.trigger') = ? ORDER BY rowid",
   );
 
-  // Refuses a commission of `workflow` that the trigger named may not start now: past its rate,
-  // with as many unfinished commissions as it may have, or past its money limit.
-  function refuseTriggered(name: string, workflow: string): void {
+  // The owner's renewals of triggers' allowances: when each was renewed. A renewal belongs to no
+  // commission, so it is kept beside the events, never changed.
+  database.exec(`CREATE TABLE IF NOT EXISTS renewals (
+    trigger TEXT NOT NULL, at INTEGER NOT NULL) STRICT`);
+
+  const renewing = database.prepare("INSERT INTO renewals VALUES (?, ?)");
+  const renewedAt = database.prepare("SELECT max(at) AS at FROM renewals WHERE trigger = ?");
+
+  // When the trigger named was last renewed, or 0 if never.
+  const lastRenewal = (name: string) => Number(renewedAt.get(name)?.at ?? 0);
+
+  // Why the trigger named may not start `count` more commissions of `workflow` now, if it may not:
+  // past its rate or allowance, with too many unfinished, or past its money limit.
+  function refusalOf(name: string, workflow: string, count: number): Refusal | undefined {
     if (!Object.hasOwn(triggers, name)) {
-      throw new Error(`There is no trigger named ${name}.`);
+      return { cap: "missing" };
     }
 
-    const { workflows: allowed, rate, unfinished, usd } = triggers[name];
+    const { workflows: allowed, rate, allowance, unfinished, usd } = triggers[name];
 
     if (!allowed.includes(workflow)) {
-      throw new Error(`Trigger ${name} may not start workflow ${workflow}.`);
+      return { cap: "workflow" };
     }
-
-    const since = Date.now() - rate.per * 1000;
 
     // SAFETY: the query selects the commission column, which holds text.
     const started = startedBy.all(name).map(({ commission }) => ({
@@ -188,28 +208,33 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       events: read(commission as string),
     }));
 
-    const recent = started.filter(({ events }) => (events[0].at ?? 0) > since);
+    const renewed = lastRenewal(name);
 
-    const plural = (count: number) => `${count} commission${count === 1 ? "" : "s"}`;
+    const startedSince = (moment: number) =>
+      started.filter(({ events }) => (events[0].at ?? 0) >= moment);
 
-    if (recent.length >= rate.count) {
-      throw new Error(
-        `Trigger ${name} started ${plural(recent.length)} in the last ${rate.per} s, its rate.`,
-      );
+    const recent = startedSince(rate === undefined ? renewed : Date.now() - rate.per * 1000);
+
+    if (rate !== undefined && recent.length + count > rate.count) {
+      return { cap: "rate", started: recent.length, ...rate };
+    }
+
+    const sinceRenewal = startedSince(renewed).length;
+
+    if (allowance !== undefined && sinceRenewal + count > allowance) {
+      return { cap: "allowance", started: sinceRenewal, allowance };
     }
 
     const open = started.filter(
       ({ events }) => replay(definitionOf(events), events).status !== "finished",
     ).length;
 
-    if (open >= unfinished) {
-      throw new Error(
-        `Trigger ${name} has ${open} unfinished commission${open === 1 ? "" : "s"}, its limit.`,
-      );
+    if (open + count > unfinished) {
+      return { cap: "unfinished", open, unfinished };
     }
 
     if (usd === undefined) {
-      return;
+      return undefined;
     }
 
     let spent = 0;
@@ -218,18 +243,193 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       const cost = spentIn(events, definitionOf(events).workflow);
 
       if ("unknown" in cost) {
-        throw new Error(
-          `Trigger ${name}'s commission ${commission} reported no cost, so its spend counts as over its money limit of $${usd}.`,
-        );
+        return { cap: "unknown", commission, usd };
       }
 
       spent += cost.spent;
     }
 
-    if (spent >= usd) {
-      throw new Error(
-        `Trigger ${name}'s commissions in the last ${rate.per} s cost $${spent}, its money limit of $${usd}.`,
-      );
+    const period = rate === undefined ? "since it was last renewed" : `in the last ${rate.per} s`;
+
+    return spent >= usd ? { cap: "usd", spent, usd, period } : undefined;
+  }
+
+  // Refuses a commission of `workflow` that a program outside the engine asks the trigger named to
+  // start now, saying which of its caps it is past.
+  function refuseTriggered(name: string, workflow: string): void {
+    const refusal = refusalOf(name, workflow, 1);
+    const plural = (count: number) => `${count} commission${count === 1 ? "" : "s"}`;
+
+    switch (refusal?.cap) {
+      case undefined:
+        return;
+      case "missing":
+        throw new Error(`There is no trigger named ${name}.`);
+      case "workflow":
+        throw new Error(`Trigger ${name} may not start workflow ${workflow}.`);
+      case "rate":
+        throw new Error(
+          `Trigger ${name} started ${plural(refusal.started)} in the last ${refusal.per} s, its rate.`,
+        );
+      case "allowance":
+        throw new Error(
+          `Trigger ${name} has started ${plural(refusal.started)} since it was last renewed, its allowance.`,
+        );
+      case "unfinished":
+        throw new Error(
+          `Trigger ${name} has ${refusal.open} unfinished commission${refusal.open === 1 ? "" : "s"}, its limit.`,
+        );
+      case "unknown":
+        throw new Error(
+          `Trigger ${name}'s commission ${refusal.commission} reported no cost, so its spend counts as over its money limit of $${refusal.usd}.`,
+        );
+      case "usd":
+        throw new Error(
+          `Trigger ${name}'s commissions ${refusal.period} cost $${refusal.spent}, its money limit of $${refusal.usd}.`,
+        );
+      default:
+        return assertNever(refusal);
+    }
+  }
+
+  // Why the commission step `name` may not start `count` commissions through its trigger now, if it
+  // may not, for the owner, who may renew the trigger and retry.
+  function stepRefusal(name: string, step: Commissioning<string>, count: number) {
+    const refusal = refusalOf(step.trigger, step.workflow, count);
+    const would = `Step ${name} would start ${count} commission${count === 1 ? "" : "s"} through trigger ${step.trigger}`;
+
+    switch (refusal?.cap) {
+      case undefined:
+        return undefined;
+      // An engine refuses a commission step whose trigger is not the factory's or may not start
+      // its workflow, so another engine's factory must differ.
+      case "missing":
+        return `${would}, which this engine's factory lacks.`;
+      case "workflow":
+        return `${would}, which may not start workflow ${step.workflow}.`;
+      case "rate":
+        return `${would}, which started ${refusal.started} in the last ${refusal.per} s, of its rate of ${refusal.count}.`;
+      case "allowance":
+        return `${would}, which has ${refusal.allowance - refusal.started} of its allowance of ${refusal.allowance} left.`;
+      case "unfinished":
+        return `${would}, which has ${refusal.open} unfinished of its limit of ${refusal.unfinished}.`;
+      case "unknown":
+        return `${would}, whose commission ${refusal.commission} reported no cost, so its spend counts as over its money limit of $${refusal.usd}.`;
+      case "usd":
+        return `${would}, whose commissions ${refusal.period} cost $${refusal.spent}, its money limit of $${refusal.usd}.`;
+      default:
+        return assertNever(refusal);
+    }
+  }
+
+  // Starts a commission of the factory's workflow `workflow` about the document `request`, named
+  // `commission`, or after its trigger and numbered, with its origin and the artifacts it is
+  // given, by hash, whose kept files the record `events` holds. Returns its name.
+  function begin(
+    workflow: string,
+    commission: string | undefined,
+    request: string,
+    {
+      origin,
+      given = [],
+      events,
+    }: { origin?: Commissioned["origin"]; given?: readonly string[]; events?: Log } = {},
+  ): string {
+    const name = commission ?? `${origin!.trigger}-${startedBy.all(origin!.trigger).length + 1}`;
+    const text = pinned(workflow, checked(workflow), (bytes) => store.keep(bytes));
+    const parsed = parseDefinition(workflow, text);
+
+    const event: Commissioned = {
+      type: "commissioned",
+      workflow,
+      engine: engineVersion(),
+      definition: store.keep(text),
+      request,
+    };
+
+    if (origin !== undefined) {
+      event.origin = origin;
+    }
+
+    if (given.length > 0) {
+      event.given = given.map((hash) => ({
+        hash,
+        kind: store.get(hash).kind,
+        kept: events === undefined ? {} : keptAnywhere(events, hash),
+      }));
+    }
+
+    replay(parsed, [event]);
+    insert.run(name, 0, JSON.stringify({ ...event, at: Date.now() }));
+
+    return name;
+  }
+
+  // Runs the commission step `name` of `commission`, ready with `state`: in one transaction, so
+  // no other engine counts the trigger's commissions in between and no crash leaves some started,
+  // either escalates, starting none, or starts one commission per request and completes.
+  function dispatch(
+    commission: string,
+    events: Log,
+    state: Extract<CommissionState, { status: "ready" }>,
+    name: string,
+    step: Commissioning<string>,
+    inputs: readonly { name: string; hashes: readonly string[] }[],
+  ): void {
+    database.exec("BEGIN IMMEDIATE");
+
+    try {
+      // Another engine may have moved the commission on since it was read: the caller reads again.
+      if (read(commission).length !== events.length) {
+        database.exec("ROLLBACK");
+
+        return;
+      }
+
+      const [requests, ...given] = inputs;
+      const problem = stepRefusal(name, step, requests!.hashes.length);
+
+      if (problem !== undefined) {
+        write(commission, events, { type: "escalated", reason: problem });
+        database.exec("COMMIT");
+
+        return;
+      }
+
+      const attempt = events.filter((event) => event.type === "attempt-started").length + 1;
+
+      write(commission, events, {
+        type: "attempt-started",
+        step: name,
+        attempt,
+        subject: state.subject,
+        inputs,
+        process: self,
+        engine: engineVersion(),
+      });
+
+      for (const request of requests!.hashes) {
+        begin(step.workflow, undefined, request, {
+          origin: { trigger: step.trigger, from: { commission, step: name, attempt } },
+          given: given.flatMap((input) => input.hashes),
+          events,
+        });
+      }
+
+      write(commission, read(commission), {
+        type: "attempt-completed",
+        step: name,
+        attempt,
+        outcome: "done",
+        artifacts: [],
+        transcript: store.keep(Buffer.alloc(0)),
+        next: step.on.done!,
+      });
+      database.exec("COMMIT");
+    } catch (error) {
+      database.exec("ROLLBACK");
+
+      throw error;
     }
   }
 
@@ -934,34 +1134,38 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
         throw new Error("A commission needs a name unless a trigger starts it.");
       }
 
-      const name = commission ?? `${trigger}-${startedBy.all(trigger!).length + 1}`;
       const definition = checked(workflow);
 
       refuseRequest(definition.kinds.document, request);
 
-      const text = pinned(workflow, definition, (bytes) => store.keep(bytes));
-      const parsed = parseDefinition(workflow, text);
+      const hash = store.put({
+        kind: "document",
+        fields: { title: request.title },
+        body: request.body,
+      });
 
-      const event: Commissioned = {
-        type: "commissioned",
+      return begin(
         workflow,
-        engine: engineVersion(),
-        definition: store.keep(text),
-        request: store.put({
-          kind: "document",
-          fields: { title: request.title },
-          body: request.body,
-        }),
-      };
+        commission,
+        hash,
+        trigger === undefined ? {} : { origin: { trigger } },
+      );
+    },
 
-      if (trigger !== undefined) {
-        event.origin = { trigger };
+    /**
+     * Renews the trigger named's allowance: the commissions it started before count no more
+     * against it. The owner's act, recorded with when it was made.
+     */
+    renew(trigger: string): void {
+      if (!Object.hasOwn(triggers, trigger)) {
+        throw new Error(`There is no trigger named ${trigger}.`);
       }
 
-      replay(parsed, [event]);
-      insert.run(name, 0, JSON.stringify({ ...event, at: Date.now() }));
+      if (triggers[trigger].allowance === undefined) {
+        throw new Error(`Trigger ${trigger} has no allowance to renew.`);
+      }
 
-      return name;
+      renewing.run(trigger, Date.now());
     },
 
     /**
@@ -1531,6 +1735,36 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
           childrenOf(commission, events, children),
         );
 
+      if (step.kind === "commission") {
+        const inputs = [
+          { name: "each", hashes: named(step.each).map(({ hash }) => hash) },
+          ...Object.entries(step.given ?? {}).map(([input, query]) => ({
+            name: input,
+            hashes: named(query).map(({ hash }) => hash),
+          })),
+        ];
+
+        const repeated = attempts.some(
+          (event) =>
+            event.type === "attempt-started" &&
+            event.subject === state.subject &&
+            isDeepStrictEqual(event.inputs, inputs),
+        );
+
+        if (repeated) {
+          write(commission, events, {
+            type: "escalated",
+            reason: `Step ${name} was already attempted on this subject and these inputs.`,
+          });
+
+          continue;
+        }
+
+        dispatch(commission, events, state, name, step, inputs);
+
+        continue;
+      }
+
       if (step.kind === "children") {
         const requests =
           step.each === undefined
@@ -1890,22 +2124,56 @@ function refuseTriggers(
   triggers: Readonly<Record<string, Trigger>>,
   workflows: Record<string, Workflow>,
 ): void {
-  for (const [name, { workflows: allowed, rate, unfinished, usd }] of Object.entries(triggers)) {
+  for (const [name, trigger] of Object.entries(triggers)) {
+    const { workflows: allowed, rate, allowance, unfinished, usd } = trigger;
+
     const valid =
       allowed.length > 0 &&
       allowed.every((workflow) => Object.hasOwn(workflows, workflow)) &&
-      Number.isSafeInteger(rate.count) &&
-      rate.count >= 1 &&
-      Number.isFinite(rate.per) &&
-      rate.per > 0 &&
+      (rate !== undefined || allowance !== undefined) &&
+      (rate === undefined ||
+        (Number.isSafeInteger(rate.count) &&
+          rate.count >= 1 &&
+          Number.isFinite(rate.per) &&
+          rate.per > 0)) &&
+      (allowance === undefined || (Number.isSafeInteger(allowance) && allowance >= 1)) &&
       Number.isSafeInteger(unfinished) &&
       unfinished >= 1 &&
       (usd === undefined || (Number.isFinite(usd) && usd > 0));
 
     if (!valid) {
       throw new Error(
-        `Trigger ${name} is invalid: it must name workflows of the factory, a rate of at least 1 commission per positive number of seconds, at least 1 unfinished commission, and any money limit above zero.`,
+        `Trigger ${name} is invalid: it must name workflows of the factory, a rate of at least 1 commission per positive number of seconds or an allowance of at least 1 commission, or both, at least 1 unfinished commission, and any money limit above zero.`,
       );
+    }
+  }
+
+  // Commissions that start commissions are an unattended loop: only an allowance the owner
+  // renews bounds it, as a rate renews with time.
+  for (const [workflowName, workflow] of Object.entries(workflows)) {
+    for (const [stepName, step] of Object.entries(workflow.steps)) {
+      if (step.kind !== "commission") {
+        continue;
+      }
+
+      const at = `Step ${stepName} of workflow ${workflowName} starts commissions`;
+      const trigger = Object.hasOwn(triggers, step.trigger) ? triggers[step.trigger] : undefined;
+
+      if (trigger === undefined) {
+        throw new Error(`${at} through trigger ${step.trigger}, which the factory lacks.`);
+      }
+
+      if (trigger.allowance === undefined) {
+        throw new Error(
+          `${at} through trigger ${step.trigger}, which has no allowance: only one the owner renews bounds commissions that start commissions.`,
+        );
+      }
+
+      if (!trigger.workflows.includes(step.workflow)) {
+        throw new Error(
+          `${at} of workflow ${step.workflow}, which trigger ${step.trigger} may not start.`,
+        );
+      }
     }
   }
 }
@@ -2139,7 +2407,9 @@ function keptIn(events: Log, hash: string): Readonly<Record<string, string>> | u
 // The transcript limit of a step: none for an approval or children step, which runs no program to
 // leave a session.
 function transcriptOf(step: Definition["workflow"]["steps"][string]): number {
-  return step.kind === "approval" || step.kind === "children" ? 0 : step.limits.transcript;
+  return step.kind === "approval" || step.kind === "children" || step.kind === "commission"
+    ? 0
+    : step.limits.transcript;
 }
 
 // What an escalation's reason adds when the attempt's session was over its limit.
@@ -2183,9 +2453,11 @@ function spentIn(
   let spent = 0;
 
   for (const event of events) {
-    // A children step runs no program: it costs nothing itself.
+    // A children or commission step runs no program: it costs nothing itself.
+    const kind = event.type === "attempt-completed" ? workflow.steps[event.step]?.kind : undefined;
+
     const ran =
-      (event.type === "attempt-completed" && workflow.steps[event.step]?.kind !== "children") ||
+      (event.type === "attempt-completed" && kind !== "children" && kind !== "commission") ||
       (event.type === "escalated" && event.attempt !== undefined && event.transcript !== undefined);
 
     if (!ran) {
@@ -2431,6 +2703,11 @@ const cancelledReason = (step: string) => `Step ${step} was cancelled by the own
 const failuresInARow = 3;
 
 // Whether an attempt of `step` is a wait that holds no program: a children step's, or a watch's.
+/** Fails at compile time when a switch misses a case, and at run time if one arrives anyway. */
+function assertNever(value: never): never {
+  throw new Error(`Unhandled ${JSON.stringify(value)}.`);
+}
+
 function waits(step: Definition["workflow"]["steps"][string] | undefined): boolean {
   return step?.kind === "children" || (step?.kind === "command" && step.watch !== undefined);
 }

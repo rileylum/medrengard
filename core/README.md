@@ -14,6 +14,7 @@ Code adapter run, and the engine and CLI let an observer follow the log.
 - [Inputs](#inputs)
 - [Children](#children)
 - [Triggers](#triggers)
+  - [Commissions that start commissions](#commissions-that-start-commissions)
 - [Access](#access)
   - [Reaching only some hosts](#reaching-only-some-hosts)
   - [Brokers](#brokers)
@@ -410,6 +411,50 @@ medrengard commission bump-deps --trigger nightly --title "Bump dependencies" --
 - `show` says `Started by trigger nightly.`, and `record` has `origin: { trigger: "nightly" }`. The
   owner's own commissions have no trigger and no caps.
 - Caps are read when commissioning, so editing a trigger affects the commissions it starts next.
+- Instead of a rate, or as well, a trigger may have an `allowance`: at most that many commissions
+  until the owner renews it with `medrengard renew <trigger>`, which counts its earlier ones no
+  more. Past it: `Trigger nightly has started 5 commissions since it was last renewed, its
+  allowance.` Without a rate, `usd` counts what those it started since it was last renewed cost.
+
+### Commissions that start commissions
+
+A `commission` step starts top-level commissions through a trigger, one per document `each` names,
+each its request, and goes on at once: unlike a children step, it waits on none of them.
+
+```ts
+const steps = {
+  plan: {
+    kind: "agent",
+    claims: ["document"], // one document per task
+    // …
+    on: { done: "spawn" },
+  },
+  spawn: {
+    kind: "commission",
+    trigger: "workers", // which must have an allowance
+    workflow: "build", // which the trigger may start
+    each: { from: ["plan"], kind: "document" }, // or "request", for one about the same request
+    given: { brief: "request" }, // optional: artifacts each starts with, as a child's
+    on: { done: "end" }, // done alone
+    budget: 1,
+  },
+} as const;
+
+const triggers = { workers: { workflows: ["build"], allowance: 20, unfinished: 5 } };
+```
+
+- Every commission that starts commissions is an unattended loop, so the step's trigger must have
+  an `allowance`, which only the owner renews; a rate renews with time. An engine whose factory
+  breaks this, or names a trigger it lacks or that may not start the workflow, refuses to start.
+- All or none: if the trigger cannot start every one now, the step starts none and the commission
+  escalates, `Step spawn would start 3 commissions through trigger workers, which has 2 of its
+  allowance of 20 left.` Renew the trigger, or let some finish, and retry.
+- Each is named after the trigger, `workers-1`, and runs on the factory's definitions when it
+  starts, not its starter's, so a chain of commissions picks up an edited workflow. Abandoning
+  the starter leaves them running.
+- `show` says `Started by trigger workers, from commission first's step spawn, attempt 2.`, and
+  `record`'s `origin` adds `from: { commission, step, attempt }`.
+- A trigger's caps count every commission it started, by a step or a program outside the engine.
 
 ## Access
 

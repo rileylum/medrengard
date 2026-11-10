@@ -4,6 +4,7 @@ import type { Kinds } from "./kinds.ts";
 import type {
   Access,
   Children,
+  Commissioning,
   Definition,
   Limits,
   Money,
@@ -542,7 +543,8 @@ function parseWorkflow(
   const runsProgram = (step: string) =>
     names.includes(step) &&
     kindsOfSteps.get(step) !== "approval" &&
-    kindsOfSteps.get(step) !== "children";
+    kindsOfSteps.get(step) !== "children" &&
+    kindsOfSteps.get(step) !== "commission";
 
   // Whether `query` is one the engine can resolve: subject, request, a query over the record, a
   // session of a step that runs a program, or the artifacts of one kind a children step's
@@ -617,6 +619,16 @@ function parseWorkflow(
 
     if (kind === "children") {
       const problem = childrenProblem(step, validQuery);
+
+      if (problem !== undefined) {
+        throw invalid(`step ${name}'s ${problem}`);
+      }
+
+      continue;
+    }
+
+    if (kind === "commission") {
+      const problem = commissioningProblem(step, validQuery);
 
       if (problem !== undefined) {
         throw invalid(`step ${name}'s ${problem}`);
@@ -979,6 +991,69 @@ function childrenProblem(
   return undefined;
 }
 
+// Why the commission step `step` cannot run, if it cannot; `valid` says whether a query is one its
+// workflow can resolve. Its trigger and workflow are the factory's, checked when an engine starts.
+function commissioningProblem(
+  step: Commissioning<string>,
+  valid: (query: Query) => boolean,
+): string | undefined {
+  const { trigger, workflow, each, given, on, budget } = step;
+
+  const fields = [
+    "kind",
+    "trigger",
+    "workflow",
+    "each",
+    ...(Object.hasOwn(step, "given") ? ["given"] : []),
+    "on",
+    "budget",
+  ];
+
+  if (!hasExactly(step, fields)) {
+    return "fields must be a commission step's: its trigger, workflow, each, any given, on and budget";
+  }
+
+  if (!isText(trigger) || !isText(workflow)) {
+    return "trigger and workflow must name the factory's";
+  }
+
+  // Each commission's request is a document.
+  if (
+    !(
+      each === "request" ||
+      (valid(each) && isRecord(each) && new Map(Object.entries(each)).get("kind") === "document")
+    )
+  ) {
+    return "each must be request, or a query of documents, which become the commissions' requests";
+  }
+
+  if (
+    given !== undefined &&
+    !(
+      isRecord(given) &&
+      Object.entries(given).every(
+        ([input, query]) =>
+          inputName.test(input) &&
+          input !== "each" &&
+          valid(query) &&
+          !(isRecord(query) && Object.hasOwn(query, "session")),
+      )
+    )
+  ) {
+    return "given must name artifacts, each by an input name other than each and a query that is no session";
+  }
+
+  if (!hasExactly(on, ["done"])) {
+    return "edges must be done alone: it goes on once it has started its commissions";
+  }
+
+  if (!positive(budget)) {
+    return "budget must be a positive integer";
+  }
+
+  return undefined;
+}
+
 /**
  * The outcome a wait counts children ending on: undefined for one that counts any end, or null for
  * a wait that is none.
@@ -1021,7 +1096,9 @@ function refuseUnbuildable(
   invalid: (problem: string) => Error,
 ): void {
   const programs = Object.values(workflow.steps).flatMap((step) =>
-    step.kind === "approval" || step.kind === "children" ? [] : [step],
+    step.kind === "approval" || step.kind === "children" || step.kind === "commission"
+      ? []
+      : [step],
   );
 
   const subjects = [
@@ -1034,7 +1111,11 @@ function refuseUnbuildable(
     from.flatMap((name) => {
       const step = workflow.steps[name];
 
-      return step.kind === "approval" ? ["decision"] : step.kind === "children" ? [] : step.claims;
+      return step.kind === "approval"
+        ? ["decision"]
+        : step.kind === "children" || step.kind === "commission"
+          ? []
+          : step.claims;
     });
 
   // The kinds the artifacts `query` names may be; a session is no artifact.
@@ -1052,7 +1133,12 @@ function refuseUnbuildable(
               : [...Object.keys(kinds), "decision"];
 
   for (const [name, step] of Object.entries(workflow.steps)) {
-    if (step.kind === "approval" || step.kind === "children" || step.workspace === "empty") {
+    if (
+      step.kind === "approval" ||
+      step.kind === "children" ||
+      step.kind === "commission" ||
+      step.workspace === "empty"
+    ) {
       continue;
     }
 
