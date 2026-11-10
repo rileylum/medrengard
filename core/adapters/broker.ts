@@ -5,7 +5,7 @@
  * step runs can use it through the broker while the attempt runs, but never read it.
  */
 import { createServer, request as plainRequest, type OutgoingHttpHeaders } from "node:http";
-import { request as tlsRequest } from "node:https";
+import { Agent, request as tlsRequest } from "node:https";
 
 /** The credential a harness is given in place of the real one, which its broker replaces. */
 export const placeholder = "medrengard-broker";
@@ -33,6 +33,18 @@ export type Route =
       // "forward", or "more" to be given more. A body it still wants more of at 64 KiB is refused.
       screen?: (start: Buffer) => { refused: string } | "forward" | "more";
     };
+
+// A broker an engine starts inside a step that may reach only some hosts has no way out but the
+// step's proxy, which its environment names. Node tunnels through it, and leaves it out for a host
+// NO_PROXY lists. Without one in the environment, a broker connects as it always has.
+const proxied =
+  (process.env.HTTPS_PROXY ?? process.env.https_proxy) === undefined
+    ? undefined
+    : new Agent({ keepAlive: true, proxyEnv: process.env });
+
+// An upstream on this machine, such as a test's, is reached without the proxy, which is for hosts
+// outside it.
+const local = (host: string) => host === "localhost" || host === "[::1]" || host.startsWith("127.");
 
 // The most of a request's body a route may ask for before it judges the request.
 const screened = 64 * 1024;
@@ -132,6 +144,8 @@ export function serve(
     const forwarded = send(
       {
         protocol: target.protocol,
+        // Undefined is Node's own agent.
+        agent: target.protocol === "https:" && !local(target.hostname) ? proxied : undefined,
         host: target.hostname,
         port: target.port,
         path: routed.path,
