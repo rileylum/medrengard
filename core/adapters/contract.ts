@@ -5,33 +5,20 @@
  */
 import { readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { input, output, readInput, type Input, type Rules } from "../step/contract.ts";
+
+export { input, output, reportUsage } from "../step/contract.ts";
 
 /** The part of a kind an adapter explains to the agent. */
-export type Kind = {
-  description: string;
-  fields: Record<string, { limit: number; required?: true; values?: string[] }>;
-  body: { required: boolean; limit: number };
-  outcome?: string;
-};
+export type Kind = Rules;
 
-/** What an adapter reads from input.json; the engine writes the rest for the agent to read. */
-export type Given = {
-  outcomes: string[];
-  attended: boolean;
-  claims: Record<string, Kind>;
-  agent: { model: string; prompt: string; skills: { name: string; path: string }[] };
-  // An artifact has a kind; a session, which a session query names, has none.
-  inputs: Record<string, { hash: string; kind?: string; body?: string }[]>;
-};
-
-/** The step's input and output directories, as the engine names them. */
-export const input = process.env.MEDRENGARD_IN!;
-export const output = process.env.MEDRENGARD_OUT!;
+/** An agent step's input.json, which always says whether it is attended and names its agent. */
+export type Given = Input & { attended: boolean; agent: NonNullable<Input["agent"]> };
 
 /** The step's input.json. */
 export function readGiven(): Given {
-  // SAFETY: the engine encodes input.json for an agent step with these fields.
-  return JSON.parse(readFileSync(join(input, "input.json"), "utf8")) as Given;
+  // SAFETY: the engine encodes an agent step's input.json with attended and agent.
+  return readInput() as Given;
 }
 
 // One line per field, saying what the claim's fields must hold.
@@ -91,7 +78,7 @@ the latest commit, so anything you did not commit is gone: check a file before y
 export function continuedOf(given: Given): { hash: string; body?: string } | undefined {
   const continued = Object.values(given.inputs)
     .flat()
-    .filter((listed) => listed.kind === undefined);
+    .filter((listed) => !("kind" in listed));
 
   if (continued.length > 1) {
     failed(`An agent continues at most one session; its inputs hold ${continued.length}.`);
@@ -129,11 +116,6 @@ export type Counted = { input: number; output: number; cacheRead: number; cacheW
 
 /** A usage report, as the step contract defines it: money, when the harness says, and tokens. */
 export type Usage = { usd?: number; tokens: Counted };
-
-/** Writes the attempt's usage so far to fd 4, the step contract's usage reports: the latest stands. */
-export function reportUsage(usage: Usage): void {
-  writeSync(4, `${JSON.stringify(usage)}\n`);
-}
 
 /**
  * How an adapter keeps a session for the record: the conversation its harness wrote, with the

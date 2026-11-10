@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { Access, Workflow } from "@medrengard/core/src/replay.ts";
+import type { Access, Workflow } from "@medrengard/core/src/definition.ts";
 import { claudeCode, contract } from "@medrengard/core/defaults/access.ts";
 import { builtIn } from "@medrengard/core/defaults/kinds.ts";
 import { limits } from "@medrengard/core/defaults/limits.ts";

@@ -11,31 +11,22 @@
  *
  * Usage: land.ts <base> <merge|squash|rebase>
  */
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { artifactsOf, claim, failed, readInput } from "../../step/contract.ts";
 
 // SAFETY: the land step's run passes the base branch and the merge method.
 const [base, method] = process.argv.slice(2) as [string, string];
-const input = process.env.MEDRENGARD_IN!;
 const broker = process.env.MEDRENGARD_BROKER_GITHUB!;
-
-type Listed = { fields: Record<string, string> };
-
-// SAFETY: the engine writes input.json, and the step declares the inputs pullRequest and subject.
-const { inputs } = JSON.parse(readFileSync(join(input, "input.json"), "utf8")) as {
-  inputs: { pullRequest: Listed[]; subject: [Listed] };
-};
-
-const pullRequest = inputs.pullRequest.at(-1);
+const given = readInput();
+const pullRequest = artifactsOf(given, "pullRequest").at(-1);
 
 if (pullRequest === undefined) {
-  console.error("No pull request about the subject was opened, so there is none to land.");
-  process.exit(1);
+  failed("No pull request about the subject was opened, so there is none to land.");
 }
 
 const { repository, number, url } = pullRequest.fields;
-const sha = inputs.subject[0].fields.sha;
-const out = process.env.MEDRENGARD_OUT!;
+
+// The step declares the input subject, which always holds one artifact.
+const sha = artifactsOf(given, "subject")[0]!.fields.sha;
 const headers = { authorization: "Bearer medrengard-broker" };
 
 const compared = await fetch(`${broker}/api/repos/${repository}/compare/${base}...${sha}`, {
@@ -43,17 +34,16 @@ const compared = await fetch(`${broker}/api/repos/${repository}/compare/${base}.
 });
 
 if (!compared.ok) {
-  console.error(
+  failed(
     `GitHub refused to compare ${sha} with ${base} (${compared.status}): ${await compared.text()}`,
   );
-  process.exit(1);
 }
 
 // SAFETY: GitHub documents behind_by on a comparison.
 const { behind_by: behind } = (await compared.json()) as { behind_by: number };
 
 if (behind > 0) {
-  writeFileSync(join(out, "output.json"), JSON.stringify({ outcome: "behind" }));
+  claim("behind");
   process.exit(0);
 }
 
@@ -64,8 +54,7 @@ const response = await fetch(`${broker}/api/repos/${repository}/pulls/${number}/
 });
 
 if (!response.ok) {
-  console.error(`GitHub refused to merge ${url} (${response.status}): ${await response.text()}`);
-  process.exit(1);
+  failed(`GitHub refused to merge ${url} (${response.status}): ${await response.text()}`);
 }
 
-writeFileSync(join(out, "output.json"), JSON.stringify({ outcome: "done" }));
+claim("done");

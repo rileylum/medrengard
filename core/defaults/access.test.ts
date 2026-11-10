@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { builtIn } from "./kinds.ts";
 import { limits } from "./limits.ts";
 import { createEngine } from "../src/engine.ts";
-import { defineWorkflow, type Access } from "../src/replay.ts";
+import { defineWorkflow, type Access } from "../src/definition.ts";
 import { claudeCode, contract, gitIdentity } from "./access.ts";
 
 const tokenFile = join(homedir(), ".config", "medrengard", "claude-token");
@@ -69,7 +69,7 @@ test("contract hides the owner's home and the network, and gives only PATH", asy
 });
 
 test(
-  "claudeCode shows nothing of the owner's home but claude, Node with npm and the adapters: not the token file",
+  "claudeCode shows nothing of the owner's home but claude, Node with npm, the adapters and the step contract's module: not the token file",
   {
     skip:
       !existsSync(tokenFile) || !existsSync(claude) ? "no Claude token file or claude here" : false,
@@ -94,6 +94,7 @@ test(
     const granted = [
       claude,
       join(import.meta.dirname, "..", "adapters"),
+      join(import.meta.dirname, "..", "step"),
       ...(existsSync(npm) ? [dirname(process.execPath), npm] : [process.execPath]),
     ];
 

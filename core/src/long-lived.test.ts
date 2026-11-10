@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { builtIn } from "../defaults/kinds.ts";
 import { limits } from "../defaults/limits.ts";
 import { createEngine } from "./engine.ts";
-import { defineWorkflow } from "./replay.ts";
+import { defineWorkflow } from "./definition.ts";
 
 const mayor = defineWorkflow({
   start: "work",
@@ -118,6 +118,7 @@ test("a long-lived agent is a chain of commissions carrying approved memory, bou
 
   assert.partialDeepStrictEqual(stopped, {
     status: "escalated",
+    cause: "trigger",
     reason:
       "Step next would start 1 commission through trigger mayor, which has 0 of its allowance of 3 left.",
   });

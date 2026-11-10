@@ -11,7 +11,7 @@ import { createEngine } from "../src/engine.ts";
 import { codex as codexAccess } from "../defaults/access.ts";
 import { builtIn } from "../defaults/kinds.ts";
 import { limits } from "../defaults/limits.ts";
-import type { Workflow } from "../src/replay.ts";
+import type { Workflow } from "../src/definition.ts";
 import { pinnedVersion } from "./codex-login.ts";
 
 const adapter = join(import.meta.dirname, "codex.ts");

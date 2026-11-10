@@ -7,7 +7,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { builtIn } from "../defaults/kinds.ts";
 import { limits } from "../defaults/limits.ts";
 import { createEngine } from "./engine.ts";
-import type { Access, CommissionState } from "./replay.ts";
+import type { Access } from "./definition.ts";
+import type { CommissionState } from "./replay.ts";
 
 // The system's programs, read-only, and the temp directory, where each test's directory is.
 const access: Access = {
@@ -119,6 +120,7 @@ test("a watch step whose check claims nothing within its wait limit escalates", 
 
   assert.partialDeepStrictEqual(await settle(engine), {
     status: "escalated",
+    cause: "limit",
     reason: "Step watch waited 2 s, its wait limit.",
   });
 });
@@ -129,6 +131,7 @@ test("a watch step's failed check is noted and the wait goes on, until three fai
 
   assert.partialDeepStrictEqual(await settle(engine), {
     status: "escalated",
+    cause: "exit",
     reason: "Step watch exited with code 1.",
   });
   assert.equal(await checks(directory), 5);
@@ -154,6 +157,7 @@ test("a watch step the owner cancels escalates", async (t) => {
 
   assert.partialDeepStrictEqual(await settle(engine), {
     status: "escalated",
+    cause: "cancelled",
     reason: "Step watch was cancelled by the owner.",
   });
 });

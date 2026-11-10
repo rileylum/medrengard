@@ -1,4 +1,4 @@
-import type { Access } from "./replay.ts";
+import type { Access } from "./definition.ts";
 
 /**
  * A program a kind runs, such as its verifier: `run` in its own sandbox under `access`, the

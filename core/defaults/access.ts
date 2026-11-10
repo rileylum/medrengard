@@ -4,7 +4,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { Access } from "../src/replay.ts";
+import type { Access } from "../src/definition.ts";
 
 const ownerHome = homedir();
 
@@ -20,9 +20,13 @@ const system = ["/usr", "/etc", "/opt", "/bin", "/sbin", "/lib", "/lib64"].flatM
 const installed = dirname(dirname(process.execPath));
 const npm = join(installed, "lib", "node_modules", "npm");
 
-const node = (existsSync(npm) ? [dirname(process.execPath), npm] : [process.execPath]).map(
+const nodeAndNpm = (existsSync(npm) ? [dirname(process.execPath), npm] : [process.execPath]).map(
   (path) => ({ path, mode: "read" as const }),
 );
+
+// The step contract's module, which a step's program written in TypeScript imports.
+const package_ = join(import.meta.dirname, "..");
+const stepContract = { path: join(package_, "step"), mode: "read" as const };
 
 // A fresh /tmp. On a RAM-backed tmpfs every byte holds memory, so it is bounded.
 const tmp = { path: "/tmp", mode: "empty" as const, size: 256 * 1024 * 1024 };
@@ -34,6 +38,22 @@ export const contract: Access = {
   environment: ["PATH"],
   workspace: "write",
   sandboxes: false,
+};
+
+/**
+ * What a step's program written in TypeScript needs: the contract's access, Node to run it, which
+ * may be under the owner's home, the step contract's module, `step/contract.ts`, and the package's
+ * manifest, by which a program that reaches the package through its factory's node_modules finds
+ * the module. The program's own directory, and that node_modules, are the factory's to add. Run it as `[process.execPath, "/path/to/step.ts"]`.
+ */
+export const node: Access = {
+  ...contract,
+  paths: [
+    ...contract.paths,
+    { path: process.execPath, mode: "read" },
+    stepContract,
+    { path: join(package_, "package.json"), mode: "read" },
+  ],
 };
 
 /** The variables that make Git author and commit as `name` and `email`, for an access's values. */
@@ -60,7 +80,8 @@ export const claudeCode = {
     tmp,
     { path: ownerHome, mode: "empty", size: 256 * 1024 * 1024 },
     // Node and npm, which may be under the owner's home.
-    ...node,
+    ...nodeAndNpm,
+    stepContract,
     { path: join(import.meta.dirname, "..", "adapters"), mode: "read" },
     // A symlink to the current version; bwrap binds the version it points to when the step starts.
     { path: join(ownerHome, ".local", "bin", "claude"), mode: "read" },
@@ -100,7 +121,8 @@ export const codex = {
     ...system,
     tmp,
     { path: ownerHome, mode: "empty", size: 256 * 1024 * 1024 },
-    ...node,
+    ...nodeAndNpm,
+    stepContract,
     { path: join(import.meta.dirname, "..", "adapters"), mode: "read" },
     ...(existsSync(codexPackage) ? [{ path: codexPackage, mode: "read" as const }] : []),
   ],

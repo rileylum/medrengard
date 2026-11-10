@@ -348,6 +348,7 @@ test("the CLI's commands are exactly the pinned ones", () => {
     "decide",
     "cancel",
     "renew",
+    "accept",
     "transcript",
     "errors",
     "artifact",
@@ -383,6 +384,7 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
     step: step("command"),
     subject: "string",
     reason: "string",
+    cause: "string",
     since: "number",
   };
 
@@ -466,7 +468,7 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
   json("commission", "failing", "second", "--title", "Greet", "--body", "Say hello.");
   assert.deepEqual(json("advance", "second"), escalated);
   assert.deepEqual(json("show", "second").entries, [
-    { entry: "attempt", ...timed, escalated: "string", errors: true },
+    { entry: "attempt", ...timed, escalated: "string", cause: "string", errors: true },
   ]);
 
   const failed = JSON.parse(run(["state", "second", "--json"], factory).stdout);
@@ -483,6 +485,7 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
     entry: "escalation",
     step: "string",
     reason: "string",
+    cause: "string",
     at: "number",
   });
 
@@ -539,6 +542,41 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
   });
 });
 
+// Constraint 3: the owner accepts an upgraded engine for every commission it stopped, at once.
+test("accept carries on every commission that escalated over the engine, and no other", async (t) => {
+  const { directory, factory } = await factoryIn(t);
+
+  for (const name of ["first", "second"]) {
+    run(["commission", "build", name, "--title", "Greet", "--body", "Say hello."], factory);
+  }
+
+  run(["commission", "failing", "third", "--title", "Greet", "--body", "Say hello."], factory);
+
+  // As if another engine had commissioned the first two.
+  const log = new DatabaseSync(join(directory, "state", "log.sqlite"));
+
+  log.exec(
+    "UPDATE events SET event = json_set(event, '$.engine', 'another') WHERE commission IN ('first', 'second')",
+  );
+  log.close();
+
+  for (const name of ["first", "second", "third"]) {
+    run(["advance", name], factory);
+  }
+
+  assert.match(run(["state", "first"], factory).stdout, /^escalated at build.*\ncause: upgrade\n/);
+  assert.match(run(["state", "third"], factory).stdout, /\ncause: exit\n/);
+
+  assert.deepEqual(run(["accept"], factory), {
+    status: 0,
+    stdout: "first: ready at build\nsecond: ready at build\n",
+    stderr: "",
+  });
+  assert.match(run(["advance", "first"], factory).stdout, /^awaiting at review/);
+  assert.match(run(["state", "third"], factory).stdout, /^escalated at build/);
+  assert.deepEqual(run(["accept"], factory), { status: 0, stdout: "", stderr: "" });
+});
+
 test("the CLI prints an attempt's transcript unchanged", async (t) => {
   const { factory } = await factoryIn(t);
 
@@ -563,6 +601,7 @@ test("the CLI exits 0 when a commission escalates, since the call succeeded", as
   assert.equal(status, 0);
   assert.partialDeepStrictEqual(JSON.parse(stdout), {
     status: "escalated",
+    cause: "exit",
     reason: "Step build exited with code 3.",
   });
 });
@@ -1067,6 +1106,7 @@ test(
     assert.notEqual(code, 0);
     assert.partialDeepStrictEqual(JSON.parse(run(["advance", "first", "--json"], factory).stdout), {
       status: "escalated",
+      cause: "interrupted",
       reason: "Step build was interrupted.",
     });
     assert.equal(await readFile(join(directory, "steps"), "utf8"), "start\n");

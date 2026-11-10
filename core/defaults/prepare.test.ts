@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEngine } from "../src/engine.ts";
-import { defineWorkflow } from "../src/replay.ts";
+import { defineWorkflow } from "../src/definition.ts";
 import { contract } from "./access.ts";
 import { builtIn } from "./kinds.ts";
 import { limits } from "./limits.ts";
@@ -84,6 +84,7 @@ test("a step whose preparation fails escalates before its program runs, saying s
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
+    cause: "exit",
     reason: "Step build exited with code 127.",
   });
   assert.partialDeepStrictEqual(engine.record("first").entries, [

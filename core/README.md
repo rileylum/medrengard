@@ -56,7 +56,7 @@ owner.
 
 ```ts
 // factory.ts
-import { defineWorkflow } from "@medrengard/core/src/replay.ts";
+import { defineWorkflow } from "@medrengard/core/src/definition.ts";
 import { contract } from "@medrengard/core/defaults/access.ts";
 import { builtIn } from "@medrengard/core/defaults/kinds.ts";
 import { limits } from "@medrengard/core/defaults/limits.ts";
@@ -151,13 +151,15 @@ budget. A workflow with an agent whose harness says `costs: false` cannot have o
 exists so the compiler checks every step name an edge or query uses. Each step's `on` maps an
 outcome to the next step or to `end`.
 
-There are three kinds of step:
+There are five kinds of step:
 
-| Kind       | Runs                                 | Fields besides `kind` and `on`                                                       |
-| ---------- | ------------------------------------ | ------------------------------------------------------------------------------------ |
-| `command`  | the owner's program, `run`           | `run`, `watch`?, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`?      |
-| `agent`    | an agent through its harness adapter | `agent`, `attended`?, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`? |
-| `approval` | nothing: it waits for the owner      | none                                                                                 |
+| Kind         | Runs                                             | Fields besides `kind` and `on`                                                                    |
+| ------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `command`    | the owner's program, `run`                       | `run`, `watch`?, `workspace`, `inputs`, `claims`, `escalate`?, `budget`, `access`, `limits`?      |
+| `agent`      | an agent through its harness adapter             | `agent`, `attended`?, `workspace`, `inputs`, `claims`, `escalate`?, `budget`, `access`, `limits`? |
+| `approval`   | nothing: it waits for the owner                  | none                                                                                              |
+| `children`   | nothing: it waits on child commissions           | see [Children](#children)                                                                         |
+| `commission` | nothing: it starts commissions through a trigger | see [Commissions that start commissions](#commissions-that-start-commissions)                     |
 
 The fields of a command or agent step:
 
@@ -201,6 +203,34 @@ The fields of a command or agent step:
 
 A kind's verifier and materialiser have bounds of their own; see [Kinds](#kinds).
 
+A command, agent or children step may route an escalation of one of its attempts to another step,
+by its cause, in place of the owner:
+
+```ts
+implement: {
+  kind: "agent",
+  inputs: { earlier: { session: "implement" } },
+  // An attempt whose engine died picks up its session again; a failed one goes to diagnose.
+  escalate: { interrupted: "implement", exit: "diagnose", limit: "diagnose" },
+  budget: 3,
+  // ...
+},
+```
+
+- The causes a step may route are `limit`, `claim`, `exit`, `kind`, `broker`, `interrupted` and
+  `unmet`, and `any` for each of them without a route of its own. The rest are yours alone:
+  `budget`, `money`, `repeat`, `inputs`, `engine`, `cancelled`, `withdrawn`, `upgrade` and
+  `trigger`. A route leads to a step, never to `end`.
+- Only an attempt's escalation is routed. One before an attempt starts, such as inputs over the
+  input limit, waits for you whatever the step routes.
+- The attempt spent a unit of its step's budget and a route renews none, so a step routed back to
+  itself stops once its budget is spent, `Step implement has spent its budget of 3 attempts.`,
+  and then waits for you.
+- The step it goes on at is told why: its `input.json` holds `routed`, `{ "step": "implement",
+  "attempt": 2, "cause": "exit", "reason": "Step implement exited with code 1." }`. It is given no
+  transcript.
+- `show` ends such an attempt's line with `On to diagnose.`, and `record` gives its `next`.
+
 A command step may `watch: { interval, wait }`, to wait on something outside the commission, such
 as CI or a review, without holding a program for the whole wait. Its attempt is the wait, a unit
 of its budget, of at most `wait` seconds. Every `interval` seconds, at least 1, its program runs as
@@ -226,15 +256,18 @@ editing the factory affects only new commissions. The definition holds `run` as 
 `run` points at changes every commission that runs it next. To pin a prompt, put its text in the
 definition, not a path to it. An agent's skills are read when the commission starts and kept with
 its definition, so editing a skill affects only new commissions. The engine is pinned as well:
-commissioning and every attempt record the engine's version, a hash of its source, and an
+commissioning and every attempt record the engine's version, a hash of the package's source,
+its adapters and kinds' programs included, and an
 upgraded engine never quietly changes how an unfinished commission goes on. Before its next
 attempt, such a commission escalates, `Commission first last ran on engine 3f9a2c1d; this engine
-is 7b01e4aa.`; the owner's retry carries it on with this engine, and abandoning ends it. Only a
+is 7b01e4aa.`; the owner's retry carries it on with this engine, and abandoning ends it;
+`medrengard accept` retries every commission escalated so, at once. Only a
 decision on that escalation accepts the engine, not one at an approval step. A commission written
 before engines recorded their version escalates the same way, once. A test keeps a log written on
 2026-11-03 readable.
 
-`src/replay.ts` exports the types `Workflow`, `Agent`, `Access` and `Query`. A `run` is a non-empty
+`src/definition.ts` exports what a factory is written in: `defineWorkflow` and the types
+`Workflow`, `Agent`, `Access` and `Query`; `src/replay.ts`, the events and a commission's state. A `run` is a non-empty
 argv, `readonly [string, ...string[]]`: a function that builds steps from a `string[]` must declare
 that type, or the compiler refuses it.
 
@@ -518,7 +551,7 @@ medrengard commission mayor --trigger mayor --title "Mayor" --body-file standing
 Every command and agent step runs in bubblewrap under its `access`:
 
 ```ts
-import type { Access } from "@medrengard/core/src/replay.ts";
+import type { Access } from "@medrengard/core/src/definition.ts";
 
 const access: Access = {
   // In order of depth; on the same path, read wins. A path not listed is invisible.
@@ -562,13 +595,15 @@ kind program whatever its access: it is empty and read-only, but for the attempt
 input and output and any path the access names under it. So no access can let a step write a
 decision without naming the log's directory itself.
 
-`@medrengard/core/defaults/access.ts` holds three values to use as they are or to change one dial of, and
+`@medrengard/core/defaults/access.ts` holds four values to use as they are or to change one dial of, and
 `gitIdentity(name, email)`, the `values` that make Git author and commit as that identity.
 "The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they
 exist.
 
 - `contract`: the system, a fresh `/tmp` of 256 MiB and `PATH`, without `sandboxes`. No home, no network and no `HOME`, so a
   program that needs a home or a cache, such as `npm`, must be pointed at `/tmp`.
+- `node`: `contract`, with the Node that runs the engine and the step contract's module, for a
+  step's program written in TypeScript. See [the step contract](#the-step-contract).
 - `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
   256 MiB, Node and npm (Node's `bin` directory and npm's package, or the `node` executable
   alone when npm is not beside it; never other global packages), the `adapters` directory, the
@@ -1074,6 +1109,50 @@ Every command and agent step is a program, started:
   over it is not kept, and the reason says so, and an attempt that would otherwise complete
   escalates instead.
 
+A step's program written in TypeScript has the contract as a module, `step/contract.ts`, in place
+of the files and descriptors; a program in any other language uses those as they are:
+
+```ts
+// steps/reply.ts, in the factory's repository
+import { artifactsOf, bodyOf, claim, note, readInput } from "@medrengard/core/step/contract.ts";
+
+const given = readInput();
+const [request] = artifactsOf(given, "request");
+
+note(`Replying to ${request?.fields.title}`);
+claim("done", [
+  { kind: "document", fields: { title: "Reply" }, text: `Reply to: ${bodyOf(request ?? {})}` },
+]);
+```
+
+```ts
+import { node } from "@medrengard/core/defaults/access.ts";
+
+const reply = {
+  kind: "command",
+  run: [process.execPath, "/path/to/factory/steps/reply.ts"],
+  // node: contract, with Node and the module. The factory adds its program and its node_modules.
+  access: {
+    ...node,
+    paths: [
+      ...node.paths,
+      { path: "/path/to/factory/steps", mode: "read" },
+      { path: "/path/to/factory/node_modules", mode: "read" },
+    ],
+  },
+  // ...
+};
+```
+
+- `readInput()` gives `input.json`; `artifactsOf(given, name)` an input's artifacts, oldest first;
+  `bodyOf(artifact)` its body as text.
+- `claim(outcome, artifacts)` writes `output.json`. An artifact's `body` is a file the program
+  wrote in its output, or `text` for the module to write there; `{ adopt: hash }` adopts an input.
+- `note(text)` writes a note, `reportUsage({ usd, tokens })` a usage report, and `failed(why)`
+  says why on stderr and exits 1, so the commission escalates.
+
+The adapters and the GitHub forge's steps are written with it.
+
 `input.json` lists each input's artifacts, oldest first, always as a list. A body is a file at
 `<input>/<hash>`, and `body` holds that path. An agent's skills are directories under `.skills`,
 each listed with its path. `claims` holds the rules of each kind the step may
@@ -1192,6 +1271,7 @@ const engine = createEngine({
   log: "/var/tmp/factory/log.sqlite",
   kinds: factory.kinds,
   workflows: factory.workflows,
+  defaults: factory.defaults,
 });
 
 // Starts a commission: the request is its first subject.
@@ -1260,7 +1340,10 @@ A state has a `status`:
   marked `attended: true`;
 - `awaiting`, at an approval `step`, about a `subject`;
 - `escalated`, at a `step`, about a `subject`, with a `reason` of at most 4096 bytes, longer ones
-  cut and marked `… (cut to 4096 of N bytes)`;
+  cut and marked `… (cut to 4096 of N bytes)`, and its `cause`: `budget`, `money`, `limit`, `repeat`,
+  `inputs`, `claim`, `exit`, `kind`, `broker`, `interrupted`, `engine`, `cancelled`, `withdrawn`,
+  `upgrade`, `unmet` or `trigger`, which [`docs/core.md`](../docs/core.md) defines. `record` gives
+  each escalation's too, and `state` prints it as `cause: limit`;
 - `finished`, `by` `"end"` or `"abandoned"`: abandoned only by the owner's `abandon`, at an
   approval step or an escalation; an approval's own edge to `end` finishes it by `"end"`.
 
@@ -1286,6 +1369,8 @@ medrengard <command> [--json] [--factory <path>]
   decide     <commission> <outcome> --subject <hash> --since <event>
              [--feedback <text> | --feedback-file <path>]
   cancel     <commission>
+  renew      <trigger>
+  accept
   transcript <commission> <attempt>
   errors     <commission> <attempt>
   artifact   <hash or a prefix of at least 8 characters>
@@ -1294,8 +1379,8 @@ medrengard <command> [--json] [--factory <path>]
 
 - The factory is `--factory <path>`, or else `MEDRENGARD_FACTORY`. The CLI never guesses one,
   because loading a factory runs its code.
-- With `--json`, stdout holds exactly one JSON value: the method's return, or `null` for
-  `commission` and `cancel`. An error goes to stderr as `{"error": "…"}`. Without `--json`, the
+- With `--json`, stdout holds exactly one JSON value: the method's return, `{ "commission": name }` for
+  `commission`, or `null` for `cancel` and `renew`. An error goes to stderr as `{"error": "…"}`. Without `--json`, the
   output is for people, not for parsing.
 - Exit codes: 0 when the call succeeded, an escalation included; 1 when the engine refused or
   failed; 2 for a usage error.
@@ -1310,6 +1395,9 @@ medrengard <command> [--json] [--factory <path>]
   they arrive, its ending, and each escalation and decision. It stops once the commission awaits
   the owner, escalates or finishes; on one that already has, it prints the whole story. `show`
   leaves the notes out. It is woken by each new event, rather than looking every so often.
+- `accept` accepts this engine for every commission that escalated because it last ran on
+  another: the owner's `retry` on each, printed one per line, `first: ready at build`. Others are
+  left as they are.
 - `attend` starts the attended step a commission is ready at in the terminal it is run in. See
   [Attended steps](#attended-steps).
 - `events` prints every commission's events after `--after`, 0 if left out, one line each with its

@@ -1,12 +1,14 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { builtIn } from "../defaults/kinds.ts";
 import { limits } from "../defaults/limits.ts";
 import { createEngine } from "./engine.ts";
-import type { Access } from "./replay.ts";
+import type { Access } from "./definition.ts";
 
 const access: Access = {
   paths: ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
@@ -176,3 +178,47 @@ for (const [what, triggers] of [
     });
   });
 }
+
+// A trigger's caps are judged and its commission written as one: no program asking at the same
+// moment is judged on a count the other is about to change.
+test("programs asking a trigger at the same moment start no more than its allowance", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const options = {
+    log: join(directory, "log.sqlite"),
+    kinds: builtIn,
+    defaults: { limits },
+    workflows: {
+      build: {
+        start: "build",
+        steps: { build: { kind: "approval", on: { approve: "end" } } },
+      },
+    },
+    triggers: { nightly: { workflows: ["build"], allowance: 1, unfinished: 10 } },
+  } as const;
+
+  const engine = createEngine(options);
+  const racing = join(directory, "racing.ts");
+  const at = Date.now() + 1500;
+
+  // Each in a process of its own, all released at the same moment, each under its own name.
+  await writeFile(
+    racing,
+    `import { createEngine } from ${JSON.stringify(join(import.meta.dirname, "engine.ts"))};
+    const engine = createEngine(${JSON.stringify(options)});
+    while (Date.now() < ${at});
+    try {
+      engine.commission("build", process.argv[2], { title: "T", body: "B" }, { trigger: "nightly" });
+    } catch {}`,
+  );
+
+  await Promise.all(
+    ["a", "b", "c", "d", "e", "f"].map((name) =>
+      once(spawn(process.execPath, [racing, name], { stdio: "ignore" }), "exit"),
+    ),
+  );
+
+  assert.equal(engine.commissions().length, 1);
+});

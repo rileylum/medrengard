@@ -5,7 +5,7 @@
  */
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { Agent } from "../src/replay.ts";
+import type { Agent } from "../src/definition.ts";
 
 const keyed = /^([a-z]+):(?: (.*))?$/;
 

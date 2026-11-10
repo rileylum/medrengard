@@ -2,9 +2,9 @@
 // request of the subject commit and, after the owner approves, merge it. Plain values, as the
 // other defaults are: spread one and change a field.
 import { join } from "node:path";
-import { contract } from "../../defaults/access.ts";
+import { node } from "../../defaults/access.ts";
 import type { Kind } from "../../src/kinds.ts";
-import type { Access, Workflow } from "../../src/replay.ts";
+import type { Access, Workflow } from "../../src/definition.ts";
 
 /**
  * The pull-request kind: a judgement about the subject commit, that it is open as pull request
@@ -40,7 +40,10 @@ type Command = Extract<Workflow["steps"][string], { kind: "command" }>;
 
 // What a step built here leaves to the factory: its outcomes' edges, whose literal step names a
 // workflow checks, and any field but its inputs and program, which the step needs as they are.
-type Overrides<O> = { on: O } & Partial<Omit<Command, "kind" | "run" | "inputs" | "on">>;
+// Its routes, whose step names a workflow checks too, a factory adds by spreading the step.
+type Overrides<O> = { on: O } & Partial<
+  Omit<Command, "kind" | "run" | "inputs" | "on" | "escalate">
+>;
 
 const here = import.meta.dirname;
 
@@ -54,13 +57,9 @@ export function github({ repository, base, token, git, api }: Options) {
   );
 
   const access: Access = {
-    ...contract,
-    paths: [
-      ...contract.paths,
-      // Node, which may be under the owner's home, and these programs.
-      { path: process.execPath, mode: "read" },
-      { path: here, mode: "read" },
-    ],
+    ...node,
+    // These programs.
+    paths: [...node.paths, { path: here, mode: "read" }],
     network: {
       hosts: [],
       brokers: {

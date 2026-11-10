@@ -31,7 +31,7 @@ export async function factoryIn(t: TestContext) {
 
   await writeFile(
     factory,
-    `import { defineWorkflow } from ${JSON.stringify(join(repository, "src/replay.ts"))};
+    `import { defineWorkflow } from ${JSON.stringify(join(repository, "src/definition.ts"))};
      import { contract } from ${JSON.stringify(join(repository, "defaults/access.ts"))};
      import { builtIn } from ${JSON.stringify(join(repository, "defaults/kinds.ts"))};
      import { limits } from ${JSON.stringify(join(repository, "defaults/limits.ts"))};

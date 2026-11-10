@@ -8,30 +8,17 @@
  * Usage: open.ts <owner/name> <base>
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { artifactsOf, bodyOf, claim, failed, readInput } from "../../step/contract.ts";
 
 // SAFETY: the open step's run passes the repository and the base branch.
 const [repository, base] = process.argv.slice(2) as [string, string];
-const input = process.env.MEDRENGARD_IN!;
 const broker = process.env.MEDRENGARD_BROKER_GITHUB!;
+const given = readInput();
 
-// What input.json lists of the request and the subject.
-type Listed = { fields: Record<string, string>; body?: string };
-
-// SAFETY: the engine writes input.json, and the step declares the inputs request and subject.
-const { commission, inputs } = JSON.parse(readFileSync(join(input, "input.json"), "utf8")) as {
-  commission: string;
-  inputs: { request: [Listed]; subject: [Listed] };
-};
-
-const [request] = inputs.request;
-const [subject] = inputs.subject;
-
-const bodyOf = (listed: Listed) =>
-  listed.body === undefined ? "" : readFileSync(join(input, listed.body), "utf8");
-
-const branch = `medrengard/${commission}`;
+// The step declares the inputs request and subject, which each always hold one artifact.
+const request = artifactsOf(given, "request")[0]!;
+const subject = artifactsOf(given, "subject")[0]!;
+const branch = `medrengard/${given.commission}`;
 
 // The placeholder, which the broker replaces with the token; no proxy, the broker being on loopback.
 // Git's stderr is kept for a failure alone: GitHub always answers a push with a hint there.
@@ -55,18 +42,18 @@ try {
   // SAFETY: execFileSync throws an error carrying the child's piped stderr.
   const { stderr } = error as { stderr: Buffer };
 
-  console.error(`The push to ${repository} failed: ${stderr}`);
-  process.exit(1);
+  failed(`The push to ${repository} failed: ${stderr}`);
 }
 
-const report = bodyOf(subject);
+const report = bodyOf(subject) ?? "";
+const asked = bodyOf(request) ?? "";
 
 const response = await fetch(`${broker}/api/repos/${repository}/pulls`, {
   method: "POST",
   headers: { authorization: "Bearer medrengard-broker", "content-type": "application/json" },
   body: JSON.stringify({
     title: request.fields.title,
-    body: report === "" ? bodyOf(request) : `${bodyOf(request)}\n\n${report}`,
+    body: report === "" ? asked : `${asked}\n\n${report}`,
     head: branch,
     base,
   }),
@@ -88,8 +75,7 @@ const reused =
 const open = reused?.ok ? ((await reused.json()) as { number: number; html_url: string }[]) : [];
 
 if (!response.ok && open.length === 0) {
-  console.error(`GitHub refused to open the pull request (${response.status}): ${said}`);
-  process.exit(1);
+  failed(`GitHub refused to open the pull request (${response.status}): ${said}`);
 }
 
 // SAFETY: GitHub answers a pull request it opened with its number and page.
@@ -97,10 +83,4 @@ const { number, html_url: url } = response.ok
   ? (JSON.parse(said) as { number: number; html_url: string })
   : open[0]!;
 
-writeFileSync(
-  join(process.env.MEDRENGARD_OUT!, "output.json"),
-  JSON.stringify({
-    outcome: "done",
-    artifacts: [{ kind: "pull-request", fields: { repository, number: String(number), url } }],
-  }),
-);
+claim("done", [{ kind: "pull-request", fields: { repository, number: String(number), url } }]);

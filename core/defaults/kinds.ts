@@ -2,7 +2,7 @@
 // beside them. The engine knows none of them; a commission records the kinds it started with.
 import { join } from "node:path";
 import type { Kinds } from "../src/kinds.ts";
-import type { Access } from "../src/replay.ts";
+import type { Access } from "../src/definition.ts";
 import { contract } from "./access.ts";
 
 const repository = join(import.meta.dirname, "..");

@@ -11,7 +11,7 @@ import { contract, gitIdentity } from "../../defaults/access.ts";
 import { builtIn } from "../../defaults/kinds.ts";
 import { limits } from "../../defaults/limits.ts";
 import { createEngine } from "../../src/engine.ts";
-import { defineWorkflow } from "../../src/replay.ts";
+import { defineWorkflow } from "../../src/definition.ts";
 import { github, pullRequest } from "./steps.ts";
 
 const git = (cwd: string, ...args: string[]) =>
@@ -443,6 +443,7 @@ test("a pull request whose head moved after it was opened is not landed, and the
   // The land step, the third attempt, says why GitHub refused.
   assert.partialDeepStrictEqual(ended, {
     status: "escalated",
+    cause: "exit",
     reason: "Step land exited with code 1.",
   });
   assert.match(engine.errors("first", 3).toString(), /\(409\): .*Head branch was modified/);
