@@ -635,6 +635,8 @@ function parseWorkflow(
     const harness = agent?.harness;
     const argv = kind === "command" ? step.run : harness?.run;
 
+    const watch = step.watch;
+
     const fields = [
       "kind",
       "workspace",
@@ -642,6 +644,7 @@ function parseWorkflow(
       "claims",
       program,
       ...(kind === "agent" && Object.hasOwn(step, "attended") ? ["attended"] : []),
+      ...(kind === "command" && Object.hasOwn(step, "watch") ? ["watch"] : []),
       "on",
       "budget",
       "access",
@@ -650,6 +653,30 @@ function parseWorkflow(
 
     if (!hasExactly(step, fields)) {
       throw invalid(`step ${name} does not have exactly the fields a ${kind} step defines`);
+    }
+
+    // Read before hasExactly, which narrows what it checks to object.
+    const { interval, wait } = watch ?? {};
+
+    if (
+      watch !== undefined &&
+      !(
+        hasExactly(watch, ["interval", "wait"]) &&
+        Number.isFinite(interval) &&
+        interval >= 1 &&
+        Number.isFinite(wait) &&
+        wait > 0 &&
+        wait <= longestLimit
+      )
+    ) {
+      throw invalid(
+        `step ${name}'s watch must be an interval of at least 1 s and a wait limit of at most ${longestLimit} s`,
+      );
+    }
+
+    // A check reads the world; it builds nothing to read.
+    if (watch !== undefined && workspace !== "empty") {
+      throw invalid(`step ${name}'s workspace must be empty, since it watches`);
     }
 
     // The query of the input the workspace is built from, which must name at most one artifact.

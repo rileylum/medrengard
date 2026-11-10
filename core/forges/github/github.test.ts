@@ -25,6 +25,15 @@ type Seen = {
   merges: { sha: string; merge_method: string }[];
 };
 
+// What the fake GitHub says of pull request 7 once opened: whether it is open or closed and
+// merged, its reviews, each of the head, and their inline comments.
+type World = {
+  state: "open" | "closed";
+  merged: boolean;
+  reviews: { user: { login: string }; state: string; body: string }[];
+  comments: { user: { login: string }; path: string; line: number; body: string }[];
+};
+
 const bodyOf = async (stream: AsyncIterable<Buffer>) => {
   const chunks: Buffer[] = [];
 
@@ -42,6 +51,7 @@ const bodyOf = async (stream: AsyncIterable<Buffer>) => {
  */
 async function fakeGitHub(t: TestContext, remote: string) {
   const seen: Seen = { requests: [], pulls: [], merges: [] };
+  const world: World = { state: "open", merged: false, reviews: [], comments: [] };
 
   const server = createServer(async (incoming, response) => {
     const url = new URL(incoming.url!, "http://github.test");
@@ -57,6 +67,58 @@ async function fakeGitHub(t: TestContext, remote: string) {
       response.writeHead(status, { "content-type": "application/json" });
       response.end(JSON.stringify(value));
     };
+
+    // The pull request as the watch reads it: its state, its reviews and their comments.
+    const head = () =>
+      git(join(remote, "owner", "app.git"), "rev-parse", `refs/heads/${seen.pulls[0]!.head}`);
+
+    const read = {
+      "/repos/owner/app/pulls/7": () => ({
+        number: 7,
+        state: world.state,
+        merged: world.merged,
+        head: { sha: head() },
+      }),
+      "/repos/owner/app/pulls/7/reviews": () =>
+        world.reviews.map((review) => ({ ...review, commit_id: head() })),
+      "/repos/owner/app/pulls/7/comments": () => world.comments,
+    };
+
+    if (incoming.method === "GET" && Object.hasOwn(read, url.pathname)) {
+      response.writeHead(200, { "content-type": "application/json" });
+      // SAFETY: hasOwn found the path among read's keys.
+      response.end(JSON.stringify(read[url.pathname as keyof typeof read]()));
+
+      return;
+    }
+
+    if (
+      incoming.method === "GET" &&
+      url.pathname === "/repos/owner/app/pulls" &&
+      url.search === "?head=owner:medrengard/first&state=open"
+    ) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify(
+          seen.pulls.length === 0
+            ? []
+            : [{ number: 7, html_url: "https://github.test/owner/app/pull/7" }],
+        ),
+      );
+
+      return;
+    }
+
+    // One pull request per branch, as GitHub allows.
+    if (
+      incoming.method === "POST" &&
+      url.pathname === "/repos/owner/app/pulls" &&
+      seen.pulls.length > 0
+    ) {
+      json(422, { message: "Validation Failed" });
+
+      return;
+    }
 
     if (incoming.method === "POST" && url.pathname === "/repos/owner/app/pulls") {
       seen.pulls.push(JSON.parse(body.toString()));
@@ -124,14 +186,14 @@ async function fakeGitHub(t: TestContext, remote: string) {
   // SAFETY: a TCP server listening on a port has an address of that kind.
   const { port } = server.address() as AddressInfo;
 
-  return { seen, url: `http://127.0.0.1:${port}` };
+  return { seen, world, url: `http://127.0.0.1:${port}` };
 }
 
 /**
  * Commissions `first`, titled Plan, on a workflow that commits plan.txt, opens a pull request of it
  * on the fake GitHub, waits for the owner's approval and lands it.
  */
-async function landing(t: TestContext) {
+async function landing(t: TestContext, after: "land" | "watch" | "fix" = "land") {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -144,7 +206,7 @@ async function landing(t: TestContext) {
   git(directory, "init", "--quiet", "--bare", bare);
   git(bare, "config", "http.receivepack", "true");
 
-  const { seen, url } = await fakeGitHub(t, join(directory, "remote"));
+  const { seen, world, url } = await fakeGitHub(t, join(directory, "remote"));
 
   const app = github({
     repository: "owner/app",
@@ -178,9 +240,30 @@ async function landing(t: TestContext) {
             budget: 1,
             access: { ...contract, values: gitIdentity("Test", "test@example.com") },
           },
-          open: app.open({ on: { done: "approve" } }),
+          open: app.open({ on: { done: after === "land" ? "approve" : after } }),
+          // A fix: another commit on the subject, opened again.
+          fix: {
+            kind: "command",
+            run: [
+              "sh",
+              "-c",
+              `echo fixed >> plan.txt; git commit -q --no-verify -am Fix
+               printf '{"outcome":"done","artifacts":[{"kind":"commit","fields":{"sha":"%s"}}]}' "$(git rev-parse HEAD)" > "$MEDRENGARD_OUT/output.json"`,
+            ],
+            workspace: "subject",
+            inputs: {},
+            claims: ["commit"],
+            on: { done: "again" },
+            budget: 1,
+            access: { ...contract, values: gitIdentity("Test", "test@example.com") },
+          },
+          again: app.open({ on: { done: "end" } }),
           approve: { kind: "approval", on: { approve: "land" } },
           land: app.land({ on: { done: "end" } }),
+          watch: app.watch({
+            on: { merged: "end", changes: "end", closed: "end" },
+            interval: 1,
+          }),
         },
       }),
     },
@@ -188,7 +271,7 @@ async function landing(t: TestContext) {
 
   engine.commission("build", "first", { title: "Plan", body: "Plan it." });
 
-  return { engine, seen, bare };
+  return { engine, seen, world, bare };
 }
 
 type Engine = Awaited<ReturnType<typeof landing>>["engine"];
@@ -271,6 +354,108 @@ test("a pull request whose head moved after it was opened is not landed, and the
   });
   assert.match(engine.errors("first", 3).toString(), /\(409\): .*Head branch was modified/);
   assert.deepEqual(seen.merges, []);
+});
+
+test("opening again after a fix pushes the fix to the pull request already open and claims it", async (t) => {
+  const { engine, seen, bare } = await landing(t, "fix");
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+
+  const attempts = engine
+    .record("first")
+    .entries.flatMap((entry) => (entry.entry === "attempt" && "artifacts" in entry ? [entry] : []));
+
+  const fixed = attempts.find(({ step }) => step === "fix")!.artifacts[0]!.artifact.fields.sha;
+  const opened = attempts.filter(({ step }) => step === "open" || step === "again");
+
+  assert.equal(git(bare, "rev-parse", "refs/heads/medrengard/first"), fixed);
+  assert.equal(seen.pulls.length, 1);
+  assert.deepEqual(
+    opened.map(({ artifacts }) => artifacts[0]!.artifact.fields.number),
+    ["7", "7"],
+  );
+});
+
+/** Advances `first` until it is no longer attempting or ready, as `run` does, and returns it. */
+async function settle(engine: Engine, limit = 30_000) {
+  const deadline = Date.now() + limit;
+
+  while (Date.now() < deadline) {
+    const state = await engine.advance("first");
+
+    if (state.status !== "attempting" && state.status !== "ready") {
+      return state;
+    }
+
+    await sleep(50);
+  }
+
+  throw new Error(`first did not settle within ${limit} ms.`);
+}
+
+// The last attempt's outcome and what it claimed, each artifact's title and body.
+function watched(engine: Engine) {
+  const last = engine.record("first").entries.at(-1);
+
+  assert.ok(last?.entry === "attempt" && "artifacts" in last);
+
+  return {
+    outcome: last.outcome,
+    claimed: last.artifacts.map(({ artifact }) => [artifact.fields.title, artifact.body]),
+  };
+}
+
+for (const [what, change, expected] of [
+  ["merged on GitHub", (world: World) => (world.merged = true), { outcome: "merged", claimed: [] }],
+  [
+    "closed unmerged",
+    (world: World) => (world.state = "closed"),
+    { outcome: "closed", claimed: [] },
+  ],
+  [
+    "asked for changes",
+    (world: World) => {
+      world.reviews.push(
+        { user: { login: "ana" }, state: "COMMENTED", body: "Looks close." },
+        { user: { login: "ben" }, state: "CHANGES_REQUESTED", body: "Rename it." },
+      );
+      world.comments.push({
+        user: { login: "ben" },
+        path: "plan.txt",
+        line: 1,
+        body: "Typo here.",
+      });
+    },
+    {
+      outcome: "changes",
+      claimed: [
+        [
+          "Review of pull request 7",
+          "ana commented: Looks close.\n\nben requested changes: Rename it.\n\nben on plan.txt:1: Typo here.\n",
+        ],
+      ],
+    },
+  ],
+] as const) {
+  test(`a watch on a pull request that is ${what} ends, claiming what it found`, async (t) => {
+    const { engine, world } = await landing(t, "watch");
+
+    // Found only after a check that found nothing.
+    setTimeout(() => change(world), 1500);
+
+    assert.partialDeepStrictEqual(await settle(engine), { status: "finished", by: "end" });
+    assert.deepEqual(watched(engine), expected);
+  });
+}
+
+test("a watch on an open pull request no one has reviewed finds nothing", async (t) => {
+  const { engine } = await landing(t, "watch");
+
+  // Opened, then a first check that found nothing, and a second.
+  for (let looks = 0; looks < 3; looks += 1) {
+    assert.partialDeepStrictEqual(await engine.advance("first"), { status: "attempting" });
+    await sleep(600);
+  }
 });
 
 /** Starts the broker for `owner/app` on a socket of its own, forwarding to `url`. */

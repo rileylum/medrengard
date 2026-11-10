@@ -152,7 +152,7 @@ There are three kinds of step:
 
 | Kind       | Runs                                 | Fields besides `kind` and `on`                                                       |
 | ---------- | ------------------------------------ | ------------------------------------------------------------------------------------ |
-| `command`  | the owner's program, `run`           | `run`, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`?                |
+| `command`  | the owner's program, `run`           | `run`, `watch`?, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`?      |
 | `agent`    | an agent through its harness adapter | `agent`, `attended`?, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`? |
 | `approval` | nothing: it waits for the owner      | none                                                                                 |
 
@@ -197,6 +197,22 @@ The fields of a command or agent step:
   it cannot state one, nor can a step whose agent's harness says `costs: false`.
 
 A kind's verifier and materialiser have bounds of their own; see [Kinds](#kinds).
+
+A command step may `watch: { interval, wait }`, to wait on something outside the commission, such
+as CI or a review, without holding a program for the whole wait. Its attempt is the wait, a unit
+of its budget, of at most `wait` seconds. Every `interval` seconds, at least 1, its program runs as
+a check, under its limits, with its inputs and access and an empty workspace:
+
+- a check that exits 0 without writing `output.json` found nothing yet; nothing is recorded, and
+  the next runs an interval later;
+- one that writes it claims, as any step does, and the attempt follows the outcome's edge;
+- one that fails is recorded as the engine's note, `A check failed, and the wait goes on: …`, and
+  the wait goes on. The third to fail in a row escalates with its reason;
+- past `wait`, the commission escalates, `Step watch waited 259200 s, its wait limit.`; the owner
+  can cancel it too.
+
+Only one check runs at a time, whichever engines look, and an engine stopping does not interrupt
+the wait: the next to look carries it on. [Landing on GitHub](#landing-on-github) has one.
 
 The engine refuses a workflow it could not run as written when it is commissioned, not halfway
 through: among others, a step with no outcomes; a step that may claim a kind whose outcome field
@@ -774,7 +790,7 @@ const implement = {
 ## Landing on GitHub
 
 `@medrengard/core/forges/github/steps.ts` takes a commission's commit to a merged pull request in
-three steps: `open` pushes the subject commit and opens a pull request of it, an approval step
+three steps, or follows one merged on GitHub with a fourth: `open` pushes the subject commit and opens a pull request of it, an approval step
 records the owner's decision, and `land` merges it. Nothing merges without that decision.
 
 ```ts
@@ -797,8 +813,9 @@ const steps = {
   or the file `token` names, for the repositories you choose, with _Contents_ and _Pull requests_
   read and write. Keep it apart from your own `gh` login. The steps reach GitHub only through a
   broker, which holds the token, so it never enters a sandbox.
-- **What the broker forwards:** only Git fetches and pushes for `repository`, and the calls to open,
-  read and merge one of its pull requests. Anything else is refused with a 403 naming it.
+- **What the broker forwards:** only Git fetches and pushes for `repository`, and the calls to open
+  one of its pull requests, find the one open for a branch, read one with its reviews and their
+  comments, and merge one. Anything else is refused with a 403 naming it.
 - **`open`** pushes the subject to `medrengard/<commission>` and opens a pull request against
   `base`. Its title is the request's title, and its body is the request's body, then the commit's
   report if it has one. It claims a `pull-request`: a judgement about the commit, which stays the
@@ -808,7 +825,20 @@ const steps = {
   the pull request's head is no longer that commit. A refused merge, such as a moved head, a
   conflict or failing required checks, fails the step, with GitHub's answer in its errors, and the
   commission escalates.
-- Both are plain steps: spread one to change a field, such as its limits or budget. `git` and
+- **`watch`** follows the latest `pull-request` about the subject, checking every `interval`
+  seconds (60 unless given) for at most `wait` (a week unless given). It claims `merged`; `closed`,
+  unmerged; or `changes`, once a reviewer's latest review of the subject commit asks for them, with
+  every review of it and their inline comments as a document. Each needs an edge:
+
+  ```ts
+  watch: app.watch({ on: { merged: "end", changes: "fix", closed: "end" } }),
+  ```
+
+  A merge made on GitHub ends the commission there; `changes` can go back to the step that writes
+  the next commit, and `open` again pushes it to the pull request already open and claims that
+  one. It reads no CI: run the tests in the factory's own steps, before `open`.
+
+- All three are plain steps: spread one to change a field, such as its limits or budget. `git` and
   `api` point the broker elsewhere, such as at GitHub Enterprise Server's `https://host/api/v3`.
 
 ## Attended steps
