@@ -25,6 +25,7 @@ const exports = {
     "Skill",
     "Usage",
     "Wait",
+    "Watch",
     "Workflow",
     "defineWorkflow",
     "replay",

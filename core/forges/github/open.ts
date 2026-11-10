@@ -1,8 +1,9 @@
 /**
  * The GitHub forge's open step: pushes the subject commit, its workspace, to
  * medrengard/<commission> and opens a pull request of it against the base branch, titled with the
- * request's title, its body the request's body and the commit's report, then claims it. It reaches
- * GitHub only through the broker.
+ * request's title, its body the request's body and the commit's report, then claims it. With one
+ * open for the branch already, as after a fix, the push updates it and it is the one claimed. It
+ * reaches GitHub only through the broker.
  *
  * Usage: open.ts <owner/name> <base>
  */
@@ -73,13 +74,28 @@ const response = await fetch(`${broker}/api/repos/${repository}/pulls`, {
 
 const said = await response.text();
 
-if (!response.ok) {
+// GitHub answers 422 when a pull request of the branch is open already, as after a fix: the push
+// above updated it, and it is the one to claim.
+const reused =
+  response.status === 422
+    ? await fetch(
+        `${broker}/api/repos/${repository}/pulls?head=${repository.split("/")[0]}:${branch}&state=open`,
+        { headers: { authorization: "Bearer medrengard-broker" } },
+      )
+    : undefined;
+
+// SAFETY: GitHub lists open pull requests with their numbers and pages.
+const open = reused?.ok ? ((await reused.json()) as { number: number; html_url: string }[]) : [];
+
+if (!response.ok && open.length === 0) {
   console.error(`GitHub refused to open the pull request (${response.status}): ${said}`);
   process.exit(1);
 }
 
 // SAFETY: GitHub answers a pull request it opened with its number and page.
-const { number, html_url: url } = JSON.parse(said) as { number: number; html_url: string };
+const { number, html_url: url } = response.ok
+  ? (JSON.parse(said) as { number: number; html_url: string })
+  : open[0]!;
 
 writeFileSync(
   join(process.env.MEDRENGARD_OUT!, "output.json"),

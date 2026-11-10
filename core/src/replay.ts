@@ -119,6 +119,13 @@ type Program<N extends string, Bounded> = {
 } & Bounded;
 
 /**
+ * A command step that watches: its attempt is a wait of at most `wait` seconds, in which its
+ * program runs every `interval` seconds as a check, in an empty workspace, until one claims. A
+ * check that exits 0 without a claim found nothing yet; three that fail in a row escalate.
+ */
+export type Watch = { interval: number; wait: number };
+
+/**
  * What a children step waits for: every child, the first, or at least some, to reach its end; or,
  * naming an outcome, that every child, or at least some, ended on it.
  */
@@ -148,12 +155,12 @@ export type Children<N extends string> = {
 
 /**
  * A step: an agent step runs its agent's harness adapter, with the owner in their terminal when
- * `attended`, a command step runs `run`, an approval step waits for the owner's decision,
+ * `attended`, a command step runs `run`, once or, watching, as checks, an approval step waits for the owner's decision,
  * following the edge its outcome names in `on`, and a children step waits on child commissions.
  */
 type Step<N extends string, Bounded> =
   | ({ kind: "agent"; agent: Agent; attended?: boolean } & Program<N, Bounded>)
-  | ({ kind: "command"; run: readonly [string, ...string[]] } & Program<N, Bounded>)
+  | ({ kind: "command"; run: readonly [string, ...string[]]; watch?: Watch } & Program<N, Bounded>)
   | { kind: "approval"; on: Record<string, N | "end"> }
   | Children<N>;
 

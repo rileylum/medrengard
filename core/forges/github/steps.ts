@@ -87,6 +87,26 @@ export function github({ repository, base, token, git, api }: Options) {
       claims: ["pull-request"],
       ...overrides,
     }),
+    /**
+     * Watches the latest pull request about the subject, checking every `interval` seconds, 60
+     * unless given, for at most `wait`, a week unless given, until it is merged, closed, or asked
+     * to change, with the review as a document.
+     */
+    watch: <const O extends Record<"merged" | "closed" | "changes", string>>({
+      interval = 60,
+      wait = 7 * 24 * 60 * 60,
+      ...overrides
+    }: Overrides<O> & { interval?: number; wait?: number }) => ({
+      ...step([join(here, "watch.ts")]),
+      watch: { interval, wait },
+      workspace: "empty" as const,
+      inputs: {
+        pullRequest: { kind: "pull-request", about: "subject" },
+        subject: "subject",
+      } as const,
+      claims: ["document"],
+      ...overrides,
+    }),
     /** Merges the latest pull request about the subject while its head is the subject's SHA. */
     land: <const O extends Record<string, string>>({
       method = "merge",

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import type { createEngine } from "./engine.ts";
 import type { Kind, Program } from "./kinds.ts";
-import type { Access, Agent, Limits, Money, Query, Wait, Workflow } from "./replay.ts";
+import type { Access, Agent, Limits, Money, Query, Wait, Watch, Workflow } from "./replay.ts";
 
 // Constraint 7: the definition's schema is pinned here, at compile time: a field added to or
 // removed from any type a factory writes fails the type check until this list changes on purpose.
@@ -58,6 +58,7 @@ type Pinned = {
     >
   >;
   childrenLimits: Expect<Same<keyof Waiting["limits"], "wait">>;
+  watch: Expect<Same<Watch, { interval: number; wait: number }>>;
   wait: Expect<
     Same<Wait, "all" | "first" | { atLeast: number; outcome?: string } | { all: string }>
   >;
@@ -80,7 +81,16 @@ type Pinned = {
   commandStep: Expect<
     Same<
       keyof Command,
-      "kind" | "run" | "inputs" | "claims" | "workspace" | "on" | "budget" | "access" | "limits"
+      | "kind"
+      | "run"
+      | "watch"
+      | "inputs"
+      | "claims"
+      | "workspace"
+      | "on"
+      | "budget"
+      | "access"
+      | "limits"
     >
   >;
   approvalStep: Expect<Same<keyof Approval, "kind" | "on">>;
