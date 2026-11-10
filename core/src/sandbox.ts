@@ -1,6 +1,6 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statfsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Access } from "./definition.ts";
 
@@ -241,4 +241,86 @@ export function overMemory(unit: string): boolean {
   }
 
   return result === "oom-kill";
+}
+
+/**
+ * The empty area of `access` that the program in the sandbox `sandbox`, by pid, has filled, if it
+ * has filled one: seen through the sandbox's root, the sandbox being bwrap's child, in its own
+ * mount namespace.
+ */
+export function fullArea(
+  sandbox: number,
+  access: Access,
+): { path: string; size: number } | undefined {
+  let root;
+
+  try {
+    const [inner] = readFileSync(`/proc/${sandbox}/task/${sandbox}/children`, "utf8").split(" ");
+
+    root = `/proc/${inner}/root`;
+  } catch {
+    // Not started yet, or ended: there is nothing to look at.
+    return undefined;
+  }
+
+  for (const area of access.paths) {
+    if (area.mode === "empty") {
+      const free = (() => {
+        try {
+          return statfsSync(join(root, area.path)).bavail;
+        } catch {
+          return undefined;
+        }
+      })();
+
+      if (free === 0) {
+        return area;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+// The time a stopped step has to exit after SIGTERM before it gets SIGKILL.
+const grace = 5000;
+
+/**
+ * Stops a confined program, started as `child`, whose sandbox leads the process group `group`:
+ * SIGTERM to the group, then SIGKILL after the grace period. The group's leader is bwrap, which
+ * dies at once on SIGTERM and takes the program with it, so it is spared the SIGTERM and the
+ * program has its grace period.
+ */
+export function stop(child: ChildProcess, group: number): void {
+  for (const pid of membersOf(group)) {
+    if (pid !== group) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // It exited since the group was listed.
+      }
+    }
+  }
+
+  const kill = setTimeout(() => process.kill(-group, "SIGKILL"), grace);
+
+  child.once("close", () => clearTimeout(kill));
+}
+
+// The processes in process group `group`, by their pid in the engine's namespace, read from
+// /proc/<pid>/stat: the group is the third field after the command name, which is in parentheses
+// and may itself hold spaces or parentheses.
+function membersOf(group: number): number[] {
+  return readdirSync("/proc")
+    .filter((entry) => /^\d+$/.test(entry))
+    .filter((pid) => {
+      try {
+        const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+
+        return Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[2]) === group;
+      } catch {
+        return false;
+      }
+    })
+    .map(Number);
 }
