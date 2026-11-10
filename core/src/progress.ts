@@ -56,7 +56,7 @@ export function admit(
 
   const left = moneyLeft(spentSince(events, workflow), workflow.usd);
 
-  return "reason" in left ? because("money", left.reason) : { attempt, commission: left };
+  return "reason" in left ? left : { attempt, commission: left };
 }
 
 /**
@@ -320,17 +320,19 @@ export function spentIn(
 function moneyLeft(
   spent: ReturnType<typeof spentSince>,
   limit: number,
-): { limit: number; spent: number } | { reason: string } {
+): { limit: number; spent: number } | Why {
   if ("unknown" in spent) {
-    return {
-      reason: `The commission's spend is unknown: attempt ${spent.unknown} reported no cost, so it counts as over its money limit of $${limit}.`,
-    };
+    return because(
+      "money",
+      `The commission's spend is unknown: attempt ${spent.unknown} reported no cost, so it counts as over its money limit of $${limit}.`,
+    );
   }
 
   if (spent.spent >= limit) {
-    return {
-      reason: `The commission has spent $${spent.spent.toFixed(2)} of its money limit of $${limit}.`,
-    };
+    return because(
+      "money",
+      `The commission has spent $${spent.spent.toFixed(2)} of its money limit of $${limit}.`,
+    );
   }
 
   return { limit, spent: spent.spent };

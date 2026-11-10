@@ -432,13 +432,9 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
   ): void {
     const { step: name, attempt, inputs } = started;
 
-    database.exec("BEGIN IMMEDIATE");
-
-    try {
+    atomically(() => {
       // Another engine may have moved the commission on since it was read: the caller reads again.
       if (read(commission).length !== events.length) {
-        database.exec("ROLLBACK");
-
         return;
       }
 
@@ -447,7 +443,6 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
 
       if (problem !== undefined) {
         write(commission, events, { type: "escalated", ...problem });
-        database.exec("COMMIT");
 
         return;
       }
@@ -469,14 +464,9 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
         outcome: "done",
         artifacts: [],
         transcript: store.keep(Buffer.alloc(0)),
-        next: step.on.done!,
+        next: step.on.done,
       });
-      database.exec("COMMIT");
-    } catch (error) {
-      database.exec("ROLLBACK");
-
-      throw error;
-    }
+    });
   }
 
   function spoolOf(commission: string, attempt: number): Spool {
@@ -732,6 +722,42 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     }
 
     throw new Error(`Commission ${commission} has no transcript for attempt ${attempt}.`);
+  }
+
+  // Writes each note of the commission's attempt as an event of its own, from `position` on. A
+  // note changes no state and the attempt is the commission's one writer, so it is appended at
+  // the next position without replaying the log; another writer's event there refuses it.
+  function noting(commission: string, attempt: number, position: number) {
+    let next = position;
+
+    return (text: string, from: "step" | "engine") => {
+      // A step's note says nothing of who wrote it, as every note did before the engine's.
+      const noted: Extract<CommissionEvent, { type: "noted" }> = {
+        type: "noted",
+        attempt,
+        note: text,
+        at: Date.now(),
+      };
+
+      if (from === "engine") {
+        noted.from = from;
+      }
+
+      insert.run(commission, next, JSON.stringify(noted));
+      next += 1;
+    };
+  }
+
+  // Ends an attempt no engine is running, for `why`: an escalation with what it had spooled.
+  function endUnheld(commission: string, events: Log, started: Started, why: Why): void {
+    const spool = spoolOf(commission, started.attempt);
+
+    write(commission, events, {
+      type: "escalated",
+      attempt: started.attempt,
+      ...ended(spool, transcriptOf(definitionOf(events).workflow.steps[started.step]), why),
+    });
+    unspool(spool);
   }
 
   // An escalation as written: its reason bounded, and the step its step routes it to, if it
@@ -1121,23 +1147,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     const spool = spoolOf(commission, attempt);
 
     // Notes go after the events already written: positions count from 0.
-    let position = events.length;
-
-    const note = (text: string, from: "step" | "engine") => {
-      const noted: Extract<CommissionEvent, { type: "noted" }> = {
-        type: "noted",
-        attempt,
-        note: text,
-        at: Date.now(),
-      };
-
-      if (from === "engine") {
-        noted.from = from;
-      }
-
-      insert.run(commission, position, JSON.stringify(noted));
-      position += 1;
-    };
+    const note = noting(commission, attempt, events.length);
 
     const artifact = (hash: string) => ({
       hash,
@@ -1664,18 +1674,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
 
       // With no engine to stop it, the attempt is over already: the cancel is its end.
       if (!held(commission, started)) {
-        const spool = spoolOf(commission, started.attempt);
-
-        write(commission, events, {
-          type: "escalated",
-          attempt: started.attempt,
-          ...ended(
-            spool,
-            transcriptOf(definitionOf(events).workflow.steps[started.step]),
-            cancelledBy(started.step),
-          ),
-        });
-        unspool(spool);
+        endUnheld(commission, events, started, cancelledBy(started.step));
 
         return;
       }
@@ -1760,18 +1759,12 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
           return state;
         }
 
-        const spool = spoolOf(commission, started.attempt);
-
-        write(commission, events, {
-          type: "escalated",
-          attempt: started.attempt,
-          ...ended(
-            spool,
-            transcriptOf(workflow.steps[state.step.name]),
-            because("interrupted", `Step ${state.step.name} was interrupted.`),
-          ),
-        });
-        unspool(spool);
+        endUnheld(
+          commission,
+          events,
+          started,
+          because("interrupted", `Step ${started.step} was interrupted.`),
+        );
 
         continue;
       }
@@ -2060,27 +2053,8 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       // Why it must stop: the owner cancelled it, or its parent withdrew the commission.
       const stopping = () => (cancelled() ? stoppedWhy(commission, name) : undefined);
 
-      // Each note the attempt writes is an event of its own, after attempt-started. A note
-      // changes no state and this attempt is the commission's one writer, so it is appended at
-      // the next position without replaying the log; another writer's event there refuses it.
-      let position = events.length + 1;
-
-      const note = (text: string, from: "step" | "engine") => {
-        // A step's note says nothing of who wrote it, as every note did before the engine's.
-        const noted: Extract<CommissionEvent, { type: "noted" }> = {
-          type: "noted",
-          attempt,
-          note: text,
-          at: Date.now(),
-        };
-
-        if (from === "engine") {
-          noted.from = from;
-        }
-
-        insert.run(commission, position, JSON.stringify(noted));
-        position += 1;
-      };
+      // Its notes go after attempt-started, just written.
+      const note = noting(commission, attempt, events.length + 1);
 
       try {
         const subject = {
@@ -2930,7 +2904,7 @@ async function run(
       }
 
       if (failed !== undefined) {
-        return escalate(because("kind", failed));
+        return escalate(failed);
       }
     }
 
@@ -2951,10 +2925,10 @@ async function run(
         : undefined;
 
     if (network !== true && network !== false) {
-      const opened = await openBrokers(network.brokers ?? {}, bounds);
+      const opened = await openBrokers(network.brokers ?? {}, bounds, name);
 
-      if ("failed" in opened) {
-        return escalate(because("broker", `Step ${name}'s ${opened.failed}`));
+      if ("reason" in opened) {
+        return escalate(opened);
       }
 
       brokers = opened;
@@ -3300,7 +3274,7 @@ async function run(
     const claim = await parse(step, name, output, given);
 
     if ("reason" in claim) {
-      return escalate(because("claim", claim.reason));
+      return escalate(claim);
     }
 
     // Each artifact whose kind has a verifier is accepted by it, which may keep files. A new one
@@ -3520,7 +3494,8 @@ const brokerSaid = 1024;
 async function openBrokers(
   programs: Readonly<Record<string, readonly [string, ...string[]]>>,
   bounds: Bounds,
-): Promise<Brokers | { failed: string }> {
+  step: string,
+): Promise<Brokers | Why> {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-brokers-"));
   const sockets = new Map<string, string>();
   const started: ChildProcess[] = [];
@@ -3557,7 +3532,7 @@ async function openBrokers(
     if (why !== undefined) {
       await close();
 
-      return { failed: `broker ${name} ${why}` };
+      return because("broker", `Step ${step}'s broker ${name} ${why}`);
     }
 
     sockets.set(name, socket);
@@ -3723,15 +3698,18 @@ async function parse(
   name: string,
   output: string,
   { subject: { hash: subject }, kinds, inputs }: Given,
-): Promise<Claim | { reason: string }> {
+): Promise<Claim | Why> {
   const bytes = await readAtMost(join(output, "output.json"), claimLimit);
 
   if (bytes === undefined) {
-    return { reason: `Step ${name} exited 0 without a readable output.json.` };
+    return because("claim", `Step ${name} exited 0 without a readable output.json.`);
   }
 
   if (bytes.length > claimLimit) {
-    return { reason: `Step ${name} wrote an output.json over its limit of ${claimLimit} bytes.` };
+    return because(
+      "claim",
+      `Step ${name} wrote an output.json over its limit of ${claimLimit} bytes.`,
+    );
   }
 
   let claim;
@@ -3739,16 +3717,17 @@ async function parse(
   try {
     claim = JSON.parse(utf8.decode(bytes));
   } catch {
-    return { reason: `Step ${name} wrote an output.json that is not JSON.` };
+    return because("claim", `Step ${name} wrote an output.json that is not JSON.`);
   }
 
   // Strict equality with a declared key also refuses an outcome that is not a string.
   const outcome = Object.keys(step.on).find((declared) => declared === claim?.outcome);
 
   if (outcome === undefined) {
-    return {
-      reason: `Step ${name} claimed an outcome it does not declare: ${JSON.stringify(claim?.outcome)}.`,
-    };
+    return because(
+      "claim",
+      `Step ${name} claimed an outcome it does not declare: ${JSON.stringify(claim?.outcome)}.`,
+    );
   }
 
   // A misspelt field would otherwise drop the claim it was meant to carry.
@@ -3757,15 +3736,16 @@ async function parse(
   );
 
   if (undefinedFields.length > 0) {
-    return {
-      reason: `Step ${name} wrote an output.json with fields it does not define: ${JSON.stringify(undefinedFields)}.`,
-    };
+    return because(
+      "claim",
+      `Step ${name} wrote an output.json with fields it does not define: ${JSON.stringify(undefinedFields)}.`,
+    );
   }
 
   const claimed = Object.hasOwn(claim, "artifacts") ? claim.artifacts : [];
 
   if (!Array.isArray(claimed)) {
-    return { reason: `Step ${name} claimed artifacts that are not a list.` };
+    return because("claim", `Step ${name} claimed artifacts that are not a list.`);
   }
 
   const artifacts: (Artifact | Adopted)[] = [];
@@ -3784,19 +3764,24 @@ async function parse(
       const found = isText(hash) ? offered.get(hash) : undefined;
 
       if (!hasExactly(artifact, ["adopt"]) || found === undefined) {
-        return {
-          reason: `Step ${name} adopted an artifact it was not given: ${JSON.stringify(hash)}.`,
-        };
+        return because(
+          "claim",
+          `Step ${name} adopted an artifact it was not given: ${JSON.stringify(hash)}.`,
+        );
       }
 
       if (!step.claims.includes(found.artifact.kind)) {
-        return {
-          reason: `Step ${name} adopted an artifact of undeclared kind: ${JSON.stringify(found.artifact.kind)}.`,
-        };
+        return because(
+          "claim",
+          `Step ${name} adopted an artifact of undeclared kind: ${JSON.stringify(found.artifact.kind)}.`,
+        );
       }
 
       if (found.hash === subject) {
-        return { reason: `Step ${name} adopted the commission's subject, which it already is.` };
+        return because(
+          "claim",
+          `Step ${name} adopted the commission's subject, which it already is.`,
+        );
       }
 
       artifacts.push({ adopt: found.hash, artifact: found.artifact, kept: found.kept });
@@ -3808,13 +3793,14 @@ async function parse(
     const { kind, fields, body } = artifact ?? {};
 
     if (kind === "decision") {
-      return { reason: `Step ${name} claimed a decision, which only the owner makes.` };
+      return because("claim", `Step ${name} claimed a decision, which only the owner makes.`);
     }
 
     if (!isText(kind) || !step.claims.includes(kind)) {
-      return {
-        reason: `Step ${name} claimed an artifact of undeclared kind: ${JSON.stringify(kind)}.`,
-      };
+      return because(
+        "claim",
+        `Step ${name} claimed an artifact of undeclared kind: ${JSON.stringify(kind)}.`,
+      );
     }
 
     // The definition allows only kinds in the table, so the step's claims name one.
@@ -3824,9 +3810,10 @@ async function parse(
       !isRecord(fields) ||
       !hasExactly(artifact, body === undefined ? ["kind", "fields"] : ["kind", "fields", "body"])
     ) {
-      return {
-        reason: `Step ${name} claimed a ${kind} that is not a kind, its fields and a body path.`,
-      };
+      return because(
+        "claim",
+        `Step ${name} claimed a ${kind} that is not a kind, its fields and a body path.`,
+      );
     }
 
     // The engine names a judgement's subject, so a claimed subject is refused here as undefined.
@@ -3835,9 +3822,10 @@ async function parse(
     );
 
     if (undefinedFields.length > 0) {
-      return {
-        reason: `Step ${name} claimed a ${kind} with fields its kind does not define: ${JSON.stringify(undefinedFields)}.`,
-      };
+      return because(
+        "claim",
+        `Step ${name} claimed a ${kind} with fields its kind does not define: ${JSON.stringify(undefinedFields)}.`,
+      );
     }
 
     const given = new Map(Object.entries(fields));
@@ -3848,26 +3836,28 @@ async function parse(
 
       if (value === undefined) {
         if (rule.required) {
-          return { reason: `Step ${name} claimed a ${kind} without its ${field}.` };
+          return because("claim", `Step ${name} claimed a ${kind} without its ${field}.`);
         }
 
         continue;
       }
 
       if (!isText(value)) {
-        return { reason: `Step ${name} claimed a ${kind} ${field} that is not text.` };
+        return because("claim", `Step ${name} claimed a ${kind} ${field} that is not text.`);
       }
 
       if (rule.values !== undefined && !rule.values.includes(value)) {
-        return {
-          reason: `Step ${name} claimed a ${kind} ${field} that is not one of ${rule.values.join(", ")}.`,
-        };
+        return because(
+          "claim",
+          `Step ${name} claimed a ${kind} ${field} that is not one of ${rule.values.join(", ")}.`,
+        );
       }
 
       if (Buffer.byteLength(value) > rule.limit) {
-        return {
-          reason: `Step ${name} claimed a ${kind} ${field} over its limit of ${rule.limit} bytes.`,
-        };
+        return because(
+          "claim",
+          `Step ${name} claimed a ${kind} ${field} over its limit of ${rule.limit} bytes.`,
+        );
       }
 
       parsed[field] = value;
@@ -3875,9 +3865,10 @@ async function parse(
 
     // The kind's outcome field, such as a verdict's, so the edge followed is the judgement given.
     if (definition.outcome !== undefined && parsed[definition.outcome] !== outcome) {
-      return {
-        reason: `Step ${name} claimed a ${kind} whose ${definition.outcome} is ${parsed[definition.outcome]}, not its outcome ${outcome}.`,
-      };
+      return because(
+        "claim",
+        `Step ${name} claimed a ${kind} whose ${definition.outcome} is ${parsed[definition.outcome]}, not its outcome ${outcome}.`,
+      );
     }
 
     // The engine names a judgement's subject: the one the attempt was given, which the step judged.
@@ -3887,7 +3878,7 @@ async function parse(
 
     if (body === undefined) {
       if (definition.body.required) {
-        return { reason: `Step ${name} claimed a ${kind} without its body.` };
+        return because("claim", `Step ${name} claimed a ${kind} without its body.`);
       }
 
       artifacts.push({ kind, fields: parsed });
@@ -3896,7 +3887,7 @@ async function parse(
     }
 
     if (!isText(body)) {
-      return { reason: `Step ${name} claimed a ${kind} body that is not a path.` };
+      return because("claim", `Step ${name} claimed a ${kind} body that is not a path.`);
     }
 
     const read = await readBody(name, output, body, definition.body.limit);
@@ -3920,9 +3911,10 @@ async function parse(
   ) {
     const kind = routing;
 
-    return {
-      reason: `Step ${name} claimed a ${kind}, whose ${kinds[kind].outcome} routes its outcome, with a new subject: the ${kind} would be about the subject its claim replaces.`,
-    };
+    return because(
+      "claim",
+      `Step ${name} claimed a ${kind}, whose ${kinds[kind].outcome} routes its outcome, with a new subject: the ${kind} would be about the subject its claim replaces.`,
+    );
   }
 
   return { outcome, artifacts };
@@ -3935,28 +3927,36 @@ async function readBody(
   output: string,
   body: string,
   limit: number,
-): Promise<{ text: string } | { reason: string }> {
+): Promise<{ text: string } | Why> {
   // Joined to the output, an absolute path would read as a relative one.
   if (isAbsolute(body)) {
-    return {
-      reason: `Step ${name} claimed a body path that is not relative to its output: ${JSON.stringify(body)}.`,
-    };
+    return because(
+      "claim",
+      `Step ${name} claimed a body path that is not relative to its output: ${JSON.stringify(body)}.`,
+    );
   }
 
   const read = await readUnder(output, body, limit);
 
   if (read === "outside") {
-    return { reason: `Step ${name} claimed a body outside its output: ${JSON.stringify(body)}.` };
+    return because(
+      "claim",
+      `Step ${name} claimed a body outside its output: ${JSON.stringify(body)}.`,
+    );
   }
 
   if (read === undefined) {
-    return { reason: `Step ${name} claimed a body it did not write: ${JSON.stringify(body)}.` };
+    return because(
+      "claim",
+      `Step ${name} claimed a body it did not write: ${JSON.stringify(body)}.`,
+    );
   }
 
   if (read.length > limit) {
-    return {
-      reason: `Step ${name} claimed a body over its limit of ${limit} bytes: ${JSON.stringify(body)}.`,
-    };
+    return because(
+      "claim",
+      `Step ${name} claimed a body over its limit of ${limit} bytes: ${JSON.stringify(body)}.`,
+    );
   }
 
   let text;
@@ -3966,7 +3966,10 @@ async function readBody(
   try {
     text = utf8.decode(read);
   } catch {
-    return { reason: `Step ${name} claimed a body that is not UTF-8: ${JSON.stringify(body)}.` };
+    return because(
+      "claim",
+      `Step ${name} claimed a body that is not UTF-8: ${JSON.stringify(body)}.`,
+    );
   }
 
   return { text };
@@ -4292,13 +4295,16 @@ async function materialise(
   kinds: Kinds,
   store: Store,
   cancelled: () => boolean,
-): Promise<string | undefined> {
+): Promise<Why | undefined> {
   const { artifact } = from;
 
   const materialiser = kinds[artifact.kind]?.materialiser;
 
   if (materialiser === undefined) {
-    return `Step ${name}'s workspace cannot be built from a ${artifact.kind}, whose kind has no materialiser.`;
+    return because(
+      "kind",
+      `Step ${name}'s workspace cannot be built from a ${artifact.kind}, whose kind has no materialiser.`,
+    );
   }
 
   const { input, output, scratch } = await areaFor(spool.work, "materialiser");
@@ -4350,5 +4356,5 @@ async function materialise(
 
   return why === undefined
     ? undefined
-    : `The ${artifact.kind} materialiser failed for step ${name}: ${why}`;
+    : because("kind", `The ${artifact.kind} materialiser failed for step ${name}: ${why}`);
 }

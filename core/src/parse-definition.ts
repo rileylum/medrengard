@@ -888,7 +888,7 @@ function parseWorkflow(
       throw invalid(`step ${name}'s program must be a command and its arguments`);
     }
 
-    if (!Number.isInteger(budget) || budget <= 0) {
+    if (!positive(budget)) {
       throw invalid(`step ${name}'s budget must be a positive integer`);
     }
 
@@ -988,6 +988,27 @@ function childrenFields(step: Children<string>): string[] {
 
 const positive = (value: number) => Number.isSafeInteger(value) && value > 0;
 
+// Whether `given`, if a step states it, names artifacts for the commissions it starts: each by
+// an input name that is none of `reserved`, which the step's own inputs take, and a query the
+// workflow can resolve that is no session, a session being no artifact.
+function givable(
+  given: Children<string>["given"],
+  valid: (query: Query) => boolean,
+  reserved: readonly string[],
+): boolean {
+  return (
+    given === undefined ||
+    (isRecord(given) &&
+      Object.entries(given).every(
+        ([input, query]) =>
+          inputName.test(input) &&
+          !reserved.includes(input) &&
+          valid(query) &&
+          !(isRecord(query) && Object.hasOwn(query, "session")),
+      ))
+  );
+}
+
 // The causes a step that runs a program may route, and a children step, each with any, for
 // each of them without a route of its own.
 const ran = ["limit", "claim", "exit", "kind", "broker", "interrupted", "any"];
@@ -1041,20 +1062,7 @@ function childrenProblem(
     return "request must be request, or a query of documents that takes the latest, and goes with count";
   }
 
-  if (
-    given !== undefined &&
-    !(
-      isRecord(given) &&
-      Object.entries(given).every(
-        ([input, query]) =>
-          inputName.test(input) &&
-          input !== "each" &&
-          input !== "request" &&
-          valid(query) &&
-          !(isRecord(query) && Object.hasOwn(query, "session")),
-      )
-    )
-  ) {
+  if (!givable(given, valid, ["each", "request"])) {
     return "given must name artifacts, each by an input name other than each or request and a query that is no session";
   }
 
@@ -1132,19 +1140,7 @@ function commissioningProblem(
     return "each must be request, or a query of documents, which become the commissions' requests";
   }
 
-  if (
-    given !== undefined &&
-    !(
-      isRecord(given) &&
-      Object.entries(given).every(
-        ([input, query]) =>
-          inputName.test(input) &&
-          input !== "each" &&
-          valid(query) &&
-          !(isRecord(query) && Object.hasOwn(query, "session")),
-      )
-    )
-  ) {
+  if (!givable(given, valid, ["each"])) {
     return "given must name artifacts, each by an input name other than each and a query that is no session";
   }
 
