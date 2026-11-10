@@ -489,7 +489,7 @@ function create(): void {
         const body = edit();
 
         say(() => {
-          engine.commission(workflow, name, { title, body });
+          engine.commission(workflow, { title, body }, { name: name });
 
           return `${name}: ${where(engine.state(name))}`;
         });

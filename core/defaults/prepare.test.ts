@@ -49,7 +49,7 @@ async function engineRunning(t: TestContext, runOf: (out: string) => Run) {
     },
   });
 
-  engine.commission("build", "first", { title: "Build", body: "Build it." });
+  engine.commission("build", { title: "Build", body: "Build it." }, { name: "first" });
 
   return { engine, out };
 }

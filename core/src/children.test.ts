@@ -68,7 +68,7 @@ async function engineWith(t: TestContext, workflows: (directory: string) => Work
     workflows: factory,
   });
 
-  engine.commission("build", "first", { title: "Plan", body: "Plan three tasks." });
+  engine.commission("build", { title: "Plan", body: "Plan three tasks." }, { name: "first" });
 
   return { engine, directory, factory };
 }
@@ -955,7 +955,7 @@ for (const [what, workflows, problem] of [
       workflows: JSON.parse(JSON.stringify(workflows)),
     });
 
-    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+    assert.throws(() => engine.commission("build", { title: "T", body: "B" }, { name: "first" }), {
       message: problem,
     });
   });

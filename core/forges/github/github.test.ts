@@ -305,7 +305,7 @@ async function landing(t: TestContext, after: "land" | "watch" | "fix" = "land")
     },
   });
 
-  engine.commission("build", "first", { title: "Plan", body: "Plan it." });
+  engine.commission("build", { title: "Plan", body: "Plan it." }, { name: "first" });
 
   return { engine, seen, world, bare };
 }

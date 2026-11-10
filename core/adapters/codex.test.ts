@@ -148,7 +148,7 @@ async function engineWithCodex(
     workflows: { build: { start: "plan", steps } },
   });
 
-  engine.commission("build", "first", { title: "Greet", body: "Say hello." });
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "first" });
 
   return { engine, directory };
 }

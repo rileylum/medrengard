@@ -68,7 +68,7 @@ test("a step written in TypeScript reads its input, notes and claims through the
     },
   });
 
-  engine.commission("reply", "first", { title: "Greet", body: "Say hello." });
+  engine.commission("reply", { title: "Greet", body: "Say hello." }, { name: "first" });
 
   const state = await engine.advance("first");
   const { entries } = engine.record("first");

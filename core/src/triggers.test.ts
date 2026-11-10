@@ -71,9 +71,9 @@ const nightly = (caps: Partial<Triggers[string]> = {}): Triggers => ({
 test("a trigger's commission is named after it unless named, and records it as its origin", async (t) => {
   const engine = await engineWith(t, nightly());
 
-  assert.equal(engine.commission("build", undefined, request, { trigger: "nightly" }), "nightly-1");
-  assert.equal(engine.commission("build", "named", request, { trigger: "nightly" }), "named");
-  assert.equal(engine.commission("build", undefined, request, { trigger: "nightly" }), "nightly-3");
+  assert.equal(engine.commission("build", request, { trigger: "nightly" }), "nightly-1");
+  assert.equal(engine.commission("build", request, { name: "named", trigger: "nightly" }), "named");
+  assert.equal(engine.commission("build", request, { trigger: "nightly" }), "nightly-3");
 
   assert.deepEqual(engine.record("nightly-1").origin, { trigger: "nightly" });
   assert.deepEqual(engine.record("named").origin, { trigger: "nightly" });
@@ -82,10 +82,10 @@ test("a trigger's commission is named after it unless named, and records it as i
 test("the owner's own commission has no origin and no caps", async (t) => {
   const engine = await engineWith(t, nightly({ rate: { count: 1, per: 3600 }, unfinished: 1 }));
 
-  engine.commission("build", undefined, request, { trigger: "nightly" });
+  engine.commission("build", request, { trigger: "nightly" });
 
-  assert.equal(engine.commission("build", "mine", request), "mine");
-  assert.equal(engine.commission("build", "also", request), "also");
+  assert.equal(engine.commission("build", request, { name: "mine" }), "mine");
+  assert.equal(engine.commission("build", request, { name: "also" }), "also");
   assert.equal(engine.record("mine").origin, undefined);
 });
 
@@ -93,7 +93,7 @@ test("the owner's own commission has no origin and no caps", async (t) => {
 function refused(engine: ReturnType<typeof createEngine>, reason: string, workflow = "build") {
   const before = engine.commissions().length;
 
-  assert.throws(() => engine.commission(workflow, undefined, request, { trigger: "nightly" }), {
+  assert.throws(() => engine.commission(workflow, request, { trigger: "nightly" }), {
     message: reason,
   });
   assert.equal(engine.commissions().length, before);
@@ -102,8 +102,8 @@ function refused(engine: ReturnType<typeof createEngine>, reason: string, workfl
 test("a trigger past its rate is refused, recording nothing", async (t) => {
   const engine = await engineWith(t, nightly({ rate: { count: 2, per: 3600 } }));
 
-  engine.commission("build", undefined, request, { trigger: "nightly" });
-  engine.commission("build", undefined, request, { trigger: "nightly" });
+  engine.commission("build", request, { trigger: "nightly" });
+  engine.commission("build", request, { trigger: "nightly" });
 
   refused(engine, "Trigger nightly started 2 commissions in the last 3600 s, its rate.");
 });
@@ -111,22 +111,22 @@ test("a trigger past its rate is refused, recording nothing", async (t) => {
 test("a trigger with as many unfinished commissions as it may have is refused until one finishes", async (t) => {
   const engine = await engineWith(t, nightly({ unfinished: 1 }));
 
-  engine.commission("build", undefined, request, { trigger: "nightly" });
+  engine.commission("build", request, { trigger: "nightly" });
 
   refused(engine, "Trigger nightly has 1 unfinished commission, its limit.");
 
   assert.partialDeepStrictEqual(await engine.advance("nightly-1"), { status: "finished" });
-  assert.equal(engine.commission("build", undefined, request, { trigger: "nightly" }), "nightly-2");
+  assert.equal(engine.commission("build", request, { trigger: "nightly" }), "nightly-2");
 });
 
 test("a trigger whose commissions cost its money limit in its period is refused", async (t) => {
   const engine = await engineWith(t, nightly({ usd: 5 }), `echo '{"usd":3}' >&4`);
 
-  engine.commission("build", undefined, request, { trigger: "nightly" });
+  engine.commission("build", request, { trigger: "nightly" });
   await engine.advance("nightly-1");
 
   // $3 of $5: room for another.
-  engine.commission("build", undefined, request, { trigger: "nightly" });
+  engine.commission("build", request, { trigger: "nightly" });
   await engine.advance("nightly-2");
 
   refused(
@@ -138,7 +138,7 @@ test("a trigger whose commissions cost its money limit in its period is refused"
 test("a trigger with a money limit is refused once one of its commissions reported no cost", async (t) => {
   const engine = await engineWith(t, nightly({ usd: 5 }));
 
-  engine.commission("build", undefined, request, { trigger: "nightly" });
+  engine.commission("build", request, { trigger: "nightly" });
   await engine.advance("nightly-1");
 
   refused(
@@ -152,7 +152,7 @@ test("a trigger cannot start a workflow it does not name, nor can a trigger the 
 
   refused(engine, "Trigger nightly may not start workflow other.", "other");
 
-  assert.throws(() => engine.commission("build", undefined, request, { trigger: "hourly" }), {
+  assert.throws(() => engine.commission("build", request, { trigger: "hourly" }), {
     message: "There is no trigger named hourly.",
   });
 });
@@ -160,7 +160,8 @@ test("a trigger cannot start a workflow it does not name, nor can a trigger the 
 test("a commission needs a name unless a trigger names it", async (t) => {
   const engine = await engineWith(t, nightly());
 
-  assert.throws(() => engine.commission("build", undefined, request), {
+  // SAFETY: neither, as a caller the compiler does not check, such as the CLI, could pass.
+  assert.throws(() => engine.commission("build", request, {} as never), {
     message: "A commission needs a name unless a trigger starts it.",
   });
 });
@@ -210,7 +211,7 @@ test("programs asking a trigger at the same moment start no more than its allowa
     const engine = createEngine(${JSON.stringify(options)});
     while (Date.now() < ${at});
     try {
-      engine.commission("build", process.argv[2], { title: "T", body: "B" }, { trigger: "nightly" });
+      engine.commission("build", { title: "T", body: "B" }, { name: process.argv[2], trigger: "nightly" });
     } catch {}`,
   );
 

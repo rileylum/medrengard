@@ -100,7 +100,7 @@ const request = { title: "Plan", body: "Plan the work." };
 test("a commission step starts one top-level commission per document through its trigger, and goes on at once", async (t) => {
   const { engine } = await engineWith(t);
 
-  engine.commission("plan", "first", request);
+  engine.commission("plan", request, { name: "first" });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
 
@@ -142,7 +142,7 @@ test("a commission step starts one top-level commission per document through its
 test("a commission step whose documents do not fit its trigger starts none and escalates", async (t) => {
   const { engine } = await engineWith(t, { count: 3, triggers: workers({ allowance: 2 }) });
 
-  engine.commission("plan", "first", request);
+  engine.commission("plan", request, { name: "first" });
 
   assert.partialDeepStrictEqual(await engine.advance("first"), {
     status: "escalated",
@@ -159,13 +159,13 @@ test("a commission step whose documents do not fit its trigger starts none and e
 test("a trigger's allowance counts every commission it started until the owner renews it", async (t) => {
   const { engine } = await engineWith(t, { count: 1, triggers: workers({ allowance: 2 }) });
 
-  engine.commission("plan", "first", request);
+  engine.commission("plan", request, { name: "first" });
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
 
   // A program outside the engine spends the trigger's allowance too.
-  engine.commission("work", undefined, request, { trigger: "workers" });
+  engine.commission("work", request, { trigger: "workers" });
 
-  engine.commission("plan", "second", request);
+  engine.commission("plan", request, { name: "second" });
 
   const escalated = await engine.advance("second");
 
@@ -175,7 +175,7 @@ test("a trigger's allowance counts every commission it started until the owner r
     reason:
       "Step spawn would start 1 commission through trigger workers, which has 0 of its allowance of 2 left.",
   });
-  assert.throws(() => engine.commission("work", undefined, request, { trigger: "workers" }), {
+  assert.throws(() => engine.commission("work", request, { trigger: "workers" }), {
     message: "Trigger workers has started 2 commissions since it was last renewed, its allowance.",
   });
 
@@ -190,9 +190,9 @@ test("a trigger's allowance counts every commission it started until the owner r
 test("a commission step is bounded by its trigger's unfinished limit", async (t) => {
   const { engine } = await engineWith(t, { count: 2, triggers: workers({ unfinished: 3 }) });
 
-  engine.commission("plan", "first", request);
+  engine.commission("plan", request, { name: "first" });
   await engine.advance("first");
-  engine.commission("plan", "second", request);
+  engine.commission("plan", request, { name: "second" });
 
   assert.partialDeepStrictEqual(await engine.advance("second"), {
     status: "escalated",
@@ -207,7 +207,7 @@ test("a started commission runs on the factory's definitions when it starts, not
 
   const before = createEngine(options());
 
-  before.commission("plan", "first", request);
+  before.commission("plan", request, { name: "first" });
 
   // The factory's work workflow changes before the commission step runs.
   const changed = {

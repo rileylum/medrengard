@@ -81,7 +81,7 @@ async function engineWith<N extends string>(
 
   const engine = createEngine(options);
 
-  engine.commission("build", "first", { title: "Greet", body: "Say hello." });
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "first" });
 
   return { engine, directory, record, options };
 }
@@ -1620,7 +1620,7 @@ test("an observer reads every commission's events after a position, in the order
     }),
   );
 
-  engine.commission("build", "second", { title: "Greet", body: "Say hello." });
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "second" });
   await engine.advance("first");
 
   const all = engine.events(0);
@@ -1657,7 +1657,11 @@ test("an observer is woken by the next event any engine on the log writes", asyn
   await sleep(200);
   assert.equal(early, false);
 
-  createEngine(options).commission("build", "second", { title: "Greet", body: "Say hello." });
+  createEngine(options).commission(
+    "build",
+    { title: "Greet", body: "Say hello." },
+    { name: "second" },
+  );
 
   assert.deepEqual(
     (await woken).map(({ commission, event }) => [commission, event.type]),
@@ -3081,7 +3085,7 @@ test("a step whose program cannot start escalates its commission", async (t) => 
     workflows: { build: { ...build, steps: { build: missing } } },
   });
 
-  engine.commission("build", "second", { title: "Greet", body: "Say hello." });
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "second" });
 
   // bwrap starts, then cannot start the program, so the reason is in the transcript.
   assert.partialDeepStrictEqual(await engine.advance("second"), {
@@ -3981,7 +3985,7 @@ function damage(log: string, commission: string) {
 test("a commission that cannot be read is listed with its error, and the others with their states", async (t) => {
   const { engine, options } = await engineRunning(t, "exit 0");
 
-  engine.commission("build", "broken", { title: "Greet", body: "Say hello." });
+  engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "broken" });
   damage(options.log, "broken");
 
   assert.deepEqual(
@@ -4354,7 +4358,7 @@ test("a request the factory's document kind refuses is not commissioned", async 
   ];
 
   for (const [request, message] of refused) {
-    assert.throws(() => engine.commission("build", "second", request), { message });
+    assert.throws(() => engine.commission("build", request, { name: "second" }), { message });
     assert.throws(() => engine.state("second"), {
       message: "There is no commission named second.",
     });
@@ -5776,7 +5780,7 @@ for (const [what, workflow, problem] of [
       workflows: { build: workflow },
     });
 
-    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+    assert.throws(() => engine.commission("build", { title: "T", body: "B" }, { name: "first" }), {
       message: `Workflow build is invalid: ${problem}.`,
     });
   });
@@ -5934,7 +5938,7 @@ for (const [what, session, problem] of [
       },
     });
 
-    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+    assert.throws(() => engine.commission("build", { title: "T", body: "B" }, { name: "first" }), {
       message: new RegExp(RegExp.escape(problem)),
     });
   });
@@ -6270,7 +6274,7 @@ for (const [what, network, problem] of [
       },
     });
 
-    assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+    assert.throws(() => engine.commission("build", { title: "T", body: "B" }, { name: "first" }), {
       message: `Workflow build is invalid: step build's ${problem}.`,
     });
   });
@@ -6298,7 +6302,7 @@ test("access whose paths name /network, where the step's proxy goes, cannot be c
     },
   });
 
-  assert.throws(() => engine.commission("build", "first", { title: "T", body: "B" }), {
+  assert.throws(() => engine.commission("build", { title: "T", body: "B" }, { name: "first" }), {
     message: /paths cannot name \/workspace, \/input, \/output or \/network/,
   });
 });

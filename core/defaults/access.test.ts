@@ -49,7 +49,7 @@ async function seenUnder(t: TestContext, access: Access, script: string): Promis
     },
   });
 
-  engine.commission("look", "first", { title: "Look", body: "Look around." });
+  engine.commission("look", { title: "Look", body: "Look around." }, { name: "first" });
   assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished" });
 
   return engine.transcript("first", 1).toString();

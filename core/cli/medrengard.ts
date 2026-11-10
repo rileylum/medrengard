@@ -144,9 +144,8 @@ try {
       printCommissioned(
         engine.commission(
           first,
-          second,
           { title: values.title!, body: body! },
-          { trigger: values.trigger },
+          { name: second, trigger: values.trigger },
         ),
       );
       break;

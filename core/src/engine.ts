@@ -157,6 +157,10 @@ export type CommissionRecord = {
   entries: Entry[];
 };
 
+// How a commission is named and started: by the owner, under a name, or through a trigger, which
+// names it after itself unless given one.
+type Naming = { name: string; trigger?: string } | { name?: string; trigger: string };
+
 // An event the engine writes: an escalation it writes always names its cause.
 type Written = Exclude<Log[1], { type: "escalated" }> | Escalation;
 
@@ -1207,10 +1211,10 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     /** Starts a commission under the workflow named `workflow`, about the owner's request. */
     commission(
       workflow: string,
-      commission: string | undefined,
       request: { title: string; body: string },
-      { trigger }: { trigger?: string } = {},
+      { name: commission, trigger }: Naming,
     ): string {
+      // The type says so to a caller checked by the compiler; the CLI's is not.
       if (commission === undefined && trigger === undefined) {
         throw new Error("A commission needs a name unless a trigger starts it.");
       }

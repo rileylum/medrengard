@@ -140,7 +140,7 @@ test("a step runs an agent from a file with its prompt as the file said when com
     },
   });
 
-  engine.commission("build", "first", { title: "T", body: "B" });
+  engine.commission("build", { title: "T", body: "B" }, { name: "first" });
 
   // Edited after commissioning: the commission runs on the prompt it started with.
   await writeFile(join(directory, "reviewer.md"), "---\nharness: fake\nmodel: m\n---\nChanged.\n");
