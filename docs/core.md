@@ -16,12 +16,12 @@
 
 **Shape**
 
-1. Mechanism, not policy. The core runs steps and keeps the record. Workflows decide what a factory does.
+1. Safety invariants, not policy. The core runs steps, keeps the record and enforces what makes a factory safe to leave running. Workflows decide everything else a factory does.
 2. A step is a program. An agent or command step runs in its workspace, reads its declared inputs from one directory and writes its outcome and artifacts to another. TypeScript is a convenience layer over this contract, not a replacement for it.
 3. Typed composition, open vocabulary. Outcomes are finite labels the engine routes on. Artifacts are hashed records whose kind defines their schema; kinds are extensions.
 4. Declared inputs. A step sees only what it is deliberately given.
 5. Vendor neutral. Harness, model and prompt are independent. A harness adapter is a program that fulfils the step contract.
-6. Small surface. A new primitive or extension point is built only when a real workflow can't be built without it.
+6. Small surface. A new primitive or extension point is built only when a real workflow, one the owner has run, can't be built without it.
 
 **Trust**
 
@@ -30,10 +30,10 @@
 
 **Safe to leave running**
 
-9. Durable. The log is the only state. Replaying it rebuilds every commission. An interrupted attempt is never silently re-run.
-10. Bounded. Before anything runs, the engine verifies that every unattended loop terminates.
+9. Durable. The log is a commission's only state. Replaying it rebuilds every commission. Beside it are only what engines tell one another, which changes nothing until an event records it (a cancel, a withdrawal, a watching attempt's checks and the engines running), and the owner's renewals of triggers. An interrupted attempt is never silently re-run. An outward step is safe to retry: attempted again, it finds what it already did.
+10. Bounded. Every step that starts attempts has a budget, which only the owner renews, so every unattended loop terminates. A commission is refused before it starts if a step lacks one.
 11. Unknown stops and asks. Anything the engine cannot classify pauses the commission for the owner.
-12. Safe by default, risk visible. The defaults confine candidate code and keep outward actions as explicit steps. Leaving a default is possible, and readable in the workflow definition.
+12. Safe by default, risk visible. The defaults confine candidate code and keep outward actions as explicit steps. Leaving a default is possible, and readable in the workflow definition. A credential never enters a sandbox: a broker holds it outside. The sandbox confines an agent's mistakes and instructions injected into it; it shares the machine's kernel, so it is no boundary against code written to escape it. A host a step may reach is a way out for whatever the step can read.
 
 **Constraints**
 
@@ -45,6 +45,7 @@
 6. Large data by reference. The log holds events and hashes; artifact bodies, kept files, transcripts and definitions live in a content-addressed store.
 7. A pinned surface. The public exports and types, the definition's schema, the event types, the step's and kind programs' contracts, the engine's methods and the CLI's commands and JSON results are listed in tests. Growing any list is a logged decision.
 8. The fold is pure. Rebuilding state from the log does no I/O and reads no clock or randomness.
+9. Old logs stay readable. An event gains fields and the vocabulary gains types; neither loses one. A test keeps a log written by an earlier engine readable.
 
 **Technology.** Node 24 and its built-ins, with zero runtime dependencies. Linux, with bubblewrap as the default sandbox, in a systemd user scope that bounds each program's memory and processes. Workflows are TypeScript modules.
 
@@ -88,7 +89,7 @@ A step declares each input as a name and a query. The name is the input's direct
 - `across` and a relation, with `from`, `kind` and `take` as a query over the record has them, applied to each related commission's record as it is when the attempt starts, finished or not: `origin`, the commission that started this one, as its parent or through a commission step; `started`, those this one started, in the order started; or `siblings`, those the same attempt started, but this one. `input.json` names the commission each artifact came from. No workspace is built from them, nor branches added;
 - `session` and a step: the latest session an attempt of that step left, however it ended, or none. It is no artifact: `input.json` lists it by its hash and body alone, and no workspace is built from it. A harness adapter continues it as a fork, so the session kept never changes, and escalates rather than start afresh when it cannot.
 
-The commission is refused before it starts if a query names a step the workflow lacks, a kind there is not, or a field or value a query does not define. Passing new data between steps is a new query in the workflow, not a change to the core.
+The commission is refused before it starts if a query names a step the workflow lacks, a kind there is not, or a field or value a query does not define. Passing data between steps is a query in the workflow; a new form of query is a change to the core.
 
 A step's workspace starts empty, or is built from the current subject or from the one artifact an input names, its base. Built from an input, it may also add as branches the artifacts another input names, which may not be a session, nor take all of each child's: each is named `<input>-<n>`, `n` being a child's number or else the artifact's position, from 1, and `input.json` gives each its `branch`. Each branch must be of its base's kind, or the commission escalates when the step is reached.
 
