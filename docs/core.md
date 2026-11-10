@@ -44,7 +44,7 @@
 5. Commissions are independent. Commissions share no mutable state, and each has one writer at a time. A parent gives its children artifacts and reads theirs, by hash; nothing else passes between commissions. Any number of commissions, across repositories and workflows, can advance at once.
 6. Large data by reference. The log holds events and hashes; artifact bodies, kept files, transcripts and definitions live in a content-addressed store.
 7. A pinned surface. The public exports and types, the definition's schema, the event types, the step's and kind programs' contracts, the engine's methods and the CLI's commands and JSON results are listed in tests. Growing any list is a logged decision.
-8. The fold is pure. Rebuilding state from the log does no I/O and reads no clock or randomness.
+8. The fold is pure. Rebuilding state from the log does no I/O and reads no clock or randomness. So is judging what a commission may do next from its log: whether its engine, budget and money admit another attempt, whether one would repeat an earlier, and how a children step's wait stands, given how long it has waited.
 9. Old logs stay readable. An event gains fields and the vocabulary gains types; neither loses one. A test keeps a log written by an earlier engine readable.
 
 **Technology.** Node 24 and its built-ins, with zero runtime dependencies. Linux, with bubblewrap as the default sandbox, in a systemd user scope that bounds each program's memory and processes. Workflows are TypeScript modules.

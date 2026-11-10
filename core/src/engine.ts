@@ -35,7 +35,6 @@ import {
 import { hostname, tmpdir } from "node:os";
 import { connect as connectTo, createServer as createNetServer, type Socket } from "node:net";
 import { DatabaseSync } from "node:sqlite";
-import { isDeepStrictEqual } from "node:util";
 import {
   type Access,
   type Children,
@@ -56,7 +55,22 @@ import {
   type CommissionState,
   type Usage,
 } from "./replay.ts";
-import { parseDefinition, waitOutcome } from "./parse-definition.ts";
+import { parseDefinition } from "./parse-definition.ts";
+import {
+  admit,
+  because,
+  finishOf,
+  outcomeOf,
+  overMoney,
+  repeats,
+  sessionsOf,
+  spentIn,
+  waitOf,
+  type Allowance,
+  type Inputs,
+  type Log,
+  type Why,
+} from "./progress.ts";
 import { hasExactly, isRecord, isText } from "./json.ts";
 import { confine, inScope, overMemory, type Bounds } from "./sandbox.ts";
 import type { Kind, Kinds, Program } from "./kinds.ts";
@@ -140,15 +154,10 @@ export type CommissionRecord = {
   entries: Entry[];
 };
 
-type Log = [Commissioned & { at?: number }, ...Exclude<CommissionEvent, Commissioned>[]];
-
-// Why a commission escalates: its cause and, for the owner, the reason.
-type Why = { cause: Cause; reason: string };
-
-const because = (cause: Cause, reason: string): Why => ({ cause, reason });
-
 // An event the engine writes: an escalation it writes always names its cause.
 type Written = Exclude<Log[1], { type: "escalated" }> | Escalation;
+
+type Started = Extract<CommissionEvent, { type: "attempt-started" }>;
 
 type Escalation = Extract<CommissionEvent, { type: "escalated" }> & { cause: Cause };
 
@@ -390,11 +399,11 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
   function dispatch(
     commission: string,
     events: Log,
-    state: Extract<CommissionState, { status: "ready" }>,
-    name: string,
     step: Commissioning<string>,
-    inputs: readonly { name: string; hashes: readonly string[] }[],
+    started: Started,
   ): void {
+    const { step: name, attempt, inputs } = started;
+
     database.exec("BEGIN IMMEDIATE");
 
     try {
@@ -415,17 +424,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
         return;
       }
 
-      const attempt = events.filter((event) => event.type === "attempt-started").length + 1;
-
-      write(commission, events, {
-        type: "attempt-started",
-        step: name,
-        attempt,
-        subject: state.subject,
-        inputs,
-        process: self,
-        engine: engineVersion(),
-      });
+      write(commission, events, started);
 
       for (const request of requests!.hashes) {
         begin(step.workflow, undefined, request, {
@@ -924,34 +923,13 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     const [requests, ...givenInputs] = started.inputs;
     const total = step.each === undefined ? step.count! : requests!.hashes.length;
     const children = childrenOfAttempt(commission, started.step, started.attempt);
-    const outcome = waitOutcome(step.wait) ?? undefined;
     const finishes = children.map(({ events: child }) => finishOf(child));
 
-    // A child succeeds by reaching its end, on the wait's outcome when it names one.
-    const succeeded = finishes.filter(
-      (finish) =>
-        finish?.outcome !== undefined && (outcome === undefined || finish.outcome === outcome),
-    ).length;
+    // Without an outcome, a wait met follows done and one that cannot be met escalates.
+    const routed = outcomeOf(step.wait) !== undefined;
 
-    const failed = children.filter((_, index) => {
-      const finish = finishes[index];
+    const { wait, failed } = waitOf(step, total, finishes, Date.now() - (started.at ?? Date.now()));
 
-      return (
-        finish !== undefined &&
-        !(finish.outcome !== undefined && (outcome === undefined || finish.outcome === outcome))
-      );
-    });
-
-    const need =
-      step.wait === "first"
-        ? 1
-        : step.wait === "all" || "all" in step.wait
-          ? total
-          : step.wait.atLeast;
-
-    const met = succeeded >= need;
-    const unmet = !met && total - failed.length < need;
-    const late = Date.now() - (started.at ?? Date.now()) > step.limits.wait * 1000;
     const cancelled = requested.get(commission, started.attempt) !== undefined;
     const name = started.step;
 
@@ -971,14 +949,14 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       attempt: started.attempt,
     });
 
-    const failedNames = failed.map((child) => child.commission).join(", ");
+    const failedNames = failed.map((index) => children[index]!.commission).join(", ");
 
     const ending = cancelled
       ? escalated(cancelledBy(name))
-      : met
-        ? completed(outcome === undefined ? "done" : "met")
-        : unmet
-          ? outcome === undefined
+      : wait === "met"
+        ? completed(routed ? "met" : "done")
+        : wait === "unmet"
+          ? !routed
             ? escalated(
                 because(
                   "unmet",
@@ -986,7 +964,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
                 ),
               )
             : completed("unmet")
-          : late
+          : wait === "late"
             ? escalated(
                 because(
                   "limit",
@@ -1781,47 +1759,31 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
         throw new Error(`Step ${name} is an approval step, so it cannot be ready.`);
       }
 
-      // Upgrading Medrengard could change how the commission goes on: the owner decides first.
-      const upgraded = unacceptedEngine(commission, events);
+      const admitted = admit(commission, definition, events, name, engineVersion());
 
-      if (upgraded !== undefined) {
-        write(commission, events, {
-          type: "escalated",
-          cause: "upgrade",
-          reason: upgraded,
-          engine: engineVersion(),
-        });
-
-        continue;
-      }
-
-      const attempts = sinceDecision(events).filter(
-        (event) => event.type === "attempt-started" && event.step === name,
-      );
-
-      if (attempts.length >= step.budget) {
-        write(commission, events, {
-          type: "escalated",
-          cause: "budget",
-          reason: `Step ${name} has spent its budget of ${step.budget} attempts.`,
-        });
+      if ("cause" in admitted) {
+        // An escalation over the engine names this one, which the owner's decision accepts.
+        write(
+          commission,
+          events,
+          admitted.cause === "upgrade"
+            ? { type: "escalated", ...admitted, engine: engineVersion() }
+            : { type: "escalated", ...admitted },
+        );
 
         continue;
       }
 
-      // What the commission's money limit leaves for this attempt, when it has one.
-      const spent = workflow.usd === undefined ? undefined : spentSince(events, workflow);
-      const overspent = spent === undefined ? undefined : moneyLeft(spent, workflow.usd!);
-
-      if (overspent !== undefined && "reason" in overspent) {
-        write(commission, events, {
-          type: "escalated",
-          cause: "money",
-          reason: overspent.reason,
-        });
-
-        continue;
-      }
+      // The event that starts the attempt the commission is admitted to, given `inputs`.
+      const starting = (inputs: Inputs): Started => ({
+        type: "attempt-started",
+        step: name,
+        attempt: admitted.attempt,
+        subject: state.subject,
+        inputs,
+        process: self,
+        engine: engineVersion(),
+      });
 
       const named = (query: Query) =>
         resolve(
@@ -1842,24 +1804,15 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
           })),
         ];
 
-        const repeated = attempts.some(
-          (event) =>
-            event.type === "attempt-started" &&
-            event.subject === state.subject &&
-            isDeepStrictEqual(event.inputs, inputs),
-        );
+        const repeat = repeats(events, name, state.subject, inputs);
 
-        if (repeated) {
-          write(commission, events, {
-            type: "escalated",
-            cause: "repeat",
-            reason: `Step ${name} was already attempted on this subject and these inputs.`,
-          });
+        if (repeat !== undefined) {
+          write(commission, events, { type: "escalated", ...repeat });
 
           continue;
         }
 
-        dispatch(commission, events, state, name, step, inputs);
+        dispatch(commission, events, step, starting(inputs));
 
         continue;
       }
@@ -1886,32 +1839,12 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
                   "limit",
                   `Step ${name} has ${requests.hashes.length} children to start, over its width of ${step.width}.`,
                 )
-              : attempts.some(
-                    (event) =>
-                      event.type === "attempt-started" &&
-                      event.subject === state.subject &&
-                      isDeepStrictEqual(event.inputs, inputs),
-                  )
-                ? because(
-                    "repeat",
-                    `Step ${name} was already attempted on this subject and these inputs.`,
-                  )
-                : undefined;
+              : repeats(events, name, state.subject, inputs);
 
         write(
           commission,
           events,
-          problem === undefined
-            ? {
-                type: "attempt-started",
-                step: name,
-                attempt: events.filter((event) => event.type === "attempt-started").length + 1,
-                subject: state.subject,
-                inputs,
-                process: self,
-                engine: engineVersion(),
-              }
-            : { type: "escalated", ...problem },
+          problem === undefined ? starting(inputs) : { type: "escalated", ...problem },
         );
 
         continue;
@@ -2062,37 +1995,17 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
         continue;
       }
 
-      // A repeat would see what the earlier attempt saw, so only a decision can justify it.
-      const repeated = attempts.some(
-        (event) =>
-          event.type === "attempt-started" &&
-          event.subject === state.subject &&
-          isDeepStrictEqual(event.inputs, given),
-      );
+      const repeat = repeats(events, name, state.subject, given);
 
-      if (repeated) {
-        write(commission, events, {
-          type: "escalated",
-          cause: "repeat",
-          reason: `Step ${name} was already attempted on this subject and these inputs.`,
-        });
+      if (repeat !== undefined) {
+        write(commission, events, { type: "escalated", ...repeat });
 
         continue;
       }
 
-      const attempt = events.filter((event) => event.type === "attempt-started").length + 1;
+      const { attempt } = admitted;
 
-      const started = {
-        type: "attempt-started",
-        step: name,
-        attempt,
-        subject: state.subject,
-        inputs: given,
-        process: self,
-        engine: engineVersion(),
-      } as const;
-
-      write(commission, events, started);
+      write(commission, events, starting(given));
 
       // The attempt is the wait; each look runs its checks.
       if (step.kind === "command" && step.watch !== undefined) {
@@ -2155,7 +2068,7 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
           note,
           store,
           spool,
-          { step: step.limits.usd, commission: overspent },
+          { step: step.limits.usd, commission: admitted.commission },
         );
 
         // Only a check finds nothing.
@@ -2427,24 +2340,6 @@ type Named = { hash: string; commission?: string };
 // A child commission, by name, with its events.
 type Child = { commission: string; events: Log };
 
-/**
- * How a commission finished, if it did: on the outcome that took its workflow to its end, or
- * abandoned or withdrawn, with none.
- */
-function finishOf(events: Log): { outcome?: string } | undefined {
-  const last = events.at(-1)!;
-
-  if (last.type === "attempt-completed" && last.next === "end") {
-    return { outcome: last.outcome };
-  }
-
-  if (last.type === "decided" && last.next === "end") {
-    return last.outcome === "abandon" ? {} : { outcome: last.outcome };
-  }
-
-  return last.type === "withdrawn" ? {} : undefined;
-}
-
 /** The name of the `n`th child, from 1, that the attempt `attempt` of the step `step` commissioned. */
 function childName(commission: string, step: string, attempt: number, n: number): string {
   return `${commission}.${step}.${attempt}.${n}`;
@@ -2454,25 +2349,6 @@ function childName(commission: string, step: string, attempt: number, n: number)
 // other's by its position, from 1.
 function branchName(input: string, child: string | undefined, index: number): string {
   return `${input}-${child === undefined ? index + 1 : child.slice(child.lastIndexOf(".") + 1)}`;
-}
-
-// The sessions attempts of `step` left, oldest first, by hash, however each attempt ended.
-function sessionsOf(events: Log, step: string): string[] {
-  const steps = new Map<number, string>();
-
-  return events.flatMap((event) => {
-    if (event.type === "attempt-started") {
-      steps.set(event.attempt, event.step);
-    }
-
-    const ended =
-      event.type === "attempt-completed" ||
-      (event.type === "escalated" && event.attempt !== undefined);
-
-    return ended && event.session !== undefined && steps.get(event.attempt!) === step
-      ? [event.session]
-      : [];
-  });
 }
 
 // Every artifact in the commission's record, oldest first, with the step that claimed or decided
@@ -2543,89 +2419,6 @@ function unkept(size: number, limit: number): string {
   return ` Its session of ${size} bytes, over its transcript limit of ${limit}, was not kept.`;
 }
 
-// What an attempt may cost: its step's money limit, and what its commission's leaves, if it has
-// each.
-type Allowance = { step?: number; commission?: { limit: number; spent: number } };
-
-// Why an attempt that has reported costing `usd` must stop, if it must: over its step's money
-// limit, or with what its commission spent before it, over the commission's.
-function overMoney(name: string, usd: number, money: Allowance): Why | undefined {
-  if (money.step !== undefined && usd > money.step) {
-    return because("money", `Step ${name} reached its money limit of $${money.step}.`);
-  }
-
-  if (money.commission !== undefined && money.commission.spent + usd > money.commission.limit) {
-    return because(
-      "money",
-      `The commission reached its money limit of $${money.commission.limit}.`,
-    );
-  }
-
-  return undefined;
-}
-
-// What the commission has spent since the owner's latest decision, as its attempts' steps
-// reported it; unknown, naming the attempt, once one whose program ran reported no cost.
-function spentSince(
-  events: Log,
-  workflow: Definition["workflow"],
-): { spent: number } | { unknown: number } {
-  return spentIn(sinceDecision(events), workflow);
-}
-
-// What the attempts among `events` spent, as their steps reported it; unknown, naming the attempt,
-// once one whose program ran reported no cost.
-function spentIn(
-  events: readonly Log[number][],
-  workflow: Definition["workflow"],
-): { spent: number } | { unknown: number } {
-  let spent = 0;
-
-  for (const event of events) {
-    // A children or commission step runs no program: it costs nothing itself.
-    const kind = event.type === "attempt-completed" ? workflow.steps[event.step]?.kind : undefined;
-
-    const ran =
-      (event.type === "attempt-completed" && kind !== "children" && kind !== "commission") ||
-      (event.type === "escalated" && event.attempt !== undefined && event.transcript !== undefined);
-
-    if (!ran) {
-      continue;
-    }
-
-    const usd = event.usage?.usd;
-
-    if (usd === undefined) {
-      return { unknown: event.attempt! };
-    }
-
-    spent += usd;
-  }
-
-  return { spent };
-}
-
-// What the commission's money limit leaves its next attempt, or why it may start none: its spend
-// unknown, or the limit spent. Renewed, like a budget, by the owner's decision.
-function moneyLeft(
-  spent: ReturnType<typeof spentSince>,
-  limit: number,
-): { limit: number; spent: number } | { reason: string } {
-  if ("unknown" in spent) {
-    return {
-      reason: `The commission's spend is unknown: attempt ${spent.unknown} reported no cost, so it counts as over its money limit of $${limit}.`,
-    };
-  }
-
-  if (spent.spent >= limit) {
-    return {
-      reason: `The commission has spent $${spent.spent.toFixed(2)} of its money limit of $${limit}.`,
-    };
-  }
-
-  return { limit, spent: spent.spent };
-}
-
 // The version of this engine: a hash of its own source, the modules beside this one but their
 // tests, so any change to the engine is a different engine. Read once per process.
 let version: string | undefined;
@@ -2647,47 +2440,6 @@ function engineVersion(): string {
   }
 
   return version;
-}
-
-// Why the commission must not go on with this engine, if it must not: it last ran on another,
-// by its latest attempt or its commissioning, and the owner has not decided on an escalation
-// that named this engine since.
-function unacceptedEngine(commission: string, events: Log): string | undefined {
-  const current = engineVersion();
-
-  const last = events.findLastIndex(
-    (event) => event.type === "attempt-started" || event.type === "commissioned",
-  );
-
-  // The commissioned event is first, so one is always found.
-  const latest = events[last]!;
-
-  const ran =
-    latest.type === "attempt-started" || latest.type === "commissioned" ? latest.engine : undefined;
-
-  if (ran === current) {
-    return undefined;
-  }
-
-  const since = events.slice(last + 1);
-
-  const named = since.findLastIndex(
-    (event) => event.type === "escalated" && event.engine === current,
-  );
-
-  if (named !== -1 && since.slice(named + 1).some((event) => event.type === "decided")) {
-    return undefined;
-  }
-
-  const was =
-    ran === undefined ? "an engine that recorded no version" : `engine ${ran.slice(0, 8)}`;
-
-  return `Commission ${commission} last ran on ${was}; this engine is ${current.slice(0, 8)}.`;
-}
-
-// Only the owner renews a budget or permits a repeat: both count from the latest decision.
-function sinceDecision(events: Log): Log[number][] {
-  return events.slice(events.findLastIndex((event) => event.type === "decided") + 1);
 }
 
 type Runnable = Extract<Definition["workflow"]["steps"][string], { kind: "agent" | "command" }>;
