@@ -563,13 +563,15 @@ kind program whatever its access: it is empty and read-only, but for the attempt
 input and output and any path the access names under it. So no access can let a step write a
 decision without naming the log's directory itself.
 
-`@medrengard/core/defaults/access.ts` holds three values to use as they are or to change one dial of, and
+`@medrengard/core/defaults/access.ts` holds four values to use as they are or to change one dial of, and
 `gitIdentity(name, email)`, the `values` that make Git author and commit as that identity.
 "The system" is `/usr`, `/etc`, `/opt`, `/bin`, `/sbin`, `/lib` and `/lib64` to read, where they
 exist.
 
 - `contract`: the system, a fresh `/tmp` of 256 MiB and `PATH`, without `sandboxes`. No home, no network and no `HOME`, so a
   program that needs a home or a cache, such as `npm`, must be pointed at `/tmp`.
+- `node`: `contract`, with the Node that runs the engine and the step contract's module, for a
+  step's program written in TypeScript. See [the step contract](#the-step-contract).
 - `claudeCode`: what the Claude Code adapter needs: the system, a fresh `/tmp`, an empty home of
   256 MiB, Node and npm (Node's `bin` directory and npm's package, or the `node` executable
   alone when npm is not beside it; never other global packages), the `adapters` directory, the
@@ -1074,6 +1076,50 @@ Every command and agent step is a program, started:
   interrupted one included, if it is a regular file of at most the step's transcript limit; one
   over it is not kept, and the reason says so, and an attempt that would otherwise complete
   escalates instead.
+
+A step's program written in TypeScript has the contract as a module, `step/contract.ts`, in place
+of the files and descriptors; a program in any other language uses those as they are:
+
+```ts
+// steps/reply.ts, in the factory's repository
+import { artifactsOf, bodyOf, claim, note, readInput } from "@medrengard/core/step/contract.ts";
+
+const given = readInput();
+const [request] = artifactsOf(given, "request");
+
+note(`Replying to ${request?.fields.title}`);
+claim("done", [
+  { kind: "document", fields: { title: "Reply" }, text: `Reply to: ${bodyOf(request ?? {})}` },
+]);
+```
+
+```ts
+import { node } from "@medrengard/core/defaults/access.ts";
+
+const reply = {
+  kind: "command",
+  run: [process.execPath, "/path/to/factory/steps/reply.ts"],
+  // node: contract, with Node and the module. The factory adds its program and its node_modules.
+  access: {
+    ...node,
+    paths: [
+      ...node.paths,
+      { path: "/path/to/factory/steps", mode: "read" },
+      { path: "/path/to/factory/node_modules", mode: "read" },
+    ],
+  },
+  // ...
+};
+```
+
+- `readInput()` gives `input.json`; `artifactsOf(given, name)` an input's artifacts, oldest first;
+  `bodyOf(artifact)` its body as text.
+- `claim(outcome, artifacts)` writes `output.json`. An artifact's `body` is a file the program
+  wrote in its output, or `text` for the module to write there; `{ adopt: hash }` adopts an input.
+- `note(text)` writes a note, `reportUsage({ usd, tokens })` a usage report, and `failed(why)`
+  says why on stderr and exits 1, so the commission escalates.
+
+The adapters and the GitHub forge's steps are written with it.
 
 `input.json` lists each input's artifacts, oldest first, always as a list. A body is a file at
 `<input>/<hash>`, and `body` holds that path. An agent's skills are directories under `.skills`,

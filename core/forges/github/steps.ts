@@ -2,7 +2,7 @@
 // request of the subject commit and, after the owner approves, merge it. Plain values, as the
 // other defaults are: spread one and change a field.
 import { join } from "node:path";
-import { contract } from "../../defaults/access.ts";
+import { node } from "../../defaults/access.ts";
 import type { Kind } from "../../src/kinds.ts";
 import type { Access, Workflow } from "../../src/definition.ts";
 
@@ -54,13 +54,9 @@ export function github({ repository, base, token, git, api }: Options) {
   );
 
   const access: Access = {
-    ...contract,
-    paths: [
-      ...contract.paths,
-      // Node, which may be under the owner's home, and these programs.
-      { path: process.execPath, mode: "read" },
-      { path: here, mode: "read" },
-    ],
+    ...node,
+    // These programs.
+    paths: [...node.paths, { path: here, mode: "read" }],
     network: {
       hosts: [],
       brokers: {

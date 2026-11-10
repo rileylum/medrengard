@@ -7,29 +7,21 @@
  *
  * Usage: watch.ts
  */
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { artifactsOf, claim, failed, readInput } from "../../step/contract.ts";
 
-const input = process.env.MEDRENGARD_IN!;
-const output = process.env.MEDRENGARD_OUT!;
 const broker = process.env.MEDRENGARD_BROKER_GITHUB!;
 
-type Listed = { fields: Record<string, string> };
-
-// SAFETY: the engine writes input.json, and the step declares the inputs pullRequest and subject.
-const { inputs } = JSON.parse(readFileSync(join(input, "input.json"), "utf8")) as {
-  inputs: { pullRequest: Listed[]; subject: [Listed] };
-};
-
-const pullRequest = inputs.pullRequest.at(-1);
+const given = readInput();
+const pullRequest = artifactsOf(given, "pullRequest").at(-1);
 
 if (pullRequest === undefined) {
-  console.error("No pull request about the subject was opened, so there is none to watch.");
-  process.exit(1);
+  failed("No pull request about the subject was opened, so there is none to watch.");
 }
 
 const { repository, number } = pullRequest.fields;
-const sha = inputs.subject[0].fields.sha;
+
+// The step declares the input subject, which always holds one artifact.
+const sha = artifactsOf(given, "subject")[0]!.fields.sha;
 
 /** GitHub's answer to GET `path` under the pull request's repository, as JSON. */
 async function read<T>(path: string): Promise<T> {
@@ -40,8 +32,7 @@ async function read<T>(path: string): Promise<T> {
   const said = await response.text();
 
   if (!response.ok) {
-    console.error(`GitHub refused GET ${path} (${response.status}): ${said}`);
-    process.exit(1);
+    failed(`GitHub refused GET ${path} (${response.status}): ${said}`);
   }
 
   // SAFETY: each caller names the shape GitHub documents for its path.
@@ -49,28 +40,24 @@ async function read<T>(path: string): Promise<T> {
 }
 
 /** Claims `outcome`, with a document titled `title` whose body is `body`, if given. */
-function claim(outcome: string, document?: { title: string; body: string }): never {
-  if (document !== undefined) {
-    writeFileSync(join(output, "found.md"), document.body);
-  }
-
-  const artifacts =
+function found(outcome: string, document?: { title: string; body: string }): never {
+  claim(
+    outcome,
     document === undefined
       ? []
-      : [{ kind: "document", fields: { title: document.title }, body: "found.md" }];
-
-  writeFileSync(join(output, "output.json"), JSON.stringify({ outcome, artifacts }));
+      : [{ kind: "document", fields: { title: document.title }, text: document.body }],
+  );
   process.exit(0);
 }
 
 const pull = await read<{ state: string; merged: boolean }>(`/pulls/${number}`);
 
 if (pull.merged) {
-  claim("merged");
+  found("merged");
 }
 
 if (pull.state === "closed") {
-  claim("closed");
+  found("closed");
 }
 
 type Review = { user: { login: string }; state: string; body: string; commit_id: string };
@@ -106,5 +93,5 @@ if ([...latest.values()].includes("CHANGES_REQUESTED")) {
     ),
   ];
 
-  claim("changes", { title: `Review of pull request ${number}`, body: `${lines.join("\n\n")}\n` });
+  found("changes", { title: `Review of pull request ${number}`, body: `${lines.join("\n\n")}\n` });
 }

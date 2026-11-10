@@ -9,6 +9,7 @@
     "./src/kinds.ts": "./src/kinds.ts",
     "./src/engine.ts": "./src/engine.ts",
     "./src/store.ts": "./src/store.ts",
+    "./step/contract.ts": "./step/contract.ts",
     "./defaults/access.ts": "./defaults/access.ts",
     "./defaults/agents.ts": "./defaults/agents.ts",
     "./defaults/kinds.ts": "./defaults/kinds.ts",

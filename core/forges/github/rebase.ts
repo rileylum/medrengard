@@ -9,12 +9,10 @@
  * Usage: rebase.ts <owner/name> <base>
  */
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { claim, failed } from "../../step/contract.ts";
 
 // SAFETY: the rebase step's run passes the repository and the base branch.
 const [repository, base] = process.argv.slice(2) as [string, string];
-const output = process.env.MEDRENGARD_OUT!;
 const broker = process.env.MEDRENGARD_BROKER_GITHUB!;
 
 /** Runs git with `args`, returning its stdout; its stderr is kept for a failure alone. */
@@ -40,38 +38,25 @@ try {
   // SAFETY: execFileSync throws an error carrying the child's piped stderr.
   const { stderr } = error as { stderr: string };
 
-  console.error(`The fetch of ${base} from ${repository} failed: ${stderr}`);
-  process.exit(1);
+  failed(`The fetch of ${base} from ${repository} failed: ${stderr}`);
 }
-
-let outcome;
 
 try {
   git("rebase", "--quiet", "FETCH_HEAD");
-  outcome = {
-    outcome: "done",
-    artifacts: [{ kind: "commit", fields: { sha: git("rev-parse", "HEAD") } }],
-  };
+  claim("done", [{ kind: "commit", fields: { sha: git("rev-parse", "HEAD") } }]);
 } catch {
   const conflicting = git("diff", "--name-only", "--diff-filter=U");
 
   if (conflicting === "") {
-    console.error(`The rebase onto ${base} failed, with no conflicting file.`);
-    process.exit(1);
+    failed(`The rebase onto ${base} failed, with no conflicting file.`);
   }
 
   git("rebase", "--abort");
-  writeFileSync(join(output, "conflicts.md"), `${conflicting}\n`);
-  outcome = {
-    outcome: "conflict",
-    artifacts: [
-      {
-        kind: "document",
-        fields: { title: `Conflicts rebasing onto ${base}` },
-        body: "conflicts.md",
-      },
-    ],
-  };
+  claim("conflict", [
+    {
+      kind: "document",
+      fields: { title: `Conflicts rebasing onto ${base}` },
+      text: `${conflicting}\n`,
+    },
+  ]);
 }
-
-writeFileSync(join(output, "output.json"), JSON.stringify(outcome));
