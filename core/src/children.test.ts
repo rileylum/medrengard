@@ -404,6 +404,27 @@ test("a children step waiting on the first child withdraws the rest, stopping on
     { entry: "attempt", escalated: "Commission first's step race no longer waits for it." },
     { entry: "withdrawal", reason: "Commission first's step race no longer waits for it." },
   ]);
+
+  // Constraint 7: a child's own events are pinned here, with every field each holds: the one that
+  // commissioned it, naming its parent and what it was given, and the one that withdrew it.
+  const fields = Object.fromEntries(
+    engine
+      .events(0)
+      .filter(({ commission }) => commission === "first.race.1.2")
+      .map(({ event }) => [event.type, Object.keys(event).toSorted()]),
+  );
+
+  assert.deepEqual(fields.commissioned, [
+    "at",
+    "definition",
+    "engine",
+    "given",
+    "parent",
+    "request",
+    "type",
+    "workflow",
+  ]);
+  assert.deepEqual(fields.withdrawn, ["at", "reason", "type"]);
 });
 
 test("a children step escalates at its wait limit, withdrawing the children still running", async (t) => {

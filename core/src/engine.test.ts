@@ -24,6 +24,7 @@ import {
   type Query,
   type Workflow,
 } from "./definition.ts";
+import type { CommissionEvent } from "./replay.ts";
 
 // The system's programs, read-only.
 const system = ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({
@@ -4954,7 +4955,19 @@ function typesIn(text: string, kept: readonly string[]) {
 
 // Constraint 7: the log's vocabulary is pinned, so a new event type or field fails here until it
 // is added on purpose. Each value is replaced by its type, so the shape is pinned to every depth.
-test("the log's events are exactly the six types, each with its pinned fields", async (t) => {
+test("the log's events are exactly the seven types, each with its pinned fields", async (t) => {
+  // Every type the log may hold, and where its fields are pinned: a type added to the vocabulary
+  // fails to compile here until it is pinned somewhere.
+  const pinned = {
+    commissioned: "here",
+    "attempt-started": "here",
+    noted: "here",
+    "attempt-completed": "here",
+    decided: "here",
+    escalated: "here",
+    withdrawn: "children.test.ts",
+  } satisfies Record<CommissionEvent["type"], "here" | "children.test.ts">;
+
   const { engine, options } = await engineWith(t, () =>
     defineWorkflow({
       start: "build",
@@ -5054,6 +5067,14 @@ test("the log's events are exactly the six types, each with its pinned fields", 
       at: "number",
     },
   ]);
+  assert.deepEqual(
+    new Set(vocabulary.map(({ type }) => type)),
+    new Set(
+      Object.entries(pinned)
+        .filter(([, where]) => where === "here")
+        .map(([type]) => type),
+    ),
+  );
 });
 
 // Constraint 7: the step contract is pinned, so a new variable, descriptor or input.json field

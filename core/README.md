@@ -151,13 +151,15 @@ budget. A workflow with an agent whose harness says `costs: false` cannot have o
 exists so the compiler checks every step name an edge or query uses. Each step's `on` maps an
 outcome to the next step or to `end`.
 
-There are three kinds of step:
+There are five kinds of step:
 
-| Kind       | Runs                                 | Fields besides `kind` and `on`                                                       |
-| ---------- | ------------------------------------ | ------------------------------------------------------------------------------------ |
-| `command`  | the owner's program, `run`           | `run`, `watch`?, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`?      |
-| `agent`    | an agent through its harness adapter | `agent`, `attended`?, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`? |
-| `approval` | nothing: it waits for the owner      | none                                                                                 |
+| Kind         | Runs                                             | Fields besides `kind` and `on`                                                       |
+| ------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `command`    | the owner's program, `run`                       | `run`, `watch`?, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`?      |
+| `agent`      | an agent through its harness adapter             | `agent`, `attended`?, `workspace`, `inputs`, `claims`, `budget`, `access`, `limits`? |
+| `approval`   | nothing: it waits for the owner                  | none                                                                                 |
+| `children`   | nothing: it waits on child commissions           | see [Children](#children)                                                            |
+| `commission` | nothing: it starts commissions through a trigger | see [Commissions that start commissions](#commissions-that-start-commissions)        |
 
 The fields of a command or agent step:
 
@@ -1239,6 +1241,7 @@ const engine = createEngine({
   log: "/var/tmp/factory/log.sqlite",
   kinds: factory.kinds,
   workflows: factory.workflows,
+  defaults: factory.defaults,
 });
 
 // Starts a commission: the request is its first subject.
@@ -1333,6 +1336,7 @@ medrengard <command> [--json] [--factory <path>]
   decide     <commission> <outcome> --subject <hash> --since <event>
              [--feedback <text> | --feedback-file <path>]
   cancel     <commission>
+  renew      <trigger>
   transcript <commission> <attempt>
   errors     <commission> <attempt>
   artifact   <hash or a prefix of at least 8 characters>
@@ -1341,8 +1345,8 @@ medrengard <command> [--json] [--factory <path>]
 
 - The factory is `--factory <path>`, or else `MEDRENGARD_FACTORY`. The CLI never guesses one,
   because loading a factory runs its code.
-- With `--json`, stdout holds exactly one JSON value: the method's return, or `null` for
-  `commission` and `cancel`. An error goes to stderr as `{"error": "…"}`. Without `--json`, the
+- With `--json`, stdout holds exactly one JSON value: the method's return, `{ "commission": name }` for
+  `commission`, or `null` for `cancel` and `renew`. An error goes to stderr as `{"error": "…"}`. Without `--json`, the
   output is for people, not for parsing.
 - Exit codes: 0 when the call succeeded, an escalation included; 1 when the engine refused or
   failed; 2 for a usage error.

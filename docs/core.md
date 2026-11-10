@@ -109,8 +109,8 @@ Replay derives a commission's state; none is stored.
 
 Seven events are the whole log vocabulary. Each carries the time the engine wrote it:
 
-- `commissioned`: the workflow, its definitions by hash and the request artifact; a child's also names its parent's commission, step and attempt, and the artifacts it was given, by hash with their kinds and kept files; one a trigger started names the trigger as its origin, and one a commission step started also its commission, step and attempt.
-- `attempt-started`: the step and attempt, the subject and each input's artifacts by hash; spends one unit of the step's budget.
+- `commissioned`: the workflow, its definitions by hash, the request artifact and the engine's version; a child's also names its parent's commission, step and attempt, and the artifacts it was given, by hash with their kinds and kept files; one a trigger started names the trigger as its origin, and one a commission step started also its commission, step and attempt.
+- `attempt-started`: the step and attempt, the subject and each input's artifacts by hash, the engine's version and the engine process running it; spends one unit of the step's budget.
 - `attempt-completed`: the attempt, its outcome, the recorded artifacts with their kinds, its transcript and, when it wrote to stderr, its errors, its latest usage report when it made one, the session it left when it left one, and the next step or end.
 - `decided`: the step and the decision artifact, with its outcome, the subject it names and any feedback, at most 1 MiB, and the next step or end.
 - `noted`: the attempt and one note for the owner, recorded as it arrives: one the attempt wrote, or the engine's, marked as such. It changes no state.
@@ -180,7 +180,7 @@ _Definition: what the owner writes; data, verified before anything runs._
 
 - Factory: the owner's workflows, agents and extensions. Medrengard builds factories; it is not one.
 - Workflow: a graph of steps whose edges are labelled by outcome.
-- Step: a node of a workflow, of one kind: an agent step runs an agent through its harness adapter, attended or unattended; a command step runs the owner's program, once or, watching, as a check each interval; an approval step waits for the owner's decision; a children step waits on child commissions.
+- Step: a node of a workflow, of one kind: an agent step runs an agent through its harness adapter, attended or unattended; a command step runs the owner's program, once or, watching, as a check each interval; an approval step waits for the owner's decision; a children step waits on child commissions; a commission step starts commissions through a trigger and waits on none.
 - Agent: a reusable definition of harness, model, prompt and skills. The step supplies its workspace and inputs.
 - Harness: the vendor tool an agent runs in, such as Claude Code, Codex, Pi or OpenCode.
 - Prompt: what the agent is told to do at a step.
@@ -225,7 +225,7 @@ _Step contract: the process boundary._
 
 _Record: the log and the store._
 
-- Event: a past-tense fact about a commission: commissioned, attempt-started, attempt-completed, noted, decided or escalated.
+- Event: a past-tense fact about a commission: commissioned, attempt-started, attempt-completed, noted, decided, withdrawn or escalated.
 - Log: the ordered events of every commission.
 - Store: content-addressed artifact bodies, kept files, transcripts and definitions.
 - Replay: the pure fold from a commission's events to its state.
@@ -233,4 +233,4 @@ _Record: the log and the store._
 - Extension: a package supplying artifact kinds, harness adapters, commands or observers.
 - Owner: the one person the factory serves.
 
-_Not used:_ stage (step), work, run or job (commission), role (prompt), run or execution (attempt), abort or kill (cancel, for the owner), check (verify, for the engine), runtime (harness or harness adapter), ticket and cycle (workflow policy, not core).
+_Not used:_ stage (step), work, run or job (commission), role, of an agent (prompt), run or execution (attempt), abort or kill (cancel, for the owner), check (verify, for the engine), runtime (harness or harness adapter), ticket and cycle (workflow policy, not core).
