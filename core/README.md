@@ -173,6 +173,11 @@ The fields of a command or agent step:
   subject is, such as the commit a change starts from. That input must be `"subject"`, `"request"`
   or a query that takes the latest; if it names nothing, the commission escalates before an attempt
   starts. A commit is checked out with its history; a document is written to the file `document`.
+  Built from an input, the workspace may add the artifacts another input names as branches,
+  `{ input: "base", branches: "changes" }`: each is named `<input>-<n>`, `n` a child's number
+  or else its position, from 1, and `input.json` gives each its `branch`. They must be of the
+  base's kind, whose materialiser must say it can add them; the branches input may not be a
+  session, a query across commissions, or a children query that takes all.
 - `inputs`: what the step is given, by name. See [Inputs](#inputs).
 - `claims`: the artifact kinds the step may claim, such as `["commit"]`; `[]` for none. A claim of
   any other kind escalates. A step need not claim what it lists. See
@@ -563,7 +568,9 @@ const access: Access = {
   paths: [
     { path: "/usr", mode: "read" },
     { path: "/home/owner/dev/app", mode: "read" },
-    // A fresh directory of at most 256 MiB over whatever is there.
+    // A fresh directory on disk, in the attempt's own area, which the step's disk limit bounds.
+    { path: "/var/cache/build", mode: "scratch" },
+    // A fresh directory of at most 256 MiB over whatever is there, held in memory.
     { path: "/tmp", mode: "empty", size: 256 * 1024 * 1024 },
   ],
   // true, false, or only some hosts: { hosts: ["api.anthropic.com", "registry.npmjs.org"] }.
@@ -769,7 +776,10 @@ A materialiser builds a later step's workspace from a subject, the current one o
 empty workspace. Its
 `MEDRENGARD_IN` holds `artifact.json`, with the artifact's `hash`, `kind`, `fields`, `body` and
 `kept` files as paths, and those files. A workflow whose workspace may be built from a kind without
-one is refused when it is commissioned.
+one is refused when it is commissioned. A materialiser that can add other artifacts of its kind
+to the workspace as branches says so, `branches: true`; then, when a step adds branches, its
+`MEDRENGARD_IN` also holds `branches.json`, each artifact as `artifact.json` gives one, with its
+`branch`, and its files under `branches/<branch>/`.
 
 A verifier or materialiser gets less than a step: no fd 3 for notes, its stdout is discarded, and
 its stderr is kept only when it fails, ending the escalation's reason (its last 1024 bytes). A
@@ -1338,6 +1348,8 @@ for (;;) {
 | `commissions()`                                              | `{ commission, state }[]`, oldest first; `{ commission, error }` for one the engine cannot read                                                                                                                                                                           |
 | `decide(commission, { subject, since, outcome, feedback? })` | the new state; refuses a stale subject or wait, an undeclared outcome, or feedback over 1 MiB                                                                                                                                                                             |
 | `cancel(commission)`                                         | nothing; the engine running the attempt stops it and escalates, or, with none, it escalates at once                                                                                                                                                                       |
+| `renew(trigger)`                                             | nothing; renews the trigger's allowance, counting its earlier commissions no more. Refuses a trigger the factory lacks or one with no allowance                                                                                                                           |
+| `definition(commission)`                                     | the definition the commission was commissioned with and runs on: its workflow, each step's limits whole, its kinds and its skills by file hash                                                                                                                            |
 | `record(commission)`                                         | `{ state, request, entries }`: every attempt, escalation and decision, oldest first; each claimed artifact with its `verifier`, the command that accepted it, or `null` when its kind has none                                                                            |
 | `errors(commission, attempt)`                                | what the attempt wrote to stderr, as a `Buffer`; empty for none                                                                                                                                                                                                           |
 | `transcript(commission, attempt)`                            | the attempt's stdout and stderr as a `Buffer`                                                                                                                                                                                                                             |
@@ -1394,6 +1406,8 @@ medrengard <command> [--json] [--factory <path>]
 - With `--json`, stdout holds exactly one JSON value: the method's return, `{ "commission": name }` for
   `commission`, or `null` for `cancel` and `renew`. An error goes to stderr as `{"error": "…"}`. Without `--json`, the
   output is for people, not for parsing.
+- A call the CLI cannot make says what is wrong with it first, `state takes 1 argument, not 0.`,
+  then the usage.
 - Exit codes: 0 when the call succeeded, an escalation included; 1 when the engine refused or
   failed; 2 for a usage error.
 - `show` prints the commission's record: one line per attempt with what it claimed and how long

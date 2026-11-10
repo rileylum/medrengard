@@ -89,8 +89,8 @@ try {
       follow: { type: "boolean" },
     },
   });
-} catch {
-  refuseUsage();
+} catch (error) {
+  refuseUsage(error instanceof Error ? error.message : String(error));
 }
 
 const { values, positionals } = parsed;
@@ -101,30 +101,53 @@ const spec = commands.get(command);
 
 const given = Object.keys(values).filter((name) => name !== "json" && name !== "factory");
 
-if (
-  spec === undefined ||
-  args.length > spec.arguments ||
-  args.length < spec.arguments - (spec.optional ?? 0) ||
-  !given.every((name) => spec.options.includes(name)) ||
-  factory === undefined
-) {
-  refuseUsage();
+if (spec === undefined) {
+  refuseUsage(command === "" ? "No command was given." : `There is no command ${command}.`);
+}
+
+const fewest = spec.arguments - (spec.optional ?? 0);
+
+if (args.length > spec.arguments || args.length < fewest) {
+  const takes = fewest === spec.arguments ? `${fewest}` : `${fewest} or ${spec.arguments}`;
+
+  refuseUsage(
+    `${command} takes ${takes} argument${spec.arguments === 1 ? "" : "s"}, not ${args.length}.`,
+  );
+}
+
+const stray = given.find((name) => !spec.options.includes(name));
+
+if (stray !== undefined) {
+  refuseUsage(`${command} does not take --${stray}.`);
+}
+
+if (factory === undefined) {
+  refuseUsage("No factory was given: pass --factory <path> or set MEDRENGARD_FACTORY.");
 }
 
 // Text is given inline or as a file, never both.
 const both = (inline?: string, file?: string) => inline !== undefined && file !== undefined;
 
-if (
-  both(values.body, values["body-file"]) ||
-  both(values.feedback, values["feedback-file"]) ||
-  (command === "commission" &&
-    (values.title === undefined || (values.body ?? values["body-file"]) === undefined)) ||
-  (command === "decide" && (values.subject === undefined || !/^\d+$/.test(values.since ?? ""))) ||
-  ((command === "transcript" || command === "errors") && !/^[1-9]\d*$/.test(args[1])) ||
-  !/^[1-9]\d*$/.test(values.parallel ?? "1") ||
-  !/^\d+$/.test(values.after ?? "0")
-) {
-  refuseUsage();
+// What is wrong with what the command was given, if anything is.
+const misused = both(values.body, values["body-file"])
+  ? "--body and --body-file cannot both be given."
+  : both(values.feedback, values["feedback-file"])
+    ? "--feedback and --feedback-file cannot both be given."
+    : command === "commission" &&
+        (values.title === undefined || (values.body ?? values["body-file"]) === undefined)
+      ? "commission needs --title, and --body or --body-file."
+      : command === "decide" && (values.subject === undefined || !/^\d+$/.test(values.since ?? ""))
+        ? "decide needs --subject, a hash, and --since, an event's number."
+        : (command === "transcript" || command === "errors") && !/^[1-9]\d*$/.test(args[1])
+          ? `${command} needs an attempt's number, from 1.`
+          : !/^[1-9]\d*$/.test(values.parallel ?? "1")
+            ? "--parallel must be a number, from 1."
+            : !/^\d+$/.test(values.after ?? "0")
+              ? "--after must be a position, from 0."
+              : undefined;
+
+if (misused !== undefined) {
+  refuseUsage(misused);
 }
 
 // Text given inline, or read from the file named.
@@ -245,8 +268,9 @@ try {
   process.exitCode = 1;
 }
 
-function refuseUsage(): never {
-  process.stderr.write(`${usage}\n`);
+// Says what is wrong with the call, then how the CLI is used.
+function refuseUsage(problem: string): never {
+  process.stderr.write(`${problem}\n\n${usage}\n`);
   process.exit(2);
 }
 

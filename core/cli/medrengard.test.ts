@@ -676,6 +676,49 @@ test("the CLI without a factory exits 2 naming both ways to give one", () => {
   assert.match(stderr, /MEDRENGARD_FACTORY/);
 });
 
+// A usage error says what was wrong before it says how the CLI is used.
+test("the CLI says what is wrong with a call it cannot make, then its usage", async (t) => {
+  const { factory } = await factoryIn(t);
+
+  for (const [args, problem] of [
+    [[], "No command was given."],
+    [["launch"], "There is no command launch."],
+    [["state"], "state takes 1 argument, not 0."],
+    [["cancel", "first", "second"], "cancel takes 1 argument, not 2."],
+    [["commission"], "commission takes 1 or 2 arguments, not 0."],
+    [["state", "first", "--parallel", "2"], "state does not take --parallel."],
+    [["state", "first", "--verbose"], "Unknown option '--verbose'"],
+    [
+      ["commission", "build", "first", "--title", "T"],
+      "commission needs --title, and --body or --body-file.",
+    ],
+    [
+      ["commission", "build", "first", "--title", "T", "--body", "B", "--body-file", "b.md"],
+      "--body and --body-file cannot both be given.",
+    ],
+    [
+      ["decide", "first", "accept", "--subject", "abc"],
+      "decide needs --subject, a hash, and --since, an event's number.",
+    ],
+    [["transcript", "first", "0"], "transcript needs an attempt's number, from 1."],
+    [["run", "--parallel", "many"], "--parallel must be a number, from 1."],
+    [["events", "--after=soon"], "--after must be a position, from 0."],
+  ] as const) {
+    const { status, stdout, stderr } = run([...args], factory);
+
+    assert.equal(status, 2, args.join(" "));
+    assert.equal(stdout, "");
+    assert.ok(stderr.startsWith(`${problem}`), `${args.join(" ")}: ${stderr.split("\n")[0]}`);
+    assert.match(stderr, /\n\nUsage: medrengard <command>/);
+  }
+
+  assert.ok(
+    run(["state", "first"], undefined).stderr.startsWith(
+      "No factory was given: pass --factory <path> or set MEDRENGARD_FACTORY.\n\nUsage:",
+    ),
+  );
+});
+
 test("the CLI refuses a factory whose default export is not exactly { log, kinds, workflows, defaults } and any triggers", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
