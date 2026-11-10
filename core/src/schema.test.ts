@@ -1,7 +1,17 @@
 import { test } from "node:test";
 import type { createEngine } from "./engine.ts";
 import type { Kind, Program } from "./kinds.ts";
-import type { Access, Agent, Limits, Money, Query, Wait, Watch, Workflow } from "./replay.ts";
+import type {
+  Access,
+  Agent,
+  Limits,
+  Money,
+  Query,
+  Trigger,
+  Wait,
+  Watch,
+  Workflow,
+} from "./replay.ts";
 
 // Constraint 7: the definition's schema is pinned here, at compile time: a field added to or
 // removed from any type a factory writes fails the type check until this list changes on purpose.
@@ -36,7 +46,9 @@ type Factory = Parameters<typeof createEngine>[0];
 type Expect<T extends true> = T;
 
 type Pinned = {
-  factory: Expect<Same<keyof Factory, "log" | "workflows" | "kinds" | "defaults">>;
+  factory: Expect<Same<keyof Factory, "log" | "workflows" | "kinds" | "defaults" | "triggers">>;
+  trigger: Expect<Same<keyof Trigger, "workflows" | "rate" | "unfinished" | "usd">>;
+  rate: Expect<Same<Trigger["rate"], { count: number; per: number }>>;
   defaults: Expect<Same<Factory["defaults"], { limits: Limits }>>;
   workflow: Expect<Same<keyof Workflow, "start" | "steps" | "usd">>;
   stepKinds: Expect<Same<Step["kind"], "agent" | "command" | "approval" | "children">>;

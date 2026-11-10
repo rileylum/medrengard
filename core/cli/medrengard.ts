@@ -17,7 +17,7 @@ import { describe, full, line, linesOf, visible, waiting, where } from "./readab
 
 const usage = `Usage: medrengard <command> [--json] [--factory <path>]
 
-  commission <workflow> <commission> --title <title> (--body <text> | --body-file <path>)
+  commission <workflow> [<commission>] [--trigger <name>] --title <title> (--body <text> | --body-file <path>)
   check      [<workflow>]
   advance    <commission>
   attend     <commission>
@@ -37,12 +37,12 @@ const usage = `Usage: medrengard <command> [--json] [--factory <path>]
   definition <commission>
 
 The factory is --factory <path>, or else MEDRENGARD_FACTORY: a module whose default export is the
-engine's options, { log, kinds, workflows, defaults }, with log relative to the module.`;
+engine's options, { log, kinds, workflows, defaults } and any triggers, with log relative to the module.`;
 
 // Each command's positional arguments, `optional` of them at the end, and the options it takes
 // besides --json and --factory.
 const commands = new Map<string, { arguments: number; optional?: number; options: string[] }>([
-  ["commission", { arguments: 2, options: ["title", "body", "body-file"] }],
+  ["commission", { arguments: 2, optional: 1, options: ["title", "body", "body-file", "trigger"] }],
   ["check", { arguments: 1, optional: 1, options: [] }],
   ["advance", { arguments: 1, options: [] }],
   ["attend", { arguments: 1, options: [] }],
@@ -74,6 +74,7 @@ try {
       title: text,
       body: text,
       "body-file": text,
+      trigger: text,
       subject: text,
       since: text,
       feedback: text,
@@ -134,8 +135,15 @@ try {
 
   switch (command) {
     case "commission":
-      engine.commission(first, second, { title: values.title!, body: body! });
-      print(null, "");
+      // Named by its trigger when not given a name.
+      printCommissioned(
+        engine.commission(
+          first,
+          second,
+          { title: values.title!, body: body! },
+          { trigger: values.trigger },
+        ),
+      );
       break;
     case "advance":
       printState(await engine.advance(first));
@@ -244,6 +252,7 @@ type Printed =
   | ReturnType<Engine["engines"]>
   | { stopping: { commission: string; step: string }[] }
   | { commission: string; state: CommissionState }
+  | { commission: string }
   | Logged
   | Definition;
 
@@ -252,6 +261,11 @@ type Logged = ReturnType<Engine["events"]>[number];
 
 function print(result: Printed, readable: string): void {
   process.stdout.write(visible(json ? `${JSON.stringify(result)}\n` : readable));
+}
+
+// The name of the commission just made, which a trigger's caller follows it by.
+function printCommissioned(commission: string): void {
+  print({ commission }, `${commission}\n`);
 }
 
 // The definition as JSON for people too: it is data, and its every field matters.
@@ -534,7 +548,7 @@ function eventLine(event: Logged["event"]): string {
 // The record for the owner: where the commission is, every entry in order, and then what it is
 // about now with every judgement about that, in full, as an owner reads at a gate.
 function printRecord(commission: string, record: CommissionRecord): void {
-  const { state, request, entries } = record;
+  const { state, request, entries, origin } = record;
 
   // An attempt shows as its ending, or as started while it runs; its notes are watch's.
   const timeline = entries.flatMap((entry, index) =>
@@ -547,6 +561,7 @@ function printRecord(commission: string, record: CommissionRecord): void {
     `${commission}: ${where(state)}${waiting(state)}`,
     ...(state.status === "escalated" ? [`reason: ${state.reason}`] : []),
     line("request", request.hash, request.artifact),
+    ...(origin === undefined ? [] : [`Started by trigger ${origin.trigger}.`]),
     ...timeline,
   ];
 

@@ -48,6 +48,7 @@ import {
   type Query,
   type Skill,
   type Usage,
+  type Trigger,
   type Watch,
   type Workflow,
 } from "./replay.ts";
@@ -65,6 +66,7 @@ type Options = {
   workflows: Record<string, Workflow>;
   kinds: Kinds;
   defaults: { limits: Limits };
+  triggers?: Readonly<Record<string, Trigger>>;
 };
 
 /**
@@ -128,6 +130,7 @@ type Note = { note: string; from: "step" | "engine" };
 export type CommissionRecord = {
   state: CommissionState;
   request: { hash: string; artifact: Artifact };
+  origin?: { trigger: string };
   entries: Entry[];
 };
 
@@ -137,7 +140,9 @@ type Log = [Commissioned & { at?: number }, ...Exclude<CommissionEvent, Commissi
  * Runs commissions through the owner's workflows, keeping every event in the SQLite log at `log`
  * and every artifact in the store beside it.
  */
-export function createEngine({ log, workflows, kinds, defaults }: Options) {
+export function createEngine({ log, workflows, kinds, defaults, triggers = {} }: Options) {
+  refuseTriggers(triggers, workflows);
+
   // Another engine or CLI call may be writing to the same log; waiting for it is bounded, and past
   // the bound the call fails as "database is locked". Writes are single events, so 5 s is ample.
   const database = new DatabaseSync(log, { timeout: logWait });
@@ -156,6 +161,77 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
   const attempts = join(dirname(log), "attempts");
 
   mkdirSync(attempts, { recursive: true });
+
+  // The commissions the trigger named started, oldest first, by their first event.
+  const startedBy = database.prepare(
+    "SELECT commission FROM events WHERE position = 0 AND json_extract(event, '$.origin.trigger') = ? ORDER BY rowid",
+  );
+
+  // Refuses a commission of `workflow` that the trigger named may not start now: past its rate,
+  // with as many unfinished commissions as it may have, or past its money limit.
+  function refuseTriggered(name: string, workflow: string): void {
+    if (!Object.hasOwn(triggers, name)) {
+      throw new Error(`There is no trigger named ${name}.`);
+    }
+
+    const { workflows: allowed, rate, unfinished, usd } = triggers[name];
+
+    if (!allowed.includes(workflow)) {
+      throw new Error(`Trigger ${name} may not start workflow ${workflow}.`);
+    }
+
+    const since = Date.now() - rate.per * 1000;
+
+    // SAFETY: the query selects the commission column, which holds text.
+    const started = startedBy.all(name).map(({ commission }) => ({
+      commission: commission as string,
+      events: read(commission as string),
+    }));
+
+    const recent = started.filter(({ events }) => (events[0].at ?? 0) > since);
+
+    const plural = (count: number) => `${count} commission${count === 1 ? "" : "s"}`;
+
+    if (recent.length >= rate.count) {
+      throw new Error(
+        `Trigger ${name} started ${plural(recent.length)} in the last ${rate.per} s, its rate.`,
+      );
+    }
+
+    const open = started.filter(
+      ({ events }) => replay(definitionOf(events), events).status !== "finished",
+    ).length;
+
+    if (open >= unfinished) {
+      throw new Error(
+        `Trigger ${name} has ${open} unfinished commission${open === 1 ? "" : "s"}, its limit.`,
+      );
+    }
+
+    if (usd === undefined) {
+      return;
+    }
+
+    let spent = 0;
+
+    for (const { commission, events } of recent) {
+      const cost = spentIn(events, definitionOf(events).workflow);
+
+      if ("unknown" in cost) {
+        throw new Error(
+          `Trigger ${name}'s commission ${commission} reported no cost, so its spend counts as over its money limit of $${usd}.`,
+        );
+      }
+
+      spent += cost.spent;
+    }
+
+    if (spent >= usd) {
+      throw new Error(
+        `Trigger ${name}'s commissions in the last ${rate.per} s cost $${spent}, its money limit of $${usd}.`,
+      );
+    }
+  }
 
   function spoolOf(commission: string, attempt: number): Spool {
     const directory = join(
@@ -846,9 +922,19 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
     /** Starts a commission under the workflow named `workflow`, about the owner's request. */
     commission(
       workflow: string,
-      commission: string,
+      commission: string | undefined,
       request: { title: string; body: string },
-    ): void {
+      { trigger }: { trigger?: string } = {},
+    ): string {
+      if (trigger !== undefined) {
+        refuseTriggered(trigger, workflow);
+      }
+
+      if (commission === undefined && trigger === undefined) {
+        throw new Error("A commission needs a name unless a trigger starts it.");
+      }
+
+      const name = commission ?? `${trigger}-${startedBy.all(trigger!).length + 1}`;
       const definition = checked(workflow);
 
       refuseRequest(definition.kinds.document, request);
@@ -868,8 +954,14 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
         }),
       };
 
+      if (trigger !== undefined) {
+        event.origin = { trigger };
+      }
+
       replay(parsed, [event]);
-      insert.run(commission, 0, JSON.stringify({ ...event, at: Date.now() }));
+      insert.run(name, 0, JSON.stringify({ ...event, at: Date.now() }));
+
+      return name;
     },
 
     /**
@@ -1127,13 +1219,20 @@ export function createEngine({ log, workflows, kinds, defaults }: Options) {
         }
       }
 
-      const { request } = events[0];
+      const { request, origin } = events[0];
 
-      return {
+      const recorded: CommissionRecord = {
         state: replay(definition, events),
         request: { hash: request, artifact: store.get(request) },
         entries,
       };
+
+      // A trigger's commission says so; the owner's says nothing.
+      if (origin !== undefined) {
+        recorded.origin = origin;
+      }
+
+      return recorded;
     },
 
     /**
@@ -1786,6 +1885,31 @@ function runningKey(log: string, commission: string, attempt: number): string {
   return JSON.stringify([resolvePath(log), commission, attempt]);
 }
 
+// Refuses a trigger that names a workflow the factory lacks, or caps nothing.
+function refuseTriggers(
+  triggers: Readonly<Record<string, Trigger>>,
+  workflows: Record<string, Workflow>,
+): void {
+  for (const [name, { workflows: allowed, rate, unfinished, usd }] of Object.entries(triggers)) {
+    const valid =
+      allowed.length > 0 &&
+      allowed.every((workflow) => Object.hasOwn(workflows, workflow)) &&
+      Number.isSafeInteger(rate.count) &&
+      rate.count >= 1 &&
+      Number.isFinite(rate.per) &&
+      rate.per > 0 &&
+      Number.isSafeInteger(unfinished) &&
+      unfinished >= 1 &&
+      (usd === undefined || (Number.isFinite(usd) && usd > 0));
+
+    if (!valid) {
+      throw new Error(
+        `Trigger ${name} is invalid: it must name workflows of the factory, a rate of at least 1 commission per positive number of seconds, at least 1 unfinished commission, and any money limit above zero.`,
+      );
+    }
+  }
+}
+
 // Throws why the owner's request breaks the rules of the factory's document kind, which the
 // definition has made a subject with a title and no other required field.
 function refuseRequest(document: Kind, { title, body }: { title: string; body: string }): void {
@@ -2047,9 +2171,18 @@ function spentSince(
   events: Log,
   workflow: Definition["workflow"],
 ): { spent: number } | { unknown: number } {
+  return spentIn(sinceDecision(events), workflow);
+}
+
+// What the attempts among `events` spent, as their steps reported it; unknown, naming the attempt,
+// once one whose program ran reported no cost.
+function spentIn(
+  events: readonly Log[number][],
+  workflow: Definition["workflow"],
+): { spent: number } | { unknown: number } {
   let spent = 0;
 
-  for (const event of sinceDecision(events)) {
+  for (const event of events) {
     // A children step runs no program: it costs nothing itself.
     const ran =
       (event.type === "attempt-completed" && workflow.steps[event.step]?.kind !== "children") ||
