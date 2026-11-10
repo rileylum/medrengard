@@ -123,7 +123,7 @@ Money limits are optional, in US dollars, and never a factory default. They coun
 - A workflow's `usd` bounds all the commission's attempts since your latest decision. Your retry starts the count again, as it renews a budget.
 - Reaching either escalates with the cause `money`. The engine stops an attempt as soon as a report puts it over.
 - Unknown cost is not zero. An attempt with a step limit that ends without reporting a cost escalates, even with a valid claim. A commission with a workflow limit escalates before its next attempt if one since your latest decision ran and reported no cost.
-- An attended step reports no cost, so it cannot state `usd`.
+- An attended step reports no cost, so it cannot state `usd`. Its attempts are not counted toward a workflow's `usd`: you are there for them.
 - An agent whose harness states `costs: false` reports no cost. Its step cannot state `usd`, and neither can a workflow with such a step.
 - Children and commission steps cost nothing themselves. A child's spend counts against its own workflow's `usd`.
 

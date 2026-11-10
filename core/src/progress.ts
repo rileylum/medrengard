@@ -291,6 +291,13 @@ export function spentIn(
 ): { spent: number } | { unknown: number } {
   let spent = 0;
 
+  // The step of each attempt, for an escalation that does not name its own.
+  const steps = new Map(
+    events.flatMap((event) =>
+      event.type === "attempt-started" ? [[event.attempt, event.step] as const] : [],
+    ),
+  );
+
   for (const event of events) {
     // A children or commission step runs no program: it costs nothing itself.
     const kind = event.type === "attempt-completed" ? workflow.steps[event.step]?.kind : undefined;
@@ -300,6 +307,17 @@ export function spentIn(
       (event.type === "escalated" && event.attempt !== undefined && event.transcript !== undefined);
 
     if (!ran) {
+      continue;
+    }
+
+    // An attended attempt reports no cost, and the owner was there for it: it is not counted,
+    // where an unattended one that reported none counts as over.
+    const at =
+      event.type === "attempt-completed" ? event.step : (event.step ?? steps.get(event.attempt!));
+
+    const step = at === undefined ? undefined : workflow.steps[at];
+
+    if (step?.kind === "agent" && step.attended === true) {
       continue;
     }
 
