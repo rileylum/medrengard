@@ -1062,7 +1062,7 @@ test("an engine in a step whose access grants cgroups holds its own steps to the
            },
          });
 
-         engine.commission("build", "inner", { title: "Inner", body: "Inner." });
+         engine.commission("build", { title: "Inner", body: "Inner." }, { name: "inner" });
 
          const state = await engine.advance("inner");
 
