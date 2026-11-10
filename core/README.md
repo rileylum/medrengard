@@ -291,6 +291,15 @@ workspace is built from it. Its bytes count toward the input limit. A step that 
 session, `implement: { inputs: { earlier: { session: "implement" } } }`, picks up where its last
 attempt left off, a failed one included, once the owner retries it.
 
+A query may read related commissions: `{ across: "siblings", kind: "document", take: "latest" }`
+gives each sibling's latest document. `across` is `origin`, the commission that started this one,
+as its parent or through a commission step; `started`, those it started, in the order started; or
+`siblings`, those the same attempt started, but this one. `from` names steps of their workflows and
+`take` applies to each. They are read as they are when the attempt starts, finished or not, so a
+sibling's plan is there before the sibling ends; the attempt records each by hash, and
+`input.json` names the commission each came from. They reach one hop, take no `about`, and a
+workspace is built from none of them.
+
 A decision on an escalation is decided at the escalated step, so `from` keeps it too. Without a
 `kind`, `{ from: ["design"], take: "latest" }` gives the owner's retry, not the plan, once design
 has escalated and been retried.

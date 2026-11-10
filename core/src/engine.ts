@@ -760,6 +760,48 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     }
   }
 
+  // The commissions a parent or commission step started, in the order started: those of the
+  // commission named, or of the attempt `attempt` of its step `step`.
+  const startedFrom = database.prepare(
+    `SELECT commission FROM events WHERE position = 0 AND (
+       (json_extract(event, '$.parent.commission') = :commission
+        AND (:step IS NULL OR (json_extract(event, '$.parent.step') = :step
+                               AND json_extract(event, '$.parent.attempt') = :attempt)))
+       OR (json_extract(event, '$.origin.from.commission') = :commission
+        AND (:step IS NULL OR (json_extract(event, '$.origin.from.step') = :step
+                               AND json_extract(event, '$.origin.from.attempt') = :attempt))))
+     ORDER BY rowid`,
+  );
+
+  // The commissions related to `commission` as an across query names them: the one that started
+  // it, those it started, or those the same attempt started but it.
+  function relatedTo(
+    commission: string,
+    events: Log,
+    relation: "origin" | "started" | "siblings",
+  ): Child[] {
+    const [{ parent, origin }] = events;
+    const starter = parent ?? origin?.from;
+
+    const names = (step: string | null, attempt: number | null, of: string) =>
+      startedFrom.all({ commission: of, step, attempt }).map((row) => String(row.commission));
+
+    const found =
+      relation === "origin"
+        ? starter === undefined
+          ? []
+          : [starter.commission]
+        : relation === "started"
+          ? names(null, null, commission)
+          : starter === undefined
+            ? []
+            : names(starter.step, starter.attempt, starter.commission).filter(
+                (name) => name !== commission,
+              );
+
+    return found.map((name) => ({ commission: name, events: read(name) }));
+  }
+
   // The children of the latest attempt of the children step `step`, which a children query reads.
   function childrenOf(commission: string, events: Log, step: string): Child[] {
     const started = events.findLast(
@@ -1731,8 +1773,13 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       }
 
       const named = (query: Query) =>
-        resolve(query, state, events, definition.kinds, (children) =>
-          childrenOf(commission, events, children),
+        resolve(
+          query,
+          state,
+          events,
+          definition.kinds,
+          (children) => childrenOf(commission, events, children),
+          (relation) => relatedTo(commission, events, relation),
         );
 
       if (step.kind === "commission") {
@@ -2250,6 +2297,7 @@ function resolve(
   events: Log,
   kinds: Kinds,
   childrenOf: (step: string) => readonly Child[],
+  related: (relation: "origin" | "started" | "siblings") => readonly Child[],
 ): Named[] {
   switch (query) {
     case "subject":
@@ -2275,6 +2323,22 @@ function resolve(
             .map(({ hash }) => ({ hash, commission }));
 
           return query.take === "all" ? named : named.slice(-1);
+        });
+      }
+
+      // Each related commission's artifacts as it has them now, finished or not.
+      if ("across" in query) {
+        return related(query.across).flatMap(({ commission, events: other }) => {
+          const named = recorded(other, kinds)
+            .filter(
+              (artifact) =>
+                (query.from === undefined ||
+                  (artifact.step !== undefined && query.from.includes(artifact.step))) &&
+                (query.kind === undefined || artifact.kind === query.kind),
+            )
+            .map(({ hash }) => ({ hash, commission }));
+
+          return query.take === "latest" ? named.slice(-1) : named;
         });
       }
 
