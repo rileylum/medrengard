@@ -15,6 +15,7 @@ Code adapter run, and the engine and CLI let an observer follow the log.
 - [Children](#children)
 - [Triggers](#triggers)
   - [Commissions that start commissions](#commissions-that-start-commissions)
+  - [Long-lived agents](#long-lived-agents)
 - [Access](#access)
   - [Reaching only some hosts](#reaching-only-some-hosts)
   - [Brokers](#brokers)
@@ -464,6 +465,53 @@ const triggers = { workers: { workflows: ["build"], allowance: 20, unfinished: 5
 - `show` says `Started by trigger workers, from commission first's step spawn, attempt 2.`, and
   `record`'s `origin` adds `from: { commission, step, attempt }`.
 - A trigger's caps count every commission it started, by a step or a program outside the engine.
+
+### Long-lived agents
+
+An agent that keeps going across work, such as a foreman or a maintainer, is a chain of finite
+commissions, each a link that ends by starting the next. Each link runs on the definitions current
+when it starts, so an edited workflow reaches the chain at its next link, and none grows without
+end.
+
+```ts
+const mayor = defineWorkflow({
+  start: "work",
+  steps: {
+    // Works from its memory, the subject: the request in the first link, the approved memory after.
+    work: {
+      kind: "agent",
+      workspace: "subject",
+      claims: ["document"],
+      on: { done: "remember" } /* … */,
+    },
+    // Memory steers every later link, so the owner approves each change to it.
+    remember: { kind: "approval", on: { approve: "next" } },
+    next: {
+      kind: "commission",
+      trigger: "mayor",
+      workflow: "mayor",
+      each: "request", // the same standing request
+      given: { memory: "subject" }, // the approved memory, the next link's first subject
+      on: { done: "end" },
+      budget: 1,
+    },
+  },
+});
+
+const triggers = { mayor: { workflows: ["mayor"], allowance: 20, unfinished: 2, usd: 50 } };
+```
+
+```sh
+medrengard commission mayor --trigger mayor --title "Mayor" --body-file standing-orders.md
+```
+
+- **Identity** is the trigger: its links are `mayor-1`, `mayor-2` and on, each naming the one before
+  as its origin.
+- **The bound** is the trigger's allowance, pooled across the chain, and its money limit. Once it is
+  spent the link escalates; `medrengard renew mayor` and a retry carry it on.
+- **Memory** is a document the owner approves before it reaches the next link. A link reads earlier
+  links' artifacts with `{ across: "origin", … }`, one link back; older history lives in the memory.
+- **Talking to it** is an attended step in its workflow.
 
 ## Access
 
