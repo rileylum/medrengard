@@ -145,7 +145,7 @@ const steps = {
 The steps reach GitHub only through the broker `github`, which holds the token outside the
 sandbox. Their access names no other host. The broker forwards, for `repository` alone:
 
-- Git fetches and pushes;
+- Git fetches, and pushes to branches under `medrengard/`;
 - `POST /pulls`: open a pull request;
 - `GET /pulls?head=<owner>:<branch>&state=open`: find the one open for a branch;
 - `GET /pulls/<number>`, `/pulls/<number>/reviews` and `/pulls/<number>/comments`: read one;
@@ -155,8 +155,9 @@ sandbox. Their access names no other host. The broker forwards, for `repository`
 Rules:
 
 - Anything else gets a 403 that names the request: `Refused by Medrengard's GitHub broker: …`
-- The broker does not limit which branch a push updates. Protect `base` on GitHub if only a pull
-  request may change it.
+- A push to any other ref, `base` included, gets a 403: `Refused by Medrengard's GitHub broker:
+  a push to refs/heads/main, which is not a branch under medrengard/.` Only a merge you approved
+  changes `base`.
 - A `base` to compare with may hold letters, digits, `_` and `-`, in parts joined by `.` or `/`.
 - Without a token file it can read, the broker does not start, and the commission escalates with
   the cause `broker`.

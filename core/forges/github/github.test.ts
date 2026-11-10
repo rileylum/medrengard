@@ -570,7 +570,7 @@ async function brokerFor(t: TestContext, url: string) {
 
   t.after(() => running.kill());
 
-  const send = (method: string, path: string) =>
+  const send = (method: string, path: string, body?: Buffer) =>
     new Promise<{ status: number; body: string }>((resolve, reject) => {
       const sent = request(
         {
@@ -584,7 +584,7 @@ async function brokerFor(t: TestContext, url: string) {
       );
 
       sent.on("error", reject);
-      sent.end();
+      sent.end(body);
     });
 
   for (let tries = 0; tries < 250; tries += 1) {
@@ -630,3 +630,56 @@ for (const [method, path] of [
     assert.deepEqual(seen.requests, []);
   });
 }
+
+// A push as Git's smart HTTP sends it: each command a line, old and new commit and the ref, the
+// first with its capabilities, then a flush and the pack.
+const pushing = (...refs: string[]) => {
+  const line = (text: string) => `${(text.length + 4).toString(16).padStart(4, "0")}${text}`;
+  const old = "0".repeat(40);
+  const next = "1".repeat(40);
+
+  return Buffer.from(
+    `${refs.map((ref, index) => line(`${old} ${next} ${ref}${index === 0 ? "\0report-status" : ""}\n`)).join("")}0000PACK`,
+  );
+};
+
+// Principle 12: the broker holds a token that can write the repository, so it forwards a push
+// only to the commission's own branches, never to the base a pull request lands on.
+test("the GitHub broker forwards a push only to branches under medrengard/", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const { seen, url } = await fakeGitHub(t, directory);
+  const send = await brokerFor(t, url);
+  const path = "/git/owner/app.git/git-receive-pack";
+
+  for (const refs of [
+    ["refs/heads/main"],
+    ["refs/heads/medrengard/first", "refs/heads/main"],
+    ["refs/tags/v1"],
+    ["refs/heads/medrengard"],
+  ]) {
+    assert.deepEqual(await send("POST", path, pushing(...refs)), {
+      status: 403,
+      body: JSON.stringify({
+        message: `Refused by Medrengard's GitHub broker: a push to ${refs.at(-1)}, which is not a branch under medrengard/.`,
+      }),
+    });
+  }
+
+  assert.deepEqual(seen.requests, []);
+
+  // Its own branches go through, as does the empty request Git sends first to try its credential.
+  await send("POST", path, pushing("refs/heads/medrengard/first", "refs/heads/medrengard/a.b"));
+  await send("POST", path, Buffer.from("0000"));
+  assert.deepEqual(
+    seen.requests.map(({ method, path: forwarded }) => `${method} ${forwarded}`),
+    ["POST /owner/app.git/git-receive-pack", "POST /owner/app.git/git-receive-pack"],
+  );
+
+  // A body that never ends its commands is not held for ever.
+  assert.partialDeepStrictEqual(await send("POST", path, Buffer.alloc(128 * 1024, "f")), {
+    status: 403,
+  });
+});

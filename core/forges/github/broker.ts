@@ -1,8 +1,9 @@
 /**
- * The GitHub forge's broker: forwards a step's Git fetches and pushes, and its calls to open, read,
- * follow, compare and merge a pull request, for one repository, with Medrengard's token, which only it reads, in
- * place of the placeholder. Anything else is refused, naming it, so a step can do no more than
- * land its change, whatever the token allows.
+ * The GitHub forge's broker: forwards a step's Git fetches, its pushes to branches under
+ * medrengard/, and its calls to open, read, follow, compare and merge a pull request, for one
+ * repository, with Medrengard's token, which only it reads, in place of the placeholder. Anything
+ * else is refused, naming it, so a step can do no more than land its change, whatever the token
+ * allows.
  *
  * Usage: broker.ts --repository <owner/name> [--token <file>] [--git <url>] [--api <url>]
  *
@@ -74,6 +75,49 @@ const apiRoutes = [
   ["PUT", /^\/pulls\/\d+\/merge$/],
 ] as const;
 
+// Judges a push by the refs it updates, which start its body as lines, each its length in four
+// hex digits and then `<old> <new> <ref>`, the first with capabilities after a NUL, ended by a
+// flush, 0000. Only branches under medrengard/, a commission's own, may be pushed: never the base
+// a pull request lands on, which only a merge the owner approved changes.
+function pushed(start: Buffer): { refused: string } | "forward" | "more" {
+  for (let at = 0; ;) {
+    if (start.length < at + 4) {
+      return "more";
+    }
+
+    const length = Number.parseInt(start.subarray(at, at + 4).toString("latin1"), 16);
+
+    // The flush: every command was a branch of its own.
+    if (length === 0) {
+      return "forward";
+    }
+
+    if (!(length >= 4)) {
+      return { refused: refusedPush("its body, which is no list of refs") };
+    }
+
+    if (start.length < at + length) {
+      return "more";
+    }
+
+    const [line = ""] = start
+      .subarray(at + 4, at + length)
+      .toString("utf8")
+      .split("\0");
+
+    const [, , ref = ""] = line.trimEnd().split(" ");
+
+    // A shallow line states no ref to update.
+    if (!line.startsWith("shallow ") && !/^refs\/heads\/medrengard\/[\w./-]+$/.test(ref)) {
+      return { refused: refusedPush(`${ref}, which is not a branch under medrengard/`) };
+    }
+
+    at += length;
+  }
+}
+
+const refusedPush = (what: string) => `Refused by Medrengard's GitHub broker: a push to ${what}.`;
+
 const allowed = (
   routes: readonly (readonly [string, RegExp])[],
   method: string,
@@ -88,13 +132,15 @@ serve(api, async (method, path) => {
   const apiPrefix = `/api/repos/${repository}`;
 
   if (path.startsWith(gitPrefix) && allowed(gitRoutes, method, path.slice(gitPrefix.length))) {
-    return {
+    const forwarded = {
       path: `/${repository}.git${path.slice(gitPrefix.length)}`,
       upstream: git,
       headers: {
         authorization: `Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`,
       },
     };
+
+    return path === `${gitPrefix}/git-receive-pack` ? { ...forwarded, screen: pushed } : forwarded;
   }
 
   if (path.startsWith(apiPrefix) && allowed(apiRoutes, method, path.slice(apiPrefix.length))) {
