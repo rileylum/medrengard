@@ -70,8 +70,13 @@ ${handOver}`;
 //
 // systemd forgets a scope once it ends, and says nothing of memory for one it does not manage
 // alone. So with $2, a process outside the program's group and session waits for it to end, then
-// leaves the file $2 if the group itself ran out of memory, whatever its own groups did. It holds
-// the program's stderr, so the engine sees the program closed only once the file is there.
+// writes to the file $2 whether the group itself ran out of memory, whatever its own groups did:
+// over, or within. The file appears whole, by a rename, and the engine waits for it.
+//
+// That process is in the group it reports on, so a group out of memory could lose it in place of
+// the program. The program and all it starts are therefore made the likelier to be stopped, by
+// their score, which they inherit; a program that lowers its own again risks only that the engine
+// is told nothing, which fails the attempt as the engine's own.
 const divide = `group=\${1:-${hierarchy}$(cut -d: -f3- /proc/self/cgroup)}
 marker=$2
 sentinel=$3
@@ -80,7 +85,9 @@ mkdir "$group/main" && echo $$ > "$group/main/cgroup.procs" &&
   echo "+memory +pids" > "$group/cgroup.subtree_control" || exit 125
 if [ -n "$marker" ]; then
   setsid sh -c 'while kill -0 "$1" 2> /dev/null; do sleep 0.05; done
-    grep -q "^oom [1-9]" "$2/memory.events.local" && : > "$3"' sh $$ "$group" "$marker" < /dev/null > /dev/null &
+    if grep -q "^oom [1-9]" "$2/memory.events.local"; then echo over; else echo within; fi > "$3.part"
+    mv "$3.part" "$3"' sh $$ "$group" "$marker" < /dev/null > /dev/null 2>&1 &
+  echo 500 > /proc/self/oom_score_adj
 fi
 for argument; do
   shift
@@ -89,7 +96,10 @@ for argument; do
 done
 ${handOver}`;
 
-// The scopes whose memory systemd does not answer for, and the file each leaves if it ran out.
+// How long the engine waits to be told whether a scope ran out of memory, once its program ended.
+const answerWait = 5000;
+
+// The scopes whose memory systemd does not answer for, and the file each is answered in.
 const markers = new Map<string, string>();
 
 /**
@@ -297,6 +307,9 @@ export function confine(
         ...ranging,
         "bwrap",
         ...unset.flatMap((name) => ["--unsetenv", name]),
+        ...(passed.XDG_RUNTIME_DIR === undefined
+          ? []
+          : ["--setenv", "XDG_RUNTIME_DIR", passed.XDG_RUNTIME_DIR]),
         // Each namespace by name: --unshare-all only tries for the user and cgroup ones, and carries
         // on without them where the kernel refuses. The PID namespace means nothing the step starts
         // outlives bwrap, and bwrap dies with the engine.
@@ -345,8 +358,9 @@ export function confine(
       access.cgroups === true ? { marker, sentinel } : undefined,
     ),
     env: {
-      XDG_RUNTIME_DIR: runtime,
       ...passed,
+      // For systemd-run, which finds the owner's systemd by it; the step's own is set inside.
+      XDG_RUNTIME_DIR: runtime,
       MEDRENGARD_IN: seen.input,
       MEDRENGARD_OUT: seen.output,
     },
@@ -368,7 +382,18 @@ export function overMemory(unit: string): boolean {
   if (marker !== undefined) {
     markers.delete(unit);
 
-    return existsSync(marker);
+    // Written a moment after the program ends, by the process that waited for it.
+    const until = Date.now() + answerWait;
+
+    while (!existsSync(marker)) {
+      if (Date.now() > until) {
+        throw new Error(`Nothing said within ${answerWait} ms whether ${unit} ran out of memory.`);
+      }
+
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+
+    return readFileSync(marker, "utf8") === "over\n";
   }
 
   const scope = `${unit}.scope`;

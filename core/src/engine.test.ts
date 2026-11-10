@@ -1179,6 +1179,18 @@ test("an access whose users are anything but a range, or a range without sandbox
   }
 });
 
+test("a step that sets XDG_RUNTIME_DIR for itself still starts, and has its own", async (t) => {
+  // systemd-run finds the owner's systemd by that variable, whatever the step is given as its own.
+  const { engine } = await engineConfined(
+    t,
+    () => ({ ...access, values: { XDG_RUNTIME_DIR: "/tmp/run" } }),
+    `echo "$XDG_RUNTIME_DIR"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.equal(engine.transcript("first", 1).toString(), "/tmp/run\n");
+});
+
 test("a step without network access has only a loopback interface", async (t) => {
   // /proc/net/dev lists one interface per line, each with a colon; its headers have none.
   const { engine } = await engineConfined(t, () => access, `grep -c : /proc/net/dev`);
