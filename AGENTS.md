@@ -15,6 +15,10 @@ Then read `HANDOFF.md`, if present: where the last session stopped and the owner
   `npm test` sets it to `/var/tmp/medrengard`, on disk: `/tmp` is often a small tmpfs held in memory.
 - **Checks:** `npm test` at the root: lint and format check, then each package's type check and
   tests. `npm test -w core` (or `-w bench`) runs one package's.
+- **Inside a Medrengard step** (your working directory is `/workspace`), run the checks from a copy:
+  `rm -rf /var/tmp/medrengard/src && cp -a . /var/tmp/medrengard/src && cd /var/tmp/medrengard/src
+  && npm test`. The engine under test keeps `/workspace` for its own steps and refuses kinds whose
+  programs are there. Edit and commit in `/workspace`.
 - **Layout:** npm workspaces. `core/` is Medrengard, the package `@medrengard/core`: zero runtime
   dependencies, and other packages import only what its `exports` names. `bench/` is the
   benchmark; its data live outside the repository (`bench/data.ts`), and a study runs from a

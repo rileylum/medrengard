@@ -102,6 +102,15 @@ export type Agent = {
  *
  * `sandboxes` lets the step's processes make namespaces of their own, as a sandbox inside the
  * step's does; without it the kernel refuses them, which keeps more of it out of reach.
+ *
+ * `cgroups` gives the step its own control group to divide, at /sys/fs/cgroup, so it can bound
+ * the memory and processes of programs it runs, as an engine inside it does. The step sees no
+ * group but its own, and what it makes there stays within its own limits.
+ *
+ * `users`, as "range", gives the step the owner's range of users, from /etc/subuid, with the step
+ * the first of them, user 0, which is the owner outside: what a container tool needs to unpack an
+ * image and run its programs as their own users. It needs `sandboxes`. Without it a step has one
+ * user, the owner.
  */
 export type Access = {
   paths: readonly (
@@ -122,6 +131,8 @@ export type Access = {
   values?: Readonly<Record<string, string>>;
   workspace: "read" | "write";
   sandboxes: boolean;
+  cgroups?: boolean;
+  users?: "range";
 };
 
 /**

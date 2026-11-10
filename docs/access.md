@@ -34,6 +34,8 @@ export const access: Access = {
 | `values`      | no       | Variables set to text, over the engine's own. Recorded with the definition, so never a secret.      |
 | `workspace`   | yes      | `"write"` or `"read"`: the mode of the step's workspace. A reviewer can have `"read"`.              |
 | `sandboxes`   | yes      | Whether the step's processes may make namespaces of their own, as a sandbox inside the step's does. |
+| `cgroups`     | no       | Whether the step has its own control group to divide. See [Control groups](#control-groups).        |
+| `users`       | no       | `"range"`: the owner's range of users, as a container tool needs. See [Users](#users).              |
 
 A commission is refused before it starts if a step's access breaks a rule below, or holds a field
 this table lacks.
@@ -82,6 +84,47 @@ And never has:
 Without `sandboxes`, the kernel refuses the step's processes any user namespace. An agent that runs
 tools that sandbox themselves, such as bubblewrap, Codex or Chromium, needs `sandboxes: true`. A
 namespace the step makes still sees nothing the access hides and writes nothing it made read-only.
+
+## Control groups
+
+With `cgroups: true`, a step finds its own control group at `/sys/fs/cgroup`, and no group but its
+own. It can make groups under it and bound the memory and processes of programs it runs.
+
+- An engine inside the step does this for its own steps, with the same limits, since it cannot
+  reach systemd. So Medrengard's own tests run in a step with `sandboxes: true, cgroups: true`,
+  from a copy of the repository outside `/workspace`, which the engine under test keeps for its own
+  steps.
+- Whatever the step makes stays within its own memory and process limits.
+- The step keeps the engine's control-group namespace, so `/proc/self/cgroup` names where its group
+  sits on the machine.
+- Going over its memory limit stops the process that went over, not every process of the step. The
+  commission escalates naming the limit if the step then fails.
+- A program the step bounded itself and lost is the step's own business: if the step fails for it,
+  the escalation names the step's exit, not a limit.
+
+## Users
+
+A step has one user, the owner. With `users: "range"` it has the owner's range from `/etc/subuid`,
+mapped by the machine's `newuidmap` and `newgidmap`, and is the first of them: user 0 inside, the
+owner outside. A container tool needs this to unpack an image, whose files belong to many users,
+and to run a program as its own user, as PostgreSQL insists on.
+
+- It needs `sandboxes: true`.
+- A machine with no range for the owner fails the step as it starts.
+
+Rootless Podman then runs containers inside the step's sandbox, where its access and limits hold
+them, given also:
+
+- `cgroups: true`, for the runtime to put each container in a group;
+- a network of the step's own, `network: false` or a list of hosts. The tool builds its containers'
+  network there, and their published ports appear on the step's loopback;
+- `/sys` to read, which the runtime wants before it mounts one for a container;
+- scratch paths at `/run`, `/var/lib/containers`, `/var/tmp` and `/var/cache`, for the tool's state.
+
+Once the step's programs end, the engine hands back to the owner whatever they left to another of
+its users, such as a database's files, so it counts against the disk limit and is removed with the
+attempt. While they run, a directory only such a user may read hides its bytes, as a locked one
+does.
 
 ## Environment
 

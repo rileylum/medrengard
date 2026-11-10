@@ -177,6 +177,8 @@ async function fakeGitHub(t: TestContext, remote: string) {
       },
     });
 
+    // Git ends as soon as it has what it needs, sometimes before all of the body is written.
+    backend.stdin.on("error", () => {});
     backend.stdin.end(body);
 
     const output = await bodyOf(backend.stdout);
@@ -233,7 +235,8 @@ async function landing(t: TestContext, after: "land" | "watch" | "fix" = "land")
 
   const bare = join(directory, "remote", "owner", "app.git");
 
-  git(directory, "init", "--quiet", "--bare", bare);
+  // Named, since the owner's Git configuration, which names it elsewhere, is not always there.
+  git(directory, "init", "--quiet", "--bare", "--initial-branch", "main", bare);
   git(bare, "config", "http.receivepack", "true");
   await commitToMain(t, bare, "README", "app\n");
 

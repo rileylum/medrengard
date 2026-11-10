@@ -961,6 +961,236 @@ test("a namespace a step makes uncovers nothing its access hides and writes noth
   assert.equal(engine.transcript("first", 1).toString(), "made\nhidden\nhidden\nread-only\n");
 });
 
+test("a step whose access does not grant cgroups has no control group to divide", async (t) => {
+  const { engine } = await engineConfined(
+    t,
+    () => access,
+    `test -w /sys/fs/cgroup/cgroup.subtree_control && echo its own || echo none`,
+  );
+
+  await engine.advance("first");
+
+  assert.equal(engine.transcript("first", 1).toString(), "none\n");
+});
+
+test("a step whose access grants cgroups bounds a program of its own, and sees no group but its own", async (t) => {
+  // tail holds its whole input, which has no newline, in memory: more than the group it is put in may.
+  const { engine } = await engineConfined(
+    t,
+    () => ({ ...access, cgroups: true }),
+    `cd /sys/fs/cgroup
+     mkdir mine && echo $((32 * 1024 * 1024)) > mine/memory.max && echo 0 > mine/memory.swap.max
+     sh -c 'echo $$ > mine/cgroup.procs; head -c 200000000 /dev/zero | tail > /dev/null' 2> /dev/null
+     grep -c 'oom_kill [1-9]' mine/memory.events
+     echo */`,
+    { memory: 256 * 1024 * 1024 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.equal(engine.transcript("first", 1).toString(), "1\nmain/ mine/\n");
+});
+
+test("a step whose access grants cgroups is still held to its own memory limit, and escalates naming it", async (t) => {
+  const { engine } = await engineConfined(
+    t,
+    () => ({ ...access, cgroups: true }),
+    `head -c 200000000 /dev/zero | tail > /dev/null || exit 1`,
+    { memory: 32 * 1024 * 1024 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    cause: "limit",
+    reason: "Step build reached its memory limit of 33554432 bytes.",
+  });
+});
+
+test("a program a step bounds and loses is not the step going over its own memory limit", async (t) => {
+  const { engine } = await engineConfined(
+    t,
+    () => ({ ...access, cgroups: true }),
+    `cd /sys/fs/cgroup
+     mkdir mine && echo $((32 * 1024 * 1024)) > mine/memory.max && echo 0 > mine/memory.swap.max
+     sh -c 'echo $$ > mine/cgroup.procs; head -c 200000000 /dev/zero | tail > /dev/null' 2> /dev/null
+     exit 3`,
+    { memory: 256 * 1024 * 1024 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    cause: "exit",
+    reason: "Step build exited with code 3.",
+  });
+});
+
+test("an engine in a step whose access grants cgroups holds its own steps to their limits", async (t) => {
+  const core = join(import.meta.dirname, "..");
+
+  const { engine } = await engineConfined(
+    t,
+    (directory) => {
+      // The engine a step runs: one commission, whose step goes over its memory limit.
+      writeFileSync(
+        join(directory, "inner.ts"),
+        `import { createEngine } from ${JSON.stringify(join(core, "src", "engine.ts"))};
+         import { builtIn } from ${JSON.stringify(join(core, "defaults", "kinds.ts"))};
+         import { limits } from ${JSON.stringify(join(core, "defaults", "limits.ts"))};
+
+         const system = ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({ path, mode: "read" }));
+
+         const engine = createEngine({
+           log: ${JSON.stringify(join(directory, "inner", "log.sqlite"))},
+           kinds: builtIn,
+           defaults: { limits },
+           workflows: {
+             build: {
+               start: "build",
+               steps: {
+                 build: {
+                   kind: "command",
+                   claims: [],
+                   workspace: "empty",
+                   inputs: {},
+                   run: ["sh", "-c", "head -c 200000000 /dev/zero | tail > /dev/null"],
+                   on: { done: "end" },
+                   budget: 1,
+                   access: { paths: system, network: false, environment: [], workspace: "write", sandboxes: false },
+                   limits: { idle: 10, attempt: 10, memory: 32 * 1024 * 1024 },
+                 },
+               },
+             },
+           },
+         });
+
+         engine.commission("build", { title: "Inner", body: "Inner." }, { name: "inner" });
+
+         const state = await engine.advance("inner");
+
+         console.log(state.status === "escalated" ? state.reason : state.status);
+        `,
+      );
+      mkdirSync(join(directory, "inner"));
+
+      return {
+        ...access,
+        cgroups: true,
+        // Its own steps run in bubblewrap, which prepares a sandbox's root under /tmp.
+        sandboxes: true,
+        paths: [
+          ...access.paths,
+          { path: "/tmp", mode: "scratch" },
+          { path: process.execPath, mode: "read" },
+          { path: core, mode: "read" },
+        ],
+      };
+    },
+    `${process.execPath} --no-warnings "$1/inner.ts"`,
+    { attempt: 60, idle: 30, memory: 1024 * 1024 * 1024 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.equal(
+    engine.transcript("first", 1).toString(),
+    "Step build reached its memory limit of 33554432 bytes.\n",
+  );
+});
+
+// A range of users is mapped by the machine's setuid helpers from the owner's entry in /etc/subuid,
+// which cannot be had where there is none, or inside a step.
+const ranged =
+  spawnSync("unshare", ["--user", "--map-root-user", "--map-auto", "true"]).status === 0
+    ? {}
+    : { skip: "this machine maps no range of users for the owner here" };
+
+test(
+  "a step whose access gives it a range of users is the first of them, with the rest to use",
+  ranged,
+  async (t) => {
+    const { engine } = await engineConfined(
+      t,
+      () => ({ ...access, sandboxes: true, users: "range" }),
+      // Each line of the map: the first user inside, the first outside, and how many.
+      `id -u
+     awk '{ print $1, $3 }' /proc/self/uid_map`,
+    );
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+    assert.equal(engine.transcript("first", 1).toString(), "0\n0 1\n1 65536\n");
+  },
+);
+
+test("a step without a range of users has one user, its owner", async (t) => {
+  const { engine } = await engineConfined(
+    t,
+    () => access,
+    `id -u
+     awk '{ print $3 }' /proc/self/uid_map`,
+  );
+
+  await engine.advance("first");
+
+  assert.equal(engine.transcript("first", 1).toString(), `${process.getuid!()}\n1\n`);
+});
+
+test(
+  "what a step leaves to another of its users counts against its disk limit and goes with its attempt",
+  ranged,
+  async (t) => {
+    // A megabyte in a directory only user 1000 of the step's range may read: no file of the owner's.
+    const { engine, directory } = await engineConfined(
+      t,
+      () => ({ ...access, sandboxes: true, users: "range" }),
+      `mkdir held && head -c 1048576 /dev/zero > held/big && chown -R 1000:1000 held && chmod 700 held`,
+      { disk: 512 * 1024 },
+    );
+
+    assert.partialDeepStrictEqual(await engine.advance("first"), {
+      status: "escalated",
+      cause: "limit",
+      reason: "Step build used more than its disk limit of 524288 bytes.",
+    });
+    assert.deepEqual(await readdir(join(directory, "record", "attempts")), []);
+  },
+);
+
+test("an access whose users are anything but a range, or a range without sandboxes, is refused", async (t) => {
+  for (const [changed, problem] of [
+    [{ users: "all" }, "users, if given, must be range"],
+    [
+      { users: "range", sandboxes: false },
+      "a range of users needs sandboxes: the step is in a user namespace made for it",
+    ],
+  ] as const) {
+    await assert.rejects(
+      engineWith(t, () =>
+        defineWorkflow({
+          start: "build",
+          steps: {
+            build: {
+              ...stepRunning("true", "end"),
+              // SAFETY: a factory in JavaScript, or one that casts, can state what the type refuses.
+              access: { ...access, ...changed } as Access,
+            },
+          },
+        }),
+      ),
+      { message: `Workflow build is invalid: step build's ${problem}.` },
+    );
+  }
+});
+
+test("a step that sets XDG_RUNTIME_DIR for itself still starts, and has its own", async (t) => {
+  // systemd-run finds the owner's systemd by that variable, whatever the step is given as its own.
+  const { engine } = await engineConfined(
+    t,
+    () => ({ ...access, values: { XDG_RUNTIME_DIR: "/tmp/run" } }),
+    `echo "$XDG_RUNTIME_DIR"`,
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.equal(engine.transcript("first", 1).toString(), "/tmp/run\n");
+});
+
 test("a step without network access has only a loopback interface", async (t) => {
   // /proc/net/dev lists one interface per line, each with a colon; its headers have none.
   const { engine } = await engineConfined(t, () => access, `grep -c : /proc/net/dev`);

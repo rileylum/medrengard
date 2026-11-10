@@ -416,11 +416,21 @@ function networkListed(network: Exclude<Access["network"], boolean>): boolean {
 function accessProblem(access: Access, hosts = true): string | undefined {
   const keys = ["paths", "network", "environment", "workspace", "sandboxes"];
 
-  if (!hasExactly(access, Object.hasOwn(access, "values") ? [...keys, "values"] : keys)) {
-    return "access must be its paths, network, environment, workspace and sandboxes, and any values";
+  const optional = ["values", "cgroups", "users"].filter((key) => Object.hasOwn(access, key));
+
+  if (!hasExactly(access, [...keys, ...optional])) {
+    return "access must be its paths, network, environment, workspace and sandboxes, and any values, cgroups and users";
   }
 
-  const { paths, network, environment, values = {}, workspace, sandboxes } = access;
+  const {
+    paths,
+    network,
+    environment,
+    values = {},
+    workspace,
+    sandboxes,
+    cgroups = false,
+  } = access;
 
   if (
     !Array.isArray(paths) ||
@@ -495,6 +505,18 @@ function accessProblem(access: Access, hosts = true): string | undefined {
 
   if (sandboxes !== true && sandboxes !== false) {
     return "sandboxes must be true or false";
+  }
+
+  if (cgroups !== true && cgroups !== false) {
+    return "cgroups must be true or false";
+  }
+
+  if (Object.hasOwn(access, "users") && access.users !== "range") {
+    return "users, if given, must be range";
+  }
+
+  if (access.users === "range" && sandboxes !== true) {
+    return "a range of users needs sandboxes: the step is in a user namespace made for it";
   }
 
   return undefined;

@@ -18,7 +18,11 @@ type Received = { authorization?: string; host?: string; path?: string; body: st
  * model API on loopback that answers 200 with `answered` and records each request it receives.
  * Returns the broker's socket and what the API received.
  */
-async function brokered(t: TestContext, answered = "answered") {
+async function brokered(
+  t: TestContext,
+  answered = "answered",
+  { upstream, env = {} }: { upstream?: string; env?: NodeJS.ProcessEnv } = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -47,8 +51,14 @@ async function brokered(t: TestContext, answered = "answered") {
 
   const running = spawn(
     process.execPath,
-    [broker, "--token", join(directory, "token"), "--upstream", `http://127.0.0.1:${port}`],
-    { env: { ...process.env, MEDRENGARD_SOCKET: socket }, stdio: "ignore" },
+    [
+      broker,
+      "--token",
+      join(directory, "token"),
+      "--upstream",
+      upstream ?? `http://127.0.0.1:${port}`,
+    ],
+    { env: { ...process.env, ...env, MEDRENGARD_SOCKET: socket }, stdio: "ignore" },
   );
 
   t.after(() => running.kill());
@@ -151,4 +161,70 @@ test("the Claude Code broker cannot start without its token, and says why", asyn
 
   assert.equal(code, 2);
   assert.match(said, /^Cannot read the token file: ENOENT/);
+});
+
+/** A proxy on loopback that records what it is asked to reach and refuses each. */
+async function refusingProxy(t: TestContext) {
+  const asked: string[] = [];
+
+  const proxy = createServer((incoming, response) => {
+    asked.push(`${incoming.method} ${incoming.url}`);
+    response.writeHead(403).end();
+  });
+
+  proxy.on("connect", (incoming, client) => {
+    asked.push(`CONNECT ${incoming.url}`);
+    client.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+  });
+
+  await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  t.after(() => proxy.close());
+
+  // SAFETY: a TCP server listening on a port has an address of that kind.
+  const address = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+
+  // In both cases, as a step's are: a program may read either, and the lower wins where both are.
+  return {
+    asked,
+    env: {
+      HTTPS_PROXY: address,
+      https_proxy: address,
+      HTTP_PROXY: address,
+      http_proxy: address,
+      NO_PROXY: "",
+      no_proxy: "",
+    },
+  };
+}
+
+test("a broker whose environment names a proxy reaches its upstream through it", async (t) => {
+  // As in a step that may reach only some hosts, where an engine's broker has no other way out.
+  const { asked, env } = await refusingProxy(t);
+  const { socket } = await brokered(t, "answered", { upstream: "https://api.upstream.test", env });
+
+  const answer = await post(
+    socket,
+    "/v1/messages",
+    { authorization: "Bearer medrengard-broker" },
+    "{}",
+  );
+
+  assert.equal(answer.status, 502);
+  assert.deepEqual(asked, ["CONNECT api.upstream.test:443"]);
+});
+
+test("a broker whose environment names a proxy still reaches an upstream on loopback itself", async (t) => {
+  const { asked, env } = await refusingProxy(t);
+  const { socket, received } = await brokered(t, "answered", { env });
+
+  const answer = await post(
+    socket,
+    "/v1/messages",
+    { authorization: "Bearer medrengard-broker" },
+    "{}",
+  );
+
+  assert.deepEqual(answer, { status: 200, body: "answered" });
+  assert.equal(received.length, 1);
+  assert.deepEqual(asked, []);
 });

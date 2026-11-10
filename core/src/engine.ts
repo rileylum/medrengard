@@ -74,7 +74,7 @@ import {
   type Why,
 } from "./progress.ts";
 import { hasExactly, isRecord, isText } from "./json.ts";
-import { confine, fullArea, inScope, overMemory, stop, type Bounds } from "./sandbox.ts";
+import { confine, fullArea, inScope, overMemory, reclaim, stop, type Bounds } from "./sandbox.ts";
 import type { Kind, Kinds, Program } from "./kinds.ts";
 import { createStore, type Artifact } from "./store.ts";
 
@@ -2611,9 +2611,10 @@ async function bytesUnder(directory: string): Promise<number> {
 }
 
 // A step's programs may leave directories they made unreadable or unremovable, such as one at mode
-// 000. Once they end, the work area is the engine's: each directory under `path` is opened again for
-// its owner, without following links.
-function opened(path: string): void {
+// 000, or, with a range of users, files that belong to another of them. Once they end, the work
+// area is the engine's: all of it is the owner's again, and each directory under `path` is opened
+// again for its owner, without following links.
+function opened(path: string, top = path): void {
   const stats = (() => {
     try {
       return lstatSync(path);
@@ -2622,11 +2623,19 @@ function opened(path: string): void {
     }
   })();
 
-  if (!stats?.isDirectory()) return;
+  if (stats === undefined) return;
+
+  if (stats.uid !== process.getuid!()) {
+    reclaim(top);
+
+    return opened(top);
+  }
+
+  if (!stats.isDirectory()) return;
 
   if ((stats.mode & 0o700) !== 0o700) chmodSync(path, stats.mode | 0o700);
 
-  for (const entry of readdirSync(path)) opened(join(path, entry));
+  for (const entry of readdirSync(path)) opened(join(path, entry), top);
 }
 
 // Removes `directory` and all under it, opening again what a step's programs locked.

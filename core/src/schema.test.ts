@@ -171,7 +171,17 @@ type Pinned = {
   harness: Expect<Same<keyof Agent["harness"], "run" | "costs">>;
   costs: Expect<Same<Agent["harness"]["costs"], false | undefined>>;
   access: Expect<
-    Same<keyof Access, "paths" | "network" | "environment" | "values" | "workspace" | "sandboxes">
+    Same<
+      keyof Access,
+      | "paths"
+      | "network"
+      | "environment"
+      | "values"
+      | "workspace"
+      | "sandboxes"
+      | "cgroups"
+      | "users"
+    >
   >;
   network: Expect<
     Same<
