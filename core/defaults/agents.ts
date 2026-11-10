@@ -68,6 +68,11 @@ export function agent(path: string, harnesses: Readonly<Record<string, Agent["ha
       throw invalid(`line ${number}'s value must be plain text, without quotes or brackets`);
     }
 
+    // A value there would be read as no skill at all.
+    if (value !== undefined && key === "skills") {
+      throw invalid(`line ${number}: skills is a list, each on a line of its own as \`  - path\``);
+    }
+
     stated.set(key, value ?? "");
     listing = value === undefined ? number : undefined;
   }

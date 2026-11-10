@@ -68,7 +68,8 @@ const planner = agent("/path/to/agents/planner.md", harnesses);
 `agent` reads the file when the factory loads and returns an `Agent`.
 
 - `harness` and `model` are required. `harness` is one of the names in `harnesses`.
-- `skills` is optional: one `- path` line per skill, indented two spaces, relative to the file.
+- `skills` is optional: one `- path` line per skill, indented two spaces, relative to the file. A value on the
+  `skills:` line itself is refused.
 - Each value is plain text: `1.10` is text, not a number.
 - The prompt is everything after the closing `---`.
 - Anything else throws, naming the file and the line: a comment, a blank line, a quote or bracket

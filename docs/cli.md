@@ -287,13 +287,13 @@ Hello. You asked: Say hello.
   artifact it claimed: its kind, the start of its hash, its fields, and `(verified)` when a
   verifier accepted it or `(no verifier)` when its kind has none.
 - An attempt that reported usage adds it: `1 build        done (0.1 s) ($0.25, 1.2k tokens)`.
-- An attempt that wrote to stderr ends `(errors: medrengard errors <commission> 1)`: read them with
+- An attempt that wrote to stderr ends `(errors: medrengard errors first 1)`, naming the commission and the attempt: read them with
   `errors`.
 - An attempt in flight prints `1 write        started`.
 - An attempt that escalated prints its reason, and `On to <step>.` when its step routed it:
 
   ```text
-  1 build        escalated (0.1 s): Step build exited with code 3.  (errors: medrengard errors <commission> 1)
+  1 build        escalated (0.1 s): Step build exited with code 3.  (errors: medrengard errors first 1)
   ```
 
 - An escalation before any attempt prints `  <step>  escalated: <reason>`; a withdrawal,

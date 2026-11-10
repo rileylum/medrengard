@@ -606,6 +606,9 @@ test("the CLI exits 0 when a commission escalates, since the call succeeded", as
     cause: "exit",
     reason: "Step build exited with code 3.",
   });
+
+  // The hint names the commission, so it can be run as it is printed.
+  assert.match(run(["show", "first"], factory).stdout, /\(errors: medrengard errors first 1\)/);
 });
 
 test("the CLI exits 1 with the engine's message as JSON when the engine refuses a call", async (t) => {

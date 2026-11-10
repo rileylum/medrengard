@@ -81,6 +81,11 @@ for (const [what, text, problem] of [
   ],
   ["nests a value", "---\nharness: fake\n  model: m\n", "line 3 must be key: value"],
   ["lists under a key other than skills", "---\nmodel:\n  - m\n", "line 2: only skills is a list"],
+  [
+    "states its skills on the key's own line",
+    "---\nskills: tdd\n",
+    "line 2: skills is a list, each on a line of its own as `  - path`",
+  ],
   ["states a key twice", "---\nmodel: m\nmodel: n\n", "line 3 states model again"],
   [
     "states an unknown key",

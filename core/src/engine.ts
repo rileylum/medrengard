@@ -364,6 +364,12 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     }: { origin?: Commissioned["origin"]; given?: readonly string[]; events?: Log } = {},
   ): string {
     const name = commission ?? `${origin!.trigger}-${startedBy.all(origin!.trigger).length + 1}`;
+
+    // Said in the engine's words, before the log refuses the name in its own.
+    if (select.all(name).length > 0) {
+      throw new Error(`There is already a commission named ${name}.`);
+    }
+
     const text = pinned(workflow, checked(workflow), (bytes) => store.keep(bytes));
     const event = commissioning(workflow, text, request);
 

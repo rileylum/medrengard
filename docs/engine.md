@@ -112,7 +112,7 @@ It throws, and records nothing, when:
 - the request breaks the document kind's rules: `The request's title is over its limit of <n> bytes.`,
   `The request's body is over its limit of <n> bytes.` or
   `The request's title is not one of <values>.`
-- the name is taken: SQLite's `UNIQUE constraint failed: events.commission, events.position`.
+- the name is taken: `There is already a commission named <name>.`
 - the trigger cannot start it:
   - `There is no trigger named <trigger>.`
   - `Trigger <trigger> may not start workflow <workflow>.`

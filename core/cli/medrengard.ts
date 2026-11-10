@@ -268,6 +268,11 @@ try {
   process.exitCode = 1;
 }
 
+// The command that prints the errors of an attempt of the commission, for a line that hints at it.
+function errorsOf(commission: string) {
+  return (attempt: number) => `medrengard errors ${commission} ${attempt}`;
+}
+
 // Says what is wrong with the call, then how the CLI is used.
 function refuseUsage(problem: string): never {
   process.stderr.write(`${problem}\n\n${usage}\n`);
@@ -530,7 +535,7 @@ async function watch(engine: Engine, commission: string): Promise<void> {
     const record = engine.record(commission);
 
     for (const [index, entry] of record.entries.entries()) {
-      for (const [key, text] of linesOf(index, entry)) {
+      for (const [key, text] of linesOf(index, entry, errorsOf(commission))) {
         if (!printed.has(key)) {
           printed.add(key);
 
@@ -611,7 +616,7 @@ function printRecord(commission: string, record: CommissionRecord): void {
 
   // An attempt shows as its ending, or as started while it runs; its notes are watch's.
   const timeline = entries.flatMap((entry, index) =>
-    linesOf(index, entry)
+    linesOf(index, entry, errorsOf(commission))
       .filter(([key]) => (key.endsWith(":start") ? "running" in entry : !/:\d+$/.test(key)))
       .map(([, text]) => text),
   );

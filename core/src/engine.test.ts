@@ -3319,6 +3319,17 @@ test("a waiting commission's state names the outcomes the owner may decide, and 
   );
 });
 
+test("a commission under a name already taken is refused, saying so, and nothing is recorded", async (t) => {
+  const { engine } = await engineRunning(t, "true");
+  const events = engine.events(0).length;
+
+  assert.throws(
+    () => engine.commission("build", { title: "Greet", body: "Say hello." }, { name: "first" }),
+    { message: "There is already a commission named first." },
+  );
+  assert.equal(engine.events(0).length, events);
+});
+
 test("a finished commission accepts nothing", async (t) => {
   const { engine } = await engineRunning(
     t,
