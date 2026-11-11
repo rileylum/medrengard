@@ -6,32 +6,7 @@ import type { Entry } from "../src/engine.ts";
 import type { CommissionState, Usage } from "../src/replay.ts";
 import type { Artifact } from "../src/store.ts";
 
-/**
- * `text` with each control character written as \uXXXX: visible to the owner, and in JSON, where
- * they can only stand inside a string, the same value.
- */
-export function visible(text: string): string {
-  return Array.from(text, (character) => {
-    const code = character.charCodeAt(0);
-
-    return isControl(code) ? `\\u${code.toString(16).padStart(4, "0")}` : character;
-  }).join("");
-}
-
-// What a terminal acts on rather than shows: C0 controls but newline and tab, DEL, C1 controls and
-// the bidi controls. A step's text can hold any of them, and could move the cursor, rewrite what
-// the owner reads at a gate, set the clipboard or reorder a line.
-function isControl(code: number): boolean {
-  return (
-    (code < 0x20 && code !== 0x0a && code !== 0x09) ||
-    (code >= 0x7f && code <= 0x9f) ||
-    code === 0x061c ||
-    code === 0x200e ||
-    code === 0x200f ||
-    (code >= 0x202a && code <= 0x202e) ||
-    (code >= 0x2066 && code <= 0x2069)
-  );
-}
+export { visible } from "../src/reading.ts";
 
 /** A state in a few lines: where the commission is and what it is about. */
 export function describe(state: CommissionState): string {

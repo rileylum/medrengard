@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +40,17 @@ const exports = {
   ],
   "src/kinds.ts": ["Kind", "Kinds", "Program"],
   "src/engine.ts": ["CommissionRecord", "Entry", "createEngine"],
+  "src/reading.ts": [
+    "Moment",
+    "Standing",
+    "changed",
+    "material",
+    "standing",
+    "timeline",
+    "visible",
+    "waits",
+    "week",
+  ],
   "src/store.ts": ["Artifact", "createStore"],
   "step/contract.ts": [
     "Artifact",
@@ -69,6 +81,7 @@ const exports = {
   "defaults/kinds.ts": ["builtIn"],
   "defaults/limits.ts": ["limits"],
   "defaults/prepare.ts": ["prepare"],
+  "defaults/programs.ts": ["programs"],
   "forges/github/steps.ts": ["Options", "github", "pullRequest"],
 };
 
@@ -78,7 +91,7 @@ for (const [module, names] of Object.entries(exports)) {
     const lines = source.split("\n").filter((line) => line.startsWith("export "));
 
     const exported = lines.map(
-      (line) => /^export (?:type|function|const|async function) (\w+)/.exec(line)?.[1] ?? line,
+      (line) => /^export (?:type|function|const|async function\*?) (\w+)/.exec(line)?.[1] ?? line,
     );
 
     assert.deepEqual(exported.sort(), names);
@@ -93,6 +106,18 @@ test("the package exports exactly the public modules, at their paths", async () 
     manifest.exports,
     Object.fromEntries(Object.keys(exports).map((module) => [`./${module}`, `./${module}`])),
   );
+});
+
+// A factory names the programs the package ships by these paths, real ones, as a sandbox grants.
+test("the shipped programs are named by the real paths of their files", async () => {
+  const { programs } = await import("../defaults/programs.ts");
+  const real = (path: string) => realpathSync(new URL(`../${path}`, import.meta.url));
+
+  assert.deepEqual(programs, {
+    medrengard: real("cli/medrengard.ts"),
+    claudeCode: real("adapters/claude-code.ts"),
+    codex: real("adapters/codex.ts"),
+  });
 });
 
 // Technology: Node 24 and its built-ins, with zero runtime dependencies.
