@@ -56,3 +56,44 @@ test("a definition stored in an earlier shape parses into the one the engine rea
   assert.ok(!Object.hasOwn(workflow.steps.fan ?? {}, "wait"));
   assert.deepEqual(kinds.commit?.verifier, { ...program, access: contract, limits: bounds });
 });
+
+// A definition of one approval step, stored as a commission's is, with `labels` on the step.
+// What a factory might write as a step's labels, rightly or not.
+type Written = string | readonly string[] | Readonly<Record<string, string | number>>;
+
+const labelled = (labels: Written) =>
+  JSON.stringify({
+    workflow: {
+      start: "review",
+      steps: { review: { kind: "approval", on: { approve: "end" }, labels } },
+    },
+    workflows: {},
+    kinds: builtIn,
+    defaults: { limits },
+    skills: {},
+  });
+
+test("a step's labels are kept in the definition as written, whatever its kind", () => {
+  const labels = { stage: "Yours", wants: "a change to approve" };
+
+  assert.deepEqual(parseDefinition("build", labelled(labels)).workflow.steps.review, {
+    kind: "approval",
+    on: { approve: "end" },
+    labels,
+  });
+});
+
+test("labels that are not short texts by name are refused, naming the step", () => {
+  for (const labels of [
+    ["Yours"],
+    { stage: 1 },
+    { stage: "" },
+    { stage: "x".repeat(257) },
+    "Yours",
+  ]) {
+    assert.throws(
+      () => parseDefinition("build", labelled(labels)),
+      /^Error: Workflow build is invalid: step review's labels must each be a text of 1 to 256 characters, by name\.$/,
+    );
+  }
+});

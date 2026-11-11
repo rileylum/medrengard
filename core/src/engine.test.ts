@@ -6602,3 +6602,64 @@ test("access whose paths name /network, where the step's proxy goes, cannot be c
     message: /paths cannot name \/workspace, \/input, \/output or \/network/,
   });
 });
+
+test("a commission's definition gives each step's labels, as the factory wrote them", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const engine = createEngine({
+    log: join(directory, "log.sqlite"),
+    workflows: {
+      build: defineWorkflow({
+        start: "review",
+        steps: {
+          review: { kind: "approval", on: { approve: "end" }, labels: { stage: "Yours" } },
+        },
+      }),
+    },
+    kinds: builtIn,
+    defaults: { limits: defaultLimits },
+  });
+
+  engine.commission("build", { title: "Label", body: "Label.\n" }, { name: "first" });
+
+  assert.deepEqual(engine.definition("first").workflow.steps.review?.labels, { stage: "Yours" });
+});
+
+test("a client reads a file a verifier kept for an artifact, which the record names", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(committing, "review"),
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  await engine.advance("first");
+
+  const hash = subjectOf(engine);
+  const [entry] = engine.record("first").entries;
+
+  assert(entry.entry === "attempt" && "artifacts" in entry);
+  assert.deepEqual(
+    entry.artifacts.map(({ kept }) => kept),
+    [["commit.bundle"]],
+  );
+
+  // A Git bundle opens with its signature.
+  assert.match(
+    engine.kept(hash, "commit.bundle").subarray(0, 16).toString(),
+    /^# v[23] git bundle/,
+  );
+  assert.throws(
+    () => engine.kept(hash, "other"),
+    new Error(`No file other was kept for the artifact ${hash}.`),
+  );
+  assert.throws(
+    () => engine.kept("0".repeat(64), "commit.bundle"),
+    new Error(`No file commit.bundle was kept for the artifact ${"0".repeat(64)}.`),
+  );
+});

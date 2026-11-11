@@ -35,13 +35,15 @@ export const draft = defineWorkflow({
 
 ## Steps
 
-| Kind         | What it does                                                                                           |
-| ------------ | ------------------------------------------------------------------------------------------------------ |
-| `command`    | Runs your program, `run`. With `watch`, runs it as a check each interval: see [Watching](#watching).   |
-| `agent`      | Runs an agent through its harness adapter. With `attended: true`, in your terminal.                    |
-| `approval`   | Waits for your decision. It has only `on`, which cannot list `abandon`: you may abandon at every wait. |
-| `children`   | Starts child commissions and waits on them. See [Children](#children).                                 |
-| `commission` | Starts commissions through a trigger and waits on none. See [Commission steps](#commission-steps).     |
+| Kind         | What it does                                                                                         |
+| ------------ | ---------------------------------------------------------------------------------------------------- |
+| `command`    | Runs your program, `run`. With `watch`, runs it as a check each interval: see [Watching](#watching). |
+| `agent`      | Runs an agent through its harness adapter. With `attended: true`, in your terminal.                  |
+| `approval`   | Waits for your decision. It has `on`, which cannot list `abandon`: you may abandon at every wait.    |
+| `children`   | Starts child commissions and waits on them. See [Children](#children).                               |
+| `commission` | Starts commissions through a trigger and waits on none. See [Commission steps](#commission-steps).   |
+
+A step of any kind may state `labels`: your own words about it, each a text of 1 to 256 characters by name, such as `labels: { stage: "Gate" }`. The engine reads none of them. A commission's definition holds them as written, so a client that shows the workflow reads them from `engine.definition(commission)` and need not know your steps' names.
 
 A command or agent step states:
 

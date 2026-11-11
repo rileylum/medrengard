@@ -153,6 +153,7 @@ test("the engine has exactly the pinned methods", async (t) => {
     "engines",
     "errors",
     "events",
+    "kept",
     "next",
     "record",
     "register",

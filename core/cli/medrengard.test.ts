@@ -432,11 +432,13 @@ test("every --json result has its pinned shape", { timeout: 20_000 }, async (t) 
             hash: "string",
             artifact: { kind: "memo", fields: { note: "string", subject: "string" } },
             verifier: ["string", "string", "string"],
+            kept: [],
           },
           {
             hash: "string",
             artifact: { kind: "verdict", fields: { verdict: "string", subject: "string" } },
             verifier: null,
+            kept: [],
           },
         ],
         errors: false,

@@ -662,6 +662,30 @@ function parseWorkflow(
     );
   }
 
+  // A step's labels are the factory's own words, which the engine reads none of: they are taken
+  // off while each kind's fields are checked, and put back as written.
+  const labelled: [step: object, labels: object][] = [];
+
+  for (const [name, step] of Object.entries(steps)) {
+    if (Object.hasOwn(step ?? {}, "labels")) {
+      const labels = step.labels;
+
+      const texts =
+        isRecord(labels) &&
+        !Array.isArray(labels) &&
+        Object.values(labels).every(
+          (label) => isText(label) && label.length >= 1 && label.length <= 256,
+        );
+
+      if (!texts) {
+        throw invalid(`step ${name}'s labels must each be a text of 1 to 256 characters, by name`);
+      }
+
+      labelled.push([step, labels]);
+      delete step.labels;
+    }
+  }
+
   for (const [name, step] of Object.entries(steps)) {
     const on = step?.on;
     const kind = step?.kind;
@@ -976,6 +1000,10 @@ function parseWorkflow(
     }
 
     Object.assign(step, { limits: whole });
+  }
+
+  for (const [step, labels] of labelled) {
+    Object.assign(step, { labels });
   }
 
   // SAFETY: every field the engine reads was checked above, and each step's limits made whole.

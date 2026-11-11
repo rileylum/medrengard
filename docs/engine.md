@@ -289,6 +289,18 @@ It throws `There is no artifact <hash>.` or `The prefix <hash> names more than o
 { "kind": "document", "fields": { "title": "Reply" }, "body": "Hello. You asked: Say hello." }
 ```
 
+### `kept`
+
+```ts
+engine.kept(hash: string, name: string): Buffer
+```
+
+Returns the file named `name` that a verifier kept for the artifact `hash`, such as a commit's
+`commit.bundle`. The record names each artifact's kept files, as `kept`. It reads only a file the
+log names as kept for that artifact.
+
+It throws `No file <name> was kept for the artifact <hash>.`
+
 ### `transcript` and `errors`
 
 ```ts
@@ -501,7 +513,13 @@ An attempt that completed:
   entry: "attempt"; attempt: number; step: string; notes: Note[];
   started?: number; ended?: number;
   outcome: string;
-  artifacts: { hash: string; artifact: Artifact; verifier: readonly string[] | null }[];
+  // kept names the files that verifier kept for it, which `kept` reads.
+  artifacts: {
+    hash: string;
+    artifact: Artifact;
+    verifier: readonly string[] | null;
+    kept: string[];
+  }[];
   errors: boolean;
   usage?: Usage;
 }

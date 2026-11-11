@@ -106,7 +106,13 @@ export type Entry =
       outcome: string;
       // verifier is the command of the verifier that accepted the artifact, or null when its kind
       // has none, as the commission's definition holds it.
-      artifacts: { hash: string; artifact: Artifact; verifier: Program["run"] | null }[];
+      // kept names the files that verifier kept for it, which `kept` reads.
+      artifacts: {
+        hash: string;
+        artifact: Artifact;
+        verifier: Program["run"] | null;
+        kept: string[];
+      }[];
       errors: boolean;
       // What its step reported it used, when it did.
       usage?: Usage;
@@ -1475,10 +1481,11 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
               outcome: event.outcome,
               // The engine records an artifact only once its kind's verifier, if any, accepted it,
               // and the kind is the commission's own.
-              artifacts: event.artifacts.map(({ hash, kind }) => ({
+              artifacts: event.artifacts.map(({ hash, kind, kept }) => ({
                 hash,
                 artifact: store.get(hash),
                 verifier: definition.kinds[kind].verifier?.run ?? null,
+                kept: Object.keys(kept),
               })),
               errors: event.errors !== undefined,
             };
@@ -1585,6 +1592,23 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
       }
 
       return store.get(matches[0]);
+    },
+
+    /**
+     * Reads the file named `name` that a verifier kept for the artifact `hash`, such as a commit's
+     * bundle. Only a file the log names as kept for that artifact is read.
+     */
+    kept(hash: string, name: string): Buffer {
+      // lazy: scans the whole log. Index artifact hashes once a log is large enough to notice.
+      for (const { commission } of commissioned.all()) {
+        const found = keptIn(read(String(commission)), hash);
+
+        if (found !== undefined && Object.hasOwn(found, name)) {
+          return store.read(found[name]);
+        }
+      }
+
+      throw new Error(`No file ${name} was kept for the artifact ${hash}.`);
     },
 
     /**

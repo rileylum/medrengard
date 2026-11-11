@@ -276,9 +276,14 @@ export type Commissioning<N extends string> = {
  * A step: an agent step runs its agent's harness adapter, with the owner in their terminal when
  * `attended`, a command step runs `run`, once or, watching, as checks, an approval step waits for the owner's decision,
  * following the edge its outcome names in `on`, a children step waits on child commissions, and a
- * commission step starts commissions of their own.
+ * commission step starts commissions of their own. Any may carry `labels`: the factory's own
+ * words about the step, texts by name, for whoever shows the workflow. The engine reads none.
  */
-type Step<N extends string, Held extends "stated" | "whole"> =
+type Step<N extends string, Held extends "stated" | "whole"> = Labelled & Unlabelled<N, Held>;
+
+type Labelled = { labels?: Readonly<Record<string, string>> };
+
+type Unlabelled<N extends string, Held extends "stated" | "whole"> =
   | ({ kind: "agent"; agent: Agent; attended: true } & Program<N> & Bounds<Held, true>)
   | ({ kind: "agent"; agent: Agent; attended?: false } & Program<N> & Bounds<Held, false>)
   | ({ kind: "command"; run: readonly [string, ...string[]]; watch?: undefined } & Program<N> &
