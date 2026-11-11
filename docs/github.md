@@ -151,6 +151,9 @@ sandbox. Their access names no other host. The broker forwards, for `repository`
 - `GET /pulls/<number>`, `/pulls/<number>/reviews` and `/pulls/<number>/comments`: read one;
 - `GET /compare/<base>...<sha>`: compare a commit with a branch;
 - `PUT /pulls/<number>/merge`: merge one.
+- `GET /issues?state=open&per_page=100&page=<n>`: read the open issues, a page at a time, for a
+  step of the owner's that needs to know what is already tracked. No step of Medrengard's makes
+  this call, and the token needs leave to read issues for it.
 
 Rules:
 

@@ -613,6 +613,10 @@ for (const [method, path] of [
     "GET",
     "/api/repos/owner/app/compare/main..x/../../../../user...0000000000000000000000000000000000000000",
   ],
+  ["GET", "/api/repos/owner/app/issues/7"],
+  ["POST", "/api/repos/owner/app/issues"],
+  ["GET", "/api/repos/owner/app/issues?state=all&per_page=100&page=1"],
+  ["GET", "/api/repos/owner/app/issues?state=open&per_page=100&page=1&labels=x"],
   ["GET", "/git/owner/other.git/info/refs?service=git-upload-pack"],
   ["GET", "/owner/app.git/info/refs?service=git-receive-pack"],
 ] as const) {
@@ -648,6 +652,22 @@ const pushing = (...refs: string[]) => {
 
 // Principle 12: the broker holds a token that can write the repository, so it forwards a push
 // only to the commission's own branches, never to the base a pull request lands on.
+test("the GitHub broker forwards a reading of the repository's open issues, a page at a time, with the token", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const { seen, url } = await fakeGitHub(t, directory);
+  const send = await brokerFor(t, url);
+  const answered = await send("GET", "/api/repos/owner/app/issues?state=open&per_page=100&page=2");
+
+  assert.notEqual(answered.status, 403);
+  assert.partialDeepStrictEqual(seen.requests, [
+    { method: "GET", path: "/repos/owner/app/issues" },
+  ]);
+  assert.notEqual(seen.requests[0]!.authorization, "Bearer medrengard-broker");
+});
+
 test("the GitHub broker forwards a push only to branches under medrengard/", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 

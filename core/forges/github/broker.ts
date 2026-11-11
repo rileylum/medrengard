@@ -65,9 +65,12 @@ const gitRoutes = [
 ] as const;
 
 // Opening a pull request, finding the one open for a branch, reading one, its reviews and their
-// comments, comparing a commit with a branch, whose name has no "..", and merging one.
+// comments, comparing a commit with a branch, whose name has no "..", and merging one; and
+// reading the repository's open issues, a page of a hundred at a time, so a step can know what is
+// already tracked. Nothing here writes an issue or reads a closed one.
 const apiRoutes = [
   ["POST", /^\/pulls$/],
+  ["GET", /^\/issues\?state=open&per_page=100&page=\d{1,3}$/],
   ["GET", /^\/compare\/[\w-]+(?:[./][\w-]+)*\.\.\.[0-9a-f]{40,64}$/],
   ["GET", /^\/pulls\?head=[\w.-]+:[\w./-]+&state=open$/],
   ["GET", /^\/pulls\/\d+$/],
