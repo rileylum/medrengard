@@ -53,6 +53,7 @@ A command or agent step states:
 | `agent`     | An agent step's harness, model, prompt and any skills. See [Agents](agents.md).                    |
 | `workspace` | What the working directory is built from. See [Workspace](#workspace).                             |
 | `inputs`    | What the step is given, by name; `{}` for nothing. See [Inputs](#inputs).                          |
+| `kept`      | Optional. The inputs whose artifacts it is also given the files a verifier kept for, by name.      |
 | `claims`    | The artifact kinds the step may claim, such as `["commit"]`; `[]` for none. See [Kinds](kinds.md). |
 | `on`        | The next step, or `end`, for each outcome. At least one.                                           |
 | `budget`    | The attempts the step may start between your decisions. A positive integer.                        |
@@ -60,6 +61,7 @@ A command or agent step states:
 | `limits`    | Optional. See [Limits](#limits) and [Money](#money).                                               |
 | `escalate`  | Optional. See [Escalation routes](#escalation-routes).                                             |
 
+- Kept files, such as a picture a verifier kept, are given only for the inputs `kept` names, and count toward the step's input limit: a commit's kept file is a bundle of its whole history.
 - A claim of a kind the step does not list escalates. A step need not claim every kind it lists.
 - If a kind has an outcome field, as a verdict has, the step needs an edge for each of its values: `pass` and `fail`.
 - A step that has spent its budget escalates: `Step write has spent its budget of 3 attempts.` Only your decision renews a budget, so every loop ends.

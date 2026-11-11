@@ -191,9 +191,12 @@ type Bounds<Held extends "stated" | "whole", Attended extends boolean> = Held ex
 // What every step that starts a program declares: its inputs, the artifact kinds it may claim,
 // whether its workspace is built from the subject, from the one artifact an input names, with the
 // artifacts another input names added as branches, or starts empty, its outcomes' edges, the attempts it may start between the owner's decisions, its access,
-// and its limits, which its kind of step adds.
+// and its limits, which its kind of step adds. `kept` names the inputs whose artifacts it is also
+// given the files a verifier kept for, such as a picture; none unless named, since a commit's
+// bundle is its whole history.
 type Program<N extends string> = {
   inputs: Readonly<Record<string, Query<N>>>;
+  kept?: readonly string[];
   claims: readonly string[];
   workspace: "subject" | "empty" | { input: string; branches?: string };
   on: Record<string, N | "end">;

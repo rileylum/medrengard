@@ -2068,11 +2068,22 @@ export function createEngine({ log, workflows, kinds, defaults, triggers = {} }:
     // An agent's prompt goes to its harness with its inputs, so it counts with them.
     const prompt = step.kind === "agent" ? Buffer.byteLength(step.agent.prompt) : 0;
 
+    // The files kept for an input the step names in `kept` are given with it, so they count.
+    const keptBytes = (input: Extract<Input, { artifacts: unknown }>) =>
+      step.kept?.includes(input.name)
+        ? input.artifacts
+            .flatMap(({ kept }) => Object.values(kept))
+            .map((hash) => store.read(hash).length)
+        : [];
+
     const bytes =
       inputs
         .flatMap((input) =>
           "artifacts" in input
-            ? input.artifacts.map(({ artifact }) => Buffer.byteLength(artifact.body ?? ""))
+            ? [
+                ...input.artifacts.map(({ artifact }) => Buffer.byteLength(artifact.body ?? "")),
+                ...keptBytes(input),
+              ]
             : input.sessions.map(({ body }) => body.length),
         )
         .reduce((sum, size) => sum + size, 0) +
@@ -2760,9 +2771,15 @@ function pin(
 // A session as input.json lists it.
 type Listed = { hash: string; body: string };
 
-// Writes input.json, listing each declared input's artifacts, and each body as <input>/<hash>.
-// The sandbox binds the input read-only.
-async function prepare(input_: string, step: Runnable, given: Given): Promise<void> {
+// Writes input.json, listing each declared input's artifacts, and each body as <input>/<hash>;
+// for an input the step names in `kept`, also each file a verifier kept for an artifact, as
+// <input>/<hash>.kept/<file>. The sandbox binds the input read-only.
+async function prepare(
+  input_: string,
+  step: Runnable,
+  given: Given,
+  store: Pick<Store, "read">,
+): Promise<void> {
   await mkdir(input_);
 
   const inputs = new Map<
@@ -2773,6 +2790,7 @@ async function prepare(input_: string, step: Runnable, given: Given): Promise<vo
           kind: string;
           fields: Artifact["fields"];
           body?: string;
+          kept?: Record<string, string>;
           commission?: string;
           branch?: string;
         }
@@ -2796,12 +2814,27 @@ async function prepare(input_: string, step: Runnable, given: Given): Promise<vo
       continue;
     }
 
-    for (const { hash, artifact, commission, branch } of input.artifacts) {
+    for (const { hash, artifact, commission, branch, kept: files } of input.artifacts) {
       const { kind, fields } = artifact;
+      const kept = step.kept?.includes(name) ? files : {};
+
+      for (const [file, stored] of Object.entries(kept)) {
+        await mkdir(join(input_, name, `${hash}.kept`), { recursive: true });
+        await writeFile(join(input_, name, `${hash}.kept`, file), store.read(stored));
+      }
 
       // A child's artifact names the child, so a step can tell whose it is, and one the workspace
-      // adds names its branch.
-      const from = { commission, branch };
+      // adds names its branch; its kept files are listed only where it has some to give.
+      const from = {
+        commission,
+        branch,
+        kept:
+          Object.keys(kept).length === 0
+            ? undefined
+            : Object.fromEntries(
+                Object.keys(kept).map((file) => [file, `${name}/${hash}.kept/${file}`]),
+              ),
+      };
 
       if (artifact.body === undefined) {
         listed.push({ hash, kind, fields, ...from });
@@ -3013,7 +3046,7 @@ async function run(
       }
     }
 
-    await prepare(input, step, given);
+    await prepare(input, step, given, store);
     await mkdir(output);
 
     // An agent step's program is its harness adapter, under the same contract.

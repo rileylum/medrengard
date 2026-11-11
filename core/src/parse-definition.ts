@@ -777,6 +777,7 @@ function parseWorkflow(
 
     const program = kind === "command" ? "run" : "agent";
     const { workspace, inputs, claims, budget, access, limits, attended } = step;
+    const keptOf = step.kept;
     const { agent } = step;
     const harness = agent?.harness;
     const argv = kind === "command" ? step.run : harness?.run;
@@ -787,6 +788,7 @@ function parseWorkflow(
       "kind",
       "workspace",
       "inputs",
+      ...(Object.hasOwn(step, "kept") ? ["kept"] : []),
       "claims",
       program,
       ...(kind === "agent" && Object.hasOwn(step, "attended") ? ["attended"] : []),
@@ -877,6 +879,22 @@ function parseWorkflow(
       throw invalid(
         `step ${name}'s input names must each be letters, digits, - or _, starting with a letter`,
       );
+    }
+
+    // Kept files are an artifact's: a session has none.
+    const keeps =
+      !Object.hasOwn(step, "kept") ||
+      (Array.isArray(keptOf) &&
+        isRecord(inputs) &&
+        keptOf.every(
+          (input) =>
+            isText(input) &&
+            Object.hasOwn(inputs, input) &&
+            !hasExactly(declared.get(input), ["session"]),
+        ));
+
+    if (!keeps) {
+      throw invalid(`step ${name}'s kept must name inputs of its own that hold artifacts`);
     }
 
     if (!isRecord(inputs) || !Object.values(inputs).every(validQuery)) {

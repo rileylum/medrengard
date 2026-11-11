@@ -21,6 +21,8 @@ export type Artifact = {
   kind: string;
   fields: Record<string, string>;
   body?: string;
+  // The path of each file a verifier kept for it, by name, where the step's `kept` names its input.
+  kept?: Record<string, string>;
   commission?: string;
   branch?: string;
 };

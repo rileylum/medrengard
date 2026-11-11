@@ -200,6 +200,8 @@ An input:
 - lists an artifact as `hash`, `kind` and `fields`;
 - adds `body` when the artifact has one: the path of its file, `<input>/<hash>`, relative to
   `MEDRENGARD_IN`;
+- adds `kept` when the step's `kept` names the input and a verifier kept files for the artifact:
+  the path of each, by its name, `<input>/<hash>.kept/<name>`, relative to `MEDRENGARD_IN`;
 - adds `commission` for an artifact of a child or a related commission: the commission it came
   from;
 - adds `branch` for an artifact the workspace added as a branch;
