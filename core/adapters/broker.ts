@@ -29,9 +29,16 @@ export type Route =
       headers: OutgoingHttpHeaders;
       upstream?: URL;
       unauthorised?: () => void;
-      // Judges the request by the start of its body, given as much as has arrived: a refusal,
-      // "forward", or "more" to be given more. A body it still wants more of at 64 KiB is refused.
-      screen?: (start: Buffer) => { refused: string } | "forward" | "more";
+      // Judges the request by the start of its body, given as much as has arrived and whether
+      // that is all of it: a refusal, "forward", "more" to be given more, or the body to forward
+      // in place of the request's, so that upstream reads what was judged and nothing else. A
+      // body it still wants more of at `most` bytes, 64 KiB unless given, or at its end, is
+      // refused.
+      screen?: (
+        start: Buffer,
+        ended: boolean,
+      ) => { refused: string } | { body: Buffer } | "forward" | "more";
+      most?: number;
     };
 
 // A broker an engine starts inside a step that may reach only some hosts has no way out but the
@@ -46,7 +53,8 @@ const proxied =
 // outside it.
 const local = (host: string) => host === "localhost" || host === "[::1]" || host.startsWith("127.");
 
-// The most of a request's body a route may ask for before it judges the request.
+// The most of a request's body a route may ask for before it judges the request, unless it names
+// its own.
 const screened = 64 * 1024;
 
 /**
@@ -109,20 +117,33 @@ export function serve(
     // The start of the body, read for a route that judges the request by it.
     let start = Buffer.alloc(0);
 
+    // The body a route that judged the whole request forwards in its place.
+    let whole: Buffer | undefined;
+
     if (routed.screen !== undefined) {
-      let verdict = routed.screen(start);
+      const most = routed.most ?? screened;
+      let verdict = routed.screen(start, false);
+      let ended = true;
 
       for await (const chunk of request) {
         // SAFETY: an incoming request without an encoding set yields buffers.
         start = Buffer.concat([start, chunk as Buffer]);
-        verdict = routed.screen(start);
+        verdict = routed.screen(start, false);
 
-        if (verdict !== "more" || start.length > screened) {
+        if (verdict !== "more" || start.length > most) {
+          ended = false;
+
           break;
         }
       }
 
-      if (verdict !== "forward") {
+      if (ended && verdict === "more") {
+        verdict = routed.screen(start, true);
+      }
+
+      if (verdict !== "forward" && verdict !== "more" && "body" in verdict) {
+        whole = verdict.body;
+      } else if (verdict !== "forward") {
         request.resume();
         answer(
           403,
@@ -138,6 +159,15 @@ export function serve(
       }
     }
 
+    // A body forwarded in place of the request's is sent whole, with its own length.
+    const received =
+      whole === undefined
+        ? request.headers
+        : Object.fromEntries(
+            Object.entries(request.headers).filter(([name]) => name !== "transfer-encoding"),
+          );
+
+    const length = whole === undefined ? undefined : { "content-length": whole.length };
     const target = routed.upstream ?? upstream;
     const send = target.protocol === "https:" ? tlsRequest : plainRequest;
 
@@ -150,7 +180,7 @@ export function serve(
         port: target.port,
         path: routed.path,
         method: request.method,
-        headers: { ...request.headers, host: target.host, ...routed.headers },
+        headers: { ...received, host: target.host, ...routed.headers, ...length },
       },
       (upstreamResponse) => {
         let status = upstreamResponse.statusCode ?? 502;
@@ -174,6 +204,13 @@ export function serve(
         `Medrengard's broker could not reach ${target.host}: ${error.code ?? error.message}\n`,
       );
     });
+
+    if (whole !== undefined) {
+      request.resume();
+      forwarded.end(whole);
+
+      return;
+    }
 
     forwarded.write(start);
     request.pipe(forwarded);

@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -12,15 +12,17 @@ import { builtIn } from "../../defaults/kinds.ts";
 import { limits } from "../../defaults/limits.ts";
 import { createEngine } from "../../src/engine.ts";
 import { defineWorkflow } from "../../src/definition.ts";
+import { isRecord } from "../../src/json.ts";
 import { github, pullRequest } from "./steps.ts";
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 
 // What the fake GitHub was asked: each request's method, path and authorization, the pull
-// requests it opened and the merges it made.
+// requests it opened, the merges it made and the issues it was filed, each as its body arrived.
 type Seen = {
   requests: { method: string; path: string; authorization?: string }[];
+  issues: string[];
   pulls: { title: string; body: string; head: string; base: string }[];
   merges: { sha: string; merge_method: string }[];
 };
@@ -50,7 +52,7 @@ const bodyOf = async (stream: AsyncIterable<Buffer>) => {
  * head is the SHA it is given.
  */
 async function fakeGitHub(t: TestContext, remote: string) {
-  const seen: Seen = { requests: [], pulls: [], merges: [] };
+  const seen: Seen = { requests: [], issues: [], pulls: [], merges: [] };
   const world: World = { state: "open", merged: false, reviews: [], comments: [] };
 
   const server = createServer(async (incoming, response) => {
@@ -120,6 +122,13 @@ async function fakeGitHub(t: TestContext, remote: string) {
             : [{ number: 7, html_url: "https://github.test/owner/app/pull/7" }],
         ),
       );
+
+      return;
+    }
+
+    if (incoming.method === "POST" && url.pathname === "/repos/owner/app/issues") {
+      seen.issues.push(body.toString());
+      json(201, { number: 12, html_url: "https://github.test/owner/app/issues/12" });
 
       return;
     }
@@ -555,15 +564,18 @@ test("a watch on an open pull request no one has reviewed finds nothing", async 
   }
 });
 
-/** Starts the broker for `owner/app` on a socket of its own, forwarding to `url`. */
-async function brokerFor(t: TestContext, url: string) {
+/**
+ * Starts the broker for `owner/app` on a socket of its own, forwarding to `url`, with any `more`
+ * of its options.
+ */
+async function brokerFor(t: TestContext, url: string, ...more: string[]) {
   const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
 
   t.after(() => rm(directory, { recursive: true, force: true }));
   await writeFile(join(directory, "token"), "test-token\n");
 
   const socket = join(directory, "socket");
-  const flags = ["--token", join(directory, "token"), "--git", url, "--api", url];
+  const flags = ["--token", join(directory, "token"), "--git", url, "--api", url, ...more];
 
   const running = spawn(
     process.execPath,
@@ -705,4 +717,183 @@ test("the GitHub broker forwards a push only to branches under medrengard/", asy
   assert.partialDeepStrictEqual(await send("POST", path, Buffer.alloc(128 * 1024, "f")), {
     status: 403,
   });
+});
+
+const issues = "/api/repos/owner/app/issues";
+
+const filing = (issue: Record<string, string | number | string[]>) =>
+  Buffer.from(JSON.stringify(issue));
+
+const refusedIssue = (what: string) => ({
+  status: 403,
+  body: JSON.stringify({ message: `Refused by Medrengard's GitHub broker: an issue ${what}.` }),
+});
+
+/** A fake GitHub and the broker for it, started with `more` of its options. */
+async function filingThrough(t: TestContext, ...more: string[]) {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const { seen, url } = await fakeGitHub(t, directory);
+
+  return { seen, send: await brokerFor(t, url, ...more) };
+}
+
+test("the GitHub broker, not started to file issues, refuses one and forwards it nowhere", async (t) => {
+  const { seen, send } = await filingThrough(t);
+
+  assert.deepEqual(await send("POST", issues, filing({ title: "Slow start", body: "It is." })), {
+    status: 403,
+    body: JSON.stringify({
+      message: `Refused by Medrengard's GitHub broker: POST ${issues} is not one it forwards for owner/app.`,
+    }),
+  });
+  assert.deepEqual(seen.requests, []);
+});
+
+// In a factory that takes a labelled issue up as new work, a step that may label one can commission
+// by itself, so the broker forwards only the labels it was started with.
+test("the GitHub broker started to file issues forwards one, with a label it was started with or none, with the token", async (t) => {
+  const { seen, send } = await filingThrough(t, "--issues", "factory,needs triage");
+
+  const answer = JSON.stringify({
+    number: 12,
+    html_url: "https://github.test/owner/app/issues/12",
+  });
+
+  const plain = { title: "Slow start", body: "It takes a minute." };
+  const labelled = { title: "Flaky test", body: "", labels: ["needs triage", "factory"] };
+
+  // As the broker read it, however the step spaced it.
+  assert.deepEqual(await send("POST", issues, Buffer.from(JSON.stringify(plain, null, 2))), {
+    status: 201,
+    body: answer,
+  });
+  assert.deepEqual(await send("POST", issues, filing(labelled)), { status: 201, body: answer });
+  assert.deepEqual(seen.issues, [JSON.stringify(plain), JSON.stringify(labelled)]);
+  assert.deepEqual(seen.requests, [
+    { method: "POST", path: "/repos/owner/app/issues", authorization: "Bearer test-token" },
+    { method: "POST", path: "/repos/owner/app/issues", authorization: "Bearer test-token" },
+  ]);
+});
+
+test("the GitHub broker started to file issues refuses one it cannot judge to be a title, a body and its labels, forwarding it nowhere", async (t) => {
+  const { seen, send } = await filingThrough(t, "--issues", "factory");
+  const issue = { title: "Slow start", body: "It takes a minute." };
+
+  for (const [sent, what] of [
+    [
+      filing({ ...issue, labels: ["factory", "urgent"] }),
+      'with the label "urgent", which the broker was not started to allow',
+    ],
+    [filing({ ...issue, assignees: ["owner"] }), 'with "assignees", a key it does not forward'],
+    [filing({ ...issue, milestone: 1 }), 'with "milestone", a key it does not forward'],
+    [
+      // The second labels is the one a parser keeps, or the first: neither is forwarded.
+      Buffer.from('{"title":"a","body":"b","labels":["factory"],"labels":["urgent"]}'),
+      'with the label "urgent", which the broker was not started to allow',
+    ],
+    [Buffer.from("title=Slow"), "that is not JSON"],
+    [Buffer.from('{"title":"Slow start","body":"It'), "that is not JSON"],
+    [Buffer.alloc(0), "that is not JSON"],
+    [Buffer.from('["factory"]'), "that is not a JSON object"],
+    [filing({ ...issue, title: "" }), "whose title is not a string that says something"],
+    [filing({ body: "It takes a minute." }), "whose title is not a string that says something"],
+    [filing({ ...issue, title: 7 }), "whose title is not a string that says something"],
+    [filing({ title: "Slow start" }), "whose body is not a string"],
+    [filing({ ...issue, labels: "factory" }), "whose labels are not a list of strings"],
+    [
+      Buffer.from('{"title":"a","body":"b","labels":null}'),
+      "whose labels are not a list of strings",
+    ],
+    [filing({ ...issue, body: "x".repeat(256 * 1024) }), "of more than 256 KiB"],
+  ] as const) {
+    assert.deepEqual(await send("POST", issues, sent), refusedIssue(what));
+  }
+
+  // Nothing else of an issue is forwarded: reading a closed one, editing, closing, commenting on
+  // or labelling one there is.
+  for (const [method, path] of [
+    ["GET", `${issues}/12`],
+    ["GET", `${issues}?state=closed&per_page=100&page=1`],
+    ["PATCH", `${issues}/12`],
+    ["POST", `${issues}/12/comments`],
+    ["POST", `${issues}/12/labels`],
+    ["PUT", `${issues}/12/labels`],
+    ["POST", `${issues}?x=1`],
+  ] as const) {
+    assert.partialDeepStrictEqual(
+      await send(method, path, method === "GET" ? undefined : filing(issue)),
+      {
+        status: 403,
+        body: JSON.stringify({
+          message: `Refused by Medrengard's GitHub broker: ${method} ${path} is not one it forwards for owner/app.`,
+        }),
+      },
+    );
+  }
+
+  assert.deepEqual(seen.requests, []);
+});
+
+test("the GitHub broker started to file issues with no label forwards an unlabelled one and refuses any label", async (t) => {
+  const { seen, send } = await filingThrough(t, "--issues", "");
+  const issue = { title: "Slow start", body: "It takes a minute." };
+
+  assert.deepEqual(
+    await send("POST", issues, filing({ ...issue, labels: ["factory"] })),
+    refusedIssue('with the label "factory", which the broker was not started to allow'),
+  );
+  assert.deepEqual(seen.requests, []);
+
+  assert.equal((await send("POST", issues, filing({ ...issue, labels: [] }))).status, 201);
+  assert.equal((await send("POST", issues, filing(issue))).status, 201);
+  assert.deepEqual(seen.issues, [JSON.stringify({ ...issue, labels: [] }), JSON.stringify(issue)]);
+});
+
+for (const labels of ["factory;urgent", "factory,", ",", "x".repeat(51), "a/b"]) {
+  test(`the GitHub broker does not start to file issues with the labels ${JSON.stringify(labels)}`, async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    await writeFile(join(directory, "token"), "test-token\n");
+
+    const started = spawnSync(
+      process.execPath,
+      [
+        join(import.meta.dirname, "broker.ts"),
+        "--repository",
+        "owner/app",
+        "--token",
+        join(directory, "token"),
+        "--issues",
+        labels,
+      ],
+      { env: { ...process.env, MEDRENGARD_SOCKET: join(directory, "socket") }, encoding: "utf8" },
+    );
+
+    assert.equal(started.status, 2);
+    assert.match(started.stderr, /^The broker files issues with the labels --issues lists/);
+    assert.match(started.stderr, /\nUsage: broker\.ts --repository <owner\/name> .*--issues/);
+  });
+}
+
+test("the forge's steps start their broker to file issues with the labels the factory gives, or not to file any", () => {
+  const run = (issues?: readonly string[]) => {
+    const { network } = github({ repository: "owner/app", base: "main", issues }).open({
+      on: { done: "end" },
+    }).access;
+
+    assert.ok(isRecord(network) && network.brokers !== undefined);
+
+    return network.brokers.github!;
+  };
+
+  assert.deepEqual(run(["factory", "needs triage"]).slice(-2), [
+    "--issues",
+    "factory,needs triage",
+  ]);
+  assert.deepEqual(run([]).slice(-2), ["--issues", ""]);
+  assert.ok(!run().includes("--issues"));
 });
