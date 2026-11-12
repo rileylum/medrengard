@@ -382,8 +382,9 @@ function parseKinds(text: string): Kinds {
 }
 
 // What is wrong with `access`, said of whatever it belongs to, or undefined when nothing is.
-// A host a step's access may list: a name or address, any of its subdomains as *.name, and a port.
-const host = /^(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*(:[0-9]{1,5})?$/;
+// A host a step's access may list: a name or address, any of its subdomains as *.name, and a port;
+// or * alone, any public host.
+const host = /^(\*|(\*\.)?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*(:[0-9]{1,5})?)$/;
 
 // A broker's name, which names the variable that gives the step its address.
 const brokerName = /^[a-z][a-z0-9]*$/;
