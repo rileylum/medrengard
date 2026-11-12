@@ -1023,6 +1023,16 @@ test("a program a step bounds and loses is not the step going over its own memor
   });
 });
 
+test("a step whose access grants cgroups and exits 125 by itself is not a sandbox that failed to set up", async (t) => {
+  const { engine } = await engineConfined(t, () => ({ ...access, cgroups: true }), `exit 125`);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    cause: "exit",
+    reason: "Step build exited with code 125.",
+  });
+});
+
 test("an engine in a step whose access grants cgroups holds its own steps to their limits", async (t) => {
   const core = join(import.meta.dirname, "..");
 
@@ -1093,6 +1103,90 @@ test("an engine in a step whose access grants cgroups holds its own steps to the
     engine.transcript("first", 1).toString(),
     "Step build reached its memory limit of 33554432 bytes.\n",
   );
+});
+
+test("a step whose sandbox fails to set up in a scope of systemd's is reported as that failure, not as a question about memory", async (t) => {
+  const core = join(import.meta.dirname, "..");
+
+  const { engine } = await engineConfined(
+    t,
+    (directory) => {
+      // In a step whose access does not grant cgroups, an engine asks systemd for a scope, here one
+      // that runs the command as it is; the group /proc names is not there to divide, so the
+      // wrapper fails before the program starts, as a refused write to cgroup.subtree_control does.
+      mkdirSync(join(directory, "bin"));
+      writeFileSync(
+        join(directory, "bin", "systemd-run"),
+        `#!/bin/sh
+         while [ "$1" != -- ]; do shift; done
+         shift
+         exec "$@"`,
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        join(directory, "inner.ts"),
+        `import { createEngine } from ${JSON.stringify(join(core, "src", "engine.ts"))};
+         import { builtIn } from ${JSON.stringify(join(core, "defaults", "kinds.ts"))};
+         import { limits } from ${JSON.stringify(join(core, "defaults", "limits.ts"))};
+
+         // The step this engine runs in is given no PATH, and the stand-in must find sh.
+         process.env.PATH = ${JSON.stringify(join(directory, "bin"))} + ":/usr/bin:/bin";
+
+         const system = ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({ path, mode: "read" }));
+
+         const engine = createEngine({
+           log: ${JSON.stringify(join(directory, "inner", "log.sqlite"))},
+           kinds: builtIn,
+           defaults: { limits },
+           workflows: {
+             build: {
+               start: "build",
+               steps: {
+                 build: {
+                   kind: "command",
+                   claims: [],
+                   workspace: "empty",
+                   inputs: {},
+                   run: ["true"],
+                   on: { done: "end" },
+                   budget: 1,
+                   access: { paths: system, network: false, environment: ["PATH"], workspace: "write", sandboxes: false, cgroups: true },
+                   limits: { idle: 10, attempt: 10 },
+                 },
+               },
+             },
+           },
+         });
+
+         engine.commission("build", { title: "Inner", body: "Inner." }, { name: "inner" });
+
+         const state = await engine.advance("inner");
+
+         console.log(state.status === "escalated" ? state.reason : state.status);
+        `,
+      );
+      mkdirSync(join(directory, "inner"));
+
+      return {
+        ...access,
+        paths: [
+          ...access.paths,
+          { path: process.execPath, mode: "read" },
+          { path: core, mode: "read" },
+        ],
+      };
+    },
+    `${process.execPath} --no-warnings "$1/inner.ts"`,
+    { attempt: 60, idle: 30, memory: 1024 * 1024 * 1024 },
+  );
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+
+  const reason = engine.transcript("first", 1).toString();
+
+  // The wrapper's own error, and nothing to suggest the machine ran out of memory.
+  assert.match(reason, /^Step build .*mkdir: cannot create directory/);
+  assert.doesNotMatch(reason, /memory/);
 });
 
 // A range of users is mapped by the machine's setuid helpers from the owner's entry in /etc/subuid,
