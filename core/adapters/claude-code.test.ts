@@ -603,6 +603,29 @@ test("a Claude Code run that ends without a result escalates, though the agent c
   assert.match(engine.errors("first", 1).toString(), /^claude ended without a result\.$/m);
 });
 
+test("a Claude Code attempt ends once claude gives its result, and stops what the agent left running", async (t) => {
+  // As claude does when it moved a command to the background: the agent claims and finishes, and
+  // claude stays alive while the command runs, which here adds a line to `alive` five times a second.
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `(while :; do echo . >> "${"$"}{0%/claude}/alive"; sleep 0.2; done) &
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"
+     ${succeeded}
+     wait`,
+  );
+
+  const started = Date.now();
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.ok(Date.now() - started < 4000, `the attempt took ${Date.now() - started} ms`);
+
+  const alive = async () => (await readFile(join(directory, "alive"), "utf8")).length;
+  const before = await alive();
+
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.equal(await alive(), before);
+});
+
 test("the Claude Code adapter records what claude loaded that the agent did not declare", async (t) => {
   const init = {
     type: "system",
