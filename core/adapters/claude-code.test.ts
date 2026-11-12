@@ -626,6 +626,71 @@ test("a Claude Code attempt ends once claude gives its result, and stops what th
   assert.equal(await alive(), before);
 });
 
+test("a Claude Code attempt ends once claude gives its result, though what the agent left running ignores being stopped", async (t) => {
+  // The command claude moved to the background ignores SIGTERM, and with it every command it runs,
+  // so it keeps claude's output open after claude itself is stopped.
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `(trap '' TERM; while :; do echo . >> "${"$"}{0%/claude}/alive"; sleep 0.2; done) &
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"
+     ${succeeded}
+     wait`,
+  );
+
+  const started = Date.now();
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.ok(Date.now() - started < 5000, `the attempt took ${Date.now() - started} ms`);
+
+  const alive = async () => (await readFile(join(directory, "alive"), "utf8")).length;
+  const before = await alive();
+
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.equal(await alive(), before);
+});
+
+test("a Claude Code attempt ends once claude gives its result, and stops what the agent left running in a session of its own", async (t) => {
+  // As Claude Code 2.1.322 runs a command it moved to the background: in a session of its own,
+  // outside claude's process group, writing to a file rather than to claude's output.
+  const { engine, directory } = await engineWithClaude(
+    t,
+    `setsid sh -c 'while :; do echo . >> "$1"; sleep 0.2; done' sh "${"$"}{0%/claude}/alive" < /dev/null > /dev/null 2>&1 &
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"
+     ${succeeded}
+     wait`,
+  );
+
+  const started = Date.now();
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "finished", by: "end" });
+  assert.ok(Date.now() - started < 4000, `the attempt took ${Date.now() - started} ms`);
+
+  const alive = async () => (await readFile(join(directory, "alive"), "utf8")).length;
+  const before = await alive();
+
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  assert.equal(await alive(), before);
+});
+
+test("a Claude Code run that exits with an error by itself after its result escalates, though what it left still runs", async (t) => {
+  const { engine } = await engineWithClaude(
+    t,
+    `(sleep 30) &
+     echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"
+     ${succeeded}
+     exit 3`,
+  );
+
+  const started = Date.now();
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    cause: "exit",
+    reason: "Step plan exited with code 3.",
+  });
+  assert.ok(Date.now() - started < 4000, `the attempt took ${Date.now() - started} ms`);
+});
+
 test("the Claude Code adapter records what claude loaded that the agent did not declare", async (t) => {
   const init = {
     type: "system",

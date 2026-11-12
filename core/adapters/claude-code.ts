@@ -245,7 +245,9 @@ const sessionId = randomUUID();
 // Starts claude, with `session` before its configuration and `credential` as its token: the
 // placeholder its broker replaces, or another, which the broker refuses. stdin, when piped, is
 // given `prompt`: Linux refuses one argument over 128 KiB. Headless, it leads a process group of
-// its own, so stopping it stops what it started; in the terminal it must stay in the foreground.
+// its own, so stopping it stops what it started there; in the terminal it must stay in the
+// foreground. Claude Code runs each command in a session of its own, out of that group: the
+// sandbox's PID namespace ends it once the adapter exits.
 function start(
   session: string[],
   credential: string,
@@ -727,9 +729,12 @@ let version: string | undefined;
 
 let claude: ChildProcess;
 
-// How long a headless claude may take to exit once it has given its result, before it is stopped.
+// How long a headless claude may take to exit once it has given its result, before it is stopped,
+// and how long what it started may take to end once stopped, before it is killed.
 const resultGrace = 1000;
+const stopGrace = 2000;
 let afterResult: NodeJS.Timeout | undefined;
+let afterStop: NodeJS.Timeout | undefined;
 let stoppedAfterResult = false;
 
 if (attended) {
@@ -774,11 +779,18 @@ if (attended) {
         // A claude that exited itself keeps its own exit; only what it left holds its output.
         stoppedAfterResult = claude.exitCode === null && claude.signalCode === null;
 
-        try {
-          process.kill(-claude.pid!, "SIGTERM");
-        } catch {
-          // The group ended on its own meanwhile.
-        }
+        const signal = (name: NodeJS.Signals) => {
+          try {
+            process.kill(-claude.pid!, name);
+          } catch {
+            // The group ended on its own meanwhile.
+          }
+        };
+
+        signal("SIGTERM");
+
+        // What ignores being stopped, and keeps claude's output open, is killed.
+        afterStop = setTimeout(() => signal("SIGKILL"), stopGrace);
       }, resultGrace);
     }
   });
@@ -787,6 +799,8 @@ if (attended) {
 const closed = await once(claude, "close").catch((error: NodeJS.ErrnoException) => error);
 
 clearTimeout(afterResult);
+
+clearTimeout(afterStop);
 
 instructionsOf();
 
