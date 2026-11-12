@@ -196,6 +196,7 @@ for whatever the step can read.
 | `example.com`    | That host on port 443.                         |
 | `example.com:22` | That host on that port.                        |
 | `*.example.com`  | Any subdomain of it, not `example.com` itself. |
+| `*`              | Any public host on port 443.                   |
 
 How it works:
 
@@ -207,8 +208,17 @@ How it works:
   gets through, and plain HTTP does not.
 - `curl`, `git`, `npm`, `pip` and `claude` follow the proxy variables. A program that does not has
   no network at all.
+- A host reached only by `*` is looked up by the proxy, outside the sandbox, and reached at the
+  address found there. The proxy refuses it when any address it answers with is this machine's,
+  a private network's or link-local, and refuses an address given in place of a name: so `*`
+  reaches the public web and nothing beside the engine. A host listed by name is reached as
+  before, wherever it is.
 - The engine notes each target refused, once:
   `Step implement was refused network access to pastebin.com:443.`
+
+`*` is a way out, to anywhere, for everything the step can read: its workspace, its inputs and
+whatever its paths grant. Give it only to a step that holds nothing it must not lose, and whose
+brokers can do no harm when asked to by a page the step read.
 
 Rules:
 

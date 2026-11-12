@@ -6548,6 +6548,54 @@ function running(pid: number): boolean {
   }
 }
 
+test("a step whose access lists any host reaches none by address, none that answers with this machine, and none off port 443", async (t) => {
+  const inside = await serving(t, "should not be reached");
+
+  const { engine, directory } = await engineWith(t, (directory) =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: {
+          ...stepRunning(
+            `curl -sS -p "http://127.0.0.1:443/" > "$1/address" 2>&1
+             curl -sS -p "http://localhost:443/" > "$1/name" 2>&1
+             curl -sS -p "http://127.0.0.1:${inside}/" > "$1/port" 2>&1
+             echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+            "end",
+            [directory],
+          ),
+          access: { ...access, network: { hosts: ["*"] } },
+        },
+      },
+    }),
+  );
+
+  const ended = await engine.advance("first");
+
+  assert.partialDeepStrictEqual(
+    ended,
+    { status: "finished" },
+    engine.errors("first", 1).toString(),
+  );
+
+  for (const name of ["address", "name", "port"]) {
+    assert.match(await readFile(join(directory, name), "utf8"), /403/, name);
+  }
+
+  assert.partialDeepStrictEqual(engine.record("first").entries, [
+    {
+      notes: [
+        { note: "Step build was refused network access to 127.0.0.1:443.", from: "engine" },
+        { note: "Step build was refused network access to localhost:443.", from: "engine" },
+        {
+          note: `Step build was refused network access to 127.0.0.1:${inside}.`,
+          from: "engine",
+        },
+      ],
+    },
+  ]);
+});
+
 test("a step whose access names a broker reaches it on loopback, and the broker stops with the attempt", async (t) => {
   const { engine, directory } = await engineWith(t, (directory) =>
     defineWorkflow({

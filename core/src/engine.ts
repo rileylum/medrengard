@@ -32,7 +32,14 @@ import {
   sep,
 } from "node:path";
 import { hostname, tmpdir } from "node:os";
-import { connect as connectTo, createServer as createNetServer, type Socket } from "node:net";
+import { lookup } from "node:dns/promises";
+import {
+  BlockList,
+  connect as connectTo,
+  createServer as createNetServer,
+  isIP,
+  type Socket,
+} from "node:net";
 import { DatabaseSync } from "node:sqlite";
 import {
   type Access,
@@ -3535,7 +3542,7 @@ async function openProxy(
 
     let head = Buffer.alloc(0);
 
-    const reading = (chunk: Buffer) => {
+    const reading = async (chunk: Buffer) => {
       head = Buffer.concat([head, chunk]);
 
       const end = head.indexOf("\r\n\r\n");
@@ -3548,12 +3555,14 @@ async function openProxy(
         return;
       }
 
-      client.off("data", reading);
+      // Nothing more is read until the tunnel is up or refused, which a name's lookup may delay.
+      client.off("data", heard);
+      client.pause();
 
       const [method, target] = head.subarray(0, end).toString("latin1").split(" ");
       const rest = head.subarray(end + 4);
 
-      if (method !== "CONNECT" || target === undefined || !reachable(target, hosts)) {
+      const refuse = () => {
         const named = method === "CONNECT" && target !== undefined ? target : `${method} ${target}`;
 
         if (!told.has(named)) {
@@ -3562,12 +3571,30 @@ async function openProxy(
         }
 
         client.end("HTTP/1.1 403 Forbidden\r\n\r\nRefused by the step's access.\n");
+      };
+
+      const how = method === "CONNECT" && target !== undefined ? reachable(target, hosts) : false;
+
+      if (target === undefined || how === false) {
+        refuse();
 
         return;
       }
 
       const separator = target.lastIndexOf(":");
-      const upstream = connectTo(Number(target.slice(separator + 1)), target.slice(0, separator));
+      const name = target.slice(0, separator);
+
+      // A host reached only because any may be is reached at a public address, found here and
+      // not by the step: a name that answers with this machine's or its network's is refused.
+      const address = how === "any" ? await publicAddressOf(name) : name;
+
+      if (address === undefined) {
+        refuse();
+
+        return;
+      }
+
+      const upstream = connectTo(Number(target.slice(separator + 1)), address);
 
       open.add(upstream);
       upstream.on("close", () => open.delete(upstream));
@@ -3587,7 +3614,9 @@ async function openProxy(
       client.on("close", () => upstream.destroy());
     };
 
-    client.on("data", reading);
+    const heard = (chunk: Buffer) => void reading(chunk);
+
+    client.on("data", heard);
   });
 
   await new Promise<void>((resolve) => server.listen(socket, resolve));
@@ -3725,25 +3754,82 @@ async function ended(broker: ChildProcess): Promise<void> {
   clearTimeout(killing);
 }
 
-// Whether a CONNECT target, host:port, is one of `hosts`: `host` is port 443, `host:port` that
-// port, and `*.domain` any of its subdomains.
-function reachable(target: string, hosts: readonly string[]): boolean {
+// Whether a CONNECT target, host:port, is one of `hosts`, and how: `host` is port 443,
+// `host:port` that port, and `*.domain` any of its subdomains, each by name; `*` is any host on
+// port 443, which only a public address answers for.
+function reachable(target: string, hosts: readonly string[]): "named" | "any" | false {
   const separator = target.lastIndexOf(":");
   const name = target.slice(0, separator).toLowerCase();
   const port = target.slice(separator + 1);
 
-  return (
-    separator > 0 &&
-    /^[0-9]+$/.test(port) &&
-    hosts.some((entry) => {
-      const [listed, listedPort = "443"] = entry.toLowerCase().split(":");
+  if (separator <= 0 || !/^[0-9]+$/.test(port)) {
+    return false;
+  }
 
-      return (
-        port === listedPort &&
-        (listed!.startsWith("*.") ? name.endsWith(listed!.slice(1)) : name === listed)
-      );
-    })
-  );
+  const named = hosts.some((entry) => {
+    const [listed, listedPort = "443"] = entry.toLowerCase().split(":");
+
+    return (
+      listed !== "*" &&
+      port === listedPort &&
+      (listed!.startsWith("*.") ? name.endsWith(listed!.slice(1)) : name === listed)
+    );
+  });
+
+  if (named) {
+    return "named";
+  }
+
+  return hosts.includes("*") && port === "443" ? "any" : false;
+}
+
+// The addresses no step reaches by `*`: this machine, the networks it sits on, and the addresses
+// kept for neither.
+const inward = new BlockList();
+
+for (const [network, prefix] of [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["224.0.0.0", 3],
+] as const) {
+  inward.addSubnet(network, prefix, "ipv4");
+}
+
+for (const [network, prefix] of [
+  ["::", 127],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["ff00::", 8],
+] as const) {
+  inward.addSubnet(network, prefix, "ipv6");
+}
+
+// The address to reach `name` at, when every address it answers with is public; none otherwise,
+// nor for a name that does not answer or an address given in place of a name.
+async function publicAddressOf(name: string): Promise<string | undefined> {
+  if (isIP(name) !== 0) {
+    return undefined;
+  }
+
+  const found = await lookup(name, { all: true }).catch(() => []);
+
+  const outward = found.every(({ address, family }) => {
+    // An IPv4 address written as IPv6 is judged as the IPv4 address it is.
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address)?.[1];
+
+    return mapped === undefined
+      ? !inward.check(address, family === 6 ? "ipv6" : "ipv4")
+      : !inward.check(mapped, "ipv4");
+  });
+
+  return outward ? found[0]?.address : undefined;
 }
 
 // An artifact a claim adopted: one of the attempt's inputs, named by hash, recorded as it is with
