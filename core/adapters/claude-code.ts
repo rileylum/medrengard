@@ -727,6 +727,11 @@ let version: string | undefined;
 
 let claude: ChildProcess;
 
+// How long a headless claude may take to exit once it has given its result, before it is stopped.
+const resultGrace = 1000;
+let afterResult: NodeJS.Timeout | undefined;
+let stoppedAfterResult = false;
+
 if (attended) {
   const session = attendedSession();
 
@@ -760,10 +765,28 @@ if (attended) {
   follow(claude, true, (event) => {
     startupOf(claude, event, startup);
     notesOf(event);
+
+    // The agent has finished: claude may stay alive for a command it moved to the background,
+    // until that ends or its own limit stops it. Given a moment to exit as it would, claude is
+    // then stopped with all it started, and judged by its result.
+    if (event.type === "result" && afterResult === undefined) {
+      afterResult = setTimeout(() => {
+        // A claude that exited itself keeps its own exit; only what it left holds its output.
+        stoppedAfterResult = claude.exitCode === null && claude.signalCode === null;
+
+        try {
+          process.kill(-claude.pid!, "SIGTERM");
+        } catch {
+          // The group ended on its own meanwhile.
+        }
+      }, resultGrace);
+    }
   });
 }
 
 const closed = await once(claude, "close").catch((error: NodeJS.ErrnoException) => error);
+
+clearTimeout(afterResult);
 
 instructionsOf();
 
@@ -781,7 +804,8 @@ if (closed instanceof Error) {
   // Why is already recorded.
   process.exitCode = 1;
 } else {
-  const [code] = closed;
+  // A claude stopped after its result ended as its result says.
+  const code = stoppedAfterResult ? 0 : closed[0];
 
   // claude can exit 0 from a run it reports as failed, or say nothing of how it ended: either way
   // a claim it left is not one to trust, so the attempt fails and the owner decides. An attended
