@@ -56,10 +56,13 @@ Read the request and write a plan for it.
 
 ```ts
 import { agent } from "@medrengard/core/defaults/agents.ts";
+import { programs } from "@medrengard/core/defaults/programs.ts";
 
+// `programs` holds the real path of each program the package ships: `claudeCode`, `codex`, and
+// `medrengard`, the CLI.
 const harnesses = {
-  "claude-code": { run: ["node", "/path/to/medrengard/core/adapters/claude-code.ts"] },
-  codex: { run: ["node", "/path/to/medrengard/core/adapters/codex.ts"], costs: false },
+  "claude-code": { run: ["node", programs.claudeCode] },
+  codex: { run: ["node", programs.codex], costs: false },
 } as const;
 
 const planner = agent("/path/to/agents/planner.md", harnesses);

@@ -662,6 +662,30 @@ function parseWorkflow(
     );
   }
 
+  // A step's labels are the factory's own words, which the engine reads none of: they are taken
+  // off while each kind's fields are checked, and put back as written.
+  const labelled: [step: object, labels: object][] = [];
+
+  for (const [name, step] of Object.entries(steps)) {
+    if (Object.hasOwn(step ?? {}, "labels")) {
+      const labels = step.labels;
+
+      const texts =
+        isRecord(labels) &&
+        !Array.isArray(labels) &&
+        Object.values(labels).every(
+          (label) => isText(label) && label.length >= 1 && label.length <= 256,
+        );
+
+      if (!texts) {
+        throw invalid(`step ${name}'s labels must each be a text of 1 to 256 characters, by name`);
+      }
+
+      labelled.push([step, labels]);
+      delete step.labels;
+    }
+  }
+
   for (const [name, step] of Object.entries(steps)) {
     const on = step?.on;
     const kind = step?.kind;
@@ -753,6 +777,7 @@ function parseWorkflow(
 
     const program = kind === "command" ? "run" : "agent";
     const { workspace, inputs, claims, budget, access, limits, attended } = step;
+    const keptOf = step.kept;
     const { agent } = step;
     const harness = agent?.harness;
     const argv = kind === "command" ? step.run : harness?.run;
@@ -763,6 +788,7 @@ function parseWorkflow(
       "kind",
       "workspace",
       "inputs",
+      ...(Object.hasOwn(step, "kept") ? ["kept"] : []),
       "claims",
       program,
       ...(kind === "agent" && Object.hasOwn(step, "attended") ? ["attended"] : []),
@@ -853,6 +879,22 @@ function parseWorkflow(
       throw invalid(
         `step ${name}'s input names must each be letters, digits, - or _, starting with a letter`,
       );
+    }
+
+    // Kept files are an artifact's: a session has none.
+    const keeps =
+      !Object.hasOwn(step, "kept") ||
+      (Array.isArray(keptOf) &&
+        isRecord(inputs) &&
+        keptOf.every(
+          (input) =>
+            isText(input) &&
+            Object.hasOwn(inputs, input) &&
+            !hasExactly(declared.get(input), ["session"]),
+        ));
+
+    if (!keeps) {
+      throw invalid(`step ${name}'s kept must name inputs of its own that hold artifacts`);
     }
 
     if (!isRecord(inputs) || !Object.values(inputs).every(validQuery)) {
@@ -976,6 +1018,10 @@ function parseWorkflow(
     }
 
     Object.assign(step, { limits: whole });
+  }
+
+  for (const [step, labels] of labelled) {
+    Object.assign(step, { labels });
   }
 
   // SAFETY: every field the engine reads was checked above, and each step's limits made whole.

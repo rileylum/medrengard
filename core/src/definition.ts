@@ -191,9 +191,12 @@ type Bounds<Held extends "stated" | "whole", Attended extends boolean> = Held ex
 // What every step that starts a program declares: its inputs, the artifact kinds it may claim,
 // whether its workspace is built from the subject, from the one artifact an input names, with the
 // artifacts another input names added as branches, or starts empty, its outcomes' edges, the attempts it may start between the owner's decisions, its access,
-// and its limits, which its kind of step adds.
+// and its limits, which its kind of step adds. `kept` names the inputs whose artifacts it is also
+// given the files a verifier kept for, such as a picture; none unless named, since a commit's
+// bundle is its whole history.
 type Program<N extends string> = {
   inputs: Readonly<Record<string, Query<N>>>;
+  kept?: readonly string[];
   claims: readonly string[];
   workspace: "subject" | "empty" | { input: string; branches?: string };
   on: Record<string, N | "end">;
@@ -276,9 +279,14 @@ export type Commissioning<N extends string> = {
  * A step: an agent step runs its agent's harness adapter, with the owner in their terminal when
  * `attended`, a command step runs `run`, once or, watching, as checks, an approval step waits for the owner's decision,
  * following the edge its outcome names in `on`, a children step waits on child commissions, and a
- * commission step starts commissions of their own.
+ * commission step starts commissions of their own. Any may carry `labels`: the factory's own
+ * words about the step, texts by name, for whoever shows the workflow. The engine reads none.
  */
-type Step<N extends string, Held extends "stated" | "whole"> =
+type Step<N extends string, Held extends "stated" | "whole"> = Labelled & Unlabelled<N, Held>;
+
+type Labelled = { labels?: Readonly<Record<string, string>> };
+
+type Unlabelled<N extends string, Held extends "stated" | "whole"> =
   | ({ kind: "agent"; agent: Agent; attended: true } & Program<N> & Bounds<Held, true>)
   | ({ kind: "agent"; agent: Agent; attended?: false } & Program<N> & Bounds<Held, false>)
   | ({ kind: "command"; run: readonly [string, ...string[]]; watch?: undefined } & Program<N> &

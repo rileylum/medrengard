@@ -49,6 +49,7 @@ GitHub instead, follow `open` with `watch`.
 | `token`      | the file that holds the token               | `~/.config/medrengard/github-token` |
 | `git`        | where Git fetches and pushes go             | `https://github.com`                |
 | `api`        | where API calls go                          | `https://api.github.com`            |
+| `issues`     | the labels an issue a step files may carry  | none: no issue is filed             |
 
 For GitHub Enterprise Server, `git` is `https://host` and `api` is `https://host/api/v3`.
 
@@ -154,13 +155,59 @@ sandbox. Their access names no other host. The broker forwards, for `repository`
 - `GET /issues?state=open&per_page=100&page=<n>`: read the open issues, a page at a time, for a
   step of the owner's that needs to know what is already tracked. No step of Medrengard's makes
   this call, and the token needs leave to read issues for it.
+- `POST /issues`, only when the broker is started with `--issues`: file an issue. See
+  [Filing issues](#filing-issues).
 
 Rules:
 
 - Anything else gets a 403 that names the request: `Refused by Medrengard's GitHub broker: …`
+- It reads no closed issue, and never edits, closes, comments on or labels an issue there is.
 - A push to any other ref, `base` included, gets a 403: `Refused by Medrengard's GitHub broker:
   a push to refs/heads/main, which is not a branch under medrengard/.` Only a merge you approved
   changes `base`.
 - A `base` to compare with may hold letters, digits, `_` and `-`, in parts joined by `.` or `/`.
 - Without a token file it can read, the broker does not start, and the commission escalates with
   the cause `broker`.
+
+## Filing issues
+
+A step files an issue only through a broker started with `--issues <labels>`: the labels an issue
+may carry, separated by commas. `--issues ""` allows an issue and no label. A label is at most 50
+letters, digits, spaces, `_`, `.` and `-`; with any other, the broker does not start. Without the
+option the broker refuses `POST /issues` as it refuses anything else.
+
+```ts
+// These steps' broker files issues, labelled bug or not at all.
+const tracker = github({ repository: "owner/app", base: "main", issues: ["bug"] });
+```
+
+`issues` adds the option to the broker of every step `github` returns. None of them files an
+issue: the step that does is your own, with their `access`.
+
+The broker forwards the request when its body is a JSON object with exactly:
+
+- `title`: a string, not empty;
+- `body`: a string;
+- `labels`, optional: a list of strings, each one the broker was started with.
+
+Anything else gets a 403 that says what was wrong, and reaches GitHub not at all: a label not
+listed, another key such as `assignees` or `milestone`, a body that is not JSON, or one of more
+than 256 KiB. The broker reads the whole issue before it forwards any of it, and forwards it as
+it read it, written again as JSON, so GitHub reads nothing the broker did not judge.
+
+Why the labels are listed: in a factory that takes an issue carrying a certain label up as new
+work, a step that may file with that label starts work by itself. Start a step's broker with that
+label only where the step may commission, and give an agent step `--issues ""` or the labels that
+start nothing.
+
+The token then needs _Issues_ read and write. To keep that from the token the other steps use,
+save a second token and pass it as `token` for the filing step alone:
+
+```ts
+const tracker = github({
+  repository: "owner/app",
+  base: "main",
+  token: "/home/you/.config/medrengard/github-issues-token",
+  issues: [],
+});
+```

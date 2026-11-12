@@ -289,6 +289,18 @@ It throws `There is no artifact <hash>.` or `The prefix <hash> names more than o
 { "kind": "document", "fields": { "title": "Reply" }, "body": "Hello. You asked: Say hello." }
 ```
 
+### `kept`
+
+```ts
+engine.kept(hash: string, name: string): Buffer
+```
+
+Returns the file named `name` that a verifier kept for the artifact `hash`, such as a commit's
+`commit.bundle`. The record names each artifact's kept files, as `kept`. It reads only a file the
+log names as kept for that artifact.
+
+It throws `No file <name> was kept for the artifact <hash>.`
+
 ### `transcript` and `errors`
 
 ```ts
@@ -379,6 +391,42 @@ as it lives, as the CLI's `run` does, registers so that others can see it.
 milliseconds since the epoch. `status` is `alive` or `dead`, judged by the process on this machine,
 or `unknown` for an engine registered on another machine.
 
+## Reading for display
+
+`@medrengard/core/src/reading.ts` holds what a client that shows a record works out from it, so
+that every client agrees. Each function only reads, through the methods above.
+
+```ts
+import {
+  changed,
+  material,
+  standing,
+  timeline,
+  visible,
+  waits,
+  week,
+} from "@medrengard/core/src/reading.ts";
+```
+
+| Function                       | Returns                                                                                                                                                                                                                                                                                                               |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `standing(engine)`             | A `Standing` for every commission the engine can read, in the order they were commissioned: its `state`; `waits`, who it waits for; its request's `title`; `since`, when its record last gained anything, 0 without times; `usd`, what its attempts reported spending; and `note`, what a running attempt last noted. |
+| `timeline(engine, commission)` | A `Moment` for each entry of the record, oldest first: `what` (`attempt`, `decision` or `stop`), its `step`, its `outcome` (`running`, the outcome claimed or decided, or `stopped`), what it `said`, when it `started` and `ended`, its `usd`, and what it `claimed` by hash, kind and title.                        |
+| `waits(moments)`               | Each wait on the owner among a timeline's moments: `at`, when their decision ended it, and how long it `lasted`.                                                                                                                                                                                                      |
+| `week(things, now, at, worth)` | Seven sums, the oldest first: what `things` are `worth` on each of the seven days ending on the day of `now`, in the machine's own days.                                                                                                                                                                              |
+| `material(engine, commission)` | The whole record as one markdown document, oldest first: the request, everything each attempt claimed, each escalation and each decision with its feedback. What an agent outside the commission is given to answer from.                                                                                             |
+| `changed(engines, signal)`     | An async generator over several engines by name: it yields a name each time that engine's record gains an event, until `signal` aborts.                                                                                                                                                                               |
+| `visible(text)`                | `text` with each control character a terminal would act on written as `\uXXXX`. Pass every text a step wrote through it before a terminal shows it.                                                                                                                                                                   |
+
+`waits` is one of:
+
+| `waits`  | When                                                                    |
+| -------- | ----------------------------------------------------------------------- |
+| `owner`  | It awaits a decision, has escalated, or is ready at a step they attend. |
+| `step`   | Its step is being attempted.                                            |
+| `run`    | It is ready, and waits for an engine that runs to attempt its step.     |
+| `nobody` | It has finished.                                                        |
+
 ## Types
 
 Import them from the modules the package exports:
@@ -393,6 +441,7 @@ import type {
 } from "@medrengard/core/src/replay.ts";
 import type { Definition, Factory } from "@medrengard/core/src/definition.ts";
 import type { Artifact } from "@medrengard/core/src/store.ts";
+import type { Moment, Standing } from "@medrengard/core/src/reading.ts";
 ```
 
 Every hash is a SHA-256 in hexadecimal. Every time is in milliseconds since the epoch.
@@ -464,7 +513,13 @@ An attempt that completed:
   entry: "attempt"; attempt: number; step: string; notes: Note[];
   started?: number; ended?: number;
   outcome: string;
-  artifacts: { hash: string; artifact: Artifact; verifier: readonly string[] | null }[];
+  // kept names the files that verifier kept for it, which `kept` reads.
+  artifacts: {
+    hash: string;
+    artifact: Artifact;
+    verifier: readonly string[] | null;
+    kept: string[];
+  }[];
   errors: boolean;
   usage?: Usage;
 }

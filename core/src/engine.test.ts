@@ -6602,3 +6602,136 @@ test("access whose paths name /network, where the step's proxy goes, cannot be c
     message: /paths cannot name \/workspace, \/input, \/output or \/network/,
   });
 });
+
+test("a commission's definition gives each step's labels, as the factory wrote them", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "medrengard-test-"));
+
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const engine = createEngine({
+    log: join(directory, "log.sqlite"),
+    workflows: {
+      build: defineWorkflow({
+        start: "review",
+        steps: {
+          review: { kind: "approval", on: { approve: "end" }, labels: { stage: "Yours" } },
+        },
+      }),
+    },
+    kinds: builtIn,
+    defaults: { limits: defaultLimits },
+  });
+
+  engine.commission("build", { title: "Label", body: "Label.\n" }, { name: "first" });
+
+  assert.deepEqual(engine.definition("first").workflow.steps.review?.labels, { stage: "Yours" });
+});
+
+test("a client reads a file a verifier kept for an artifact, which the record names", async (t) => {
+  const { engine } = await engineWith(t, () =>
+    defineWorkflow({
+      start: "build",
+      steps: {
+        build: stepRunning(committing, "review"),
+        review: { kind: "approval", on: { approve: "end" } },
+      },
+    }),
+  );
+
+  await engine.advance("first");
+
+  const hash = subjectOf(engine);
+  const [entry] = engine.record("first").entries;
+
+  assert(entry.entry === "attempt" && "artifacts" in entry);
+  assert.deepEqual(
+    entry.artifacts.map(({ kept }) => kept),
+    [["commit.bundle"]],
+  );
+
+  // A Git bundle opens with its signature.
+  assert.match(
+    engine.kept(hash, "commit.bundle").subarray(0, 16).toString(),
+    /^# v[23] git bundle/,
+  );
+  assert.throws(
+    () => engine.kept(hash, "other"),
+    new Error(`No file other was kept for the artifact ${hash}.`),
+  );
+  assert.throws(
+    () => engine.kept("0".repeat(64), "commit.bundle"),
+    new Error(`No file commit.bundle was kept for the artifact ${"0".repeat(64)}.`),
+  );
+});
+
+// A workflow whose `build` commits, and whose `read` is given the subject, with `more` as its
+// other fields, and copies its input into the directory `received`.
+const readingKept = (directory: string, more: { kept?: readonly string[]; input?: number }) =>
+  defineWorkflow({
+    start: "build",
+    steps: {
+      build: stepRunning(committing, "read"),
+      read: {
+        ...stepRunning(
+          `cp -r "$MEDRENGARD_IN"/* "$1"; echo '{"outcome":"done"}' > "$MEDRENGARD_OUT/output.json"`,
+          "review",
+          [join(directory, "received")],
+        ),
+        inputs: { subject: "subject" },
+        kept: more.kept,
+        limits: { idle: 5, attempt: 10, transcript: 65536, input: more.input ?? 65536 },
+      },
+      review: { kind: "approval", on: { approve: "end" } },
+    },
+  });
+
+test("a step is given the files kept for an input it names in kept, and for no other", async (t) => {
+  const { engine, directory } = await engineWith(t, (at) => readingKept(at, { kept: ["subject"] }));
+
+  await mkdir(join(directory, "received"));
+  assert.partialDeepStrictEqual(await engine.advance("first"), { status: "awaiting" });
+
+  const hash = subjectOf(engine);
+  const given = JSON.parse(await readFile(join(directory, "received", "input.json"), "utf8"));
+
+  assert.deepEqual(given.inputs.subject[0].kept, {
+    "commit.bundle": `subject/${hash}.kept/commit.bundle`,
+  });
+  assert.deepEqual(
+    await readFile(join(directory, "received", "subject", `${hash}.kept`, "commit.bundle")),
+    engine.kept(hash, "commit.bundle"),
+  );
+
+  const plain = await engineWith(t, (at) => readingKept(at, {}));
+
+  await mkdir(join(plain.directory, "received"));
+  await plain.engine.advance("first");
+
+  const without = JSON.parse(
+    await readFile(join(plain.directory, "received", "input.json"), "utf8"),
+  );
+
+  assert.ok(!Object.hasOwn(without.inputs.subject[0], "kept"));
+  assert.ok(!existsSync(join(plain.directory, "received", "subject")));
+});
+
+test("the kept files a step is given count toward its input limit", async (t) => {
+  const { engine, directory } = await engineWith(t, (at) =>
+    readingKept(at, { kept: ["subject"], input: 64 }),
+  );
+
+  await mkdir(join(directory, "received"));
+
+  const state = await engine.advance("first");
+
+  assert(state.status === "escalated");
+  assert.equal(state.cause, "limit");
+  assert.match(state.reason, /^Step read's inputs are \d+ bytes, over its input limit of 64\.$/);
+});
+
+test("a step whose kept names no input of its own is refused", async (t) => {
+  await assert.rejects(
+    engineWith(t, (at) => readingKept(at, { kept: ["report"] })),
+    /step read's kept must name inputs of its own that hold artifacts/,
+  );
+});

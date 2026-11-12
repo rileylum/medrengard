@@ -71,12 +71,16 @@ type Pinned = {
     Same<Step["kind"], "agent" | "command" | "approval" | "children" | "commission">
   >;
   commissionStep: Expect<
-    Same<keyof Starting, "kind" | "trigger" | "workflow" | "each" | "given" | "on" | "budget">
+    Same<
+      keyof Starting,
+      "kind" | "trigger" | "workflow" | "each" | "given" | "on" | "budget" | "labels"
+    >
   >;
   childrenStep: Expect<
     Same<
       keyof Waiting,
       | "kind"
+      | "labels"
       | "workflow"
       | "each"
       | "count"
@@ -107,9 +111,11 @@ type Pinned = {
     Same<
       keyof Agentic,
       | "kind"
+      | "labels"
       | "agent"
       | "attended"
       | "inputs"
+      | "kept"
       | "claims"
       | "workspace"
       | "on"
@@ -123,9 +129,11 @@ type Pinned = {
     Same<
       keyof Command,
       | "kind"
+      | "labels"
       | "run"
       | "watch"
       | "inputs"
+      | "kept"
       | "claims"
       | "workspace"
       | "on"
@@ -135,7 +143,7 @@ type Pinned = {
       | "limits"
     >
   >;
-  approvalStep: Expect<Same<keyof Approval, "kind" | "on">>;
+  approvalStep: Expect<Same<keyof Approval, "kind" | "on" | "labels">>;
   workspace: Expect<
     Same<Agentic["workspace"], "subject" | "empty" | { input: string; branches?: string }>
   >;

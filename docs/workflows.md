@@ -35,13 +35,15 @@ export const draft = defineWorkflow({
 
 ## Steps
 
-| Kind         | What it does                                                                                           |
-| ------------ | ------------------------------------------------------------------------------------------------------ |
-| `command`    | Runs your program, `run`. With `watch`, runs it as a check each interval: see [Watching](#watching).   |
-| `agent`      | Runs an agent through its harness adapter. With `attended: true`, in your terminal.                    |
-| `approval`   | Waits for your decision. It has only `on`, which cannot list `abandon`: you may abandon at every wait. |
-| `children`   | Starts child commissions and waits on them. See [Children](#children).                                 |
-| `commission` | Starts commissions through a trigger and waits on none. See [Commission steps](#commission-steps).     |
+| Kind         | What it does                                                                                         |
+| ------------ | ---------------------------------------------------------------------------------------------------- |
+| `command`    | Runs your program, `run`. With `watch`, runs it as a check each interval: see [Watching](#watching). |
+| `agent`      | Runs an agent through its harness adapter. With `attended: true`, in your terminal.                  |
+| `approval`   | Waits for your decision. It has `on`, which cannot list `abandon`: you may abandon at every wait.    |
+| `children`   | Starts child commissions and waits on them. See [Children](#children).                               |
+| `commission` | Starts commissions through a trigger and waits on none. See [Commission steps](#commission-steps).   |
+
+A step of any kind may state `labels`: your own words about it, each a text of 1 to 256 characters by name, such as `labels: { stage: "Gate" }`. The engine reads none of them. A commission's definition holds them as written, so a client that shows the workflow reads them from `engine.definition(commission)` and need not know your steps' names.
 
 A command or agent step states:
 
@@ -51,6 +53,7 @@ A command or agent step states:
 | `agent`     | An agent step's harness, model, prompt and any skills. See [Agents](agents.md).                    |
 | `workspace` | What the working directory is built from. See [Workspace](#workspace).                             |
 | `inputs`    | What the step is given, by name; `{}` for nothing. See [Inputs](#inputs).                          |
+| `kept`      | Optional. The inputs whose artifacts it is also given the files a verifier kept for, by name.      |
 | `claims`    | The artifact kinds the step may claim, such as `["commit"]`; `[]` for none. See [Kinds](kinds.md). |
 | `on`        | The next step, or `end`, for each outcome. At least one.                                           |
 | `budget`    | The attempts the step may start between your decisions. A positive integer.                        |
@@ -58,6 +61,7 @@ A command or agent step states:
 | `limits`    | Optional. See [Limits](#limits) and [Money](#money).                                               |
 | `escalate`  | Optional. See [Escalation routes](#escalation-routes).                                             |
 
+- Kept files, such as a picture a verifier kept, are given only for the inputs `kept` names, and count toward the step's input limit: a commit's kept file is a bundle of its whole history.
 - A claim of a kind the step does not list escalates. A step need not claim every kind it lists.
 - If a kind has an outcome field, as a verdict has, the step needs an edge for each of its values: `pass` and `fail`.
 - A step that has spent its budget escalates: `Step write has spent its budget of 3 attempts.` Only your decision renews a budget, so every loop ends.

@@ -26,7 +26,9 @@ export const pullRequest = {
 
 /**
  * Where the broker finds Medrengard's token and GitHub: the defaults are
- * ~/.config/medrengard/github-token, https://github.com and https://api.github.com.
+ * ~/.config/medrengard/github-token, https://github.com and https://api.github.com. With `issues`,
+ * the steps' broker also forwards the filing of an issue that carries none but those labels;
+ * without, it files none.
  */
 export type Options = {
   repository: string;
@@ -34,6 +36,7 @@ export type Options = {
   token?: string;
   git?: string;
   api?: string;
+  issues?: readonly string[];
 };
 
 // A command step that does not watch; the watch step adds its own watch and empty workspace.
@@ -52,9 +55,9 @@ const here = import.meta.dirname;
  * The open, watch, land and rebase steps for `repository`, a pull request's base being `base`. Each reaches
  * GitHub only through the broker, which forwards nothing but landing this repository's change.
  */
-export function github({ repository, base, token, git, api }: Options) {
-  const flags = Object.entries({ token, git, api }).flatMap(([flag, value]) =>
-    value === undefined ? [] : [`--${flag}`, value],
+export function github({ repository, base, token, git, api, issues }: Options) {
+  const flags = Object.entries({ token, git, api, issues: issues?.join(",") }).flatMap(
+    ([flag, value]) => (value === undefined ? [] : [`--${flag}`, value]),
   );
 
   const access: Access = {
