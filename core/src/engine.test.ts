@@ -1023,6 +1023,16 @@ test("a program a step bounds and loses is not the step going over its own memor
   });
 });
 
+test("a step whose access grants cgroups and exits 125 by itself is not a sandbox that failed to set up", async (t) => {
+  const { engine } = await engineConfined(t, () => ({ ...access, cgroups: true }), `exit 125`);
+
+  assert.partialDeepStrictEqual(await engine.advance("first"), {
+    status: "escalated",
+    cause: "exit",
+    reason: "Step build exited with code 125.",
+  });
+});
+
 test("an engine in a step whose access grants cgroups holds its own steps to their limits", async (t) => {
   const core = join(import.meta.dirname, "..");
 
@@ -1119,7 +1129,8 @@ test("a step whose sandbox fails to set up in a scope of systemd's is reported a
          import { builtIn } from ${JSON.stringify(join(core, "defaults", "kinds.ts"))};
          import { limits } from ${JSON.stringify(join(core, "defaults", "limits.ts"))};
 
-         process.env.PATH = ${JSON.stringify(join(directory, "bin"))} + ":" + process.env.PATH;
+         // The step this engine runs in is given no PATH, and the stand-in must find sh.
+         process.env.PATH = ${JSON.stringify(join(directory, "bin"))} + ":/usr/bin:/bin";
 
          const system = ["/usr", "/etc", "/bin", "/lib", "/lib64"].map((path) => ({ path, mode: "read" }));
 

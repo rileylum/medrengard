@@ -68,22 +68,37 @@ ${handOver}`;
 // groups of its own there: a group holding processes cannot give its children limits, so this one
 // moves to a leaf, main, first. The argument equal to $3 becomes the group's path.
 //
+// If the group cannot be divided, the program does not start: the file $2 says so, setup, with
+// what the shell said of it, and this exits 125. The kernel may count a child this shell has
+// already reaped, mkdir, in the group a moment longer and refuse the controllers as busy, so the
+// write is tried again for a while.
+//
 // systemd forgets a scope once it ends, and says nothing of memory for one it does not manage
-// alone. So with $2, a process outside the program's group and session waits for it to end, then
-// writes to the file $2 whether the group itself ran out of memory, whatever its own groups did:
-// over, or within. The file appears whole, by a rename, and the engine waits for it.
+// alone. So without $1, a process outside the program's group and session waits for it to end,
+// then writes to the file $2 whether the group itself ran out of memory, whatever its own groups
+// did: over, or within. The file appears whole, by a rename, and the engine waits for it.
 //
 // That process is in the group it reports on, so a group out of memory could lose it in place of
 // the program. The program and all it starts are therefore made the likelier to be stopped, by
 // their score, which they inherit; a program that lowers its own again risks only that the engine
 // is told nothing, which fails the attempt as the engine's own.
 const divide = `group=\${1:-${hierarchy}$(cut -d: -f3- /proc/self/cgroup)}
+given=$1
 marker=$2
 sentinel=$3
 shift 3
-mkdir "$group/main" && echo $$ > "$group/main/cgroup.procs" &&
-  echo "+memory +pids" > "$group/cgroup.subtree_control" || exit 125
-if [ -n "$marker" ]; then
+tries=100
+mkdir "$group/main" 2> "$marker.part" && echo $$ 2> "$marker.part" > "$group/main/cgroup.procs" &&
+  until echo "+memory +pids" 2> "$marker.part" > "$group/cgroup.subtree_control"; do
+    tries=$((tries - 1))
+    [ "$tries" -gt 0 ] || break
+    sleep 0.01
+  done && [ "$tries" -gt 0 ] || {
+  { echo setup; cat "$marker.part"; } > "$marker.failed"
+  mv "$marker.failed" "$marker"
+  exit 125
+}
+if [ -z "$given" ]; then
   setsid sh -c 'while kill -0 "$1" 2> /dev/null; do sleep 0.05; done
     if grep -q "^oom [1-9]" "$2/memory.events.local"; then echo over; else echo within; fi > "$3.part"
     mv "$3.part" "$3"' sh $$ "$group" "$marker" < /dev/null > /dev/null 2>&1 &
@@ -99,7 +114,8 @@ ${handOver}`;
 // How long the engine waits to be told whether a scope ran out of memory, once its program ended.
 const answerWait = 5000;
 
-// The scopes whose memory systemd does not answer for, and the file each is answered in.
+// The groups a program may divide, and the file each is answered in: whether it was divided, and,
+// for a scope, whether it ran out of memory, which systemd does not answer for.
 const markers = new Map<string, string>();
 
 /**
@@ -116,19 +132,16 @@ function held(
 ) {
   const group = join(hierarchy, unit);
 
-  // A group this engine made is still there to read once its program ends: no file is needed.
+  if (divided !== undefined) {
+    markers.set(unit, divided.marker);
+  }
+
+  // A group this engine made is still there to read once its program ends: the file answers only
+  // whether it was divided.
   const dividing =
     divided === undefined
       ? []
-      : [
-          "sh",
-          "-c",
-          divide,
-          "sh",
-          delegated ? group : "",
-          delegated ? "" : divided.marker,
-          divided.sentinel,
-        ];
+      : ["sh", "-c", divide, "sh", delegated ? group : "", divided.marker, divided.sentinel];
 
   if (delegated) {
     return {
@@ -144,10 +157,6 @@ function held(
         ...argv,
       ],
     };
-  }
-
-  if (divided !== undefined) {
-    markers.set(unit, divided.marker);
   }
 
   return {
@@ -368,12 +377,36 @@ export function confine(
 }
 
 /**
+ * What was said when the group of the unit `unit` could not be divided, so its program never
+ * started, or undefined if it was.
+ */
+export function notSetUp(unit: string): string | undefined {
+  const marker = markers.get(unit);
+
+  if (marker === undefined || !existsSync(marker)) {
+    return undefined;
+  }
+
+  const [answer, ...said] = readFileSync(marker, "utf8").split("\n");
+
+  if (answer !== "setup") {
+    return undefined;
+  }
+
+  markers.delete(unit);
+
+  return said.join("\n").trim();
+}
+
+/**
  * Whether the program that ran as the unit `unit` was stopped for using more than its memory.
  * systemd keeps a scope that failed until it is reset, so this resets it.
  */
 export function overMemory(unit: string): boolean {
   // A group this engine made: whether it ran out of memory itself, not a group under it.
   if (delegated) {
+    markers.delete(unit);
+
     return /^oom [1-9]/m.test(readFileSync(join(hierarchy, unit, "memory.events.local"), "utf8"));
   }
 

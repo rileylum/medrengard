@@ -74,7 +74,16 @@ import {
   type Why,
 } from "./progress.ts";
 import { hasExactly, isRecord, isText } from "./json.ts";
-import { confine, fullArea, inScope, overMemory, reclaim, stop, type Bounds } from "./sandbox.ts";
+import {
+  confine,
+  fullArea,
+  inScope,
+  notSetUp,
+  overMemory,
+  reclaim,
+  stop,
+  type Bounds,
+} from "./sandbox.ts";
 import type { Kind, Kinds, Program } from "./kinds.ts";
 import { createStore, type Artifact } from "./store.ts";
 
@@ -3337,6 +3346,15 @@ async function run(
     }
 
     if (code !== 0) {
+      // The sandbox could not be set up, so the program never started.
+      const unset = notSetUp(unit);
+
+      if (unset !== undefined) {
+        return escalate(
+          because("exit", `Step ${name} could not be set up in its sandbox: ${unset}`),
+        );
+      }
+
       // systemd stops the whole scope; only it knows why.
       if (overMemory(unit)) {
         return escalate(
@@ -4267,6 +4285,12 @@ async function runProgram(
 
   if (late) {
     return `it reached its limit of ${program.limits.attempt} s.${stderr}`;
+  }
+
+  const unset = closed[0] === 0 ? undefined : notSetUp(unit);
+
+  if (unset !== undefined) {
+    return `it could not be set up in its sandbox: ${unset}${stderr}`;
   }
 
   if (closed[0] !== 0 && overMemory(unit)) {
