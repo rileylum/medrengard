@@ -94,6 +94,8 @@ fields are `repository`, `number` and `url`. It has no verifier.
 - It force-pushes the subject to the branch `medrengard/<commission>`.
 - It opens a pull request of that branch against `base`. The title is the request's title. The
   body is the request's body, then the commit's report if it has one.
+- A request or a report over 20000 characters is cut at the end of a line, and says that the whole
+  of it is in the commission's record. GitHub refuses a body over 65536 characters.
 - If a pull request of the branch is already open, the push updates it, and `open` claims that
   one.
 
