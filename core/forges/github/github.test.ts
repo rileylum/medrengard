@@ -376,6 +376,26 @@ test("a commission opens a pull request of its commit through the broker and, ap
   );
 });
 
+test("a request too long for a pull request is cut where it is opened, and says where the whole of it is", async (t) => {
+  const { engine, seen } = await landing(t);
+
+  // GitHub refuses a body over 65536 characters.
+  engine.commission(
+    "build",
+    { title: "Long", body: "A line of a very long request.\n".repeat(3000) },
+    { name: "long" },
+  );
+  assert.partialDeepStrictEqual(await engine.advance("long"), { status: "awaiting" });
+
+  const { body } = seen.pulls.at(-1)!;
+
+  assert.ok(body.length < 30_000, String(body.length));
+  assert.match(
+    body,
+    /A line of a very long request\.\n\n_Cut here for length: the whole of it is in the record of the commission `long`\._\n\nRan the tests\.\n$/,
+  );
+});
+
 /** The latest attempt at `step` of `first`, with what it claimed. */
 function latest(engine: Engine, step: string) {
   const attempt = engine

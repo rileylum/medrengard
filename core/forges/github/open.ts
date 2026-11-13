@@ -1,9 +1,9 @@
 /**
  * The GitHub forge's open step: pushes the subject commit, its workspace, to
  * medrengard/<commission> and opens a pull request of it against the base branch, titled with the
- * request's title, its body the request's body and the commit's report, then claims it. With one
- * open for the branch already, as after a fix, the push updates it and it is the one claimed. It
- * reaches GitHub only through the broker.
+ * request's title, its body the request's body and the commit's report, each cut where it is over
+ * 20000 characters, then claims it. With one open for the branch already, as after a fix, the push
+ * updates it and it is the one claimed. It reaches GitHub only through the broker.
  *
  * Usage: open.ts <owner/name> <base>
  */
@@ -45,8 +45,17 @@ try {
   failed(`The push to ${repository} failed: ${stderr}`);
 }
 
-const report = bodyOf(subject) ?? "";
-const asked = bodyOf(request) ?? "";
+// GitHub refuses a pull request whose body is over 65536 characters, and nobody reads one that
+// long: each part is cut at the end of a line, and says where the whole of it is.
+const most = 20_000;
+
+const cut = (text: string) =>
+  text.length <= most
+    ? text
+    : `${text.slice(0, Math.max(text.lastIndexOf("\n", most), 0) || most).trimEnd()}\n\n_Cut here for length: the whole of it is in the record of the commission \`${given.commission}\`._`;
+
+const report = cut(bodyOf(subject) ?? "");
+const asked = cut(bodyOf(request) ?? "");
 
 const response = await fetch(`${broker}/api/repos/${repository}/pulls`, {
   method: "POST",
